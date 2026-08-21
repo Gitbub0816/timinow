@@ -21,8 +21,6 @@ jobs:
     name: Swift tests and iOS build
     runs-on: macos-15
     timeout-minutes: 30
-    env:
-      SKIP_BRIDGE: "1"
     defaults:
       run:
         working-directory: apps/customer-mobile
@@ -40,7 +38,7 @@ jobs:
         working-directory: apps/customer-mobile/Darwin
         run: xcodegen generate
       - name: Resolve Swift packages
-        run: swift package resolve
+        run: SKIP_BRIDGE=1 swift package resolve
       - name: Run core tests
         run: |
           set +e

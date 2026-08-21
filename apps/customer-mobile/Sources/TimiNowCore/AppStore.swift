@@ -25,21 +25,33 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
     public var currentLatitude = 37.6688
     public var currentLongitude = -122.0808
 
+    #if !os(Android)
     private let defaults: UserDefaults
+    #endif
     private var gateway: TimiGateway
 
     public init() {
+        #if os(Android)
+        let storedPets = [DemoData.pet]
+        let selectedPetId = storedPets[0].id
+        let storedHistory: [CareHistoryItem] = []
+        let completedOnboarding = false
+        let apiBaseURLText = ""
+        #else
         let defaults = UserDefaults.standard
         self.defaults = defaults
         let storedPets = Self.decode([PetProfile].self, from: defaults.data(forKey: "timi.pets")) ?? [DemoData.pet]
-        self.pets = storedPets
         let selectedPetId = defaults.string(forKey: "timi.selectedPet") ?? storedPets[0].id
+        let storedHistory = Self.decode([CareHistoryItem].self, from: defaults.data(forKey: "timi.history")) ?? []
+        let completedOnboarding = defaults.bool(forKey: "timi.onboarding.complete")
+        let apiBaseURLText = defaults.string(forKey: "timi.apiBaseURL") ?? ""
+        #endif
+        self.pets = storedPets
         self.selectedPetId = selectedPetId
         let selected = storedPets.first(where: { $0.id == selectedPetId }) ?? storedPets[0]
         self.draft = CareDraft(pet: selected)
-        self.history = Self.decode([CareHistoryItem].self, from: defaults.data(forKey: "timi.history")) ?? []
-        self.hasCompletedOnboarding = defaults.bool(forKey: "timi.onboarding.complete")
-        let apiBaseURLText = defaults.string(forKey: "timi.apiBaseURL") ?? ""
+        self.history = storedHistory
+        self.hasCompletedOnboarding = completedOnboarding
         self.apiBaseURLText = apiBaseURLText
         self.gateway = TimiGateway(baseURL: Self.validBaseURL(apiBaseURLText))
     }
@@ -55,7 +67,9 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
             draft = CareDraft(pet: pets[0])
         }
         hasCompletedOnboarding = true
+        #if !os(Android)
         defaults.set(true, forKey: "timi.onboarding.complete")
+        #endif
         persistPets()
     }
 
@@ -72,7 +86,9 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
 
     public func choosePet(_ id: String) {
         selectedPetId = id
+        #if !os(Android)
         defaults.set(id, forKey: "timi.selectedPet")
+        #endif
     }
 
     public func savePet(_ pet: PetProfile) {
@@ -136,14 +152,31 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
     public func saveAPIBaseURL() {
         let trimmed = apiBaseURLText.trimmingCharacters(in: .whitespacesAndNewlines)
         apiBaseURLText = trimmed
+        #if !os(Android)
         defaults.set(trimmed, forKey: "timi.apiBaseURL")
+        #endif
         gateway.baseURL = Self.validBaseURL(trimmed)
     }
 
-    public func resetOnboarding() { hasCompletedOnboarding = false; onboardingPage = 0; defaults.set(false, forKey: "timi.onboarding.complete") }
+    public func resetOnboarding() {
+        hasCompletedOnboarding = false
+        onboardingPage = 0
+        #if !os(Android)
+        defaults.set(false, forKey: "timi.onboarding.complete")
+        #endif
+    }
 
-    private func persistPets() { defaults.set(try? JSONEncoder().encode(pets), forKey: "timi.pets"); defaults.set(selectedPetId, forKey: "timi.selectedPet") }
-    private func persistHistory() { defaults.set(try? JSONEncoder().encode(history), forKey: "timi.history") }
+    private func persistPets() {
+        #if !os(Android)
+        defaults.set(try? JSONEncoder().encode(pets), forKey: "timi.pets")
+        defaults.set(selectedPetId, forKey: "timi.selectedPet")
+        #endif
+    }
+    private func persistHistory() {
+        #if !os(Android)
+        defaults.set(try? JSONEncoder().encode(history), forKey: "timi.history")
+        #endif
+    }
     private static func decode<T: Decodable>(_ type: T.Type, from data: Data?) -> T? { guard let data else { return nil }; return try? JSONDecoder().decode(type, from: data) }
     private static func validBaseURL(_ text: String) -> URL? { guard let url = URL(string: text), url.scheme == "https", url.host != nil else { return nil }; return url }
 }
