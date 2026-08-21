@@ -35,6 +35,7 @@ const [validator, gateway, appStore, theme, onboarding, tracker, mini, alerts, c
   read("apps/vet-windows/src/TimiVet/Services/ClinicApiClient.cs")
 ]);
 const settingsStore = await read("apps/vet-windows/src/TimiVet/Services/SettingsStore.cs");
+const nativeWorkflow = await read(".github/workflows/native-clients.yml");
 
 const expectations = [
   [validator, "not acting like", "deterministic vague-concern rule"],
@@ -60,6 +61,7 @@ if (appStore.includes("where: { $0.id == self.selectedPetId }")) throw new Error
 if (/public\s+(struct|extension).*ButtonStyle|public\s+func\s+timiCard/.test(theme)) throw new Error("SwiftUI implementation helpers must stay out of the public Skip bridge surface.");
 if (!clinicApi.includes("using System.Net.Http;")) throw new Error("Windows HTTP client namespace is not imported.");
 if (!settingsStore.includes("using System.IO;")) throw new Error("Windows settings storage namespace is not imported.");
+if (!nativeWorkflow.includes('SKIP_BRIDGE: "1"') || !nativeWorkflow.includes('install-swift-android-sdk: "true"')) throw new Error("Skip Fuse CI must install and load the native Android bridge.");
 
 for (const path of [
   "apps/customer-mobile/Sources/TimiNowUI/Components.swift",

@@ -21,11 +21,19 @@ jobs:
     name: Swift tests and iOS build
     runs-on: macos-15
     timeout-minutes: 30
+    env:
+      SKIP_BRIDGE: "1"
     defaults:
       run:
         working-directory: apps/customer-mobile
     steps:
       - uses: actions/checkout@v5
+      - name: Install Skip Fuse Android toolchain
+        uses: skiptools/actions/setup-skip@v1
+        with:
+          install-swift-android-sdk: "true"
+          run-doctor: "false"
+          verify-project: apps/customer-mobile
       - name: Install XcodeGen
         run: brew install xcodegen
       - name: Generate Xcode project
