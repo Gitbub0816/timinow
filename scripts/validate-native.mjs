@@ -23,10 +23,11 @@ const required = [
 await Promise.all(required.map((path) => access(resolve(root, path))));
 
 const read = async (path) => readFile(resolve(root, path), "utf8");
-const [validator, gateway, appStore, onboarding, tracker, mini, alerts, clinicApi] = await Promise.all([
+const [validator, gateway, appStore, theme, onboarding, tracker, mini, alerts, clinicApi] = await Promise.all([
   read("apps/customer-mobile/Sources/TimiNowCore/ConcernValidator.swift"),
   read("apps/customer-mobile/Sources/TimiNowCore/APIClient.swift"),
   read("apps/customer-mobile/Sources/TimiNowCore/AppStore.swift"),
+  read("apps/customer-mobile/Sources/TimiNowUI/Theme.swift"),
   read("apps/customer-mobile/Sources/TimiNowUI/OnboardingView.swift"),
   read("apps/customer-mobile/Sources/TimiNowUI/OfferAndTrackerViews.swift"),
   read("apps/vet-windows/src/TimiVet/Views/MiniWindow.xaml"),
@@ -54,6 +55,7 @@ for (const [source, needle, label] of expectations) {
 
 if (gateway.includes("bearerToken: String? = nil, session:")) throw new Error("URLSession must not appear in the public Skip bridge surface.");
 if (appStore.includes("init(defaults: UserDefaults")) throw new Error("UserDefaults must not appear in the public Skip bridge surface.");
+if (/public\s+(struct|extension).*ButtonStyle|public\s+func\s+timiCard/.test(theme)) throw new Error("SwiftUI implementation helpers must stay out of the public Skip bridge surface.");
 if (!clinicApi.includes("using System.Net.Http;")) throw new Error("Windows HTTP client namespace is not imported.");
 if (!settingsStore.includes("using System.IO;")) throw new Error("Windows settings storage namespace is not imported.");
 
