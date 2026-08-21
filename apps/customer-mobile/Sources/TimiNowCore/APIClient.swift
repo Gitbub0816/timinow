@@ -1,11 +1,11 @@
 import Foundation
 
-public enum TimiAPIError: LocalizedError, Sendable {
+public enum TimiAPIError: Error, Sendable {
     case invalidConfiguration
     case server(String)
     case invalidResponse
 
-    public var errorDescription: String? {
+    public var message: String {
         switch self {
         case .invalidConfiguration: return "Enter the HTTPS address of your Tími Worker in Settings."
         case .server(let message): return message
