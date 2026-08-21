@@ -24,3 +24,11 @@
     "crons": ["*/5 * * * *"]
   }
 }
+// wrangler.jsonc
+"d1_databases": [
+  {
+    "binding": "DB",
+    "database_name": "timinow",
+    "database_id": "<your-d1-database-id>"   // from: wrangler d1 list
+  }
+]
