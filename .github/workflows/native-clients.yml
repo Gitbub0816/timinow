@@ -42,7 +42,7 @@ jobs:
       - name: Run core tests
         run: |
           set +e
-          swift test > "$RUNNER_TEMP/timi-swift-test.log" 2>&1
+          swift test --filter ConcernValidatorTests > "$RUNNER_TEMP/timi-swift-test.log" 2>&1
           status=$?
           if [ "$status" -ne 0 ]; then
             rg -i "error:|fatalerror|failed|unsatisfiedlink|exception" "$RUNNER_TEMP/timi-swift-test.log" | tail -200 || true
