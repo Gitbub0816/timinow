@@ -9,8 +9,8 @@ import SwiftUI
 
 struct IntakeFlowView: View {
     @Bindable var store: AppStore
-    @State private var step = 0
-    private let symptoms = [
+    @State var step = 0
+    let symptoms = [
         ("vomiting_or_diarrhea", "Vomiting / diarrhea", "drop.fill"), ("breathing_or_coughing", "Breathing / coughing", "lungs.fill"),
         ("pain_or_limping", "Pain / limping", "figure.walk"), ("not_eating_or_drinking", "Not eating / drinking", "fork.knife"),
         ("urination_or_stool", "Bathroom change", "exclamationmark.circle"), ("injury_or_bleeding", "Injury / bleeding", "bandage.fill"),
@@ -38,7 +38,7 @@ struct IntakeFlowView: View {
         }
     }
 
-    private var concernStep: some View {
+    var concernStep: some View {
         VStack(alignment: .leading, spacing: 18) {
             Text("Choose everything you can observe").font(.headline)
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 145))], spacing: 10) {
@@ -59,7 +59,7 @@ struct IntakeFlowView: View {
         }
     }
 
-    private var contactStep: some View {
+    var contactStep: some View {
         VStack(alignment: .leading, spacing: 16) {
             field("Your name", text: $store.draft.ownerName, hint: "Caleb Owen")
             field("Mobile number", text: $store.draft.ownerPhone, hint: "(510) 555-0123")
@@ -70,6 +70,6 @@ struct IntakeFlowView: View {
         }
     }
 
-    private func field(_ title: String, text: Binding<String>, hint: String) -> some View { VStack(alignment: .leading, spacing: 7) { Text(title).font(.headline); TextField(hint, text: text).textFieldStyle(.roundedBorder) } }
-    private func acknowledgement(_ binding: Binding<Bool>, _ text: String) -> some View { Toggle(isOn: binding) { Text(text).font(.caption).fontWeight(.semibold) }.toggleStyle(.switch).tint(TimiColor.blue) }
+    func field(_ title: String, text: Binding<String>, hint: String) -> some View { VStack(alignment: .leading, spacing: 7) { Text(title).font(.headline); TextField(hint, text: text).textFieldStyle(.roundedBorder) } }
+    func acknowledgement(_ binding: Binding<Bool>, _ text: String) -> some View { Toggle(isOn: binding) { Text(text).font(.caption).fontWeight(.semibold) }.toggleStyle(.switch).tint(TimiColor.blue) }
 }

@@ -7,7 +7,7 @@ import TimiNowUI
 private let logger = Logger(subsystem: "solutions.clearkey.timinow", category: "application")
 
 public struct RootView: View {
-    @State private var store = AppStore()
+    @State var store = AppStore()
     public init() { }
 
     public var body: some View {

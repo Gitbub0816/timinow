@@ -9,9 +9,9 @@ import SwiftUI
 
 struct OnboardingView: View {
     @Bindable var store: AppStore
-    @State private var petName = ""
-    @State private var species: PetSpecies = .dog
-    @State private var direction = 1
+    @State var petName = ""
+    @State var species: PetSpecies = .dog
+    @State var direction = 1
 
     var body: some View {
         ZStack {
@@ -30,7 +30,7 @@ struct OnboardingView: View {
         }
     }
 
-    @ViewBuilder private var page: some View {
+    @ViewBuilder var page: some View {
         switch store.onboardingPage {
         case 0:
             VStack(spacing: 12) { Spacer(); Eyebrow(text: "LIVE VETERINARY INTAKE"); Text("Less calling.\nFaster answers.").font(.system(size: 47, weight: .bold, design: .serif)).multilineTextAlignment(.center).foregroundStyle(TimiColor.ink); CareCompanionArtwork(); Text("Tími finds participating clinics that can actually consider your pet now—not tomorrow's calendar.").font(.title3).foregroundStyle(TimiColor.muted).multilineTextAlignment(.center).padding(.horizontal, 30); Spacer() }
@@ -43,9 +43,9 @@ struct OnboardingView: View {
         }
     }
 
-    private func permissionRow(_ symbol: String, _ title: String, _ detail: String, enabled: Bool, action: @escaping () -> Void) -> some View {
+    func permissionRow(_ symbol: String, _ title: String, _ detail: String, enabled: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) { HStack(spacing: 14) { Image(systemName: enabled ? "checkmark.circle.fill" : symbol).font(.title2).foregroundStyle(enabled ? TimiColor.blue : TimiColor.coral).frame(width: 36); VStack(alignment: .leading) { Text(title).fontWeight(.bold); Text(detail).font(.caption).foregroundStyle(TimiColor.muted) }; Spacer(); Text(enabled ? "Ready" : "Enable").font(.caption).fontWeight(.black).foregroundStyle(TimiColor.blue) }.padding(15).background(.white, in: RoundedRectangle(cornerRadius: 18)).overlay(RoundedRectangle(cornerRadius: 18).stroke(TimiColor.ink.opacity(0.15))) }.buttonStyle(.plain)
     }
 
-    private func move(_ delta: Int) { direction = delta; withAnimation { store.onboardingPage = min(3, max(0, store.onboardingPage + delta)) } }
+    func move(_ delta: Int) { direction = delta; withAnimation { store.onboardingPage = min(3, max(0, store.onboardingPage + delta)) } }
 }

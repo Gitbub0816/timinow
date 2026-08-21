@@ -17,7 +17,7 @@ struct TimiWordmark: View {
 
 struct CareCompanionArtwork: View {
     var compact = false
-    @State private var floating = false
+    @State var floating = false
 
     var body: some View {
         Image("timi-care-companion", bundle: .module)
@@ -40,7 +40,7 @@ struct Eyebrow: View {
 }
 
 struct PulsingBeacon: View {
-    @State private var pulse = false
+    @State var pulse = false
     var symbol = "pawprint.fill"
     var body: some View {
         ZStack {
@@ -89,7 +89,7 @@ struct ErrorToast: View {
 }
 
 struct CelebrationOverlay: View {
-    @State private var expand = false
+    @State var expand = false
     var body: some View {
         ZStack {
             Color.black.opacity(expand ? 0 : 0.08).ignoresSafeArea()

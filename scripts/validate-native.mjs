@@ -57,4 +57,16 @@ if (appStore.includes("init(defaults: UserDefaults")) throw new Error("UserDefau
 if (!clinicApi.includes("using System.Net.Http;")) throw new Error("Windows HTTP client namespace is not imported.");
 if (!settingsStore.includes("using System.IO;")) throw new Error("Windows settings storage namespace is not imported.");
 
+for (const path of [
+  "apps/customer-mobile/Sources/TimiNowUI/Components.swift",
+  "apps/customer-mobile/Sources/TimiNowUI/CustomerRootView.swift",
+  "apps/customer-mobile/Sources/TimiNowUI/IntakeFlowView.swift",
+  "apps/customer-mobile/Sources/TimiNowUI/OfferAndTrackerViews.swift",
+  "apps/customer-mobile/Sources/TimiNowUI/OnboardingView.swift",
+  "apps/customer-mobile/Sources/TimiNowUI/SupportViews.swift"
+]) {
+  const source = await read(path);
+  if (source.includes("@State private")) throw new Error(`Private SwiftUI state cannot be bridged by Skip: ${path}`);
+}
+
 console.log(`Native client structure validated (${required.length} required files, ${expectations.length} behavioral contracts).`);

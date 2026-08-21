@@ -9,11 +9,11 @@ import SwiftUI
 
 struct OfferSearchView: View {
     @Bindable var store: AppStore
-    @State private var sort = "recommended"
-    @State private var appeared: Set<String> = []
-    @State private var lastOfferCount = 0
+    @State var sort = "recommended"
+    @State var appeared: Set<String> = []
+    @State var lastOfferCount = 0
 
-    private var offers: [CareOffer] {
+    var offers: [CareOffer] {
         let active = (store.currentSearch?.offers ?? []).filter { $0.status == "active" }
         let sorted: [CareOffer]
         switch sort {
@@ -45,7 +45,7 @@ struct OfferSearchView: View {
         }
     }
 
-    private var waitingView: some View {
+    var waitingView: some View {
         VStack(spacing: 20) {
             PulsingBeacon(symbol: "phone.arrow.up.right.fill")
             Eyebrow(text: "LIVE SEARCH IN PROGRESS")
@@ -56,7 +56,7 @@ struct OfferSearchView: View {
         }.padding(.top, 18)
     }
 
-    private var offersView: some View {
+    var offersView: some View {
         VStack(alignment: .leading, spacing: 17) {
             Eyebrow(text: "\(offers.count) OF \(store.currentSearch?.maxOffers ?? 5) OFFERS", color: TimiColor.blue)
             Text("\(store.draft.pet.name) has options.").font(.system(size: 40, weight: .bold, design: .serif))
@@ -72,11 +72,11 @@ struct OfferSearchView: View {
     }
 }
 
-private struct OfferCard: View {
+struct OfferCard: View {
     var offer: CareOffer; var rank: Int; var isWorking: Bool; var select: () -> Void
-    @State private var details = false
-    private var clinic: ClinicLocation { offer.location ?? ClinicLocation(id: offer.locationId, name: "Veterinary clinic") }
-    private var isEmergency: Bool { offer.responseType == "emergency_intake" }
+    @State var details = false
+    var clinic: ClinicLocation { offer.location ?? ClinicLocation(id: offer.locationId, name: "Veterinary clinic") }
+    var isEmergency: Bool { offer.responseType == "emergency_intake" }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 15) {
@@ -95,8 +95,8 @@ private struct OfferCard: View {
 
 struct TrackerView: View {
     @Bindable var store: AppStore
-    private var intake: CareIntake? { store.currentIntake }
-    private var clinic: ClinicLocation? { intake?.location }
+    var intake: CareIntake? { store.currentIntake }
+    var clinic: ClinicLocation? { intake?.location }
 
     var body: some View {
         NavigationStack {
@@ -116,7 +116,7 @@ struct TrackerView: View {
         }
     }
 
-    private var clinicCard: some View {
+    var clinicCard: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack { Image(systemName: "building.2.fill").font(.title).foregroundStyle(.white).frame(width: 54, height: 54).background(TimiColor.blue, in: RoundedRectangle(cornerRadius: 16)); VStack(alignment: .leading) { Text(clinic?.name ?? "Veterinary clinic").font(.title3).fontWeight(.black); Text(clinic?.address ?? "Address unavailable").font(.caption).foregroundStyle(TimiColor.muted) } }
             Divider(); Text(intake?.clinicNote ?? "The clinic is expecting your arrival. Capacity and clinical priority can still change.").font(.callout)
@@ -124,17 +124,17 @@ struct TrackerView: View {
         }.timiCard(.white)
     }
 
-    private var timeline: some View {
+    var timeline: some View {
         VStack(alignment: .leading, spacing: 16) { Eyebrow(text: "ARRIVAL PROGRESS"); timelineRow(true, "Clinic confirmed", "Your selected offer is secured."); timelineRow(["en_route", "arrived", "triaged", "seen", "completed"].contains(intake?.status ?? ""), "On the way", "Tell the team when you leave."); timelineRow(["arrived", "triaged", "seen", "completed"].contains(intake?.status ?? ""), "Arrived", "Clinical triage determines treatment order."); timelineRow(["seen", "completed"].contains(intake?.status ?? ""), "Seen", "Your observation helps improve future estimates.") }.timiCard(TimiColor.paper)
     }
 
-    private func timelineRow(_ complete: Bool, _ title: String, _ detail: String) -> some View { HStack(alignment: .top, spacing: 13) { Image(systemName: complete ? "checkmark.circle.fill" : "circle").font(.title2).foregroundStyle(complete ? TimiColor.blue : TimiColor.ink.opacity(0.2)); VStack(alignment: .leading) { Text(title).fontWeight(.bold); Text(detail).font(.caption).foregroundStyle(TimiColor.muted) } } }
+    func timelineRow(_ complete: Bool, _ title: String, _ detail: String) -> some View { HStack(alignment: .top, spacing: 13) { Image(systemName: complete ? "checkmark.circle.fill" : "circle").font(.title2).foregroundStyle(complete ? TimiColor.blue : TimiColor.ink.opacity(0.2)); VStack(alignment: .leading) { Text(title).fontWeight(.bold); Text(detail).font(.caption).foregroundStyle(TimiColor.muted) } } }
 
-    private var depositCard: some View {
+    var depositCard: some View {
         VStack(alignment: .leading, spacing: 11) { Eyebrow(text: intake?.paymentStatus == "paid" ? "DEPOSIT PAID" : "ARRIVAL DEPOSIT"); HStack { Text(TimiFormat.money(intake?.depositAmountCents)).font(.system(size: 34, weight: .bold, design: .serif)); Spacer(); Image(systemName: intake?.paymentStatus == "paid" ? "checkmark.shield.fill" : "creditcard.fill").font(.title).foregroundStyle(TimiColor.blue) }; Text("The deposit is credited to the clinic's invoice. Remaining veterinary charges are billed by the clinic; Tími does not submit insurance claims.").font(.caption).foregroundStyle(TimiColor.muted); if intake?.paymentStatus != "paid" { Button("Complete deposit") { if store.isDemoMode, var value = store.currentIntake { value.paymentStatus = "paid"; store.currentIntake = value } else { store.errorMessage = "Secure native Stripe Payment Sheet activates when the production Stripe mobile configuration is added." } }.buttonStyle(TimiPrimaryButtonStyle(color: TimiColor.blue)) } }.timiCard(TimiColor.goldSoft)
     }
 
-    private var actionButtons: some View {
+    var actionButtons: some View {
         VStack(spacing: 11) {
             if intake?.status == "accepted" { Button { Task { await store.updateIntake(status: "en_route") } } label: { Label("We're leaving now", systemImage: "car.fill") }.buttonStyle(TimiPrimaryButtonStyle()) }
             if ["en_route", "accepted"].contains(intake?.status ?? "") { Button { Task { await store.record("arrived") } } label: { Label("We arrived", systemImage: "mappin.circle.fill") }.buttonStyle(TimiQuietButtonStyle()) }

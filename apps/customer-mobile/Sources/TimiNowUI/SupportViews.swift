@@ -9,7 +9,7 @@ import SwiftUI
 
 struct PetsView: View {
     @Bindable var store: AppStore
-    @State private var showEditor = false
+    @State var showEditor = false
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
@@ -25,13 +25,13 @@ struct PetsView: View {
     }
 }
 
-private struct PetEditor: View {
+struct PetEditor: View {
     @Bindable var store: AppStore
     @Binding var isPresented: Bool
-    @State private var name = ""
-    @State private var species: PetSpecies = .dog
-    @State private var breed = ""
-    @State private var weight = ""
+    @State var name = ""
+    @State var species: PetSpecies = .dog
+    @State var breed = ""
+    @State var weight = ""
     var body: some View {
         NavigationStack { Form { Section("Pet") { TextField("Name", text: $name); Picker("Species", selection: $species) { ForEach(PetSpecies.allCases, id: \.self) { Text($0.title).tag($0) } }; TextField("Breed", text: $breed); TextField("Weight in pounds", text: $weight) } Section { Text("Profiles are stored on this device while accounts are disabled.").font(.caption).foregroundStyle(TimiColor.muted) } }.navigationTitle("Add a pet").toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { isPresented = false } }; ToolbarItem(placement: .confirmationAction) { Button("Save") { store.savePet(PetProfile(name: name, species: species, breed: breed, weightLbs: Double(weight), colorToken: store.pets.count)); isPresented = false }.disabled(name.trimmingCharacters(in: .whitespaces).isEmpty) } } }
     }
@@ -68,5 +68,5 @@ struct LegalView: View {
             legalSection("Operator and contact", "Tími NOW is operated by ClearKey Solutions, LLC in Hayward, California. California law governs the service to the extent permitted. Contact legal@clearkey.solutions or privacy@clearkey.solutions for applicable requests.")
         }.padding(20).padding(.bottom, 40) }.background(TimiColor.paper).navigationTitle("Legal").navigationBarTitleDisplayMode(.inline)
     }
-    private func legalSection(_ title: String, _ text: String) -> some View { VStack(alignment: .leading, spacing: 8) { Text(title).font(.title3).fontWeight(.black); Text(text).font(.callout).foregroundStyle(TimiColor.muted).lineSpacing(4) } }
+    func legalSection(_ title: String, _ text: String) -> some View { VStack(alignment: .leading, spacing: 8) { Text(title).font(.title3).fontWeight(.black); Text(text).font(.callout).foregroundStyle(TimiColor.muted).lineSpacing(4) } }
 }

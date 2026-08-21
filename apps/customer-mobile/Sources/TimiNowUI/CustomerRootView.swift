@@ -20,7 +20,7 @@ public struct CustomerRootView: View {
         }.animation(.easeInOut(duration: 0.25), value: store.errorMessage != nil)
     }
 
-    @ViewBuilder private var appContent: some View {
+    @ViewBuilder var appContent: some View {
         switch store.route {
         case .intake: IntakeFlowView(store: store).transition(.move(edge: .trailing))
         case .searching: OfferSearchView(store: store).transition(.opacity)
@@ -38,7 +38,7 @@ public struct CustomerRootView: View {
 
 struct HomeView: View {
     @Bindable var store: AppStore
-    @State private var breathe = false
+    @State var breathe = false
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
@@ -57,7 +57,7 @@ struct HomeView: View {
         }.background(TimiColor.canvas).navigationBarHidden(true)
     }
 
-    private func processRow(_ number: Int, _ title: String, _ detail: String) -> some View {
+    func processRow(_ number: Int, _ title: String, _ detail: String) -> some View {
         HStack(alignment: .top, spacing: 13) { Text("\(number)").font(.system(size: 16, weight: .black, design: .serif)).frame(width: 36, height: 36).background(number == 2 ? TimiColor.coral : TimiColor.gold, in: Circle()).overlay(Circle().stroke(TimiColor.ink, lineWidth: 2)); VStack(alignment: .leading, spacing: 3) { Text(title).fontWeight(.bold); Text(detail).font(.caption).foregroundStyle(TimiColor.muted) } }
     }
 }
