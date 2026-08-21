@@ -1,0 +1,112 @@
+export const DEMO_LOCATIONS = [
+  {
+    id: "loc_bayview",
+    tenantId: "tenant_bayview",
+    name: "Bayview Veterinary Emergency",
+    kind: "emergency",
+    address: "2211 Shoreline Drive, Hayward, CA 94545",
+    phone: "(510) 555-0138",
+    latitude: 37.6536,
+    longitude: -122.1197,
+    open24Hours: true,
+    acceptsWalkIns: true,
+    autoAccept: false,
+    arrivalWindowMinutes: 20,
+    species: ["dog", "cat", "bird", "rabbit"],
+    capabilities: ["emergency", "urgent", "surgery", "oxygen", "toxin", "imaging", "overnight"],
+    baseExamFeeCents: 18500,
+    availability: {
+      intakeStatus: "limited",
+      stableWaitMin: 75,
+      stableWaitMax: 135,
+      capacityCount: 2,
+      acceptsCritical: true,
+      source: "hospital",
+      confidence: "high",
+      note: "Critical patients are always triaged on arrival.",
+      reportedAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString()
+    },
+    policy: { id: "policy_bayview_v1", version: 1, depositRequired: true, depositAmountCents: 7500, depositRefundable: true, freeCancelMinutes: 15, completedPlatformFeeCents: 2000, noShowPlatformFeeCents: 500 }
+  },
+  {
+    id: "loc_hearth",
+    tenantId: "tenant_hearth",
+    name: "Hearth & Paw Urgent Care",
+    kind: "urgent",
+    address: "1555 B Street, Hayward, CA 94541",
+    phone: "(510) 555-0194",
+    latitude: 37.6718,
+    longitude: -122.0824,
+    open24Hours: false,
+    acceptsWalkIns: true,
+    autoAccept: true,
+    arrivalWindowMinutes: 25,
+    species: ["dog", "cat"],
+    capabilities: ["urgent", "minor_injury", "vomiting", "same_day", "imaging"],
+    baseExamFeeCents: 8900,
+    availability: {
+      intakeStatus: "available",
+      stableWaitMin: 15,
+      stableWaitMax: 35,
+      capacityCount: 3,
+      acceptsCritical: false,
+      source: "hospital",
+      confidence: "high",
+      note: "Accepting stable urgent-care arrivals.",
+      reportedAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString()
+    },
+    policy: { id: "policy_hearth_v1", version: 1, depositRequired: true, depositAmountCents: 5000, depositRefundable: true, freeCancelMinutes: 30, completedPlatformFeeCents: 2000, noShowPlatformFeeCents: 500 }
+  },
+  {
+    id: "loc_juniper",
+    tenantId: "tenant_juniper",
+    name: "Juniper Animal Care",
+    kind: "general",
+    address: "3100 Castro Valley Boulevard, Castro Valley, CA 94546",
+    phone: "(510) 555-0161",
+    latitude: 37.6944,
+    longitude: -122.0868,
+    open24Hours: false,
+    acceptsWalkIns: true,
+    autoAccept: false,
+    arrivalWindowMinutes: 30,
+    species: ["dog", "cat"],
+    capabilities: ["same_day", "wellness", "minor_injury", "vaccines"],
+    baseExamFeeCents: 7200,
+    availability: {
+      intakeStatus: "confirm_first",
+      stableWaitMin: 30,
+      stableWaitMax: 60,
+      capacityCount: 1,
+      acceptsCritical: false,
+      source: "timi_request",
+      confidence: "medium",
+      note: "Call-ahead confirmation required.",
+      reportedAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString()
+    },
+    policy: { id: "policy_juniper_v1", version: 1, depositRequired: false, depositAmountCents: 0, depositRefundable: true, freeCancelMinutes: 0, completedPlatformFeeCents: 2000, noShowPlatformFeeCents: 500 }
+  }
+];
+
+export const RED_FLAG_TERMS = [
+  "not breathing",
+  "can't breathe",
+  "cannot breathe",
+  "struggling to breathe",
+  "unconscious",
+  "collapsed",
+  "seizure",
+  "poison",
+  "toxin",
+  "hit by car",
+  "heavy bleeding",
+  "uncontrolled bleeding",
+  "bloated abdomen"
+];
+
+export const VALID_SPECIES = new Set(["dog", "cat", "bird", "rabbit", "reptile", "small_mammal", "other"]);
+export const VALID_URGENCY = new Set(["routine", "same_day", "urgent", "emergency"]);
+export const VALID_INTAKE_STATUS = new Set(["available", "limited", "confirm_first", "critical_only", "diverting", "closed", "unverified"]);

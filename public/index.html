@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#2357d9">
+  <meta name="description" content="Find veterinary hospitals that can take your pet right now with Tími NOW.">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/assets/icons/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/styles.css">
+  <title>Tími NOW — find veterinary care right now</title>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <header class="site-header" data-public-header>
+    <a class="brand" href="#home" aria-label="Tími NOW home"><img src="/assets/brand/timinow-wordmark.svg" alt="Tími NOW"></a>
+    <nav aria-label="Primary navigation">
+      <a href="#how-it-works">How it works</a>
+      <a href="#emergency">Emergency care</a>
+      <a href="#clinic">For veterinary teams</a>
+    </nav>
+    <div class="header-actions">
+      <button class="text-button" type="button" data-install hidden>Install</button>
+      <a class="button button-small button-dark" href="#find">Find care now <span aria-hidden="true">→</span></a>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="screen landing-screen is-active" data-screen="home" aria-labelledby="home-title">
+      <div class="hero">
+        <div class="hero-copy">
+          <p class="eyebrow"><span class="pulse-dot"></span> Live veterinary intake</p>
+          <h1 id="home-title">Who can see<br>your pet <em>now?</em></h1>
+          <p class="hero-lede">Tími checks real intake capacity—not tomorrow’s calendar—so you know where to go before you leave home.</p>
+          <div class="hero-actions">
+            <a class="button button-primary" href="#find">Find available care <span aria-hidden="true">→</span></a>
+            <button class="button button-quiet" type="button" data-use-location>Use my location</button>
+          </div>
+          <p class="microcopy">No membership. No directory full of unanswered phones. Availability always shows when and how it was verified.</p>
+        </div>
+        <div class="hero-scene" aria-label="Illustration of a dog following a path to available veterinary care">
+          <div class="sunburst" aria-hidden="true"></div>
+          <svg class="route-line" viewBox="0 0 520 300" aria-hidden="true"><path d="M24 255C107 168 152 280 250 184S390 196 492 67"/><path class="route-dash" d="M30 249C110 178 157 269 251 184S389 194 484 74"/></svg>
+          <div class="live-card card-one"><span class="signal available"></span><div><strong>Available now</strong><small>Confirmed 4 min ago</small></div></div>
+          <div class="live-card card-two"><span class="signal limited"></span><div><strong>Limited capacity</strong><small>Stable wait 1–2 hr</small></div></div>
+          <svg class="dog-art" viewBox="0 0 300 300" role="img" aria-label="Cheerful blue dog">
+            <path class="dog-ear" d="M105 76C64 32 32 66 53 117c11 27 36 31 55 17M195 76c41-44 73-10 52 41-11 27-36 31-55 17"/>
+            <path class="dog-face" d="M86 91c29-29 99-30 128 0 28 29 25 106 1 142-21 32-47 45-65 45s-47-14-66-47c-21-37-24-111 2-140Z"/>
+            <circle cx="119" cy="157" r="7"/><circle cx="181" cy="157" r="7"/>
+            <path class="dog-nose" d="M134 182q16-12 32 0-3 20-16 20t-16-20Z"/><path class="dog-smile" d="M150 201v13m0 0c-12 14-25 11-31 2m31-2c12 14 25 11 31 2"/>
+            <path class="dog-collar" d="M91 232q60 33 118 0"/><circle class="dog-tag" cx="150" cy="250" r="15"/>
+          </svg>
+          <span class="doodle-star star-a">✦</span><span class="doodle-star star-b">✺</span><span class="doodle-star star-c">×</span>
+        </div>
+      </div>
+
+      <div class="truth-strip" aria-label="Tími service principles">
+        <div><span>01</span><strong>Capacity, not calendars</strong><small>We ask whether a clinic can take another patient now.</small></div>
+        <div><span>02</span><strong>Freshness is visible</strong><small>Every result shows its source, age, and confidence.</small></div>
+        <div><span>03</span><strong>Call-ahead confirmation</strong><small>Your clinic knows you are coming before you drive.</small></div>
+      </div>
+
+      <section class="process-section" id="how-it-works" aria-labelledby="process-title">
+        <div class="section-copy">
+          <p class="eyebrow coral">LESS CALLING. FASTER ANSWERS.</p>
+          <h2 id="process-title">From worried to<br><em>on your way.</em></h2>
+          <p>Tell us what is happening, compare nearby capacity, and send one intake request. Tími keeps trying until a veterinary team answers.</p>
+        </div>
+        <div class="process-cards">
+          <article><span class="step-number">1</span><div class="sketch-icon">?</div><h3>Describe the concern</h3><p>A short, non-diagnostic intake helps us find an appropriate level of care.</p></article>
+          <article><span class="step-number">2</span><div class="sketch-icon coral-bg">⌁</div><h3>See current capacity</h3><p>Compare driving time, reported stable-patient wait, capability and freshness.</p></article>
+          <article><span class="step-number">3</span><div class="sketch-icon gold-bg">✓</div><h3>Get accepted</h3><p>The hospital confirms an arrival window. If it cannot, Tími moves to your next choice.</p></article>
+        </div>
+      </section>
+
+      <section class="emergency-section" id="emergency" aria-labelledby="emergency-title">
+        <div class="emergency-mark" aria-hidden="true">＋</div>
+        <div><p class="eyebrow light">FOR POSSIBLE EMERGENCIES</p><h2 id="emergency-title">The shortest wait is not always the safest destination.</h2><p>For life-threatening warning signs, Tími prioritizes the nearest appropriate emergency-capable hospital and helps call ahead. Hospital staff—not Tími—perform clinical triage.</p></div>
+        <a class="button button-light" href="#find?care=emergency">Find emergency care</a>
+      </section>
+
+      <section class="team-callout">
+        <div><p class="eyebrow">FOR VETERINARY TEAMS</p><h2>Tell the community when you have room to help.</h2><p>One live status replaces dozens of “are you taking patients?” phone calls.</p></div>
+        <a class="button button-dark" href="#clinic">Open clinic console <span aria-hidden="true">→</span></a>
+      </section>
+    </section>
+
+    <section class="screen app-screen" data-screen="find" aria-labelledby="find-title">
+      <header class="app-header"><a class="brand compact" href="#home"><img src="/assets/brand/timinow-wordmark.svg" alt="Tími NOW"></a><div class="step-status"><span data-intake-step-label>1 of 3</span><i><b data-intake-progress></b></i></div><button class="icon-button" type="button" data-route="home" aria-label="Close">×</button></header>
+      <div class="intake-shell">
+        <form data-intake-form novalidate>
+          <section class="intake-step is-active" data-intake-step="1">
+            <p class="eyebrow coral">YOUR PET</p><h1 id="find-title">Who needs care?</h1><p class="lede-small">Just enough information to find clinics equipped to help right now.</p>
+            <div class="form-grid two-column">
+              <label>Pet’s name<input name="petName" autocomplete="off" required value="Otis"></label>
+              <label>Species<select name="species" required><option value="dog">Dog</option><option value="cat">Cat</option><option value="bird">Bird</option><option value="rabbit">Rabbit</option><option value="reptile">Reptile</option><option value="small_mammal">Small mammal</option><option value="other">Other</option></select></label>
+              <label>Breed <span>(optional)</span><input name="breed" autocomplete="off" value="Golden retriever"></label>
+              <label>Approximate weight <span>(optional)</span><div class="input-suffix"><input name="weightLbs" inputmode="decimal" type="number" min="0.1" max="3000" value="72"><span>lb</span></div></label>
+            </div>
+            <button class="button button-primary continue-button" type="button" data-next-step>Continue <span>→</span></button>
+          </section>
+
+          <section class="intake-step" data-intake-step="2" hidden>
+            <p class="eyebrow coral">THE CONCERN</p><h1>What is happening?</h1><p class="lede-small">Tími does not diagnose. These answers identify an appropriate facility and are sent to the clinic.</p>
+            <fieldset class="urgency-choices"><legend>How quickly does this feel like it needs attention?</legend>
+              <label><input type="radio" name="urgency" value="same_day" checked><span><b>Today</b><small>Uncomfortable or worsening, but currently stable</small></span></label>
+              <label><input type="radio" name="urgency" value="urgent"><span><b>As soon as possible</b><small>Needs prompt veterinary attention</small></span></label>
+              <label><input type="radio" name="urgency" value="emergency"><span><b>Possible emergency</b><small>Severe symptoms or immediate danger</small></span></label>
+            </fieldset>
+            <label class="stacked-field">Describe what you see<textarea name="concernSummary" rows="5" minlength="5" maxlength="1200" required placeholder="For example: Otis has vomited three times since this morning and will not drink water."></textarea></label>
+            <fieldset class="red-flag-box"><legend>Is any of this happening?</legend>
+              <label><input type="checkbox" name="redFlag" value="struggling to breathe"> Struggling to breathe</label>
+              <label><input type="checkbox" name="redFlag" value="unconscious or collapsed"> Unconscious or collapsed</label>
+              <label><input type="checkbox" name="redFlag" value="uncontrolled bleeding"> Uncontrolled bleeding</label>
+              <label><input type="checkbox" name="redFlag" value="active seizure or toxin exposure"> Active seizure or possible toxin exposure</label>
+            </fieldset>
+            <div class="safety-callout" data-safety-callout hidden><strong>Seek emergency care now.</strong><p>Tími will show emergency-capable hospitals first. If your pet is in immediate danger, begin traveling to the nearest appropriate emergency hospital while someone calls ahead.</p></div>
+            <div class="step-actions"><button class="button button-quiet" type="button" data-prev-step>Back</button><button class="button button-primary" type="button" data-next-step>Continue <span>→</span></button></div>
+          </section>
+
+          <section class="intake-step" data-intake-step="3" hidden>
+            <p class="eyebrow coral">WHERE & HOW TO REACH YOU</p><h1>Find care nearby.</h1><p class="lede-small">Your contact information is shared only with the clinic you ask to accept your pet.</p>
+            <div class="location-panel"><span aria-hidden="true">⌖</span><div><strong data-location-label>Hayward, California</strong><small data-location-detail>Using demonstration coordinates</small></div><button type="button" data-use-location>Use my location</button></div>
+            <div class="form-grid two-column">
+              <label>Your name<input name="ownerName" autocomplete="name" required value="Maya Morgan"></label>
+              <label>Mobile number<input name="ownerPhone" type="tel" autocomplete="tel" required value="(510) 555-0147"></label>
+              <label class="wide">Email <span>(optional)</span><input name="ownerEmail" type="email" autocomplete="email" value="maya@example.com"></label>
+            </div>
+            <label class="consent-row"><input type="checkbox" name="consent" required checked><span>I authorize Tími and the selected clinic to contact me about this immediate intake request.</span></label>
+            <div class="step-actions"><button class="button button-quiet" type="button" data-prev-step>Back</button><button class="button button-primary" type="submit">Show who can help now <span>→</span></button></div>
+          </section>
+        </form>
+      </div>
+    </section>
+
+    <section class="screen results-screen" data-screen="results" aria-labelledby="results-title">
+      <header class="app-header"><button class="icon-button" type="button" data-route="find" aria-label="Back">←</button><a class="brand compact" href="#home"><img src="/assets/brand/timinow-wordmark.svg" alt="Tími NOW"></a><button class="profile-pill" type="button" data-route="pets">Otis</button></header>
+      <div class="results-shell">
+        <div class="results-heading"><div><p class="eyebrow"><span class="pulse-dot"></span> LIVE INTAKE CAPACITY</p><h1 id="results-title">Who can help <em>right now.</em></h1><p data-results-context>Searching near Hayward for Otis.</p></div><div class="results-tools"><label>Sort<select data-sort-results><option value="recommended">Recommended</option><option value="distance">Closest</option><option value="wait">Shortest stable wait</option><option value="freshness">Most recently verified</option></select></label><button class="button button-quiet" type="button" data-refresh-results>Refresh</button></div></div>
+        <div class="result-legend"><span><i class="signal available"></i> Available</span><span><i class="signal limited"></i> Limited</span><span><i class="signal unverified"></i> Unverified</span><strong>Critical patients are triaged by the hospital regardless of this order.</strong></div>
+        <div class="results-grid"><div class="hospital-list" data-hospital-list aria-live="polite"><div class="loading-state"><span></span><strong>Checking nearby capacity…</strong></div></div><aside class="search-summary"><h2>Your search</h2><dl><div><dt>Pet</dt><dd data-summary-pet>Otis · Dog</dd></div><div><dt>Need</dt><dd data-summary-urgency>Care today</dd></div><div><dt>Area</dt><dd data-summary-area>Hayward, CA</dd></div></dl><button class="text-button" type="button" data-route="find">Edit intake</button><div class="summary-safety"><strong>Symptoms getting worse?</strong><p>Call the hospital directly or seek the nearest appropriate emergency facility.</p></div></aside></div>
+      </div>
+    </section>
+
+    <section class="screen tracker-screen" data-screen="tracker" aria-labelledby="tracker-title">
+      <header class="app-header"><a class="brand compact" href="#home"><img src="/assets/brand/timinow-wordmark.svg" alt="Tími NOW"></a><span class="secure-label">Secure intake link</span><button class="icon-button" type="button" data-route="results" aria-label="Close">×</button></header>
+      <div class="tracker-shell">
+        <div class="tracker-status-art" data-tracker-art><span class="radar-ring"></span><b>⌁</b></div>
+        <p class="eyebrow coral" data-tracker-eyebrow>REQUEST SENT</p>
+        <h1 id="tracker-title" data-tracker-title>Asking the veterinary team now.</h1>
+        <p class="tracker-lede" data-tracker-lede>Keep this page open. Most clinics answer through a one-tap request.</p>
+        <article class="tracker-card"><div class="hospital-avatar" data-tracker-initials>BV</div><div><strong data-tracker-hospital>Bayview Veterinary Emergency</strong><small data-tracker-address>Hayward, California</small></div><a data-tracker-phone href="tel:">Call</a></article>
+        <ol class="status-timeline"><li class="complete"><span>✓</span><div><strong>Intake delivered</strong><small data-request-time>Just now</small></div></li><li data-timeline-decision><span>2</span><div><strong>Clinic response</strong><small>Waiting for accept or decline</small></div></li><li data-timeline-arrival><span>3</span><div><strong>Arrival window</strong><small>Appears after acceptance</small></div></li></ol>
+        <p class="payment-note" data-payment-note hidden></p><div class="tracker-actions"><button class="button button-primary" type="button" data-pay-deposit hidden>Pay deposit</button><button class="button button-primary" type="button" data-start-trip hidden>We’re on our way</button><button class="button button-quiet" type="button" data-cancel-intake>Cancel request</button></div>
+        <div class="arrival-feedback" data-arrival-feedback hidden><p>Help improve Tími’s live estimate.</p><div><button type="button" data-observation="arrived">We arrived</button><button type="button" data-observation="triaged">Pet was triaged</button><button type="button" data-observation="seen">Pet was seen</button></div></div>
+      </div>
+    </section>
+
+    <section class="screen profile-screen" data-screen="pets" aria-labelledby="pets-title">
+      <header class="app-header"><button class="icon-button" type="button" data-route="results" aria-label="Back">←</button><span>Pet profile</span><button class="text-button" type="button" data-toast-message="Profile editing will be available when accounts are enabled.">Edit</button></header>
+      <div class="profile-shell"><div class="pet-portrait">🐶<span>✦</span></div><p class="eyebrow coral">READY TO SHARE</p><h1 id="pets-title">Otis</h1><p>Golden retriever · Dog · 72 lb</p><div class="profile-grid"><article><small>MEDICATION</small><strong>Apoquel · 16 mg daily</strong></article><article><small>ALLERGY</small><strong>Chicken protein</strong></article><article><small>VACCINES</small><strong>Current through May 2027</strong></article><article><small>RECORDS</small><strong>4 documents ready</strong></article></div><p class="privacy-note">Records are not sent until you explicitly include them with an accepted intake.</p></div>
+    </section>
+
+    <section class="screen clinic-screen" data-screen="clinic" aria-labelledby="clinic-title">
+      <aside class="clinic-sidebar"><a class="brand inverse-brand" href="#home"><img src="/assets/brand/timinow-wordmark.svg" alt="Tími NOW"></a><p>CLINIC CONSOLE</p><nav><a class="active" href="#clinic">Live intake</a><a href="#clinic" data-toast-message="History is included in the activity feed below.">History</a><a href="#clinic" data-toast-message="Policy controls are shown in the settlement panel.">Policies</a><a href="#home">Public site</a></nav><div id="clerk-org-switcher" hidden></div><div class="clinic-identity"><span>HP</span><div><strong data-clinic-name>Hearth & Paw</strong><small>Demo tenant</small></div></div></aside>
+      <div class="clinic-workspace">
+        <header class="clinic-topbar"><div><p class="eyebrow">LIVE OPERATIONS</p><h1 id="clinic-title">Can you take another patient?</h1></div><div class="clinic-topbar-actions"><button class="button button-quiet" type="button" data-enable-alerts>Enable alerts</button><button class="button button-dark" type="button" data-refresh-clinic>Refresh</button></div></header>
+        <section class="availability-console" data-availability-console>
+          <div class="availability-current"><span class="large-signal available" data-clinic-signal></span><div><small>CURRENT PUBLIC STATUS</small><strong data-clinic-status>Available now</strong><p data-clinic-freshness>Confirmed moments ago · expires in 30 minutes</p></div></div>
+          <form data-availability-form>
+            <fieldset><legend>Intake status</legend><div class="status-buttons"><label><input type="radio" name="intakeStatus" value="available" checked><span>Available</span></label><label><input type="radio" name="intakeStatus" value="limited"><span>Limited</span></label><label><input type="radio" name="intakeStatus" value="confirm_first"><span>Confirm first</span></label><label><input type="radio" name="intakeStatus" value="critical_only"><span>Critical only</span></label><label><input type="radio" name="intakeStatus" value="diverting"><span>Diverting</span></label><label><input type="radio" name="intakeStatus" value="closed"><span>Closed</span></label></div></fieldset>
+            <div class="compact-fields"><label>Stable wait, minimum<input name="stableWaitMin" type="number" min="0" max="1440" value="15"><span>min</span></label><label>Stable wait, maximum<input name="stableWaitMax" type="number" min="0" max="1440" value="35"><span>min</span></label><label>Additional patients<input name="capacityCount" type="number" min="0" max="100" value="3"></label><label>Status expires<select name="ttlMinutes"><option value="15">15 minutes</option><option value="30" selected>30 minutes</option><option value="60">1 hour</option><option value="120">2 hours</option></select></label></div>
+            <label class="inline-check"><input type="checkbox" name="acceptsCritical" checked> Accepting critical patients</label>
+            <label class="stacked-field">Public note<input name="note" maxlength="500" value="Accepting stable urgent-care arrivals."></label>
+            <button class="button button-primary" type="submit">Publish live status</button>
+          </form>
+        </section>
+
+        <div class="clinic-metrics"><article><small>WAITING FOR RESPONSE</small><strong data-metric-pending>0</strong></article><article><small>ACTIVE ARRIVALS</small><strong data-metric-active>0</strong></article><article><small>COMPLETED TODAY</small><strong data-metric-completed>0</strong></article><article><small>DECLINED TODAY</small><strong data-metric-declined>0</strong></article></div>
+
+        <div class="clinic-columns"><section class="request-panel"><div class="panel-heading"><div><p class="eyebrow coral">INCOMING</p><h2>Immediate intake requests</h2></div><span data-request-count>0 requests</span></div><div class="request-list" data-request-list><div class="empty-state"><strong>No requests waiting.</strong><p>New requests appear here and can be accepted in one tap.</p></div></div></section>
+          <aside class="operations-panel"><div class="panel-heading"><div><p class="eyebrow">HOW TÍMI REPORTS LOAD</p><h2>Public visibility</h2></div></div><dl><div><dt>Source</dt><dd data-ops-source>Hospital confirmed</dd></div><div><dt>Confidence</dt><dd data-ops-confidence>High</dd></div><div><dt>Stable-patient wait</dt><dd data-ops-wait>15–35 min</dd></div><div><dt>Critical care</dt><dd data-ops-critical>Accepting</dd></div></dl><p class="operations-note">Tími always labels the source and age of capacity data. An expired report becomes “unverified” automatically.</p></aside></div>
+
+        <section class="policy-panel"><div><p class="eyebrow">TENANT POLICY · VERSION 1</p><h2>Arrival deposit and settlement</h2></div><div class="policy-metrics"><span><small>DEPOSIT</small><strong data-policy-deposit>$50</strong></span><span><small>FREE CANCELLATION</small><strong data-policy-cancel>30 min</strong></span><span><small>COMPLETED VISIT FEE</small><strong data-policy-completed>$20</strong></span><span><small>NO-SHOW FEE</small><strong data-policy-noshow>$5</strong></span></div><p>Every intake keeps the exact policy snapshot accepted by the customer. Clinics can use different amounts and refund rules.</p></section>
+      </div>
+    </section>
+
+    <section class="screen sign-in-screen" data-screen="sign-in" aria-labelledby="sign-in-title">
+      <a class="brand" href="#home"><img src="/assets/brand/timinow-wordmark.svg" alt="Tími NOW"></a><div class="sign-in-card"><p class="eyebrow coral">SECURE ACCESS</p><h1 id="sign-in-title">Sign in to Tími.</h1><p>Pet-parent and veterinary-team access is managed by Clerk. Clinic access follows the active organization tenant.</p><div id="clerk-sign-in"><div class="loading-state"><span></span><strong>Loading secure sign-in…</strong></div></div><p class="sign-in-note" data-auth-disabled hidden>Sign-in is currently disabled by configuration.</p></div>
+    </section>
+  </main>
+
+  <dialog class="hospital-dialog" data-hospital-dialog aria-labelledby="hospital-dialog-title">
+    <form method="dialog"><button class="dialog-close" value="cancel" aria-label="Close">×</button><div data-hospital-dialog-content></div></form>
+  </dialog>
+
+  <dialog class="decision-dialog" data-decision-dialog aria-labelledby="decision-title">
+    <form data-decision-form><button class="dialog-close" type="button" data-close-dialog aria-label="Close">×</button><p class="eyebrow coral">RESPOND TO INTAKE</p><h2 id="decision-title" data-decision-title>Accept Otis?</h2><input type="hidden" name="intakeId"><fieldset><legend>Decision</legend><label><input type="radio" name="decision" value="accept" checked> Accept this arrival</label><label><input type="radio" name="decision" value="decline"> Decline this request</label></fieldset><label>Arrival window<select name="arrivalWindowMinutes"><option value="15">Within 15 minutes</option><option value="20">Within 20 minutes</option><option value="30" selected>Within 30 minutes</option><option value="45">Within 45 minutes</option><option value="60">Within 1 hour</option></select></label><label>Message to pet owner<textarea name="note" rows="3" maxlength="500" placeholder="Optional arrival instructions"></textarea></label><button class="button button-primary" type="submit">Send decision</button></form>
+  </dialog>
+
+  <dialog class="payment-dialog" data-payment-dialog aria-labelledby="payment-title"><form data-payment-form><button class="dialog-close" type="button" data-close-dialog aria-label="Close">×</button><p class="eyebrow coral">ARRIVAL DEPOSIT</p><h2 id="payment-title">Secure your arrival window.</h2><p>The full deposit is credited toward the clinic invoice. Tími’s fee is settled with the clinic separately.</p><div data-payment-element></div><button class="button button-primary" type="submit">Pay deposit</button></form></dialog>
+
+  <div class="toast" role="status" aria-live="polite" data-toast></div>
+  <script src="/app.js" type="module"></script>
+</body>
+</html>

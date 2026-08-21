@@ -1,0 +1,20 @@
+{
+  "name": "timinow",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev --local --persist-to .wrangler/state",
+    "dev:d1": "wrangler dev --config wrangler.d1.jsonc --local --persist-to .wrangler/state",
+    "db:migrate:local": "wrangler d1 migrations apply timinow --config wrangler.d1.jsonc --local --persist-to .wrangler/state",
+    "db:migrate:remote": "wrangler d1 migrations apply timinow --config wrangler.d1.jsonc --remote",
+    "deploy": "wrangler deploy",
+    "types": "wrangler types",
+    "build": "wrangler deploy --dry-run --outdir .wrangler/build",
+    "smoke": "node scripts/smoke.mjs && node scripts/auth-test.mjs && node scripts/e2e.mjs",
+    "check": "node --check src/index.js && node --check src/auth.js && node --check src/catalog.js && node --check src/db.js && node --check public/app.js && node scripts/validate.mjs && node scripts/smoke.mjs && node scripts/auth-test.mjs && node scripts/e2e.mjs"
+  },
+  "devDependencies": {
+    "wrangler": "^4.32.0"
+  }
+}

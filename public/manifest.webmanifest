@@ -1,0 +1,23 @@
+{
+  "name": "Tími NOW — veterinary care, right now",
+  "short_name": "Tími NOW",
+  "description": "Find veterinary hospitals that can accept your pet right now.",
+  "start_url": "/?source=pwa#find",
+  "display": "standalone",
+  "background_color": "#fffaf0",
+  "theme_color": "#2f5bea",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "/assets/icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    {"name": "Find care now", "url": "/#intake"},
+    {"name": "Track active intake", "url": "/#tracker"},
+    {"name": "Clinic console", "url": "/#clinic"}
+  ]
+}
