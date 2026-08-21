@@ -28,6 +28,27 @@ An expired hospital report is never silently treated as current. It becomes `unv
 
 The MVP deliberately avoids a PIMS dependency. The clinic console is the operational source for current capacity. Future connectors can write `availability_reports` with `source='integration'` without changing the customer contract.
 
+## Multi-clinic offer search
+
+A customer submits one `care_searches` record. Tími ranks as many as 30 matching participating locations and creates one tenant-isolated `care_search_targets` row for each clinic. A clinic does not book the customer when it responds; it creates a temporary `care_offers` record containing its availability type, arrival window, reported wait, deposit-policy snapshot, exam-fee information when supplied, instructions, and expiration time.
+
+The customer may choose as soon as an offer arrives. Collection stops after 90 seconds or five active offers, whichever occurs first. Offers use a tenant-controlled hold of two to ten minutes, with five minutes as the baseline. The selection transaction conditionally locks `care_searches.selected_offer_id`, creates one accepted `intake_requests` row, marks the chosen offer and target selected, and releases every other target and offer. Conditional SQL prevents two simultaneous customer actions from confirming different clinics.
+
+```mermaid
+stateDiagram-v2
+    [*] --> collecting: Search submitted
+    collecting --> offers_ready: Five offers or collection ends
+    collecting --> selected: Customer chooses early
+    offers_ready --> selected: Customer chooses
+    collecting --> cancelled: Customer cancels
+    offers_ready --> cancelled: Customer cancels
+    collecting --> expired: No offers
+    offers_ready --> expired: Offer holds lapse
+    selected --> [*]: One intake created
+```
+
+Emergency-intake offers describe current acceptance and an estimated wait only. They never promise examination priority because the hospital independently triages patients on arrival.
+
 ## Intake state machine
 
 ```mermaid

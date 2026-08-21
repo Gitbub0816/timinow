@@ -16,6 +16,7 @@ const requiredFiles = [
   "src/db.js",
   "migrations/0001_initial.sql",
   "migrations/0002_seed.sql",
+  "migrations/0003_multi_offer_search.sql",
   "scripts/smoke.mjs",
   "scripts/auth-test.mjs",
   "scripts/e2e.mjs",
@@ -32,6 +33,7 @@ const html = await readFile("public/index.html", "utf8");
 const app = await readFile("public/app.js", "utf8");
 const worker = await readFile("src/index.js", "utf8");
 const migration = await readFile("migrations/0001_initial.sql", "utf8");
+const multiOfferMigration = await readFile("migrations/0003_multi_offer_search.sql", "utf8");
 const manifest = JSON.parse(await readFile("public/manifest.webmanifest", "utf8"));
 const wrangler = await readFile("wrangler.jsonc", "utf8");
 const wranglerD1Example = await readFile("wrangler.d1.example.jsonc", "utf8");
@@ -42,12 +44,12 @@ for (const screen of expectedScreens) {
   if (!screens.includes(screen)) throw new Error(`Missing application screen: ${screen}`);
 }
 
-const requiredTables = ["tenants", "locations", "availability_reports", "tenant_policies", "intake_requests", "intake_events", "customer_observations", "notification_outbox"];
+const requiredTables = ["tenants", "locations", "availability_reports", "tenant_policies", "intake_requests", "intake_events", "customer_observations", "notification_outbox", "care_searches", "care_search_targets", "care_offers"];
 for (const table of requiredTables) {
-  if (!migration.includes(`CREATE TABLE IF NOT EXISTS ${table}`)) throw new Error(`Missing D1 table: ${table}`);
+  if (!`${migration}\n${multiOfferMigration}`.includes(`CREATE TABLE IF NOT EXISTS ${table}`)) throw new Error(`Missing D1 table: ${table}`);
 }
 
-const requiredRoutes = ["/api/config", "/api/locations", "/api/intakes", "/api/observations", "/api/clinic/dashboard", "/api/clinic/availability"];
+const requiredRoutes = ["/api/config", "/api/locations", "/api/intakes", "/api/searches", "select-offer", "/api/observations", "/api/clinic/dashboard", "/api/clinic/availability", "search-targets"];
 for (const route of requiredRoutes) {
   if (!worker.includes(route)) throw new Error(`Missing API route: ${route}`);
 }

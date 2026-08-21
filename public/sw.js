@@ -1,4 +1,4 @@
-const CACHE = "timinow-shell-v3";
+const CACHE = "timinow-shell-v4";
 const SHELL = [
   "/",
   "/index.html",

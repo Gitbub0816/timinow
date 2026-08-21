@@ -7,6 +7,7 @@ const DEFAULT_POSITION = { latitude: 37.6688, longitude: -122.0808, label: "Hayw
 const STORAGE_KEYS = {
   draft: "timi_intake_draft_v1",
   intake: "timi_current_intake_v1",
+  search: "timi_current_search_v1",
   clinicAvailability: "timi_demo_clinic_availability_v1",
   clinicDecisions: "timi_demo_clinic_decisions_v1"
 };
@@ -34,6 +35,7 @@ const state = {
   locations: [],
   selectedLocation: null,
   currentIntake: readStorage(STORAGE_KEYS.intake, null),
+  currentSearch: readStorage(STORAGE_KEYS.search, null),
   trackerTimer: null,
   clinicTimer: null,
   deferredInstall: null,
@@ -465,6 +467,14 @@ function renderLocations() {
     list.innerHTML = '<div class="empty-state"><strong>No matching hospital is reporting nearby.</strong><p>Increase the search area or call the nearest emergency hospital if your pet may be in danger.</p></div>';
     return;
   }
+  const eligibleCount = locations.filter((location) => careType() === "emergency" || !["closed", "diverting", "critical_only"].includes(location.availability.intakeStatus)).slice(0, 30).length;
+  const launch = $("[data-start-search]");
+  if (launch) {
+    launch.disabled = eligibleCount === 0;
+    launch.textContent = eligibleCount ? `Ask ${eligibleCount} nearby clinic${eligibleCount === 1 ? "" : "s"}` : "No clinics available to ask";
+  }
+  const launchNote = $("[data-search-launch-note]");
+  if (launchNote) launchNote.textContent = `Tími will contact ${eligibleCount} matching clinic${eligibleCount === 1 ? "" : "s"} and show up to five active offers. Nothing is booked until you choose.`;
   list.innerHTML = locations.map((location) => {
     const status = location.availability.intakeStatus;
     const disabled = ["closed", "diverting"].includes(status) && careType() !== "emergency";
@@ -476,7 +486,7 @@ function renderLocations() {
         <div class="hospital-capabilities">${capabilities}</div>
         <div class="freshness-row"><strong>${escapeHtml(humanize(location.availability.source))}</strong><span>Verified ${escapeHtml(formatRelativeTime(location.availability.reportedAt))}</span><span class="confidence">${escapeHtml(humanize(location.availability.confidence))} confidence</span></div>
       </div>
-      <div class="capacity-box"><div class="capacity-label"><i class="signal ${escapeHtml(status)}"></i>${escapeHtml(location.availability.label)}</div><div class="wait-range"><small>REPORTED STABLE-PATIENT WAIT</small><strong>${escapeHtml(waitText(location))}</strong></div><div class="card-actions"><button class="button button-quiet" type="button" data-view-location="${escapeHtml(location.id)}">Details</button><button class="button button-primary" type="button" data-request-location="${escapeHtml(location.id)}" ${disabled ? "disabled" : ""}>Ask to accept</button></div></div>
+      <div class="capacity-box"><div class="capacity-label"><i class="signal ${escapeHtml(status)}"></i>${escapeHtml(location.availability.label)}</div><div class="wait-range"><small>REPORTED STABLE-PATIENT WAIT</small><strong>${escapeHtml(waitText(location))}</strong></div><div class="card-actions"><button class="button button-quiet" type="button" data-view-location="${escapeHtml(location.id)}">Details</button><span class="candidate-state">${disabled ? "Not contacted" : "Included in search"}</span></div></div>
     </article>`;
   }).join("");
 }
@@ -491,12 +501,52 @@ function openHospitalDialog(locationId, requestMode = false) {
     <div class="dialog-capacity"><div><small>CURRENT STATUS</small><strong>${escapeHtml(location.availability.label)}</strong></div><div><small>STABLE-PATIENT WAIT</small><strong>${escapeHtml(waitText(location))}</strong></div><div><small>VERIFIED</small><strong>${escapeHtml(formatRelativeTime(location.availability.reportedAt))}</strong></div><div><small>SOURCE</small><strong>${escapeHtml(humanize(location.availability.source))} · ${escapeHtml(location.availability.confidence)}</strong></div></div>
     <p class="dialog-note">${escapeHtml(location.availability.note || "Hospital staff determine clinical priority after intake. Your actual wait can change when critical patients arrive.")}</p>
     <div class="deposit-box"><strong>${policy.depositRequired ? `${formatMoney(policy.depositAmountCents)} arrival deposit after acceptance` : "No Tími deposit required"}</strong><small>${policy.depositRequired ? `Policy ${escapeHtml(policy.version || "current")}: the full deposit is credited to the clinic invoice. Refund and no-show terms are shown again before payment.` : "The clinic will handle veterinary payment directly."}</small></div>
-    ${requestMode ? `<label class="policy-ack"><input type="checkbox" data-policy-ack> <span>I understand capacity and wait time may change, the clinic independently triages patients, and this request is not guaranteed care.</span></label>` : ""}
-    <p class="dialog-legal">By sending a request, your intake is shared with this clinic under the <a href="#legal?section=terms">Terms</a> and <a href="#legal?section=safety">Veterinary Safety Notice</a>.</p>
-    <div class="dialog-actions"><a class="button button-quiet" href="tel:${escapeHtml(location.phone.replace(/[^0-9+]/g, ""))}">Call hospital</a><button class="button button-primary" type="button" data-confirm-request="${escapeHtml(location.id)}">${requestMode ? "Send intake request" : "Ask this hospital to accept"}</button></div>`;
+    <p class="dialog-legal">If included in a search, this clinic receives the structured intake under the <a href="#legal?section=terms">Terms</a> and <a href="#legal?section=safety">Veterinary Safety Notice</a>. No clinic is confirmed until you choose an offer.</p>
+    <div class="dialog-actions"><a class="button button-quiet" href="tel:${escapeHtml(location.phone.replace(/[^0-9+]/g, ""))}">Call hospital</a><button class="button button-primary" type="button" data-close-dialog>Done</button></div>`;
   const dialog = $("[data-hospital-dialog]");
   dialog.showModal();
   document.body.classList.add("dialog-open");
+}
+
+async function startCareSearch() {
+  const draft = state.intakeDraft;
+  const candidates = sortLocations(state.locations)
+    .filter((location) => careType() === "emergency" || !["closed", "diverting", "critical_only"].includes(location.availability.intakeStatus))
+    .slice(0, 30);
+  if (!candidates.length) return showToast("No matching clinic can be contacted from this search.");
+  const button = $("[data-start-search]");
+  if (button) { button.disabled = true; button.textContent = "Contacting clinics…"; }
+  try {
+    const data = await api("/api/searches", {
+      method: "POST",
+      body: JSON.stringify({
+        locationIds: candidates.map((location) => location.id),
+        targetLimit: 30,
+        radiusMiles: 50,
+        pet: { name: draft.petName, species: draft.species, breed: draft.breed, weightLbs: draft.weightLbs },
+        owner: { name: draft.ownerName, phone: draft.ownerPhone, email: draft.ownerEmail },
+        concernCategory: careType() === "emergency" ? "possible_emergency" : "illness_or_injury",
+        concernSummary: draft.concernSummary,
+        symptoms: draft.symptoms,
+        startedWhen: draft.startedWhen,
+        urgency: draft.urgency,
+        redFlags: draft.redFlags,
+        customerLatitude: draft.position.latitude,
+        customerLongitude: draft.position.longitude,
+        consentToContact: draft.contactConsent === true,
+        legalConsent: draft.legalConsent === true,
+        legalVersion: "2026-08-21"
+      })
+    });
+    state.currentSearch = data.search;
+    state.currentIntake = null;
+    writeStorage(STORAGE_KEYS.search, state.currentSearch);
+    writeStorage(STORAGE_KEYS.intake, null);
+    setRoute("tracker");
+  } catch (error) {
+    showToast(error.message);
+    if (button) { button.disabled = false; button.textContent = "Ask nearby clinics"; }
+  }
 }
 
 async function submitIntake(locationId) {
@@ -540,6 +590,10 @@ async function submitIntake(locationId) {
 }
 
 async function refreshCurrentIntake() {
+  if (!state.currentIntake?.id && state.currentSearch?.id) {
+    await refreshCareSearch();
+    return;
+  }
   if (!state.currentIntake?.id) {
     $("[data-tracker-title]").textContent = "No active intake request.";
     $("[data-tracker-lede]").textContent = "Return to results to ask a hospital to accept your pet.";
@@ -574,9 +628,149 @@ async function refreshCurrentIntake() {
   renderTracker();
 }
 
+async function refreshCareSearch() {
+  if (!state.currentSearch?.id) return;
+  if (!state.currentSearch.demo && !state.currentSearch.id.startsWith("demo_search_")) {
+    try {
+      const data = await api(`/api/searches/${encodeURIComponent(state.currentSearch.id)}`);
+      state.currentSearch = data.search;
+      writeStorage(STORAGE_KEYS.search, state.currentSearch);
+      if (state.currentSearch.selectedIntakeId) {
+        const intakeData = await api(`/api/intakes/${encodeURIComponent(state.currentSearch.selectedIntakeId)}`);
+        const selectedOffer = state.currentSearch.offers?.find((offer) => offer.id === state.currentSearch.selectedOfferId);
+        state.currentIntake = { ...intakeData.intake, location: selectedOffer?.location };
+        writeStorage(STORAGE_KEYS.intake, state.currentIntake);
+        renderTracker();
+        return;
+      }
+    } catch (error) {
+      if (error.code !== "SEARCH_NOT_FOUND") showToast(error.message);
+    }
+  }
+  renderCareSearch();
+}
+
+function offerWaitText(offer) {
+  if (offer.waitMin === null && offer.waitMax === null) return "Not supplied";
+  if (offer.waitMin === offer.waitMax) return `${offer.waitMin} min`;
+  return `${offer.waitMin ?? 0}–${offer.waitMax ?? "?"} min`;
+}
+
+function offerTypeLabel(offer) {
+  return ({
+    available_now: "Available now",
+    available_at: offer.availableAt ? `Available ${formatClock(offer.availableAt)}` : "Available at stated time",
+    emergency_intake: "Emergency intake open"
+  })[offer.responseType] || "Availability offered";
+}
+
+function renderCareSearch() {
+  const search = state.currentSearch;
+  if (!search) return;
+  $("[data-search-stage]").hidden = false;
+  $("[data-confirmed-stage]").hidden = true;
+  const offers = Array.isArray(search.offers) ? search.offers.filter((offer) => offer.status === "active") : [];
+  const progress = search.progress || { contacted: search.targetLimit || 0, awaiting: 0, declined: 0, offers: offers.length };
+  $("[data-offer-count]").textContent = `${offers.length} of ${search.maxOffers || 5} offers`;
+  $("[data-search-progress]").textContent = offers.length >= (search.maxOffers || 5) ? "Five clinics can help" : `Contacting ${progress.contacted || 0} clinics`;
+  $("[data-search-progress-detail]").textContent = search.status === "expired"
+    ? "The response window ended. Start a new search for current capacity."
+    : `${progress.awaiting || 0} awaiting response · ${progress.declined || 0} unavailable`;
+  $("[data-tracker-eyebrow]").textContent = offers.length ? "AVAILABILITY OFFERS" : "SEARCH IN PROGRESS";
+  $("[data-tracker-title]").textContent = offers.length
+    ? `${search.pet?.name || "Your pet"} has ${offers.length} option${offers.length === 1 ? "" : "s"}.`
+    : "Asking nearby clinics now.";
+  $("[data-tracker-lede]").textContent = offers.length
+    ? "Compare the live offers and choose the clinic that works best. Tími will release every offer you do not select."
+    : `Offers will be collected until ${formatClock(search.collectionExpiresAt || search.searchExpiresAt)} or until five clinics respond.`;
+  const list = $("[data-offer-list]");
+  if (!offers.length) {
+    list.innerHTML = `<div class="empty-state offer-waiting"><span class="offer-spinner"></span><strong>${search.status === "expired" ? "No active offers remain" : "Waiting for clinic responses"}</strong><p>${search.status === "expired" ? "Capacity changes quickly. Please start a new search." : "You may leave this page open; responses update automatically."}</p></div>`;
+    return;
+  }
+  list.innerHTML = offers.map((offer) => {
+    const clinic = offer.location || {};
+    const emergency = offer.responseType === "emergency_intake";
+    const canSelect = ["collecting", "offers_ready"].includes(search.status) && timestampMs(offer.expiresAt) > Date.now();
+    return `<article class="offer-card ${emergency ? "is-emergency" : ""}">
+      <div class="offer-card-heading"><div class="hospital-avatar">${escapeHtml(initials(clinic.name || "Clinic"))}</div><div><span class="hospital-kind">${escapeHtml(offerTypeLabel(offer))}</span><h2>${escapeHtml(clinic.name || "Veterinary clinic")}</h2><p>${escapeHtml(clinic.address || "Address available on confirmation")}</p></div></div>
+      <dl class="offer-facts"><div><dt>Travel</dt><dd>${clinic.distanceMiles ?? "—"} mi</dd></div><div><dt>${emergency ? "Estimated wait" : "Reported wait"}</dt><dd>${escapeHtml(offerWaitText(offer))}</dd></div><div><dt>Deposit</dt><dd>${offer.depositAmountCents ? formatMoney(offer.depositAmountCents) : "None"}</dd></div><div><dt>Exam fee</dt><dd>${offer.baseExamFeeCents ? `From ${formatMoney(offer.baseExamFeeCents)}` : "Not supplied"}</dd></div></dl>
+      <p class="offer-note">${escapeHtml(offer.clinicNote || (emergency ? "Open for emergency intake; treatment order is determined by clinical triage." : "The clinic reports capacity for this arrival window."))}</p>
+      <div class="offer-card-actions"><small>Held until ${escapeHtml(formatClock(offer.expiresAt))}</small><button class="button button-primary" type="button" data-select-offer="${escapeHtml(offer.id)}" ${canSelect ? "" : "disabled"}>Choose this clinic</button></div>
+    </article>`;
+  }).join("");
+}
+
+async function selectCareOffer(offerId) {
+  const search = state.currentSearch;
+  const offer = search?.offers?.find((candidate) => candidate.id === offerId);
+  if (!search || !offer) return;
+  const button = $(`[data-select-offer="${CSS.escape(offerId)}"]`);
+  if (button) { button.disabled = true; button.textContent = "Confirming…"; }
+  try {
+    let data;
+    if (search.demo || search.id.startsWith("demo_search_")) {
+      const now = new Date().toISOString();
+      data = {
+        intake: {
+          id: `demo_intake_${Date.now()}`,
+          publicCode: search.publicCode,
+          locationId: offer.locationId,
+          tenantId: offer.tenantId,
+          pet: search.pet,
+          owner: search.owner,
+          concernCategory: search.concernCategory,
+          concernSummary: search.concernSummary,
+          urgency: search.urgency,
+          redFlags: search.redFlags,
+          status: "accepted",
+          clinicNote: offer.clinicNote,
+          requestedAt: search.requestedAt,
+          decisionAt: now,
+          requestExpiresAt: offer.expiresAt,
+          arrivalBy: offer.arrivalBy,
+          policy: offer.policy,
+          depositAmountCents: offer.depositAmountCents,
+          paymentStatus: offer.depositAmountCents ? "pending" : "not_required",
+          sourceSearchId: search.id,
+          selectedOfferId: offer.id,
+          demo: true
+        },
+        location: offer.location
+      };
+      state.currentSearch = { ...search, status: "selected", selectedOfferId: offer.id, selectedIntakeId: data.intake.id, offers: search.offers.map((item) => ({ ...item, status: item.id === offer.id ? "selected" : "released" })) };
+    } else {
+      data = await api(`/api/searches/${encodeURIComponent(search.id)}/select-offer`, { method: "POST", body: JSON.stringify({ offerId }) });
+      state.currentSearch = data.search;
+    }
+    state.currentIntake = { ...data.intake, location: data.location || offer.location };
+    writeStorage(STORAGE_KEYS.search, state.currentSearch);
+    writeStorage(STORAGE_KEYS.intake, state.currentIntake);
+    showToast("Clinic selected. The other offers were released.");
+    renderTracker();
+  } catch (error) {
+    showToast(error.message);
+    if (button) { button.disabled = false; button.textContent = "Choose this clinic"; }
+  }
+}
+
+async function cancelCareSearch() {
+  const search = state.currentSearch;
+  if (!search) return;
+  try {
+    if (search.demo || search.id.startsWith("demo_search_")) state.currentSearch = { ...search, status: "cancelled", offers: [] };
+    else state.currentSearch = (await api(`/api/searches/${encodeURIComponent(search.id)}/status`, { method: "POST", body: JSON.stringify({ status: "cancelled" }) })).search;
+    writeStorage(STORAGE_KEYS.search, state.currentSearch);
+    renderCareSearch();
+    showToast("The search was cancelled and clinic offers were released.");
+  } catch (error) { showToast(error.message); }
+}
+
 function renderTracker() {
   const intake = state.currentIntake;
   if (!intake) return;
+  $("[data-search-stage]").hidden = true;
+  $("[data-confirmed-stage]").hidden = false;
   const location = intake.location || state.locations.find((candidate) => candidate.id === intake.locationId) || {};
   $("[data-tracker-hospital]").textContent = location.name || "Veterinary hospital";
   $("[data-tracker-address]").textContent = location.address || "Location available after confirmation";
@@ -822,7 +1016,7 @@ function renderClinicRequests(requests) {
     list.innerHTML = '<div class="empty-state"><strong>No requests waiting.</strong><p>New requests appear here and can be accepted in one tap.</p></div>';
     return;
   }
-  list.innerHTML = requests.slice(0, 12).map((intake) => `<article class="request-card"><span class="request-urgency">${escapeHtml(intake.urgency === "emergency" ? "ER" : "NOW")}</span><div><h3>${escapeHtml(intake.pet.name)} · ${escapeHtml(humanize(intake.species || intake.pet.species))}</h3><p>${escapeHtml(intake.concernSummary)}</p><small>${escapeHtml(intake.owner.name)} · ${escapeHtml(intake.travelMinutes ? `${intake.travelMinutes} min away` : "travel time unknown")} · ${escapeHtml(humanize(intake.status))}</small></div>${intake.status === "pending" ? `<button type="button" data-review-intake="${escapeHtml(intake.id)}" data-pet-name="${escapeHtml(intake.pet.name)}">Review</button>` : `<span class="hospital-kind">${escapeHtml(humanize(intake.status))}</span>`}</article>`).join("");
+  list.innerHTML = requests.slice(0, 12).map((intake) => `<article class="request-card"><span class="request-urgency">${escapeHtml(intake.urgency === "emergency" ? "ER" : "NOW")}</span><div><h3>${escapeHtml(intake.pet.name)} · ${escapeHtml(humanize(intake.species || intake.pet.species))}</h3><p>${escapeHtml(intake.concernSummary)}</p><small>${escapeHtml(intake.owner.name)} · ${escapeHtml(intake.travelMinutes ? `${intake.travelMinutes} min away` : "travel time unknown")} · ${escapeHtml(intake.searchTarget ? "Multi-clinic search" : humanize(intake.status))}</small></div>${intake.status === "pending" ? `<button type="button" data-review-intake="${escapeHtml(intake.id)}" data-pet-name="${escapeHtml(intake.pet.name)}" data-search-target="${intake.searchTarget ? "true" : "false"}">Review</button>` : `<span class="hospital-kind">${escapeHtml(humanize(intake.status))}</span>`}</article>`).join("");
 }
 
 async function publishAvailability(event) {
@@ -848,12 +1042,27 @@ async function publishAvailability(event) {
   finally { button.disabled = false; button.textContent = "Publish live status"; }
 }
 
-function openDecisionDialog(intakeId, petName) {
+function openDecisionDialog(intakeId, petName, searchTarget = false) {
   const dialog = $("[data-decision-dialog]");
   const form = $("[data-decision-form]");
+  form.reset();
   form.elements.intakeId.value = intakeId;
-  $("[data-decision-title]").textContent = `Accept ${petName}?`;
+  form.elements.requestType.value = searchTarget ? "search" : "intake";
+  $("[data-decision-title]").textContent = searchTarget ? `Offer availability for ${petName}` : `Accept ${petName}?`;
+  $("[data-accept-decision-label]").textContent = searchTarget ? "Make an availability offer" : "Accept this arrival";
+  syncDecisionFields();
   dialog.showModal(); document.body.classList.add("dialog-open");
+}
+
+function syncDecisionFields() {
+  const form = $("[data-decision-form]");
+  if (!form) return;
+  const isSearch = form.elements.requestType.value === "search";
+  const isAccept = form.elements.decision.value === "accept";
+  $("[data-offer-fields]").hidden = !(isSearch && isAccept);
+  form.elements.availableAt.required = isSearch && isAccept && form.elements.responseType.value === "available_at";
+  const button = form.querySelector("button[type='submit']");
+  button.textContent = isAccept ? (isSearch ? "Send availability offer" : "Accept arrival") : "Decline request";
 }
 
 async function submitDecision(event) {
@@ -861,17 +1070,32 @@ async function submitDecision(event) {
   const form = event.currentTarget;
   const values = new FormData(form);
   const intakeId = values.get("intakeId");
+  const isSearch = values.get("requestType") === "search";
+  const availableAtValue = values.get("availableAt");
+  const availableAt = availableAtValue && Number.isFinite(Date.parse(availableAtValue)) ? new Date(availableAtValue).toISOString() : null;
   const button = form.querySelector("button[type='submit']");
   button.disabled = true; button.textContent = "Sending…";
   try {
-    const data = await api(`/api/clinic/intakes/${encodeURIComponent(intakeId)}/decision`, { clinic: true, method: "POST", body: JSON.stringify({ decision: values.get("decision"), arrivalWindowMinutes: Number(values.get("arrivalWindowMinutes")), note: values.get("note") }) });
+    const endpoint = isSearch
+      ? `/api/clinic/search-targets/${encodeURIComponent(intakeId)}/decision`
+      : `/api/clinic/intakes/${encodeURIComponent(intakeId)}/decision`;
+    const data = await api(endpoint, { clinic: true, method: "POST", body: JSON.stringify({
+      decision: isSearch && values.get("decision") === "accept" ? "offer" : values.get("decision"),
+      responseType: values.get("responseType"),
+      availableAt,
+      arrivalWindowMinutes: Number(values.get("arrivalWindowMinutes")),
+      holdMinutes: Number(values.get("holdMinutes")),
+      waitMin: Number(values.get("waitMin")),
+      waitMax: Number(values.get("waitMax")),
+      note: values.get("note")
+    }) });
     if (data.demo) {
       const decisions = readStorage(STORAGE_KEYS.clinicDecisions, {});
       decisions[intakeId] = data.intake;
       writeStorage(STORAGE_KEYS.clinicDecisions, decisions);
     }
     $("[data-decision-dialog]").close(); document.body.classList.remove("dialog-open");
-    showToast("The pet owner was updated.");
+    showToast(isSearch && values.get("decision") === "accept" ? "Availability offer sent. The owner can compare it with other clinics." : "The pet owner was updated.");
     await loadClinicDashboard();
   } catch (error) { showToast(error.message); }
   finally { button.disabled = false; button.textContent = "Send decision"; }
@@ -888,12 +1112,18 @@ document.addEventListener("click", (event) => {
   if (previous) { persistFormDraft(); state.intakeStep = Math.max(1, state.intakeStep - 1); renderIntakeStep(); }
   const refreshResults = event.target.closest("[data-refresh-results]");
   if (refreshResults) loadLocations();
+  const startSearch = event.target.closest("[data-start-search]");
+  if (startSearch) startCareSearch();
   const viewLocation = event.target.closest("[data-view-location]");
   if (viewLocation) openHospitalDialog(viewLocation.dataset.viewLocation, false);
   const requestLocation = event.target.closest("[data-request-location]");
   if (requestLocation) openHospitalDialog(requestLocation.dataset.requestLocation, true);
   const confirmRequest = event.target.closest("[data-confirm-request]");
   if (confirmRequest) submitIntake(confirmRequest.dataset.confirmRequest);
+  const selectOffer = event.target.closest("[data-select-offer]");
+  if (selectOffer) selectCareOffer(selectOffer.dataset.selectOffer);
+  const cancelSearch = event.target.closest("[data-cancel-search]");
+  if (cancelSearch && confirm("Cancel this search and release every clinic offer?")) cancelCareSearch();
   const startTrip = event.target.closest("[data-start-trip]");
   if (startTrip) updateIntakeStatus("en_route");
   const cancel = event.target.closest("[data-cancel-intake]");
@@ -907,7 +1137,7 @@ document.addEventListener("click", (event) => {
   const enableAlerts = event.target.closest("[data-enable-alerts]");
   if (enableAlerts) enableClinicAlerts();
   const review = event.target.closest("[data-review-intake]");
-  if (review) openDecisionDialog(review.dataset.reviewIntake, review.dataset.petName);
+  if (review) openDecisionDialog(review.dataset.reviewIntake, review.dataset.petName, review.dataset.searchTarget === "true");
   const closeDialog = event.target.closest("[data-close-dialog]");
   if (closeDialog) { closeDialog.closest("dialog")?.close(); document.body.classList.remove("dialog-open"); }
   const toastButton = event.target.closest("[data-toast-message]");
@@ -933,6 +1163,9 @@ $("[data-intake-form]")?.addEventListener("submit", (event) => {
 $("[data-sort-results]")?.addEventListener("change", renderLocations);
 $("[data-availability-form]")?.addEventListener("submit", publishAvailability);
 $("[data-decision-form]")?.addEventListener("submit", submitDecision);
+$("[data-decision-form]")?.addEventListener("change", (event) => {
+  if (event.target.matches('[name="decision"], [name="responseType"]')) syncDecisionFields();
+});
 $("[data-payment-form]")?.addEventListener("submit", confirmStripePayment);
 
 $$('dialog').forEach((dialog) => {

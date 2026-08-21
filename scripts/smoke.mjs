@@ -51,6 +51,30 @@ body = await response.json();
 assert(response.status === 201 && body.demo === true, "Zero-configuration demo must accept a fixture intake");
 assert(body.intake.status === "accepted" && body.intake.id.startsWith("demo_"), "Fixture auto-accept must return a usable demo intake");
 
+response = await call("/api/searches", {
+  method: "POST",
+  headers: { "content-type": "application/json" },
+  body: JSON.stringify({
+    locationIds: ["loc_bayview", "loc_hearth", "loc_juniper", "loc_cedar", "loc_solano"],
+    targetLimit: 30,
+    radiusMiles: 50,
+    pet: { name: "Otis", species: "dog", breed: "Golden retriever", weightLbs: 72 },
+    owner: { name: "Maya Morgan", phone: "(510) 555-0147", email: "maya@example.com" },
+    concernCategory: "illness_or_injury",
+    concernSummary: "Vomited several times this morning and refused water.",
+    symptoms: ["vomiting_or_diarrhea"],
+    startedWhen: "today",
+    urgency: "urgent",
+    customerLatitude: 37.6688,
+    customerLongitude: -122.0808,
+    consentToContact: true,
+    legalConsent: true,
+    legalVersion: "2026-08-21"
+  })
+});
+body = await response.json();
+assert(response.status === 201 && body.search.offers.length === 5, "Zero-configuration demo must return five clinic offers for comparison");
+
 response = await call("/api/clinic/dashboard", { headers: { "x-demo-role": "clinic", "x-demo-tenant-id": "tenant_hearth" } });
 body = await response.json();
 assert(response.status === 200 && body.requests.some((request) => request.id === "demo_clinic_request"), "Fixture clinic console must include an actionable request");

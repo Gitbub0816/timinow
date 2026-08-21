@@ -7,22 +7,25 @@ The repository contains the complete Cloudflare MVP:
 - Customer-facing responsive PWA
 - Non-diagnostic concern intake and emergency red-flag escalation
 - Live hospital capacity search with freshness, source, and confidence
-- Arrival-request state machine and customer tracker
-- Clinic live-status console and accept/decline workflow
+- Multi-clinic search fan-out to as many as 30 matching locations
+- Up to five expiring clinic offers with customer comparison and selection
+- Atomic confirmation of one clinic and automatic release of every other offer
+- Arrival-request state machine and customer tracker after selection
+- Clinic live-status console and availability-offer workflow
 - Customer-supplied arrival, triage, and seen observations
 - Tenant-versioned deposit policies
 - Optional Stripe PaymentIntent collection after clinic acceptance
 - Clerk organization tenancy scaffolded behind an exact runtime flag
 - Cloudflare Worker, D1 migrations, Static Assets, scheduled expiry, and observability
 
-The checked-in configuration deploys immediately in zero-configuration demo mode. Search, intake, tracking, simulated deposits, clinic status publishing, and accept/decline interactions all work with fixtures and browser-local persistence. D1, Clerk, and Stripe are opt-in production upgrades.
+The checked-in configuration deploys immediately in zero-configuration demo mode. Search, five-offer comparison, selection, tracking, simulated deposits, clinic status publishing, and clinic responses all work with fixtures and browser-local persistence. D1, Clerk, and Stripe are opt-in production upgrades.
 
 ## Product routes
 
 - `/#home` — public explanation and safety boundaries
-- `/#find` — three-step immediate-care intake
+- `/#find` — concise two-step immediate-care intake
 - `/#results` — nearby live intake capacity
-- `/#tracker` — request, acceptance, arrival window, payment, and milestones
+- `/#tracker` — multi-clinic offer comparison followed by confirmation, payment, and milestones
 - `/#pets` — portable pet-profile demonstration
 - `/#clinic` — veterinary team operations console
 - `/#sign-in` — Clerk sign-in surface, dormant by default
@@ -36,7 +39,7 @@ npm install
 npm run dev
 ```
 
-Wrangler serves the Worker and static PWA with three East Bay demonstration hospitals. No Cloudflare resources, IDs, accounts, or secrets are required for this mode.
+Wrangler serves the Worker and static PWA with five East Bay demonstration clinics. No Cloudflare resources, IDs, accounts, or secrets are required for this mode.
 
 ## Deploy by connecting the repository to Cloudflare
 
@@ -69,7 +72,7 @@ The Worker verifies Clerk RS256 session tokens with Web Crypto. Clinic API acces
 
 ## Payments
 
-The MVP takes a deposit only after a clinic accepts an intake. In demonstration mode, the payment endpoint records a simulated successful deposit. For Stripe:
+The MVP takes a deposit only after the customer selects one clinic offer. In demonstration mode, the payment endpoint records a simulated successful deposit. For Stripe:
 
 ```bash
 npx wrangler secret put STRIPE_SECRET_KEY

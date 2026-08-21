@@ -88,6 +88,66 @@ export const DEMO_LOCATIONS = [
       expiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString()
     },
     policy: { id: "policy_juniper_v1", version: 1, depositRequired: false, depositAmountCents: 0, depositRefundable: true, freeCancelMinutes: 0, completedPlatformFeeCents: 2000, noShowPlatformFeeCents: 500 }
+  },
+  {
+    id: "loc_cedar",
+    tenantId: "tenant_cedar",
+    name: "Cedar Grove Veterinary Urgent Care",
+    kind: "urgent",
+    address: "4027 Mowry Avenue, Fremont, CA 94538",
+    phone: "(510) 555-0172",
+    latitude: 37.5485,
+    longitude: -121.9886,
+    open24Hours: false,
+    acceptsWalkIns: true,
+    autoAccept: false,
+    arrivalWindowMinutes: 35,
+    species: ["dog", "cat"],
+    capabilities: ["urgent", "same_day", "minor_injury", "vomiting", "imaging"],
+    baseExamFeeCents: 9500,
+    availability: {
+      intakeStatus: "available",
+      stableWaitMin: 20,
+      stableWaitMax: 40,
+      capacityCount: 2,
+      acceptsCritical: false,
+      source: "hospital",
+      confidence: "high",
+      note: "Two urgent-care arrivals currently available.",
+      reportedAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString()
+    },
+    policy: { id: "policy_cedar_v1", version: 1, depositRequired: true, depositAmountCents: 5000, depositRefundable: true, freeCancelMinutes: 20, completedPlatformFeeCents: 2000, noShowPlatformFeeCents: 500 }
+  },
+  {
+    id: "loc_solano",
+    tenantId: "tenant_solano",
+    name: "Solano Pet Emergency",
+    kind: "emergency",
+    address: "1850 Solano Avenue, Berkeley, CA 94707",
+    phone: "(510) 555-0186",
+    latitude: 37.8918,
+    longitude: -122.2811,
+    open24Hours: true,
+    acceptsWalkIns: true,
+    autoAccept: false,
+    arrivalWindowMinutes: 25,
+    species: ["dog", "cat", "rabbit"],
+    capabilities: ["emergency", "urgent", "surgery", "oxygen", "imaging", "overnight"],
+    baseExamFeeCents: 17500,
+    availability: {
+      intakeStatus: "limited",
+      stableWaitMin: 50,
+      stableWaitMax: 90,
+      capacityCount: 2,
+      acceptsCritical: true,
+      source: "hospital",
+      confidence: "high",
+      note: "Emergency intake is open; all patients are triaged on arrival.",
+      reportedAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString()
+    },
+    policy: { id: "policy_solano_v1", version: 1, depositRequired: true, depositAmountCents: 7500, depositRefundable: true, freeCancelMinutes: 15, completedPlatformFeeCents: 2000, noShowPlatformFeeCents: 500 }
   }
 ];
 

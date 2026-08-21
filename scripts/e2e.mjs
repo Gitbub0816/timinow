@@ -52,6 +52,7 @@ function assert(condition, message) {
 const database = new DatabaseSync(":memory:");
 database.exec(await readFile("migrations/0001_initial.sql", "utf8"));
 database.exec(await readFile("migrations/0002_seed.sql", "utf8"));
+database.exec(await readFile("migrations/0003_multi_offer_search.sql", "utf8"));
 
 const env = {
   ASSETS: { fetch: async () => new Response("asset") },
@@ -85,7 +86,7 @@ const intakePayload = {
 };
 
 let result = await call("/api/locations?lat=37.6688&lng=-122.0808&species=dog&care=urgent");
-assert(result.response.status === 200 && result.body.locations.length === 3, "D1 location search must return seeded clinics");
+assert(result.response.status === 200 && result.body.locations.length === 5, "D1 location search must return all seeded clinics");
 
 result = await call("/api/intakes", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ...intakePayload, concernSummary: "My dog isn't acting like himself.", symptoms: ["energy_or_behavior"] }) });
 assert(result.response.status === 422 && result.body.error.details.some((detail) => detail.includes("observable")), "Vague concern descriptions must be rejected without AI");
@@ -114,6 +115,47 @@ result = await call("/api/clinic/availability", {
   body: JSON.stringify({ intakeStatus: "limited", stableWaitMin: 45, stableWaitMax: 80, capacityCount: 1, ttlMinutes: 30, acceptsCritical: false, note: "One stable intake available." })
 });
 assert(result.response.status === 201 && result.body.location.availability.intakeStatus === "limited", "Clinic live-status publication must update public capacity");
+
+result = await call("/api/searches", {
+  method: "POST",
+  headers: { "content-type": "application/json" },
+  body: JSON.stringify({ ...intakePayload, locationId: undefined, locationIds: ["loc_bayview", "loc_hearth", "loc_juniper", "loc_cedar", "loc_solano"], targetLimit: 30, radiusMiles: 50 })
+});
+assert(result.response.status === 201 && result.body.search.status === "collecting", `Multi-clinic search creation failed: ${JSON.stringify(result.body)}`);
+const careSearchId = result.body.search.id;
+const targets = database.prepare("SELECT id, tenant_id FROM care_search_targets WHERE search_id = ? ORDER BY rank").all(careSearchId);
+assert(targets.length === 5, "A care search must fan out to every matching seeded clinic");
+for (const [index, target] of targets.entries()) {
+  result = await call(`/api/clinic/search-targets/${target.id}/decision`, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-demo-role": "clinic", "x-demo-tenant-id": target.tenant_id },
+    body: JSON.stringify({
+      decision: "offer",
+      responseType: index % 2 ? "available_now" : "emergency_intake",
+      arrivalWindowMinutes: 20 + index * 5,
+      holdMinutes: 5,
+      waitMin: 10 + index * 5,
+      waitMax: 25 + index * 5,
+      note: `Offer ${index + 1} is ready for comparison.`
+    })
+  });
+  assert(result.response.status === 200, `Clinic ${target.tenant_id} could not submit an offer: ${JSON.stringify(result.body)}`);
+}
+result = await call(`/api/searches/${careSearchId}`);
+assert(result.response.status === 200 && result.body.search.status === "offers_ready", "The search must become ready after five clinic offers");
+assert(result.body.search.offers.length === 5, "The customer must receive exactly five comparable active offers");
+const chosenOffer = result.body.search.offers[2];
+result = await call(`/api/searches/${careSearchId}/select-offer`, {
+  method: "POST",
+  headers: { "content-type": "application/json" },
+  body: JSON.stringify({ offerId: chosenOffer.id })
+});
+assert(result.response.status === 201 && result.body.intake.status === "accepted", `Offer selection must create one confirmed intake: ${JSON.stringify(result.body)}`);
+assert(result.body.intake.selectedOfferId === chosenOffer.id && result.body.intake.sourceSearchId === careSearchId, "The confirmed intake must retain search and offer provenance");
+assert(database.prepare("SELECT COUNT(*) AS count FROM care_offers WHERE search_id = ? AND status = 'selected'").get(careSearchId).count === 1, "Exactly one offer must be selected");
+assert(database.prepare("SELECT COUNT(*) AS count FROM care_offers WHERE search_id = ? AND status = 'released'").get(careSearchId).count === 4, "Every unchosen offer must be released");
+assert(database.prepare("SELECT COUNT(*) AS count FROM care_search_targets WHERE search_id = ? AND status = 'selected'").get(careSearchId).count === 1, "Exactly one clinic target must be confirmed");
+assert(database.prepare("SELECT COUNT(*) AS count FROM care_search_targets WHERE search_id = ? AND status = 'released'").get(careSearchId).count === 4, "All other clinic targets must be released");
 
 result = await call("/api/intakes", {
   method: "POST",
@@ -148,11 +190,11 @@ assert(noShowRow.status === "no_show", "Scheduled cleanup must close elapsed arr
 assert(database.prepare("SELECT COUNT(*) AS count FROM intake_events WHERE intake_id = ? AND event_type = 'expired'").get(expiringId).count === 1, "Scheduled expiry must be audited");
 assert(database.prepare("SELECT COUNT(*) AS count FROM intake_events WHERE intake_id = ? AND event_type = 'no_show'").get(pendingId).count === 1, "Scheduled no-show must be audited");
 
-const tableChecks = ["tenants", "locations", "availability_reports", "tenant_policies", "intake_requests", "intake_events", "customer_observations", "notification_outbox"];
+const tableChecks = ["tenants", "locations", "availability_reports", "tenant_policies", "intake_requests", "intake_events", "customer_observations", "notification_outbox", "care_searches", "care_search_targets", "care_offers"];
 for (const table of tableChecks) {
   const count = database.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get().count;
   assert(count > 0, `${table} should contain end-to-end test data`);
 }
 
 database.close();
-console.log("D1 end-to-end tests passed: search, policy snapshot, auto-accept, deposit, travel, observation, clinic status, emergency request, clinic decision, expiry, and no-show audit.");
+console.log("D1 end-to-end tests passed: five-offer search, atomic customer selection, clinic release, policy snapshot, deposit, travel, observation, expiry, and audit.");

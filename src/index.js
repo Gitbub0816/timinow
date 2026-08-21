@@ -1,10 +1,14 @@
 import { actorForRequest, roleAllows, signInRequired } from "./auth.js";
-import { RED_FLAG_TERMS, VALID_INTAKE_STATUS, VALID_SPECIES, VALID_URGENCY } from "./catalog.js";
+import { DEMO_LOCATIONS, RED_FLAG_TERMS, VALID_INTAKE_STATUS, VALID_SPECIES, VALID_URGENCY } from "./catalog.js";
 import {
+  getCareOffer,
+  getCareSearch,
+  getClinicSearchTarget,
   getClinicLocation,
   getIntake,
   getLocation,
   hasDatabase,
+  listClinicSearchTargets,
   listClinicIntakes,
   listLocations,
   normalizeIntakeRow,
@@ -133,7 +137,7 @@ function authRequiredResponse() {
 async function handleConfig(env) {
   return json({
     appName: "Tími NOW",
-    version: "1.0.0-mvp",
+    version: "1.1.0-multi-offer",
     signInRequired: signInRequired(env),
     clerkPublishableKey: signInRequired(env) ? (env.CLERK_PUBLISHABLE_KEY || null) : null,
     clerkJsUrl: signInRequired(env) ? (env.CLERK_JS_URL || "https://cdn.jsdelivr.net/npm/@clerk/clerk-js@5/+esm") : null,
@@ -168,7 +172,7 @@ function humanizeSymptom(value) {
   return ({ vomiting_or_diarrhea: "vomiting/diarrhea", breathing_or_coughing: "breathing/coughing", pain_or_limping: "pain/limping", not_eating_or_drinking: "not eating/drinking", urination_or_stool: "urination/stool", injury_or_bleeding: "injury/bleeding", energy_or_behavior: "energy/behavior", eye_ear_or_skin: "eye/ear/skin", other_observable: "other observable change" })[value] || value;
 }
 
-function validateIntake(body) {
+function validateIntake(body, { requireLocation = true } = {}) {
   const pet = body.pet && typeof body.pet === "object" ? body.pet : {};
   const owner = body.owner && typeof body.owner === "object" ? body.owner : {};
   const species = cleanString(pet.species, 30).toLowerCase();
@@ -179,7 +183,7 @@ function validateIntake(body) {
   const redFlags = redFlagsFrom(concernSummary, body.redFlags);
   const urgency = redFlags.length ? "emergency" : requestedUrgency;
   const errors = [];
-  if (!cleanString(body.locationId, 80)) errors.push("locationId is required");
+  if (requireLocation && !cleanString(body.locationId, 80)) errors.push("locationId is required");
   if (!cleanString(pet.name, 80)) errors.push("pet.name is required");
   if (!VALID_SPECIES.has(species)) errors.push("pet.species is invalid");
   if (!cleanString(owner.name, 120)) errors.push("owner.name is required");
@@ -307,6 +311,323 @@ async function createIntake(request, env, actor) {
   return json({ intake: created, location: enrichLocation(location), requiresClinicConfirmation: status === "pending" }, { status: 201 });
 }
 
+function demoOffer(location, searchId, index) {
+  const offeredAt = new Date().toISOString();
+  const waitMin = location.availability.stableWaitMin;
+  const waitMax = location.availability.stableWaitMax;
+  return {
+    id: `demo_offer_${index + 1}`,
+    searchId,
+    targetId: `demo_target_${index + 1}`,
+    locationId: location.id,
+    tenantId: location.tenantId,
+    responseType: location.kind === "emergency" ? "emergency_intake" : "available_now",
+    status: "active",
+    availableAt: offeredAt,
+    arrivalBy: isoAfter(location.arrivalWindowMinutes),
+    waitMin,
+    waitMax,
+    clinicNote: location.availability.note,
+    policy: location.policy,
+    depositAmountCents: location.policy?.depositAmountCents || 0,
+    baseExamFeeCents: location.baseExamFeeCents,
+    offeredAt,
+    expiresAt: isoAfter(5),
+    location: enrichLocation(location)
+  };
+}
+
+async function createCareSearch(request, env, actor) {
+  let body;
+  try {
+    body = await readJson(request);
+  } catch (error) {
+    return apiError(error.message === "PAYLOAD_TOO_LARGE" ? 413 : 400, error.message, "A valid JSON request body is required.");
+  }
+  const validated = validateIntake(body, { requireLocation: false });
+  if (validated.errors.length) return apiError(422, "VALIDATION_FAILED", "Review the intake information.", validated.errors);
+
+  const latitude = numberInRange(body.customerLatitude, -90, 90);
+  const longitude = numberInRange(body.customerLongitude, -180, 180);
+  if (latitude === null || longitude === null) return apiError(422, "LOCATION_REQUIRED", "Share a search location before contacting clinics.");
+  const radiusMiles = numberInRange(body.radiusMiles, 1, 250, 50);
+  const targetLimit = numberInRange(body.targetLimit, 1, 30, 30);
+  const requestedLocationIds = Array.isArray(body.locationIds)
+    ? new Set(body.locationIds.map((value) => cleanString(value, 80)).filter(Boolean).slice(0, 30))
+    : null;
+  let candidates = await listLocations(env, {
+    latitude,
+    longitude,
+    radiusMiles,
+    species: validated.species,
+    care: validated.urgency === "emergency" ? "emergency" : "urgent"
+  });
+  if (requestedLocationIds?.size) candidates = candidates.filter((location) => requestedLocationIds.has(location.id));
+  candidates = candidates
+    .filter((location) => validated.urgency === "emergency" || !["closed", "diverting", "critical_only"].includes(location.availability.intakeStatus))
+    .slice(0, targetLimit);
+  if (!candidates.length) return apiError(409, "NO_MATCHING_CLINICS", "No participating clinic matches this search right now.");
+
+  const searchId = newId(hasDatabase(env) ? "search" : "demo_search");
+  const now = new Date().toISOString();
+  const collectionExpiresAt = isoAfter(1.5);
+  const searchExpiresAt = isoAfter(6.5);
+  const ageYears = numberInRange(validated.pet.ageYears, 0, 80);
+  const weightLbs = numberInRange(validated.pet.weightLbs, 0.1, 3000);
+
+  if (!hasDatabase(env)) {
+    const offers = candidates.slice(0, 5).map((location, index) => demoOffer(location, searchId, index));
+    const search = {
+      id: searchId,
+      publicCode: publicCode(),
+      customerUserId: actor?.userId || null,
+      pet: { name: cleanString(validated.pet.name, 80), species: validated.species, breed: cleanString(validated.pet.breed, 120) || null, ageYears, weightLbs },
+      owner: { name: cleanString(validated.owner.name, 120), phone: cleanString(validated.owner.phone, 30), email: cleanString(validated.owner.email, 160) || null },
+      concernCategory: cleanString(body.concernCategory, 80),
+      concernSummary: validated.clinicConcernSummary,
+      urgency: validated.urgency,
+      redFlags: validated.redFlags,
+      customerLatitude: latitude,
+      customerLongitude: longitude,
+      radiusMiles,
+      status: "offers_ready",
+      maxOffers: 5,
+      targetLimit,
+      selectedOfferId: null,
+      selectedIntakeId: null,
+      requestedAt: now,
+      collectionExpiresAt,
+      searchExpiresAt,
+      offers,
+      progress: { contacted: candidates.length, awaiting: Math.max(0, candidates.length - offers.length), declined: 0, offers: offers.length },
+      demo: true
+    };
+    return json({ search, demo: true }, { status: 201 });
+  }
+
+  const statements = [env.DB.prepare(`
+    INSERT INTO care_searches (
+      id, public_code, customer_user_id, pet_name, species, breed, age_years, weight_lbs,
+      owner_name, owner_phone, owner_email, concern_category, concern_summary, urgency,
+      red_flags_json, customer_latitude, customer_longitude, radius_miles, status,
+      max_offers, target_limit, legal_version, legal_accepted_at, requested_at,
+      collection_expires_at, search_expires_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'collecting', 5, ?, ?, ?, ?, ?, ?)
+  `).bind(
+    searchId, publicCode(), actor?.userId || null, cleanString(validated.pet.name, 80), validated.species,
+    cleanString(validated.pet.breed, 120) || null, ageYears, weightLbs, cleanString(validated.owner.name, 120),
+    cleanString(validated.owner.phone, 30), cleanString(validated.owner.email, 160) || null,
+    cleanString(body.concernCategory, 80), validated.clinicConcernSummary, validated.urgency,
+    JSON.stringify(validated.redFlags), latitude, longitude, radiusMiles, targetLimit,
+    validated.legalVersion, now, now, collectionExpiresAt, searchExpiresAt
+  )];
+
+  candidates.forEach((location, rank) => {
+    const targetId = newId("target");
+    const travelMinutes = Math.max(5, Math.round((location.distanceMiles || 2) * 4));
+    statements.push(
+      env.DB.prepare(`
+        INSERT INTO care_search_targets (
+          id, search_id, location_id, tenant_id, rank, travel_minutes, status, contacted_at
+        ) VALUES (?, ?, ?, ?, ?, ?, 'awaiting_response', ?)
+      `).bind(targetId, searchId, location.id, location.tenantId, rank + 1, travelMinutes, now),
+      env.DB.prepare(`
+        INSERT INTO notification_outbox (
+          id, tenant_id, channel, template_key, payload_json, available_at
+        ) VALUES (?, ?, 'dashboard', 'new_care_search', ?, ?)
+      `).bind(newId("notification"), location.tenantId, JSON.stringify({ searchId, targetId, petName: cleanString(validated.pet.name, 80), urgency: validated.urgency }), now)
+    );
+  });
+  await env.DB.batch(statements);
+  return json({ search: await getCareSearch(env, searchId) }, { status: 201 });
+}
+
+async function respondToCareSearch(request, env, actor, tenantId, targetId) {
+  if (!hasDatabase(env)) return apiError(503, "DATABASE_REQUIRED", "D1 is required for multi-clinic offer responses.");
+  const body = await readJson(request).catch(() => null);
+  const decision = cleanString(body?.decision, 20);
+  if (!new Set(["offer", "decline"]).has(decision)) return apiError(422, "INVALID_DECISION", "Choose offer or decline.");
+  const target = await getClinicSearchTarget(env, targetId, tenantId);
+  if (!target) return apiError(404, "SEARCH_TARGET_NOT_FOUND", "This clinic request was not found.");
+  if (target.status !== "pending") return apiError(409, "ALREADY_DECIDED", "This clinic request has already been handled.");
+  const search = await getCareSearch(env, target.searchId);
+  const now = new Date().toISOString();
+  if (!search || !["collecting", "offers_ready"].includes(search.status) || timestampMs(search.collectionExpiresAt || search.searchExpiresAt) <= Date.now()) {
+    return apiError(409, "SEARCH_CLOSED", "The customer is no longer collecting clinic offers.");
+  }
+
+  if (decision === "decline") {
+    const result = await env.DB.prepare(`
+      UPDATE care_search_targets SET status = 'declined', responded_at = ?, updated_at = ?
+      WHERE id = ? AND tenant_id = ? AND status IN ('contacting', 'awaiting_response')
+    `).bind(now, now, target.id, tenantId).run();
+    if (!result.meta?.changes) return apiError(409, "TARGET_CHANGED", "Another team member handled this request first.");
+    return json({ target: { ...target, status: "declined", respondedAt: now } });
+  }
+
+  const responseType = cleanString(body?.responseType, 30) || (search.urgency === "emergency" ? "emergency_intake" : "available_now");
+  if (!new Set(["available_now", "available_at", "emergency_intake"]).has(responseType)) return apiError(422, "INVALID_OFFER_TYPE", "Choose a supported availability offer.");
+  const location = await getClinicLocation(env, tenantId);
+  if (!location || location.id !== target.locationId) return apiError(409, "LOCATION_MISMATCH", "The active clinic cannot respond for this location.");
+  const arrivalMinutes = numberInRange(body.arrivalWindowMinutes, 5, 360, location.arrivalWindowMinutes || 20);
+  const suppliedAvailableAt = cleanString(body.availableAt, 40);
+  if (responseType === "available_at" && !suppliedAvailableAt) return apiError(422, "AVAILABLE_TIME_REQUIRED", "Provide the time when this clinic can receive the patient.");
+  const availableAtMs = suppliedAvailableAt ? Date.parse(suppliedAvailableAt) : Date.now();
+  if (!Number.isFinite(availableAtMs) || availableAtMs < Date.now() - 60_000 || availableAtMs > Date.now() + 12 * 60 * 60_000) {
+    return apiError(422, "INVALID_AVAILABLE_TIME", "Availability must be between now and 12 hours from now.");
+  }
+  const waitMin = numberInRange(body.waitMin, 0, 1440, location.availability.stableWaitMin);
+  const waitMax = numberInRange(body.waitMax, 0, 1440, location.availability.stableWaitMax);
+  if (waitMin !== null && waitMax !== null && waitMin > waitMax) return apiError(422, "INVALID_WAIT_RANGE", "Minimum wait cannot exceed maximum wait.");
+  const offerId = newId("offer");
+  const offerExpiresAt = isoAfter(numberInRange(body.holdMinutes, 2, 10, 5));
+  const availableAt = new Date(availableAtMs).toISOString();
+  const arrivalBy = new Date(availableAtMs + arrivalMinutes * 60_000).toISOString();
+  const policy = location.policy || { depositRequired: false, depositAmountCents: 0 };
+  const note = cleanString(body.note, 500) || null;
+
+  const results = await env.DB.batch([
+    env.DB.prepare(`
+      INSERT INTO care_offers (
+        id, search_id, target_id, location_id, tenant_id, response_type, status,
+        available_at, arrival_by, wait_min, wait_max, clinic_note, policy_snapshot_json,
+        deposit_amount_cents, base_exam_fee_cents, offered_at, expires_at, created_by
+      )
+      SELECT ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+      WHERE (SELECT COUNT(*) FROM care_offers WHERE search_id = ? AND status = 'active' AND datetime(expires_at) > datetime(?))
+            < (SELECT max_offers FROM care_searches WHERE id = ?)
+    `).bind(
+      offerId, search.id, target.id, location.id, tenantId, responseType, availableAt, arrivalBy,
+      waitMin, waitMax, note, JSON.stringify(policy), policy.depositAmountCents || 0,
+      location.baseExamFeeCents, now, offerExpiresAt, actor.userId || null, search.id, now, search.id
+    ),
+    env.DB.prepare(`
+      UPDATE care_search_targets
+      SET status = CASE WHEN EXISTS (SELECT 1 FROM care_offers WHERE id = ?) THEN 'offered' ELSE 'released' END,
+          responded_at = ?, released_at = CASE WHEN EXISTS (SELECT 1 FROM care_offers WHERE id = ?) THEN NULL ELSE ? END,
+          updated_at = ?
+      WHERE id = ? AND status IN ('contacting', 'awaiting_response')
+    `).bind(offerId, now, offerId, now, now, target.id),
+    env.DB.prepare(`
+      UPDATE care_searches
+      SET status = CASE
+        WHEN (SELECT COUNT(*) FROM care_offers WHERE search_id = ? AND status = 'active' AND datetime(expires_at) > datetime(?)) >= max_offers THEN 'offers_ready'
+        ELSE status END,
+        updated_at = ?
+      WHERE id = ? AND status IN ('collecting', 'offers_ready')
+    `).bind(search.id, now, now, search.id),
+    env.DB.prepare(`
+      UPDATE care_search_targets
+      SET status = 'released', released_at = ?, updated_at = ?
+      WHERE search_id = ? AND status IN ('contacting', 'awaiting_response')
+        AND (SELECT COUNT(*) FROM care_offers WHERE search_id = ? AND status = 'active' AND datetime(expires_at) > datetime(?))
+            >= (SELECT max_offers FROM care_searches WHERE id = ?)
+    `).bind(now, now, search.id, search.id, now, search.id)
+  ]);
+  if (!results[0]?.meta?.changes) return apiError(409, "OFFER_WINDOW_FULL", "The customer already has five active clinic offers.");
+  return json({ search: await getCareSearch(env, search.id), offerId });
+}
+
+async function selectCareOffer(request, env, actor, searchId) {
+  if (!hasDatabase(env)) return apiError(503, "DATABASE_REQUIRED", "D1 is required to confirm a clinic offer.");
+  const body = await readJson(request).catch(() => null);
+  const offerId = cleanString(body?.offerId, 100);
+  if (!offerId) return apiError(422, "OFFER_REQUIRED", "Choose one clinic offer.");
+  const search = await getCareSearch(env, searchId);
+  if (!search) return apiError(404, "SEARCH_NOT_FOUND", "The care search was not found.");
+  if (signInRequired(env) && search.customerUserId !== actor?.userId) return apiError(403, "SEARCH_ACCESS_DENIED", "This care search belongs to another account.");
+  if (search.selectedIntakeId) return apiError(409, "OFFER_ALREADY_SELECTED", "A clinic has already been selected for this search.");
+  if (!["collecting", "offers_ready"].includes(search.status)) return apiError(409, "SEARCH_CLOSED", "This care search is no longer accepting a selection.");
+  if (timestampMs(search.searchExpiresAt) <= Date.now()) return apiError(409, "SEARCH_EXPIRED", "The clinic offers in this search have expired.");
+  const offer = await getCareOffer(env, search.id, offerId);
+  if (!offer || offer.status !== "active" || timestampMs(offer.expiresAt) <= Date.now()) return apiError(409, "OFFER_EXPIRED", "That clinic offer is no longer active.");
+  const target = await env.DB.prepare("SELECT travel_minutes FROM care_search_targets WHERE id = ? AND search_id = ? LIMIT 1").bind(offer.targetId, search.id).first();
+  const now = new Date().toISOString();
+  const intakeId = newId("intake");
+  const code = publicCode();
+  const paymentStatus = offer.policy?.depositRequired && offer.depositAmountCents > 0 ? "pending" : "not_required";
+
+  const results = await env.DB.batch([
+    env.DB.prepare(`
+      UPDATE care_searches SET status = 'selected', selected_offer_id = ?, updated_at = ?
+      WHERE id = ? AND selected_offer_id IS NULL AND status IN ('collecting', 'offers_ready')
+    `).bind(offer.id, now, search.id),
+    env.DB.prepare(`
+      INSERT INTO intake_requests (
+        id, public_code, location_id, tenant_id, customer_user_id, pet_name, species, breed,
+        age_years, weight_lbs, owner_name, owner_phone, owner_email, concern_category,
+        concern_summary, urgency, red_flags_json, customer_latitude, customer_longitude,
+        travel_minutes, status, requested_at, decision_at, request_expires_at, arrival_by,
+        clinic_note, policy_snapshot_json, deposit_amount_cents, payment_status, consent_to_contact,
+        source_search_id, selected_offer_id
+      )
+      SELECT ?, ?, ?, ?, customer_user_id, pet_name, species, breed, age_years, weight_lbs,
+             owner_name, owner_phone, owner_email, concern_category, concern_summary, urgency,
+             red_flags_json, customer_latitude, customer_longitude, ?, 'accepted', requested_at,
+             ?, ?, ?, ?, ?, ?, ?, 1, id, ?
+      FROM care_searches
+      WHERE id = ? AND selected_offer_id = ? AND selected_intake_id IS NULL
+    `).bind(
+      intakeId, code, offer.locationId, offer.tenantId, target?.travel_minutes || null, now,
+      offer.expiresAt, offer.arrivalBy, offer.clinicNote, JSON.stringify(offer.policy || {}),
+      offer.depositAmountCents, paymentStatus, offer.id, search.id, offer.id
+    ),
+    env.DB.prepare(`
+      UPDATE care_searches SET selected_intake_id = ?, updated_at = ?
+      WHERE id = ? AND selected_offer_id = ? AND selected_intake_id IS NULL
+        AND EXISTS (SELECT 1 FROM intake_requests WHERE id = ?)
+    `).bind(intakeId, now, search.id, offer.id, intakeId),
+    env.DB.prepare(`
+      UPDATE care_offers SET status = CASE WHEN id = ? THEN 'selected' ELSE 'released' END, updated_at = ?
+      WHERE search_id = ? AND status = 'active'
+        AND EXISTS (SELECT 1 FROM care_searches WHERE id = ? AND selected_offer_id = ?)
+    `).bind(offer.id, now, search.id, search.id, offer.id),
+    env.DB.prepare(`
+      UPDATE care_search_targets SET
+        status = CASE WHEN id = ? THEN 'selected' ELSE 'released' END,
+        released_at = CASE WHEN id = ? THEN NULL ELSE ? END,
+        updated_at = ?
+      WHERE search_id = ? AND status IN ('contacting', 'awaiting_response', 'offered')
+        AND EXISTS (SELECT 1 FROM care_searches WHERE id = ? AND selected_offer_id = ?)
+    `).bind(offer.targetId, offer.targetId, now, now, search.id, search.id, offer.id),
+    env.DB.prepare(`
+      INSERT INTO intake_events (id, intake_id, event_type, actor_type, actor_id, detail_json)
+      SELECT ?, ?, 'offer_selected', 'customer', ?, ?
+      WHERE EXISTS (SELECT 1 FROM intake_requests WHERE id = ?)
+    `).bind(newId("event"), intakeId, actor?.userId || null, JSON.stringify({ searchId: search.id, offerId: offer.id }), intakeId),
+    env.DB.prepare(`
+      INSERT INTO notification_outbox (id, tenant_id, intake_id, channel, recipient, template_key, payload_json, available_at)
+      SELECT ?, ?, ?, 'dashboard', ?, 'offer_selected', ?, ?
+      WHERE EXISTS (SELECT 1 FROM intake_requests WHERE id = ?)
+    `).bind(newId("notification"), offer.tenantId, intakeId, search.owner.phone, JSON.stringify({ searchId: search.id, offerId: offer.id, publicCode: code }), now, intakeId),
+    env.DB.prepare(`
+      INSERT INTO notification_outbox (id, tenant_id, channel, template_key, payload_json, available_at)
+      SELECT 'notification_' || lower(hex(randomblob(16))), tenant_id, 'dashboard', 'offer_released', ?, ?
+      FROM care_search_targets
+      WHERE search_id = ? AND id <> ?
+        AND EXISTS (SELECT 1 FROM intake_requests WHERE id = ?)
+    `).bind(JSON.stringify({ searchId: search.id, selectedOfferId: offer.id }), now, search.id, offer.targetId, intakeId)
+  ]);
+  if (!results[0]?.meta?.changes || !results[1]?.meta?.changes) return apiError(409, "SELECTION_RACE", "Another clinic offer was selected first. Refresh to continue.");
+  const intake = await getIntake(env, intakeId);
+  return json({ intake, location: enrichLocation(offer.location), search: await getCareSearch(env, search.id) }, { status: 201 });
+}
+
+async function cancelCareSearch(env, actor, searchId) {
+  if (!hasDatabase(env)) return apiError(503, "DATABASE_REQUIRED", "D1 is required to cancel a care search.");
+  const search = await getCareSearch(env, searchId);
+  if (!search) return apiError(404, "SEARCH_NOT_FOUND", "The care search was not found.");
+  if (signInRequired(env) && search.customerUserId !== actor?.userId) return apiError(403, "SEARCH_ACCESS_DENIED", "This care search belongs to another account.");
+  if (!["collecting", "offers_ready"].includes(search.status)) return apiError(409, "SEARCH_CLOSED", "This care search can no longer be cancelled.");
+  const now = new Date().toISOString();
+  await env.DB.batch([
+    env.DB.prepare("UPDATE care_searches SET status = 'cancelled', updated_at = ? WHERE id = ? AND status IN ('collecting', 'offers_ready')").bind(now, search.id),
+    env.DB.prepare("UPDATE care_search_targets SET status = 'released', released_at = ?, updated_at = ? WHERE search_id = ? AND status IN ('contacting', 'awaiting_response', 'offered')").bind(now, now, search.id),
+    env.DB.prepare("UPDATE care_offers SET status = 'released', updated_at = ? WHERE search_id = ? AND status = 'active'").bind(now, search.id)
+  ]);
+  return json({ search: await getCareSearch(env, search.id) });
+}
+
 async function updateCustomerIntakeStatus(request, env, actor, intakeId) {
   if (!hasDatabase(env)) return apiError(503, "DATABASE_REQUIRED", "D1 is required for intake updates.");
   const body = await readJson(request).catch(() => null);
@@ -362,7 +683,14 @@ async function recordObservation(request, env, actor) {
 async function clinicDashboard(env, tenantId) {
   const location = await getClinicLocation(env, tenantId);
   if (!location) return apiError(404, "CLINIC_NOT_FOUND", "No clinic is mapped to the active Clerk organization.");
-  const requests = await listClinicIntakes(env, tenantId);
+  const [intakes, searchTargets] = await Promise.all([
+    listClinicIntakes(env, tenantId),
+    listClinicSearchTargets(env, tenantId)
+  ]);
+  const requests = [...searchTargets, ...intakes].sort((a, b) => {
+    const pendingDifference = Number(b.status === "pending") - Number(a.status === "pending");
+    return pendingDifference || timestampMs(b.requestedAt) - timestampMs(a.requestedAt);
+  });
   let observations = [];
   if (hasDatabase(env)) {
     const result = await env.DB.prepare(`
@@ -542,6 +870,15 @@ async function expireStaleState(env) {
   const now = new Date().toISOString();
   const expired = await env.DB.prepare("SELECT id, status FROM intake_requests WHERE status = 'pending' AND request_expires_at <= ? LIMIT 200").bind(now).all();
   const noShows = await env.DB.prepare("SELECT id, status FROM intake_requests WHERE status IN ('accepted', 'en_route') AND arrival_by IS NOT NULL AND datetime(arrival_by) <= datetime(?, '-15 minutes') LIMIT 200").bind(now).all();
+  const closedCollections = await env.DB.prepare(`
+    SELECT s.id,
+      (SELECT COUNT(*) FROM care_offers o WHERE o.search_id = s.id AND o.status = 'active' AND datetime(o.expires_at) > datetime(?)) AS active_offers
+    FROM care_searches s
+    WHERE s.status = 'collecting' AND datetime(s.collection_expires_at) <= datetime(?)
+    LIMIT 200
+  `).bind(now, now).all();
+  const expiredSearches = await env.DB.prepare("SELECT id FROM care_searches WHERE status IN ('collecting', 'offers_ready') AND datetime(search_expires_at) <= datetime(?) LIMIT 200").bind(now).all();
+  const expiredOffers = await env.DB.prepare("SELECT id, search_id FROM care_offers WHERE status = 'active' AND datetime(expires_at) <= datetime(?) LIMIT 200").bind(now).all();
   const statements = [];
   for (const intake of expired.results) {
     statements.push(
@@ -555,8 +892,27 @@ async function expireStaleState(env) {
       env.DB.prepare("INSERT INTO intake_events (id, intake_id, event_type, actor_type, actor_id, detail_json) VALUES (?, ?, 'no_show', 'system', NULL, ?)").bind(newId("event"), intake.id, JSON.stringify({ previousStatus: intake.status, reason: "arrival_window_elapsed" }))
     );
   }
+  for (const offer of expiredOffers.results) {
+    statements.push(
+      env.DB.prepare("UPDATE care_offers SET status = 'expired', updated_at = ? WHERE id = ? AND status = 'active'").bind(now, offer.id),
+      env.DB.prepare("UPDATE care_search_targets SET status = 'expired', updated_at = ? WHERE id = (SELECT target_id FROM care_offers WHERE id = ?) AND status = 'offered'").bind(now, offer.id)
+    );
+  }
+  for (const search of closedCollections.results) {
+    statements.push(
+      env.DB.prepare("UPDATE care_searches SET status = ?, updated_at = ? WHERE id = ? AND status = 'collecting'").bind(Number(search.active_offers) > 0 ? "offers_ready" : "expired", now, search.id),
+      env.DB.prepare("UPDATE care_search_targets SET status = 'released', released_at = ?, updated_at = ? WHERE search_id = ? AND status IN ('contacting', 'awaiting_response')").bind(now, now, search.id)
+    );
+  }
+  for (const search of expiredSearches.results) {
+    statements.push(
+      env.DB.prepare("UPDATE care_searches SET status = 'expired', updated_at = ? WHERE id = ? AND status IN ('collecting', 'offers_ready')").bind(now, search.id),
+      env.DB.prepare("UPDATE care_search_targets SET status = 'expired', updated_at = ? WHERE search_id = ? AND status IN ('contacting', 'awaiting_response', 'offered')").bind(now, search.id),
+      env.DB.prepare("UPDATE care_offers SET status = 'expired', updated_at = ? WHERE search_id = ? AND status = 'active'").bind(now, search.id)
+    );
+  }
   if (statements.length) await env.DB.batch(statements);
-  console.log(JSON.stringify({ event: "scheduled_expiry_complete", at: now, expired: expired.results.length, noShows: noShows.results.length }));
+  console.log(JSON.stringify({ event: "scheduled_expiry_complete", at: now, expired: expired.results.length, noShows: noShows.results.length, closedCollections: closedCollections.results.length, expiredSearches: expiredSearches.results.length, expiredOffers: expiredOffers.results.length }));
 }
 
 async function handleApi(request, env) {
@@ -564,7 +920,7 @@ async function handleApi(request, env) {
   const path = url.pathname;
   const method = request.method.toUpperCase();
 
-  if (method === "GET" && path === "/api/health") return json({ ok: true, service: "timinow", version: "1.0.0-mvp", database: hasDatabase(env) });
+  if (method === "GET" && path === "/api/health") return json({ ok: true, service: "timinow", version: "1.1.0-multi-offer", database: hasDatabase(env) });
   if (method === "GET" && path === "/api/config") return handleConfig(env);
   if (method === "GET" && path === "/api/locations") return handleLocationSearch(url, env);
   if (method === "GET" && path.startsWith("/api/locations/")) {
@@ -576,7 +932,26 @@ async function handleApi(request, env) {
   if (signInRequired(env) && !actor) return authRequiredResponse();
 
   if (method === "POST" && path === "/api/intakes") return createIntake(request, env, actor);
+  if (method === "POST" && path === "/api/searches") return createCareSearch(request, env, actor);
   if (method === "POST" && path === "/api/observations") return recordObservation(request, env, actor);
+
+  const searchMatch = path.match(/^\/api\/searches\/([^/]+)(?:\/(select-offer|status))?$/);
+  if (searchMatch) {
+    const searchId = decodeURIComponent(searchMatch[1]);
+    const action = searchMatch[2] || null;
+    if (method === "GET" && !action) {
+      const search = await getCareSearch(env, searchId);
+      if (!search) return apiError(404, "SEARCH_NOT_FOUND", "The care search was not found.");
+      if (signInRequired(env) && search.customerUserId !== actor?.userId) return apiError(403, "SEARCH_ACCESS_DENIED", "This care search belongs to another account.");
+      return json({ search });
+    }
+    if (method === "POST" && action === "select-offer") return selectCareOffer(request, env, actor, searchId);
+    if (method === "POST" && action === "status") {
+      const body = await readJson(request).catch(() => null);
+      if (cleanString(body?.status, 20) !== "cancelled") return apiError(422, "INVALID_STATUS", "A care search may only be cancelled.");
+      return cancelCareSearch(env, actor, searchId);
+    }
+  }
 
   const intakeMatch = path.match(/^\/api\/intakes\/([^/]+)(?:\/(status|payment|payment-status))?$/);
   if (intakeMatch) {
@@ -601,6 +976,8 @@ async function handleApi(request, env) {
     if (method === "POST" && path === "/api/clinic/availability") return setClinicAvailability(request, env, actor, tenantId);
     const decisionMatch = path.match(/^\/api\/clinic\/intakes\/([^/]+)\/decision$/);
     if (method === "POST" && decisionMatch) return decideIntake(request, env, actor, tenantId, decodeURIComponent(decisionMatch[1]));
+    const searchDecisionMatch = path.match(/^\/api\/clinic\/search-targets\/([^/]+)\/decision$/);
+    if (method === "POST" && searchDecisionMatch) return respondToCareSearch(request, env, actor, tenantId, decodeURIComponent(searchDecisionMatch[1]));
   }
 
   return apiError(404, "NOT_FOUND", "The requested API route does not exist.");

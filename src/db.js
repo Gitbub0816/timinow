@@ -210,6 +210,186 @@ export async function getClinicLocation(env, tenantId) {
   return row ? locationFromRow(row, null) : null;
 }
 
+function normalizeCareSearchRow(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    publicCode: row.public_code,
+    customerUserId: row.customer_user_id,
+    pet: {
+      name: row.pet_name,
+      species: row.species,
+      breed: row.breed,
+      ageYears: row.age_years,
+      weightLbs: row.weight_lbs
+    },
+    owner: {
+      name: row.owner_name,
+      phone: row.owner_phone,
+      email: row.owner_email
+    },
+    concernCategory: row.concern_category,
+    concernSummary: row.concern_summary,
+    urgency: row.urgency,
+    redFlags: parseJson(row.red_flags_json, []),
+    customerLatitude: row.customer_latitude,
+    customerLongitude: row.customer_longitude,
+    radiusMiles: row.radius_miles,
+    status: row.status,
+    maxOffers: row.max_offers,
+    targetLimit: row.target_limit,
+    selectedOfferId: row.selected_offer_id,
+    selectedIntakeId: row.selected_intake_id,
+    legalVersion: row.legal_version,
+    legalAcceptedAt: row.legal_accepted_at,
+    requestedAt: row.requested_at,
+    collectionExpiresAt: row.collection_expires_at,
+    searchExpiresAt: row.search_expires_at,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
+
+function normalizeOfferRow(row, location, search) {
+  const latitude = Number(search?.customerLatitude);
+  const longitude = Number(search?.customerLongitude);
+  const hasCoordinates = Number.isFinite(latitude) && Number.isFinite(longitude);
+  const enrichedLocation = location && hasCoordinates
+    ? { ...location, distanceMiles: Number(haversineMiles(latitude, longitude, location.latitude, location.longitude).toFixed(1)) }
+    : location;
+  return {
+    id: row.id,
+    searchId: row.search_id,
+    targetId: row.target_id,
+    locationId: row.location_id,
+    tenantId: row.tenant_id,
+    responseType: row.response_type,
+    status: row.status,
+    availableAt: row.available_at,
+    arrivalBy: row.arrival_by,
+    waitMin: row.wait_min,
+    waitMax: row.wait_max,
+    clinicNote: row.clinic_note,
+    policy: parseJson(row.policy_snapshot_json, {}),
+    depositAmountCents: row.deposit_amount_cents || 0,
+    baseExamFeeCents: row.base_exam_fee_cents,
+    offeredAt: row.offered_at,
+    expiresAt: row.expires_at,
+    location: enrichedLocation
+  };
+}
+
+export async function getCareSearch(env, identifier) {
+  if (!hasDatabase(env)) return null;
+  const row = await env.DB.prepare("SELECT * FROM care_searches WHERE id = ? OR public_code = ? LIMIT 1").bind(identifier, identifier).first();
+  const search = normalizeCareSearchRow(row);
+  if (!search) return null;
+  const offerResult = await env.DB.prepare(`
+    SELECT * FROM care_offers
+    WHERE search_id = ? AND status IN ('active', 'selected')
+    ORDER BY
+      CASE status WHEN 'selected' THEN 0 ELSE 1 END,
+      CASE response_type WHEN 'available_now' THEN 0 WHEN 'emergency_intake' THEN 1 ELSE 2 END,
+      COALESCE(wait_min, 9999), offered_at
+    LIMIT ?
+  `).bind(search.id, search.maxOffers).all();
+  const offers = await Promise.all(offerResult.results.map(async (offer) => normalizeOfferRow(offer, await getLocation(env, offer.location_id), search)));
+  const counts = await env.DB.prepare(`
+    SELECT
+      COUNT(*) AS contacted,
+      SUM(CASE WHEN status IN ('contacting', 'awaiting_response') THEN 1 ELSE 0 END) AS awaiting,
+      SUM(CASE WHEN status = 'declined' THEN 1 ELSE 0 END) AS declined
+    FROM care_search_targets WHERE search_id = ?
+  `).bind(search.id).first();
+  return {
+    ...search,
+    offers,
+    progress: {
+      contacted: Number(counts?.contacted || 0),
+      awaiting: Number(counts?.awaiting || 0),
+      declined: Number(counts?.declined || 0),
+      offers: offers.length
+    }
+  };
+}
+
+function normalizeClinicSearchTarget(row) {
+  if (!row) return null;
+  const status = ["contacting", "awaiting_response"].includes(row.target_status) ? "pending" : row.target_status;
+  return {
+    id: row.target_id,
+    searchId: row.search_id,
+    publicCode: row.public_code,
+    locationId: row.location_id,
+    tenantId: row.tenant_id,
+    customerUserId: row.customer_user_id,
+    pet: {
+      name: row.pet_name,
+      species: row.species,
+      breed: row.breed,
+      ageYears: row.age_years,
+      weightLbs: row.weight_lbs
+    },
+    owner: {
+      name: row.owner_name,
+      phone: row.owner_phone,
+      email: row.owner_email
+    },
+    concernCategory: row.concern_category,
+    concernSummary: row.concern_summary,
+    urgency: row.urgency,
+    redFlags: parseJson(row.red_flags_json, []),
+    travelMinutes: row.travel_minutes,
+    status,
+    requestedAt: row.requested_at,
+    requestExpiresAt: row.collection_expires_at || row.search_expires_at,
+    respondedAt: row.responded_at,
+    searchTarget: true,
+    createdAt: row.target_created_at,
+    updatedAt: row.target_updated_at
+  };
+}
+
+const CLINIC_SEARCH_TARGET_SELECT = `
+  SELECT
+    t.id AS target_id, t.search_id, t.location_id, t.tenant_id,
+    t.status AS target_status, t.travel_minutes, t.responded_at,
+    t.created_at AS target_created_at, t.updated_at AS target_updated_at,
+    s.public_code, s.customer_user_id, s.pet_name, s.species, s.breed,
+    s.age_years, s.weight_lbs, s.owner_name, s.owner_phone, s.owner_email,
+    s.concern_category, s.concern_summary, s.urgency, s.red_flags_json,
+    s.requested_at, s.collection_expires_at, s.search_expires_at
+  FROM care_search_targets t
+  JOIN care_searches s ON s.id = t.search_id
+`;
+
+export async function listClinicSearchTargets(env, tenantId, limit = 50) {
+  if (!hasDatabase(env)) return [];
+  const result = await env.DB.prepare(`${CLINIC_SEARCH_TARGET_SELECT}
+    WHERE t.tenant_id = ? AND s.status IN ('collecting', 'offers_ready')
+    ORDER BY CASE t.status WHEN 'awaiting_response' THEN 0 WHEN 'contacting' THEN 1 ELSE 2 END,
+             datetime(s.requested_at) DESC
+    LIMIT ?
+  `).bind(tenantId, limit).all();
+  return result.results.map(normalizeClinicSearchTarget);
+}
+
+export async function getClinicSearchTarget(env, targetId, tenantId) {
+  if (!hasDatabase(env)) return null;
+  const row = await env.DB.prepare(`${CLINIC_SEARCH_TARGET_SELECT}
+    WHERE t.id = ? AND t.tenant_id = ? LIMIT 1
+  `).bind(targetId, tenantId).first();
+  return normalizeClinicSearchTarget(row);
+}
+
+export async function getCareOffer(env, searchId, offerId) {
+  if (!hasDatabase(env)) return null;
+  const search = await getCareSearch(env, searchId);
+  if (!search) return null;
+  const row = await env.DB.prepare("SELECT * FROM care_offers WHERE id = ? AND search_id = ? LIMIT 1").bind(offerId, search.id).first();
+  return row ? normalizeOfferRow(row, await getLocation(env, row.location_id), search) : null;
+}
+
 export function normalizeIntakeRow(row) {
   if (!row) return null;
   return {
@@ -245,6 +425,8 @@ export function normalizeIntakeRow(row) {
     depositAmountCents: row.deposit_amount_cents,
     paymentStatus: row.payment_status,
     paymentProviderId: row.payment_provider_id,
+    sourceSearchId: row.source_search_id || null,
+    selectedOfferId: row.selected_offer_id || null,
     createdAt: row.created_at,
     updatedAt: row.updated_at
   };
