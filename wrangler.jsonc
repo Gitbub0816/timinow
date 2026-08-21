@@ -29,6 +29,6 @@
   {
     "binding": "DB",
     "database_name": "timinow",
-    "database_id": "<your-d1-database-id>"   // from: wrangler d1 list
+    "database_id": "eae5bd15-686f-4827-9354-e99973daa803"   // from: wrangler d1 list
   }
 ]
