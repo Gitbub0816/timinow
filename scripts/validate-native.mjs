@@ -8,6 +8,7 @@ const required = [
   "apps/customer-mobile/Sources/TimiNowApp/Skip/skip.yml",
   "apps/customer-mobile/Sources/TimiNowUI/Skip/skip.yml",
   "apps/customer-mobile/Sources/TimiNowCore/Skip/skip.yml",
+  "apps/customer-mobile/Tests/TimiNowCoreTests/Skip/skip.yml",
   "apps/customer-mobile/Sources/TimiNowCore/ConcernValidator.swift",
   "apps/customer-mobile/Sources/TimiNowUI/Resources/timi-care-companion.png",
   "apps/customer-mobile/Sources/TimiNowUI/OnboardingView.swift",
