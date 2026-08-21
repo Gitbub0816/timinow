@@ -62,6 +62,7 @@ if (/public\s+(struct|extension).*ButtonStyle|public\s+func\s+timiCard/.test(the
 if (!clinicApi.includes("using System.Net.Http;")) throw new Error("Windows HTTP client namespace is not imported.");
 if (!settingsStore.includes("using System.IO;")) throw new Error("Windows settings storage namespace is not imported.");
 if (!nativeWorkflow.includes('SKIP_BRIDGE: "1"') || !nativeWorkflow.includes('install-swift-android-sdk: "true"')) throw new Error("Skip Fuse CI must install and load the native Android bridge.");
+if (!nativeWorkflow.includes('timi-swift-test.log')) throw new Error("Skip test output must be bounded so CI failures remain diagnosable.");
 
 for (const path of [
   "apps/customer-mobile/Sources/TimiNowUI/Components.swift",

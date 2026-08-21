@@ -42,7 +42,23 @@ jobs:
       - name: Resolve Swift packages
         run: swift package resolve
       - name: Run core tests
-        run: swift test
+        run: |
+          set +e
+          swift test > "$RUNNER_TEMP/timi-swift-test.log" 2>&1
+          status=$?
+          if [ "$status" -ne 0 ]; then
+            rg -i "error:|fatalerror|failed|unsatisfiedlink|exception" "$RUNNER_TEMP/timi-swift-test.log" | tail -200 || true
+            tail -120 "$RUNNER_TEMP/timi-swift-test.log"
+            exit "$status"
+          fi
+          tail -80 "$RUNNER_TEMP/timi-swift-test.log"
+      - name: Upload Swift test log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: swift-test-log
+          path: ${{ runner.temp }}/timi-swift-test.log
+          retention-days: 3
       - name: Compile iOS app
         run: >-
           xcodebuild
