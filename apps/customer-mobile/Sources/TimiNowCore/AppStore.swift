@@ -28,7 +28,8 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
     private let defaults: UserDefaults
     private var gateway: TimiGateway
 
-    public init(defaults: UserDefaults = .standard) {
+    public init() {
+        let defaults = UserDefaults.standard
         self.defaults = defaults
         let storedPets = Self.decode([PetProfile].self, from: defaults.data(forKey: "timi.pets")) ?? [DemoData.pet]
         self.pets = storedPets
