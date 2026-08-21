@@ -31,6 +31,7 @@ const [validator, gateway, onboarding, tracker, mini, alerts, clinicApi] = await
   read("apps/vet-windows/src/TimiVet/Services/AlertService.cs"),
   read("apps/vet-windows/src/TimiVet/Services/ClinicApiClient.cs")
 ]);
+const settingsStore = await read("apps/vet-windows/src/TimiVet/Services/SettingsStore.cs");
 
 const expectations = [
   [validator, "not acting like", "deterministic vague-concern rule"],
@@ -51,5 +52,6 @@ for (const [source, needle, label] of expectations) {
 
 if (gateway.includes("bearerToken: String? = nil, session:")) throw new Error("URLSession must not appear in the public Skip bridge surface.");
 if (!clinicApi.includes("using System.Net.Http;")) throw new Error("Windows HTTP client namespace is not imported.");
+if (!settingsStore.includes("using System.IO;")) throw new Error("Windows settings storage namespace is not imported.");
 
 console.log(`Native client structure validated (${required.length} required files, ${expectations.length} behavioral contracts).`);
