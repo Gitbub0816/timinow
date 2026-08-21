@@ -25,7 +25,7 @@ jobs:
       run:
         working-directory: apps/customer-mobile
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Install XcodeGen
         run: brew install xcodegen
       - name: Generate Xcode project
@@ -53,8 +53,8 @@ jobs:
       run:
         working-directory: apps/vet-windows
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: "8.0.x"
       - name: Restore

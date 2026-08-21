@@ -21,8 +21,8 @@ public final class TimiGateway: @unchecked Sendable {
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
 
-    public init(baseURL: URL? = nil, bearerToken: String? = nil, session: URLSession = .shared) {
-        self.baseURL = baseURL; self.bearerToken = bearerToken; self.session = session
+    public init(baseURL: URL? = nil, bearerToken: String? = nil) {
+        self.baseURL = baseURL; self.bearerToken = bearerToken; self.session = .shared
     }
 
     public var isDemo: Bool { baseURL == nil }

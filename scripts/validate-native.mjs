@@ -49,4 +49,7 @@ for (const [source, needle, label] of expectations) {
   if (!source.includes(needle)) throw new Error(`Missing ${label}: ${needle}`);
 }
 
+if (gateway.includes("bearerToken: String? = nil, session:")) throw new Error("URLSession must not appear in the public Skip bridge surface.");
+if (!clinicApi.includes("using System.Net.Http;")) throw new Error("Windows HTTP client namespace is not imported.");
+
 console.log(`Native client structure validated (${required.length} required files, ${expectations.length} behavioral contracts).`);
