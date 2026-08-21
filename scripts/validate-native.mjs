@@ -70,6 +70,7 @@ for (const path of [
 ]) {
   const source = await read(path);
   if (source.includes("@State private")) throw new Error(`Private SwiftUI state cannot be bridged by Skip: ${path}`);
+  if (/navigationBarHidden|navigationBarTitleDisplayMode|textInputAutocapitalization/.test(source)) throw new Error(`iOS-only view modifier breaks Swift package validation on macOS: ${path}`);
 }
 
 console.log(`Native client structure validated (${required.length} required files, ${expectations.length} behavioral contracts).`);

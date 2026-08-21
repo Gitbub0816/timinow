@@ -1,6 +1,6 @@
 import Foundation
 
-#if !SKIP
+#if os(iOS) && !SKIP
 import CoreLocation
 import UserNotifications
 

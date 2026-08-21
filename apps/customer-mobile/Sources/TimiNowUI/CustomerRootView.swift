@@ -54,7 +54,7 @@ struct HomeView: View {
                 SafetyBanner(compact: true)
                 VStack(alignment: .leading, spacing: 12) { Eyebrow(text: "HOW TÍMI WORKS"); processRow(1, "Describe what you observe", "Rules prevent vague requests before anything is shared."); processRow(2, "Clinics answer with live capacity", "Each response includes timing, wait, deposit, and offer hold."); processRow(3, "Choose the best fit", "Only your selected clinic is confirmed; every other offer is released.") }.timiCard(TimiColor.paper)
             }.padding(20).padding(.bottom, 20)
-        }.background(TimiColor.canvas).navigationBarHidden(true)
+        }.background(TimiColor.canvas)
     }
 
     func processRow(_ number: Int, _ title: String, _ detail: String) -> some View {

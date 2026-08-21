@@ -32,7 +32,7 @@ struct OfferSearchView: View {
                     HStack { Button { store.resetCareFlow() } label: { Image(systemName: "xmark").frame(width: 42, height: 42).background(.white, in: Circle()) }; Spacer(); TimiWordmark(compact: true) }
                     if offers.isEmpty { waitingView } else { offersView }
                 }.padding(20).padding(.bottom, 36)
-            }.background(TimiColor.canvas).navigationBarHidden(true)
+            }.background(TimiColor.canvas)
         }
         .task {
             while store.route == .searching && ["collecting", "offers_ready"].contains(store.currentSearch?.status ?? "") {
@@ -112,7 +112,7 @@ struct TrackerView: View {
                     SafetyBanner(compact: true)
                     Button("Finish and return home") { store.resetCareFlow() }.buttonStyle(TimiQuietButtonStyle())
                 }.padding(20).padding(.bottom, 34)
-            }.background(TimiColor.canvas).navigationBarHidden(true)
+            }.background(TimiColor.canvas)
         }
     }
 

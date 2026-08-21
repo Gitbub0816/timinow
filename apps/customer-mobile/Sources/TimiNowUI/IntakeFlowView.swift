@@ -34,7 +34,7 @@ struct IntakeFlowView: View {
                             .buttonStyle(TimiPrimaryButtonStyle()).disabled(store.isWorking || (step == 1 && (!store.draft.legalConsent || !store.draft.contactConsent)))
                     }
                 }.padding(20).padding(.bottom, 30)
-            }.background(TimiColor.canvas).navigationBarHidden(true)
+            }.background(TimiColor.canvas)
         }
     }
 
