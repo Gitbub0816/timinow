@@ -1,11 +1,13 @@
-const CACHE = "timinow-shell-v2";
+const CACHE = "timinow-shell-v3";
 const SHELL = [
   "/",
   "/index.html",
   "/styles.css",
   "/app.js",
   "/manifest.webmanifest",
-  "/assets/brand/timinow-wordmark.svg",
+  "/assets/brand/timinow-wordmark.png",
+  "/assets/art/find-care-hero.png",
+  "/assets/art/clinic-operations.png",
   "/assets/icons/icon.svg"
 ];
 

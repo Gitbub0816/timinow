@@ -6,7 +6,9 @@ const requiredFiles = [
   "public/app.js",
   "public/manifest.webmanifest",
   "public/sw.js",
-  "public/assets/brand/timinow-wordmark.svg",
+  "public/assets/brand/timinow-wordmark.png",
+  "public/assets/art/find-care-hero.png",
+  "public/assets/art/clinic-operations.png",
   "public/assets/icons/icon.svg",
   "src/index.js",
   "src/auth.js",
@@ -35,7 +37,7 @@ const wrangler = await readFile("wrangler.jsonc", "utf8");
 const wranglerD1Example = await readFile("wrangler.d1.example.jsonc", "utf8");
 
 const screens = [...html.matchAll(/data-screen="([^"]+)"/g)].map((match) => match[1]);
-const expectedScreens = ["home", "find", "results", "tracker", "pets", "clinic", "sign-in"];
+const expectedScreens = ["home", "find", "results", "tracker", "pets", "clinic", "sign-in", "legal"];
 for (const screen of expectedScreens) {
   if (!screens.includes(screen)) throw new Error(`Missing application screen: ${screen}`);
 }

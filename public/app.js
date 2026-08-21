@@ -1,7 +1,7 @@
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 
-const APP_ROUTES = new Set(["find", "results", "tracker", "pets", "clinic", "sign-in"]);
+const APP_ROUTES = new Set(["find", "results", "tracker", "pets", "clinic", "sign-in", "legal"]);
 const PROTECTED_ROUTES = new Set(["find", "results", "tracker", "pets", "clinic"]);
 const DEFAULT_POSITION = { latitude: 37.6688, longitude: -122.0808, label: "Hayward, California", detail: "Using demonstration coordinates" };
 const STORAGE_KEYS = {
@@ -23,6 +23,8 @@ const state = {
     breed: "Golden retriever",
     weightLbs: 72,
     urgency: "same_day",
+    symptoms: [],
+    startedWhen: "",
     concernSummary: "",
     redFlags: [],
     ownerName: "Maya Morgan",
@@ -99,6 +101,28 @@ function humanize(value) {
   return String(value || "").replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
+const GENERIC_CONCERN = /^(?:(?:my|the)\s+(?:dog|cat|pet|animal)\s+)?(?:isn['’]?t|is not|doesn['’]?t seem|does not seem|hasn['’]?t been)?\s*(?:acting like (?:himself|herself|themself|themselves)|feeling (?:well|good)|doing (?:well|good)|right|normal|himself|herself|themselves|seems? off|sick|unwell|not okay|something(?: is|'s) wrong)[.! ]*$/i;
+const OBSERVABLE_DETAIL = /\b(vomit|throw(?:ing)? up|diarrh|stool|feces|cough|wheez|breath|pant|limp|walk|stand|pain|cry|yel[p|l]|bleed|wound|swollen|lump|seiz|collaps|unconscious|urine|urinat|pee|drink|water|eat|food|appetite|eye|ear|skin|rash|itch|scratch|toxin|poison|chocol|medication|fever|temperature|discharge|shak|trembl|letharg|energy|sleep|hiding|aggress|abdomen|belly|leg|paw|mouth)\w*/i;
+const QUANTIFIED_DETAIL = /\b(?:\d+|once|twice|three|four|several|every|hourly|constantly|repeatedly|since|for\s+\d+|minutes?|hours?|days?|today|yesterday|morning|tonight)\b/i;
+const FUNCTIONAL_DETAIL = /\b(?:won['’]?t|will not|can['’]?t|cannot|unable|refus|less than|more than|stopped|difficulty|struggl|only)\b/i;
+
+function assessConcern(summary, symptoms, startedWhen) {
+  const text = String(summary || "").trim();
+  const words = text.match(/[a-z0-9'’]+/gi) || [];
+  const selected = Array.isArray(symptoms) ? symptoms : [];
+  const concrete = OBSERVABLE_DETAIL.test(text);
+  const quantified = QUANTIFIED_DETAIL.test(text);
+  const functional = FUNCTIONAL_DETAIL.test(text);
+  const weakCategoryOnly = selected.every((value) => ["energy_or_behavior", "other_observable"].includes(value));
+  if (!selected.length) return { ok: false, message: "Select at least one thing you can observe." };
+  if (!startedWhen) return { ok: false, message: "Choose when the change started." };
+  if (text.length < 30 || words.length < 6) return { ok: false, message: "Add a little more detail: what changed and how often or how much." };
+  if (GENERIC_CONCERN.test(text) || (!concrete && !quantified && !functional)) return { ok: false, message: "Describe something observable—for example eating, breathing, walking, vomiting, stool, urination, pain, or a visible injury." };
+  if (weakCategoryOnly && !concrete) return { ok: false, message: "For behavior or energy changes, include the specific action that changed, such as hiding, refusing food, trouble standing, or unusual sleep." };
+  const strength = 2 + Number(concrete) + Number(quantified) + Number(functional) + Number(words.length >= 12);
+  return { ok: true, strength, message: strength >= 5 ? "Specific enough for a clinic to review" : "Good—one more concrete detail would help" };
+}
+
 function showToast(message) {
   const toast = $("[data-toast]");
   if (!toast) return;
@@ -134,6 +158,8 @@ function clearTimers() {
 
 async function renderRoute() {
   clearTimers();
+  $$('dialog[open]').forEach((dialog) => dialog.close());
+  document.body.classList.remove("dialog-open");
   let route = parseRoute();
   if (state.config?.signInRequired && PROTECTED_ROUTES.has(route) && !state.clerk?.user) {
     sessionStorage.setItem("timi_return_route", route);
@@ -161,6 +187,7 @@ async function renderRoute() {
     tracker: "Live intake request · Tími NOW",
     pets: "Pet profile · Tími NOW",
     clinic: "Clinic console · Tími NOW",
+    legal: "Legal center · Tími NOW",
     "sign-in": "Sign in · Tími NOW"
   })[route];
 
@@ -168,10 +195,14 @@ async function renderRoute() {
     const anchor = location.hash.replace("#", "");
     if (["how-it-works", "emergency"].includes(anchor)) requestAnimationFrame(() => document.getElementById(anchor)?.scrollIntoView());
   }
+  if (route === "legal") {
+    const section = routeQuery().get("section") || "terms";
+    requestAnimationFrame(() => document.getElementById(section)?.scrollIntoView({ block: "start" }));
+  }
   if (route === "find") {
     if (routeQuery().get("care") === "emergency") {
       state.intakeDraft.urgency = "emergency";
-      state.intakeStep = 2;
+      state.intakeStep = 1;
     }
     hydrateIntakeForm();
     renderIntakeStep();
@@ -277,13 +308,17 @@ function hydrateIntakeForm() {
   const draft = state.intakeDraft;
   const set = (name, value) => { if (form.elements[name] && value !== undefined && value !== null) form.elements[name].value = value; };
   set("petName", draft.petName); set("species", draft.species); set("breed", draft.breed); set("weightLbs", draft.weightLbs);
-  set("ownerName", draft.ownerName); set("ownerPhone", draft.ownerPhone); set("ownerEmail", draft.ownerEmail); set("concernSummary", draft.concernSummary);
+  set("ownerName", draft.ownerName); set("ownerPhone", draft.ownerPhone); set("ownerEmail", draft.ownerEmail); set("concernSummary", draft.concernSummary); set("startedWhen", draft.startedWhen);
   const urgency = form.querySelector(`[name="urgency"][value="${CSS.escape(draft.urgency || "same_day")}"]`);
   if (urgency) urgency.checked = true;
   $$('[name="redFlag"]', form).forEach((input) => { input.checked = (draft.redFlags || []).includes(input.value); });
+  $$('[name="symptom"]', form).forEach((input) => { input.checked = (draft.symptoms || []).includes(input.value); });
+  if (form.elements.legalConsent) form.elements.legalConsent.checked = draft.legalConsent === true;
+  if (form.elements.contactConsent) form.elements.contactConsent.checked = draft.contactConsent === true;
   $("[data-location-label]").textContent = draft.position?.label || DEFAULT_POSITION.label;
   $("[data-location-detail]").textContent = draft.position?.detail || DEFAULT_POSITION.detail;
   updateSafetyCallout();
+  updateConcernSpecificity();
 }
 
 function persistFormDraft() {
@@ -297,11 +332,15 @@ function persistFormDraft() {
     breed: String(values.get("breed") || "").trim(),
     weightLbs: Number(values.get("weightLbs")) || null,
     urgency: String(values.get("urgency") || "same_day"),
+    symptoms: values.getAll("symptom").map(String),
+    startedWhen: String(values.get("startedWhen") || ""),
     concernSummary: String(values.get("concernSummary") || "").trim(),
     redFlags: values.getAll("redFlag").map(String),
     ownerName: String(values.get("ownerName") || "").trim(),
     ownerPhone: String(values.get("ownerPhone") || "").trim(),
-    ownerEmail: String(values.get("ownerEmail") || "").trim()
+    ownerEmail: String(values.get("ownerEmail") || "").trim(),
+    legalConsent: values.get("legalConsent") === "on",
+    contactConsent: values.get("contactConsent") === "on"
   };
   if (state.intakeDraft.redFlags.length) state.intakeDraft.urgency = "emergency";
   writeStorage(STORAGE_KEYS.draft, state.intakeDraft);
@@ -313,13 +352,20 @@ function renderIntakeStep() {
     step.hidden = !active;
     step.classList.toggle("is-active", active);
   });
-  $("[data-intake-step-label]").textContent = `${state.intakeStep} of 3`;
-  $("[data-intake-progress]").style.width = `${state.intakeStep * 33.333}%`;
+  $("[data-intake-step-label]").textContent = `${state.intakeStep} of 2`;
+  $("[data-intake-progress]").style.width = `${state.intakeStep * 50}%`;
   requestAnimationFrame(() => $("[data-intake-step]:not([hidden]) h1")?.focus?.());
 }
 
 function validateStep(step) {
   const panel = $(`[data-intake-step="${step}"]`);
+  const form = $("[data-intake-form]");
+  const concern = form?.elements.concernSummary;
+  if (step === 1 && concern) {
+    const values = new FormData(form);
+    const assessment = assessConcern(values.get("concernSummary"), values.getAll("symptom").map(String), values.get("startedWhen"));
+    concern.setCustomValidity(assessment.ok ? "" : assessment.message);
+  }
   const fields = $$('input, select, textarea', panel).filter((field) => field.required && !field.checkValidity());
   $$('.field-error', panel).forEach((error) => error.remove());
   if (!fields.length) return true;
@@ -330,6 +376,18 @@ function validateStep(step) {
   first.closest("label, fieldset")?.append(error);
   first.focus();
   return false;
+}
+
+function updateConcernSpecificity() {
+  const form = $("[data-intake-form]");
+  const meter = $("[data-specificity-meter]");
+  if (!form || !meter) return;
+  const values = new FormData(form);
+  const assessment = assessConcern(values.get("concernSummary"), values.getAll("symptom").map(String), values.get("startedWhen"));
+  meter.classList.toggle("is-ready", assessment.ok);
+  meter.querySelector("span").textContent = assessment.message;
+  meter.querySelector("i").style.width = assessment.ok ? `${Math.min(100, (assessment.strength || 4) * 18)}%` : "26%";
+  form.elements.concernSummary?.setCustomValidity(assessment.ok ? "" : assessment.message);
 }
 
 function updateSafetyCallout() {
@@ -432,7 +490,9 @@ function openHospitalDialog(locationId, requestMode = false) {
   content.innerHTML = `<p class="eyebrow coral">${escapeHtml(humanize(location.kind))} CARE</p><h2 id="hospital-dialog-title">${escapeHtml(location.name)}</h2><p class="address">${escapeHtml(location.address)} · ${escapeHtml(location.phone)}</p>
     <div class="dialog-capacity"><div><small>CURRENT STATUS</small><strong>${escapeHtml(location.availability.label)}</strong></div><div><small>STABLE-PATIENT WAIT</small><strong>${escapeHtml(waitText(location))}</strong></div><div><small>VERIFIED</small><strong>${escapeHtml(formatRelativeTime(location.availability.reportedAt))}</strong></div><div><small>SOURCE</small><strong>${escapeHtml(humanize(location.availability.source))} · ${escapeHtml(location.availability.confidence)}</strong></div></div>
     <p class="dialog-note">${escapeHtml(location.availability.note || "Hospital staff determine clinical priority after intake. Your actual wait can change when critical patients arrive.")}</p>
-    <div class="deposit-box"><strong>${policy.depositRequired ? `${formatMoney(policy.depositAmountCents)} arrival deposit` : "No Tími deposit required"}</strong><small>${policy.depositRequired ? `Held under this clinic’s policy version ${policy.version}. The full deposit is credited to the clinic invoice.` : "The clinic will handle payment directly."}</small></div>
+    <div class="deposit-box"><strong>${policy.depositRequired ? `${formatMoney(policy.depositAmountCents)} arrival deposit after acceptance` : "No Tími deposit required"}</strong><small>${policy.depositRequired ? `Policy ${escapeHtml(policy.version || "current")}: the full deposit is credited to the clinic invoice. Refund and no-show terms are shown again before payment.` : "The clinic will handle veterinary payment directly."}</small></div>
+    ${requestMode ? `<label class="policy-ack"><input type="checkbox" data-policy-ack> <span>I understand capacity and wait time may change, the clinic independently triages patients, and this request is not guaranteed care.</span></label>` : ""}
+    <p class="dialog-legal">By sending a request, your intake is shared with this clinic under the <a href="#legal?section=terms">Terms</a> and <a href="#legal?section=safety">Veterinary Safety Notice</a>.</p>
     <div class="dialog-actions"><a class="button button-quiet" href="tel:${escapeHtml(location.phone.replace(/[^0-9+]/g, ""))}">Call hospital</a><button class="button button-primary" type="button" data-confirm-request="${escapeHtml(location.id)}">${requestMode ? "Send intake request" : "Ask this hospital to accept"}</button></div>`;
   const dialog = $("[data-hospital-dialog]");
   dialog.showModal();
@@ -443,6 +503,8 @@ async function submitIntake(locationId) {
   const location = state.locations.find((candidate) => candidate.id === locationId);
   if (!location) return;
   const draft = state.intakeDraft;
+  const policyAck = $("[data-policy-ack]");
+  if (policyAck && !policyAck.checked) { policyAck.focus(); return showToast("Acknowledge the clinic and capacity terms before sending."); }
   const button = $(`[data-confirm-request="${CSS.escape(locationId)}"]`);
   if (button) { button.disabled = true; button.textContent = "Sending…"; }
   try {
@@ -454,12 +516,16 @@ async function submitIntake(locationId) {
         owner: { name: draft.ownerName, phone: draft.ownerPhone, email: draft.ownerEmail },
         concernCategory: careType() === "emergency" ? "possible_emergency" : "illness_or_injury",
         concernSummary: draft.concernSummary,
+        symptoms: draft.symptoms,
+        startedWhen: draft.startedWhen,
         urgency: draft.urgency,
         redFlags: draft.redFlags,
         customerLatitude: draft.position.latitude,
         customerLongitude: draft.position.longitude,
         travelMinutes: Math.max(5, Math.round((location.distanceMiles || 2) * 4)),
-        consentToContact: true
+        consentToContact: draft.contactConsent === true,
+        legalConsent: draft.legalConsent === true,
+        legalVersion: "2026-08-21"
       })
     });
     state.currentIntake = { ...data.intake, location: data.location };
@@ -597,23 +663,17 @@ async function recordObservation(milestone) {
 async function startPayment() {
   const intake = state.currentIntake;
   if (!intake) return;
-  if (intake.demo || intake.id.startsWith("demo_")) {
-    state.currentIntake = { ...intake, paymentStatus: "paid", paymentProviderId: `demo_payment_${Date.now()}`, updatedAt: new Date().toISOString() };
-    writeStorage(STORAGE_KEYS.intake, state.currentIntake);
-    renderTracker();
-    showToast("Demonstration deposit completed. No card was charged.");
-    return;
-  }
-  try {
-    const data = await api(`/api/intakes/${encodeURIComponent(intake.id)}/payment`, { method: "POST" });
-    state.currentIntake = { ...state.currentIntake, ...data.intake };
-    if (["none", "paid", "demo"].includes(data.mode)) {
-      writeStorage(STORAGE_KEYS.intake, state.currentIntake);
-      renderTracker();
-      return showToast(data.mode === "demo" ? "Demonstration deposit completed." : "Deposit status updated.");
-    }
-    if (data.mode === "stripe") await openStripePayment(data.clientSecret);
-  } catch (error) { showToast(error.message); }
+  const policy = intake.policy || {};
+  const clinic = intake.location?.name || "the selected clinic";
+  $("[data-payment-disclosure]").textContent = `${clinic} requires ${formatMoney(intake.depositAmountCents)}. The full amount is credited to its invoice. Free cancellation: ${policy.freeCancelMinutes ?? 0} minutes; later refund and no-show handling follow clinic policy ${policy.version || "current"}.`;
+  $("[data-payment-policy-ack]").textContent = `I authorize the ${formatMoney(intake.depositAmountCents)} deposit and agree to clinic policy ${policy.version || "current"}, including its cancellation, refund, and no-show terms.`;
+  const form = $("[data-payment-form]");
+  state.stripeElements = null;
+  $("[data-payment-element]").replaceChildren();
+  form.reset();
+  form.querySelector("button[type='submit']").textContent = intake.demo || intake.id.startsWith("demo_") ? "Complete demo deposit" : "Continue to secure payment";
+  const dialog = $("[data-payment-dialog]");
+  dialog.showModal(); document.body.classList.add("dialog-open");
 }
 
 async function loadStripe() {
@@ -634,7 +694,8 @@ async function openStripePayment(clientSecret) {
   state.stripe = Stripe(state.config.stripePublishableKey);
   state.stripeElements = state.stripe.elements({ clientSecret, appearance: { theme: "stripe", variables: { colorPrimary: "#2357d9", borderRadius: "10px" } } });
   const dialog = $("[data-payment-dialog]");
-  dialog.showModal(); document.body.classList.add("dialog-open");
+  if (!dialog.open) dialog.showModal();
+  document.body.classList.add("dialog-open");
   const paymentElement = state.stripeElements.create("payment");
   paymentElement.mount("[data-payment-element]");
 }
@@ -643,6 +704,28 @@ async function confirmStripePayment(event) {
   event.preventDefault();
   const button = event.currentTarget.querySelector("button[type='submit']");
   button.disabled = true; button.textContent = "Processing…";
+  const intake = state.currentIntake;
+  if (intake.demo || intake.id.startsWith("demo_")) {
+    state.currentIntake = { ...intake, paymentStatus: "paid", paymentProviderId: `demo_payment_${Date.now()}`, updatedAt: new Date().toISOString() };
+    writeStorage(STORAGE_KEYS.intake, state.currentIntake);
+    $("[data-payment-dialog]").close(); document.body.classList.remove("dialog-open");
+    renderTracker();
+    button.disabled = false; button.textContent = "Complete demo deposit";
+    return showToast("Demonstration deposit completed. No card was charged.");
+  }
+  if (!state.stripeElements) {
+    try {
+      const data = await api(`/api/intakes/${encodeURIComponent(intake.id)}/payment`, { method: "POST" });
+      state.currentIntake = { ...state.currentIntake, ...data.intake };
+      if (["none", "paid", "demo"].includes(data.mode)) {
+        writeStorage(STORAGE_KEYS.intake, state.currentIntake); renderTracker(); $("[data-payment-dialog]").close();
+        return showToast(data.mode === "demo" ? "Demonstration deposit completed." : "Deposit status updated.");
+      }
+      await openStripePayment(data.clientSecret);
+      button.disabled = false; button.textContent = `Pay ${formatMoney(intake.depositAmountCents)} deposit`;
+      return;
+    } catch (error) { showToast(error.message); button.disabled = false; button.textContent = "Continue to secure payment"; return; }
+  }
   const result = await state.stripe.confirmPayment({ elements: state.stripeElements, confirmParams: { return_url: `${location.origin}/#tracker` }, redirect: "if_required" });
   if (result.error) { showToast(result.error.message); button.disabled = false; button.textContent = "Pay deposit"; return; }
   $("[data-payment-dialog]").close(); document.body.classList.remove("dialog-open");
@@ -800,7 +883,7 @@ document.addEventListener("click", (event) => {
   const locationButton = event.target.closest("[data-use-location]");
   if (locationButton) useLocation();
   const next = event.target.closest("[data-next-step]");
-  if (next && validateStep(state.intakeStep)) { persistFormDraft(); state.intakeStep = Math.min(3, state.intakeStep + 1); renderIntakeStep(); }
+  if (next && validateStep(state.intakeStep)) { persistFormDraft(); state.intakeStep = Math.min(2, state.intakeStep + 1); renderIntakeStep(); }
   const previous = event.target.closest("[data-prev-step]");
   if (previous) { persistFormDraft(); state.intakeStep = Math.max(1, state.intakeStep - 1); renderIntakeStep(); }
   const refreshResults = event.target.closest("[data-refresh-results]");
@@ -833,11 +916,16 @@ document.addEventListener("click", (event) => {
 
 $("[data-intake-form]")?.addEventListener("change", (event) => {
   if (event.target.matches('[name="redFlag"], [name="urgency"]')) updateSafetyCallout();
+  if (event.target.matches('[name="symptom"], [name="startedWhen"]')) updateConcernSpecificity();
+});
+
+$("[data-intake-form]")?.addEventListener("input", (event) => {
+  if (event.target.matches('[name="concernSummary"]')) updateConcernSpecificity();
 });
 
 $("[data-intake-form]")?.addEventListener("submit", (event) => {
   event.preventDefault();
-  if (!validateStep(3)) return;
+  if (!validateStep(2)) return;
   persistFormDraft();
   setRoute("results");
 });
@@ -863,7 +951,7 @@ $("[data-install]")?.addEventListener("click", async () => {
   state.deferredInstall.prompt(); await state.deferredInstall.userChoice; state.deferredInstall = null; $("[data-install]").hidden = true;
 });
 
-window.addEventListener("hashchange", renderRoute);
+window.addEventListener("hashchange", () => { if (state.route === "find") persistFormDraft(); renderRoute(); });
 window.addEventListener("load", async () => { await loadConfig(); await renderRoute(); });
 
 if ("serviceWorker" in navigator) window.addEventListener("load", () => navigator.serviceWorker.register("/sw.js").catch(() => {}));

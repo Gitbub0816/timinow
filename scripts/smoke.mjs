@@ -37,10 +37,14 @@ response = await call("/api/intakes", {
     pet: { name: "Otis", species: "dog", breed: "Golden retriever", weightLbs: 72 },
     owner: { name: "Maya Morgan", phone: "(510) 555-0147", email: "maya@example.com" },
     concernCategory: "illness_or_injury",
-    concernSummary: "Vomited several times this morning.",
+    concernSummary: "Vomited several times this morning and refused water.",
+    symptoms: ["vomiting_or_diarrhea"],
+    startedWhen: "today",
     urgency: "urgent",
     travelMinutes: 12,
-    consentToContact: true
+    consentToContact: true,
+    legalConsent: true,
+    legalVersion: "2026-08-21"
   })
 });
 body = await response.json();

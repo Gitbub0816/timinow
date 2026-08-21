@@ -18,6 +18,21 @@ const SECURITY_HEADERS = {
   "x-frame-options": "DENY",
   "permissions-policy": "camera=(), microphone=(), payment=(self), geolocation=(self)"
 };
+const VALID_SYMPTOMS = new Set(["vomiting_or_diarrhea", "breathing_or_coughing", "pain_or_limping", "not_eating_or_drinking", "urination_or_stool", "injury_or_bleeding", "energy_or_behavior", "eye_ear_or_skin", "other_observable"]);
+const VALID_ONSETS = new Set(["within_hour", "today", "one_to_three_days", "more_than_three_days", "unknown"]);
+const GENERIC_CONCERN = /^(?:(?:my|the)\s+(?:dog|cat|pet|animal)\s+)?(?:isn['’]?t|is not|doesn['’]?t seem|does not seem|hasn['’]?t been)?\s*(?:acting like (?:himself|herself|themself|themselves)|feeling (?:well|good)|doing (?:well|good)|right|normal|himself|herself|themselves|seems? off|sick|unwell|not okay|something(?: is|'s) wrong)[.! ]*$/i;
+const OBSERVABLE_DETAIL = /\b(vomit|throw(?:ing)? up|diarrh|stool|feces|cough|wheez|breath|pant|limp|walk|stand|pain|cry|yelp|bleed|wound|swollen|lump|seiz|collaps|unconscious|urine|urinat|pee|drink|water|eat|food|appetite|eye|ear|skin|rash|itch|scratch|toxin|poison|chocol|medication|fever|temperature|discharge|shak|trembl|letharg|energy|sleep|hiding|aggress|abdomen|belly|leg|paw|mouth)\w*/i;
+const DETAIL_MODIFIER = /\b(?:\d+|once|twice|three|four|several|every|hourly|constantly|repeatedly|since|minutes?|hours?|days?|today|yesterday|morning|tonight|won['’]?t|will not|can['’]?t|cannot|unable|refus|stopped|difficulty|struggl)\b/i;
+
+function concernSpecificity(summary, symptoms, startedWhen) {
+  const words = summary.match(/[a-z0-9'’]+/gi) || [];
+  if (!symptoms.length) return "Select at least one observable symptom.";
+  if (!VALID_ONSETS.has(startedWhen)) return "Choose when the concern started.";
+  if (summary.length < 30 || words.length < 6) return "Describe what changed with at least 30 characters and six words.";
+  if (GENERIC_CONCERN.test(summary) || (!OBSERVABLE_DETAIL.test(summary) && !DETAIL_MODIFIER.test(summary))) return "Describe an observable change, not only that the pet seems off.";
+  if (symptoms.every((value) => ["energy_or_behavior", "other_observable"].includes(value)) && !OBSERVABLE_DETAIL.test(summary)) return "Behavior or energy concerns need a specific observable action.";
+  return null;
+}
 
 function json(data, init = {}) {
   return new Response(JSON.stringify(data), {
@@ -145,12 +160,22 @@ async function handleLocationSearch(url, env) {
   });
 }
 
+function humanizeOnset(value) {
+  return ({ within_hour: "Started within the last hour", today: "Started today", one_to_three_days: "Started 1–3 days ago", more_than_three_days: "Started more than 3 days ago", unknown: "Onset unknown" })[value] || "Onset not reported";
+}
+
+function humanizeSymptom(value) {
+  return ({ vomiting_or_diarrhea: "vomiting/diarrhea", breathing_or_coughing: "breathing/coughing", pain_or_limping: "pain/limping", not_eating_or_drinking: "not eating/drinking", urination_or_stool: "urination/stool", injury_or_bleeding: "injury/bleeding", energy_or_behavior: "energy/behavior", eye_ear_or_skin: "eye/ear/skin", other_observable: "other observable change" })[value] || value;
+}
+
 function validateIntake(body) {
   const pet = body.pet && typeof body.pet === "object" ? body.pet : {};
   const owner = body.owner && typeof body.owner === "object" ? body.owner : {};
   const species = cleanString(pet.species, 30).toLowerCase();
   const requestedUrgency = cleanString(body.urgency, 30).toLowerCase();
   const concernSummary = cleanString(body.concernSummary, 1200);
+  const symptoms = Array.isArray(body.symptoms) ? [...new Set(body.symptoms.map((value) => cleanString(value, 50)).filter((value) => VALID_SYMPTOMS.has(value)))].slice(0, 9) : [];
+  const startedWhen = cleanString(body.startedWhen, 40);
   const redFlags = redFlagsFrom(concernSummary, body.redFlags);
   const urgency = redFlags.length ? "emergency" : requestedUrgency;
   const errors = [];
@@ -160,10 +185,13 @@ function validateIntake(body) {
   if (!cleanString(owner.name, 120)) errors.push("owner.name is required");
   if (!/^\+?[0-9().\-\s]{7,24}$/.test(cleanString(owner.phone, 30))) errors.push("owner.phone is invalid");
   if (!cleanString(body.concernCategory, 80)) errors.push("concernCategory is required");
-  if (concernSummary.length < 5) errors.push("concernSummary must contain at least 5 characters");
+  const specificityError = concernSpecificity(concernSummary, symptoms, startedWhen);
+  if (specificityError) errors.push(specificityError);
   if (!VALID_URGENCY.has(urgency)) errors.push("urgency is invalid");
   if (body.consentToContact !== true) errors.push("consentToContact is required");
-  return { errors, pet, owner, species, urgency, concernSummary, redFlags };
+  if (body.legalConsent !== true || cleanString(body.legalVersion, 20) !== "2026-08-21") errors.push("current terms and safety notice must be accepted");
+  const clinicConcernSummary = `${humanizeOnset(startedWhen)} · ${symptoms.map(humanizeSymptom).join(", ")} · ${concernSummary}`;
+  return { errors, pet, owner, species, urgency, concernSummary, clinicConcernSummary, symptoms, startedWhen, redFlags, legalVersion: "2026-08-21" };
 }
 
 async function createIntake(request, env, actor) {
@@ -226,7 +254,7 @@ async function createIntake(request, env, actor) {
         email: cleanString(validated.owner.email, 160) || null
       },
       concernCategory: cleanString(body.concernCategory, 80),
-      concernSummary: validated.concernSummary,
+      concernSummary: validated.clinicConcernSummary,
       urgency: validated.urgency,
       redFlags: validated.redFlags,
       travelMinutes,
@@ -239,6 +267,7 @@ async function createIntake(request, env, actor) {
       policy,
       depositAmountCents: policy.depositAmountCents || 0,
       paymentStatus,
+      legalAcceptance: { version: validated.legalVersion, acceptedAt: now },
       createdAt: now,
       updatedAt: now,
       demo: true
@@ -260,14 +289,14 @@ async function createIntake(request, env, actor) {
       cleanString(validated.pet.name, 80), validated.species, cleanString(validated.pet.breed, 120) || null,
       ageYears, weightLbs, cleanString(validated.owner.name, 120), cleanString(validated.owner.phone, 30),
       cleanString(validated.owner.email, 160) || null, cleanString(body.concernCategory, 80),
-      validated.concernSummary, validated.urgency, JSON.stringify(validated.redFlags), customerLatitude,
+      validated.clinicConcernSummary, validated.urgency, JSON.stringify(validated.redFlags), customerLatitude,
       customerLongitude, travelMinutes, status, now, decisionAt, isoAfter(requestTtl), arrivalBy,
       JSON.stringify(policy), policy.depositAmountCents || 0, paymentStatus
     ),
     env.DB.prepare(`
       INSERT INTO intake_events (id, intake_id, event_type, actor_type, actor_id, detail_json)
       VALUES (?, ?, ?, ?, ?, ?)
-    `).bind(eventId, intakeId, status === "accepted" ? "auto_accepted" : "requested", "customer", actor?.userId || null, JSON.stringify({ urgency: validated.urgency, redFlags: validated.redFlags })),
+    `).bind(eventId, intakeId, status === "accepted" ? "auto_accepted" : "requested", "customer", actor?.userId || null, JSON.stringify({ urgency: validated.urgency, redFlags: validated.redFlags, symptoms: validated.symptoms, startedWhen: validated.startedWhen, legalVersion: validated.legalVersion, legalAcceptedAt: now })),
     env.DB.prepare(`
       INSERT INTO notification_outbox (id, tenant_id, intake_id, channel, template_key, payload_json, available_at)
       VALUES (?, ?, ?, 'dashboard', 'new_intake_request', ?, ?)

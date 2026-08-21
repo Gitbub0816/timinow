@@ -72,16 +72,23 @@ const intakePayload = {
   owner: { name: "Maya Morgan", phone: "(510) 555-0147", email: "maya@example.com" },
   concernCategory: "illness_or_injury",
   concernSummary: "Vomited three times this morning and will not drink.",
+  symptoms: ["vomiting_or_diarrhea", "not_eating_or_drinking"],
+  startedWhen: "today",
   urgency: "urgent",
   redFlags: [],
   customerLatitude: 37.6688,
   customerLongitude: -122.0808,
   travelMinutes: 12,
-  consentToContact: true
+  consentToContact: true,
+  legalConsent: true,
+  legalVersion: "2026-08-21"
 };
 
 let result = await call("/api/locations?lat=37.6688&lng=-122.0808&species=dog&care=urgent");
 assert(result.response.status === 200 && result.body.locations.length === 3, "D1 location search must return seeded clinics");
+
+result = await call("/api/intakes", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ...intakePayload, concernSummary: "My dog isn't acting like himself.", symptoms: ["energy_or_behavior"] }) });
+assert(result.response.status === 422 && result.body.error.details.some((detail) => detail.includes("observable")), "Vague concern descriptions must be rejected without AI");
 
 result = await call("/api/intakes", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(intakePayload) });
 assert(result.response.status === 201, `Immediate intake creation failed: ${JSON.stringify(result.body)}`);
@@ -126,7 +133,7 @@ assert(result.response.status === 200 && result.body.intake.status === "accepted
 result = await call("/api/intakes", {
   method: "POST",
   headers: { "content-type": "application/json" },
-  body: JSON.stringify({ ...intakePayload, locationId: "loc_bayview", concernSummary: "Persistent diarrhea but currently alert.", urgency: "urgent", redFlags: [] })
+  body: JSON.stringify({ ...intakePayload, locationId: "loc_bayview", concernSummary: "Persistent diarrhea six times today but still currently alert.", urgency: "urgent", redFlags: [] })
 });
 const expiringId = result.body.intake.id;
 database.prepare("UPDATE intake_requests SET request_expires_at = datetime('now', '-1 minute') WHERE id = ?").run(expiringId);
