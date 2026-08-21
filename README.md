@@ -4,6 +4,8 @@ Tími NOW is a real-time veterinary intake network. It answers **“Which veteri
 
 The repository contains the complete Cloudflare MVP:
 
+- Customer-only native SwiftUI iOS app with guided onboarding and Skip Fuse-ready shared modules
+- Veterinary-team-only native Windows operations app with tray alerts and an always-on-top compact queue
 - Customer-facing responsive PWA
 - Non-diagnostic concern intake and emergency red-flag escalation
 - Live hospital capacity search with freshness, source, and confidence
@@ -106,9 +108,17 @@ npm run deploy
 
 No repository changes are automatically committed or pushed by these commands.
 
+## Native clients
+
+- [`apps/customer-mobile`](apps/customer-mobile) — iOS 17+ SwiftUI app, interactive demo mode, live Worker integration, deterministic concern-quality guard, and Skip Fuse module configuration
+- [`apps/vet-windows`](apps/vet-windows) — .NET 8 WPF clinic console with capacity controls, request review, native alerts, tray behavior, and a draggable floating queue
+
+Native platform builds run in [GitHub Actions](.github/workflows/native-clients.yml). See [`docs/NATIVE-CLIENTS.md`](docs/NATIVE-CLIENTS.md) for release boundaries and production configuration.
+
 ## Architecture and policy documents
 
 - [`docs/MVP-ARCHITECTURE.md`](docs/MVP-ARCHITECTURE.md)
 - [`docs/PAYMENTS-AND-TENANT-POLICIES.md`](docs/PAYMENTS-AND-TENANT-POLICIES.md)
 - [`docs/INTEGRATION-COST-MATRIX.md`](docs/INTEGRATION-COST-MATRIX.md)
 - [`docs/UX-WIREFRAME.md`](docs/UX-WIREFRAME.md)
+- [`docs/NATIVE-CLIENTS.md`](docs/NATIVE-CLIENTS.md)

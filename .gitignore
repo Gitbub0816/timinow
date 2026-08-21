@@ -4,3 +4,11 @@ node_modules/
 wrangler.d1.jsonc
 dist/
 .DS_Store
+apps/customer-mobile/.build/
+apps/customer-mobile/.swiftpm/
+apps/customer-mobile/Package.resolved
+apps/customer-mobile/Darwin/TimiNow.xcodeproj/
+apps/customer-mobile/xcuserdata/
+apps/vet-windows/**/bin/
+apps/vet-windows/**/obj/
+*.user

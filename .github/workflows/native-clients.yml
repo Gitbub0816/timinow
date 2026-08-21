@@ -1,0 +1,63 @@
+name: Native clients
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/customer-mobile/**"
+      - "apps/vet-windows/**"
+      - ".github/workflows/native-clients.yml"
+  pull_request:
+    paths:
+      - "apps/customer-mobile/**"
+      - "apps/vet-windows/**"
+      - ".github/workflows/native-clients.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  ios:
+    name: Swift tests and iOS build
+    runs-on: macos-15
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: apps/customer-mobile
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Generate Xcode project
+        working-directory: apps/customer-mobile/Darwin
+        run: xcodegen generate
+      - name: Resolve Swift packages
+        run: swift package resolve
+      - name: Run core tests
+        run: swift test
+      - name: Compile iOS app
+        run: >-
+          xcodebuild
+          -workspace Project.xcworkspace
+          -scheme TimiNow
+          -sdk iphonesimulator
+          -destination 'generic/platform=iOS Simulator'
+          CODE_SIGNING_ALLOWED=NO
+          build
+
+  windows:
+    name: Windows desktop build
+    runs-on: windows-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: apps/vet-windows
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+      - name: Restore
+        run: dotnet restore TimiVet.sln
+      - name: Compile release build
+        run: dotnet build TimiVet.sln -c Release --no-restore

@@ -1,0 +1,4 @@
+# Compile the shared model and networking layer natively through Skip Fuse.
+skip:
+  mode: native
+  bridging: true

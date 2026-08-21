@@ -11,8 +11,9 @@
     "deploy": "wrangler deploy",
     "types": "wrangler types",
     "build": "wrangler deploy --dry-run --outdir .wrangler/build",
+    "check:native": "node scripts/validate-native.mjs",
     "smoke": "node scripts/smoke.mjs && node scripts/auth-test.mjs && node scripts/e2e.mjs",
-    "check": "node --check src/index.js && node --check src/auth.js && node --check src/catalog.js && node --check src/db.js && node --check public/app.js && node scripts/validate.mjs && node scripts/smoke.mjs && node scripts/auth-test.mjs && node scripts/e2e.mjs"
+    "check": "node --check src/index.js && node --check src/auth.js && node --check src/catalog.js && node --check src/db.js && node --check public/app.js && node scripts/validate.mjs && node scripts/validate-native.mjs && node scripts/smoke.mjs && node scripts/auth-test.mjs && node scripts/e2e.mjs"
   },
   "devDependencies": {
     "wrangler": "^4.32.0"

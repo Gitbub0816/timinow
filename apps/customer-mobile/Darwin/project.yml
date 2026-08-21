@@ -1,0 +1,38 @@
+name: TimiNow
+options:
+  bundleIdPrefix: solutions.clearkey
+  deploymentTarget:
+    iOS: "17.0"
+packages:
+  TimiNowPackage:
+    path: ..
+targets:
+  TimiNow:
+    type: application
+    platform: iOS
+    sources:
+      - Sources
+    dependencies:
+      - package: TimiNowPackage
+        product: TimiNowApp
+    configFiles:
+      Debug: TimiNow.xcconfig
+      Release: TimiNow.xcconfig
+    settings:
+      base:
+        INFOPLIST_FILE: Info.plist
+        PRODUCT_NAME: TimiNow
+        PRODUCT_MODULE_NAME: TimiNowHost
+        CODE_SIGN_STYLE: Automatic
+        TARGETED_DEVICE_FAMILY: "1,2"
+        SUPPORTS_MACCATALYST: NO
+        SWIFT_VERSION: "5.9"
+schemes:
+  TimiNow:
+    build:
+      targets:
+        TimiNow: all
+    run:
+      config: Debug
+    archive:
+      config: Release
