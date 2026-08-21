@@ -33,13 +33,15 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
         self.defaults = defaults
         let storedPets = Self.decode([PetProfile].self, from: defaults.data(forKey: "timi.pets")) ?? [DemoData.pet]
         self.pets = storedPets
-        self.selectedPetId = defaults.string(forKey: "timi.selectedPet") ?? storedPets[0].id
-        let selected = storedPets.first(where: { $0.id == self.selectedPetId }) ?? storedPets[0]
+        let selectedPetId = defaults.string(forKey: "timi.selectedPet") ?? storedPets[0].id
+        self.selectedPetId = selectedPetId
+        let selected = storedPets.first(where: { $0.id == selectedPetId }) ?? storedPets[0]
         self.draft = CareDraft(pet: selected)
         self.history = Self.decode([CareHistoryItem].self, from: defaults.data(forKey: "timi.history")) ?? []
         self.hasCompletedOnboarding = defaults.bool(forKey: "timi.onboarding.complete")
-        self.apiBaseURLText = defaults.string(forKey: "timi.apiBaseURL") ?? ""
-        self.gateway = TimiGateway(baseURL: Self.validBaseURL(self.apiBaseURLText))
+        let apiBaseURLText = defaults.string(forKey: "timi.apiBaseURL") ?? ""
+        self.apiBaseURLText = apiBaseURLText
+        self.gateway = TimiGateway(baseURL: Self.validBaseURL(apiBaseURLText))
     }
 
     public var selectedPet: PetProfile { pets.first(where: { $0.id == selectedPetId }) ?? pets[0] }
