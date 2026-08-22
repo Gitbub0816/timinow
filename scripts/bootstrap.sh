@@ -382,6 +382,16 @@ set_var PLATFORM_ADMIN_EMAILS  "$ADMIN"
 set_var PLATFORM_ADMIN_USER_IDS "$ADMIN"
 # Shared by both ends of the immediate-dispatch path, so it goes to both.
 set_var VOICE_DRAIN_TOKEN      "$CUSTOMER" "$VOICE"
+# Optional for the drain itself, which no-ops on an empty queue and is reachable
+# over the service binding regardless. Not optional for /api/voice/test-call,
+# which places a real, billable call and therefore refuses to run without one —
+# and "not permitted" is a confusing answer when the reason is that nobody ever
+# set a token.
+if ! have VOICE_DRAIN_TOKEN; then
+  warn "  VOICE_DRAIN_TOKEN is blank, so /api/voice/test-call will refuse to"
+  warn "  place a test call. Add a line like this to $ENV_FILE and re-run:"
+  dim  "    VOICE_DRAIN_TOKEN=$(openssl rand -hex 24 2>/dev/null || head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+fi
 echo
 
 # ------------------------------------------------ secrets -> each Worker ---

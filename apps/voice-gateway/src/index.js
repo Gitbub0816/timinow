@@ -676,7 +676,19 @@ async function handleApi(request, env) {
   if (method === "POST" && path === "/api/voice/test-call") {
     const expected = env.VOICE_DRAIN_TOKEN || "";
     const supplied = request.headers.get("x-timi-drain-token") || "";
-    if (!expected || supplied !== expected) return apiError(403, "TEST_CALL_FORBIDDEN", "Not permitted.");
+    // Three different problems, and one message for all three sends you off to
+    // check the wrong one. None of these tells an attacker anything they could
+    // use: the token itself is never echoed, and knowing that a Worker has no
+    // token configured does not produce one.
+    if (!expected) {
+      return apiError(403, "TEST_CALL_NO_TOKEN", "This Worker has no VOICE_DRAIN_TOKEN set, so the test endpoint stays closed. Put one in your env file and run scripts/bootstrap.sh again.");
+    }
+    if (!supplied) {
+      return apiError(403, "TEST_CALL_NO_HEADER", "No x-timi-drain-token header was sent.");
+    }
+    if (supplied !== expected) {
+      return apiError(403, "TEST_CALL_TOKEN_MISMATCH", `The x-timi-drain-token sent does not match this Worker's VOICE_DRAIN_TOKEN (sent ${supplied.length} characters, expected ${expected.length}).`);
+    }
     if (!env.TWILIO_ACCOUNT_SID || !env.TWILIO_AUTH_TOKEN || !env.TWILIO_FROM_NUMBER) {
       return apiError(409, "TWILIO_NOT_CONFIGURED", "Set TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN and TWILIO_FROM_NUMBER first.");
     }
