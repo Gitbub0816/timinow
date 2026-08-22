@@ -416,6 +416,28 @@ for (const [appRoot, libraryRoots] of [
   if (!invocations.length) throw new Error(".github/workflows/native-clients.yml: no xcodebuild invocation found — the native apps are no longer being compiled.");
 }
 
+// A library product named after a target that an app product already owns the
+// linkage of makes Xcode refuse the whole build. Only declare products the
+// Xcode projects actually link.
+for (const [manifestPath, projectPath] of [
+  ["apps/customer-mobile/Package.swift", "apps/customer-mobile/Darwin/project.yml"],
+  ["apps/vet-desktop/Package.swift", "apps/vet-desktop/Darwin/project.yml"]
+]) {
+  const manifest = await read(manifestPath);
+  const project = await read(projectPath);
+  const linked = new Set([...project.matchAll(/product:\s*(\w+)/g)].map((m) => m[1]));
+  for (const product of manifest.matchAll(/\.library\(name:\s*"(\w+)"/g)) {
+    if (!linked.has(product[1])) {
+      throw new Error(`${manifestPath}: declares the library product ${product[1]}, which ${projectPath} never links. A product named after a target reached through another product makes Xcode refuse the build — drop it.`);
+    }
+  }
+  for (const name of linked) {
+    if (!manifest.includes(`.library(name: "${name}"`)) {
+      throw new Error(`${projectPath}: links the product ${name}, which ${manifestPath} does not declare.`);
+    }
+  }
+}
+
 const csharpFiles = await collectFiles("apps/vet-windows", ".cs");
 for (const path of csharpFiles) {
   const problems = bracketProblems(await read(path));

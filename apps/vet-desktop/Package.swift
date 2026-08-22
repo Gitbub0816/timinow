@@ -6,9 +6,10 @@ let package = Package(
     defaultLocalization: "en",
     platforms: [.macOS(.v14)],
     products: [
-        .library(name: "TimiVetApp", type: .dynamic, targets: ["TimiVetApp"]),
-        .library(name: "TimiVetUI", type: .dynamic, targets: ["TimiVetUI"]),
-        .library(name: "TimiVetCore", type: .dynamic, targets: ["TimiVetCore"])
+        // Only the product the Xcode project links — see the customer
+        // package's Package.swift for why a same-named library product for
+        // each target breaks the app build.
+        .library(name: "TimiVetApp", type: .dynamic, targets: ["TimiVetApp"])
     ],
     dependencies: [
         .package(url: "https://source.skip.tools/skip.git", from: "1.7.0"),

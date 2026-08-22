@@ -67,9 +67,13 @@ let package = Package(
     defaultLocalization: "en",
     platforms: [.iOS(.v17), .macOS(.v14), .macCatalyst(.v17)],
     products: [
+        // Only what the Xcode project actually links is a product. A product
+        // sharing a name with a target it does not own the linkage of makes
+        // Xcode refuse the build: "TimiNowCore is linked as a static library
+        // by TimiNow and TimiNowApp, but cannot be built dynamically because
+        // there is a package product with the same name." The targets are
+        // still built and tested — they are reached through TimiNowApp.
         .library(name: "TimiNowApp", type: .dynamic, targets: ["TimiNowApp"]),
-        .library(name: "TimiNowUI", type: .dynamic, targets: ["TimiNowUI"]),
-        .library(name: "TimiNowCore", type: .dynamic, targets: ["TimiNowCore"]),
         // Apple-only, opt-in from the Darwin Xcode project (see
         // Darwin/project.yml). Never a dependency of TimiNowUI/TimiNowApp so
         // Skip's Android build never has to compile it.
