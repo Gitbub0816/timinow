@@ -97,6 +97,12 @@ public struct AuthWorkspaceOption: Identifiable, Hashable, Sendable {
         isBusy = true
         defer { isBusy = false }
 
+        // Four different things can go wrong here and they used to look
+        // identical: "Tími could not reach Clerk. Check the Worker connection
+        // in Settings." The error was caught and thrown away, so the one fact
+        // that would have ended it — which address, and what it said — never
+        // reached the screen. Each is now named.
+        let address = apiClient.configuredAddress
         do {
             let config = try await apiClient.getConfig()
             publishableKey = config.clerkPublishableKey
@@ -104,16 +110,23 @@ public struct AuthWorkspaceOption: Identifiable, Hashable, Sendable {
                 frontendAPIHost = explicitHost
             } else if let key = publishableKey {
                 frontendAPIHost = Self.decodeFrontendAPIHost(key)
+                if frontendAPIHost == nil {
+                    errorMessage = "\(address) returned a Clerk key Tími could not read (\(key.prefix(12))…). It should start pk_live_ or pk_test_."
+                }
+            } else {
+                errorMessage = "\(address) is reachable but serves no Clerk publishable key, so there is no sign-in service to reach. Deploy the Workers with CLERK_PUBLISHABLE_KEY set."
             }
+        } catch let error as ClinicAPIError {
+            errorMessage = "Could not read \(address)/api/config — \(error.message)"
         } catch {
-            // Offline, or the Worker URL in Settings is not reachable yet.
-            // Sign-in stays on the identifier screen until it is.
+            errorMessage = "Could not reach \(address)/api/config — \(error.localizedDescription)"
         }
 
         guard let host = frontendAPIHost, let stored = loadCredential(), stored.frontendAPIHost == host else {
             stage = .identifier
             return
         }
+        errorMessage = nil
         restoreCookie(stored.clientCookie, host: host)
         activeSessionId = stored.activeSessionId
         workerToken = stored.workerToken
@@ -137,7 +150,10 @@ public struct AuthWorkspaceOption: Identifiable, Hashable, Sendable {
     public func submitIdentifier() async {
         let identifier = identifierText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !identifier.isEmpty else { errorMessage = "Enter your work email or phone number."; return }
-        guard frontendAPIHost != nil else { errorMessage = "Tími could not reach Clerk. Check the Worker connection in Settings."; return }
+        guard frontendAPIHost != nil else {
+            errorMessage = errorMessage ?? "No Clerk instance resolved from \(apiClient.configuredAddress). Check the Worker address in Settings."
+            return
+        }
         isBusy = true; errorMessage = nil
         defer { isBusy = false }
         do {
@@ -558,7 +574,10 @@ public struct AuthWorkspaceOption: Identifiable, Hashable, Sendable {
 #if canImport(AuthenticationServices) && canImport(AppKit)
 extension AuthController {
     public func beginOAuth(provider: String) async {
-        guard frontendAPIHost != nil else { errorMessage = "Tími could not reach Clerk. Check the Worker connection in Settings."; return }
+        guard frontendAPIHost != nil else {
+            errorMessage = errorMessage ?? "No Clerk instance resolved from \(apiClient.configuredAddress). Check the Worker address in Settings."
+            return
+        }
         isBusy = true; errorMessage = nil
         defer { isBusy = false }
         do {
