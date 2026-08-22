@@ -310,9 +310,15 @@ There is no separate `git pull`: the script rewrites the wrangler configs from
 the env file on every run, so its own edits to them are never worth a merge
 conflict. Anything else uncommitted stops the run rather than being discarded.
 
+It also writes the Mapbox downloads token into `~/.netrc` on the machine it
+runs on, since that is the only way SwiftPM can authenticate to
+`api.mapbox.com` — without it the iOS app builds the non-Mapbox fallback: a
+ranked list instead of a live map, and no turn-by-turn. Only the
+`api.mapbox.com` entry is touched; anything else in that file is left alone.
+
 Add `--dry-run` to see what it would do and touch nothing, `--secrets-only` to
 skip straight to the secrets when the Workers are already deployed, or
-`--no-pull` to deploy exactly what is in the checkout.
+`--no-pull` to deploy exactly what is in the checkout. The flags combine.
 
 `wrangler login` opens a browser. `gh auth login` is only needed for the two
 repository secrets; skip it and the script says so and carries on.

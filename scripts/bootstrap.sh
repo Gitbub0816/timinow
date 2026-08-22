@@ -33,24 +33,29 @@ fi
 
 set -euo pipefail
 
-ENV_FILE="${1:-}"
-DRY_RUN="${2:-}"
-[ "${1:-}" = "--dry-run" ] && { ENV_FILE=""; DRY_RUN="--dry-run"; }
-
-if [ -z "$ENV_FILE" ] || [ ! -f "$ENV_FILE" ]; then
-  echo "usage: $0 <path-to-env-file> [--dry-run|--secrets-only|--no-pull]" >&2
-  echo "example: $0 ~/Downloads/env.example" >&2
-  exit 1
-fi
-
+ENV_FILE=""
 DRY=false
 SECRETS_ONLY=false
 PULL=true
-case "$DRY_RUN" in
-  --dry-run)      DRY=true ;;
-  --secrets-only) SECRETS_ONLY=true ;;
-  --no-pull)      PULL=false ;;
-esac
+
+# Every argument is read, in any order, so the flags combine — `--dry-run
+# --no-pull` used to silently ignore the second one.
+for arg in "$@"; do
+  case "$arg" in
+    --dry-run)      DRY=true ;;
+    --secrets-only) SECRETS_ONLY=true ;;
+    --no-pull)      PULL=false ;;
+    -*)             echo "unknown option: $arg" >&2; exit 1 ;;
+    *)              [ -n "$ENV_FILE" ] && { echo "more than one env file given: $ENV_FILE and $arg" >&2; exit 1; }
+                    ENV_FILE="$arg" ;;
+  esac
+done
+
+if [ -z "$ENV_FILE" ] || [ ! -f "$ENV_FILE" ]; then
+  echo "usage: $0 <path-to-env-file> [--dry-run] [--secrets-only] [--no-pull]" >&2
+  echo "example: $0 ~/Downloads/env.example" >&2
+  exit 1
+fi
 
 cd "$(dirname "$0")/.."
 
@@ -420,6 +425,39 @@ if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
 else
   warn "  gh not installed or not signed in — skipping repository secrets."
   warn "  brew install gh && gh auth login, then re-run."
+fi
+echo
+
+# The Mapbox SDKs are binary dependencies fetched over HTTP, and SwiftPM
+# authenticates to api.mapbox.com through ~/.netrc — there is no other way to
+# hand it the downloads token. Without it the iOS app builds the non-Mapbox
+# fallback: a ranked list instead of a live map, and no turn-by-turn at all.
+# Writing it here means the token is never pasted into a terminal.
+bold "6b. Mapbox downloads token (this machine)"
+DOWNLOADS_TOKEN="$(env_value MAPBOX_DOWNLOADS_TOKEN)"
+if [ -z "$DOWNLOADS_TOKEN" ]; then
+  dim "  skip  MAPBOX_DOWNLOADS_TOKEN (blank in env file)"
+elif $DRY; then
+  dim "    would write the api.mapbox.com entry in $HOME/.netrc"
+else
+  case "$DOWNLOADS_TOKEN" in
+    sk.*) ;;
+    *) die "  MAPBOX_DOWNLOADS_TOKEN must be a secret token starting with sk. — a
+  pk. token has no DOWNLOADS:READ scope and the SDKs will not fetch." ;;
+  esac
+  NETRC="$HOME/.netrc"
+  # Only our own entry is touched. A ~/.netrc is shared with every other tool
+  # on the machine, so replacing the file wholesale would break them.
+  if [ -f "$NETRC" ]; then
+    awk '
+      /^[[:space:]]*machine[[:space:]]/ { ours = ($2 == "api.mapbox.com") }
+      !ours { print }
+    ' "$NETRC" > "$NETRC.timi" && mv "$NETRC.timi" "$NETRC"
+  fi
+  printf 'machine api.mapbox.com\n  login mapbox\n  password %s\n' "$DOWNLOADS_TOKEN" >> "$NETRC"
+  chmod 600 "$NETRC"
+  echo "  set   MAPBOX_DOWNLOADS_TOKEN -> $NETRC"
+  dim "  export TIMI_MAPBOX=1 before building the iOS app to link the SDKs."
 fi
 echo
 

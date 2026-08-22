@@ -299,4 +299,17 @@ if (!moments.some((moment) => PLAYFUL.test(TIMI_ANNOUNCEMENTS.calm[moment]))) {
   }
 }
 
+// ~/.netrc is shared with every other tool on the machine, so the Mapbox entry
+// has to be merged into it, never written over it.
+{
+  const bootstrap = await readFile("scripts/bootstrap.sh", "utf8");
+  const netrcWrites = [...bootstrap.matchAll(/^\s*printf[^\n]*[^>]>\s*"\$NETRC"/gm)];
+  if (netrcWrites.length) {
+    throw new Error("scripts/bootstrap.sh truncates ~/.netrc. It is shared with git, curl, and anything else on the machine — append the api.mapbox.com entry after filtering the old one instead.");
+  }
+  if (!bootstrap.includes('>> "$NETRC"')) {
+    throw new Error("scripts/bootstrap.sh no longer writes the Mapbox downloads token to ~/.netrc, so the iOS app silently builds the non-Mapbox fallback.");
+  }
+}
+
 console.log(`Validated ${requiredFiles.length} files, ${screens.length} screens, ${requiredTables.length} D1 tables, and ${requiredRoutes.length} API groups.`);
