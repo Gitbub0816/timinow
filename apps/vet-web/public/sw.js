@@ -1,14 +1,11 @@
-const CACHE = "timinow-shell-v6";
+const CACHE = "timinow-vet-shell-v1";
 const SHELL = [
   "/",
   "/index.html",
   "/styles.css",
   "/app.js",
-  "/map.js",
   "/manifest.webmanifest",
-  "/assets/brand/timinow-wordmark.png",
-  "/assets/art/find-care-hero.png",
-  "/assets/art/clinic-operations.png",
+  "/assets/brand/timinow-wordmark.svg",
   "/assets/icons/icon.svg"
 ];
 
@@ -27,6 +24,7 @@ self.addEventListener("activate", (event) => {
 self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
   const url = new URL(event.request.url);
+  // Never cache the API: the review queue and dashboard must always be live.
   if (url.pathname.startsWith("/api/")) return;
 
   event.respondWith(

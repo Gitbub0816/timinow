@@ -1,0 +1,22 @@
+{
+  "name": "Tími Vet — veterinary operations console",
+  "short_name": "Tími Vet",
+  "description": "Live intake queue, public capacity, and availability decisions for veterinary teams.",
+  "start_url": "/?source=pwa#console",
+  "display": "standalone",
+  "background_color": "#f3f5fa",
+  "theme_color": "#111b3b",
+  "orientation": "any",
+  "icons": [
+    {
+      "src": "/assets/icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    {"name": "Clinic operations", "url": "/#console"},
+    {"name": "Workspace people", "url": "/#people"}
+  ]
+}

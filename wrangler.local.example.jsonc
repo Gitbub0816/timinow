@@ -19,7 +19,7 @@
     "SIGN_IN_REQUIRED": "false",
     "DEMO_MODE": "true",
     "SURFACE": "customer",
-    "CLERK_JS_URL": "https://cdn.jsdelivr.net/npm/@clerk/clerk-js@5/dist/clerk.headless.mjs",
+    "CLERK_JS_URL": "https://cdn.jsdelivr.net/npm/@clerk/clerk-js@5/headless/+esm",
     "MAPBOX_PUBLIC_TOKEN": "",
     "MAPBOX_STYLE_URL": "mapbox://styles/calebowen2019/cmt3nci25004d01sya8qxcb4u"
   },

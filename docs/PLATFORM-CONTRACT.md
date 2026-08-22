@@ -119,7 +119,7 @@ Admin Worker only:
   "appName": "Tími NOW",
   "signInRequired": true,
   "clerkPublishableKey": "pk_live_…",
-  "clerkJsUrl": "https://cdn.jsdelivr.net/npm/@clerk/clerk-js@5/dist/clerk.headless.mjs",
+  "clerkJsUrl": "https://cdn.jsdelivr.net/npm/@clerk/clerk-js@5/headless/+esm",
   "stripePublishableKey": "pk_live_…",
   "demoMode": false,
   "database": "d1",

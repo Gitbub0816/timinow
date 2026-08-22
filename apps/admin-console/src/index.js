@@ -329,13 +329,22 @@ async function createTenant(request, env, actor) {
 
   let locationId;
   try {
+    // The tenant row is written through the shared helper (as every other
+    // surface does); the location/policy/availability rows are then written
+    // together in one D1 batch, which D1 executes as a single transaction —
+    // so those three either all land or all roll back together.
+    await insertTenant(env, {
+      id: tenantId,
+      clerkOrgId: organization.id,
+      clerkOrgSlug: organization.slug || slug,
+      name,
+      slug,
+      contactEmail: contactEmail || null,
+      createdBy: actor.userId
+    });
     locationId = newId("location");
     const locationSlug = await uniqueLocationSlug(env, slug, location.name);
     await env.DB.batch([
-      env.DB.prepare(`
-        INSERT INTO tenants (id, clerk_org_id, name, slug, status, clerk_org_slug, contact_email, created_by)
-        VALUES (?, ?, ?, ?, 'active', ?, ?, ?)
-      `).bind(tenantId, organization.id, name, slug, organization.slug || slug, contactEmail || null, actor.userId),
       insertLocationStatement(env, { id: locationId, tenantId, slug: locationSlug, location }),
       insertPolicyStatement(env, { tenantId, policy }),
       insertInitialAvailabilityStatement(env, { locationId, createdBy: actor.userId })
@@ -343,9 +352,16 @@ async function createTenant(request, env, actor) {
   } catch (error) {
     console.error(JSON.stringify({ event: "tenant_creation_rollback", tenantId, message: error.message }));
     try {
+      // `tenants` cascades to any location/policy rows that did land, so this
+      // single delete cleans up whichever step actually failed.
+      await env.DB.prepare("DELETE FROM tenants WHERE id = ?").bind(tenantId).run();
+    } catch (cleanupError) {
+      console.error(JSON.stringify({ event: "tenant_creation_d1_rollback_failed", tenantId, message: cleanupError.message }));
+    }
+    try {
       await deleteOrganization(env, organization.id);
     } catch (cleanupError) {
-      console.error(JSON.stringify({ event: "tenant_creation_rollback_failed", tenantId, clerkOrgId: organization.id, message: cleanupError.message }));
+      console.error(JSON.stringify({ event: "tenant_creation_clerk_rollback_failed", tenantId, clerkOrgId: organization.id, message: cleanupError.message }));
     }
     return apiError(500, "TENANT_CREATION_FAILED", "Creating the tenant failed and the Clerk organization was rolled back. No records were left in an inconsistent state.", [error.message]);
   }

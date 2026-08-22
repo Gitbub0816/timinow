@@ -9,7 +9,7 @@
     "SIGN_IN_REQUIRED": "true",
     "DEMO_MODE": "false",
     "SURFACE": "customer",
-    "CLERK_JS_URL": "https://cdn.jsdelivr.net/npm/@clerk/clerk-js@5/dist/clerk.headless.mjs",
+    "CLERK_JS_URL": "https://cdn.jsdelivr.net/npm/@clerk/clerk-js@5/headless/+esm",
     "CLERK_PUBLISHABLE_KEY": "",
     "CLERK_ISSUER": "",
     "AUTHORIZED_PARTIES": "",

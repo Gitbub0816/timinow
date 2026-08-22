@@ -4,6 +4,7 @@ const requiredFiles = [
   "public/index.html",
   "public/styles.css",
   "public/app.js",
+  "public/map.js",
   "public/manifest.webmanifest",
   "public/sw.js",
   "public/assets/brand/timinow-wordmark.png",
@@ -44,6 +45,7 @@ await Promise.all(requiredFiles.map((file) => access(file)));
 
 const html = await readFile("public/index.html", "utf8");
 const app = await readFile("public/app.js", "utf8");
+const customerMap = await readFile("public/map.js", "utf8");
 const worker = await readFile("src/index.js", "utf8");
 const migration = await readFile("migrations/0001_initial.sql", "utf8");
 const multiOfferMigration = await readFile("migrations/0003_multi_offer_search.sql", "utf8");
@@ -109,7 +111,10 @@ for (const [label, source] of [["customer", app], ["veterinary", vetApp], ["admi
 for (const [label, source] of [["customer Worker", wrangler], ["veterinary Worker", wranglerVet], ["admin Worker", wranglerAdmin]]) {
   if (!source.includes(MAP_STYLE_URL)) throw new Error(`The ${label} must pin the production Mapbox style URL`);
 }
-if (!app.includes("mapbox")) throw new Error("The customer application must render the Mapbox map");
+if (!customerMap.includes("mapbox-gl")) throw new Error("The customer map module must load Mapbox GL JS");
+if (!customerMap.includes("directions/v5/mapbox")) throw new Error("The customer map module must request driving directions");
+if (!app.includes("renderClinicMap")) throw new Error("The customer application must render the clinic map");
+if (!app.includes("startNavigation")) throw new Error("The customer application must offer turn-by-turn navigation");
 if (!app.includes("state.config?.signInRequired")) throw new Error("The client is not enforcing the runtime sign-in configuration");
 if (manifest.display !== "standalone") throw new Error("PWA manifest must use standalone display mode");
 if (!manifest.icons?.length) throw new Error("PWA manifest requires at least one icon");
