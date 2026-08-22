@@ -28,6 +28,7 @@ cd "$(dirname "$0")/.."
 
 bold() { printf '\n\033[1m%s\033[0m\n' "$*"; }
 dim()  { printf '\033[2m%s\033[0m\n' "$*"; }
+warn() { printf '\033[33m%s\033[0m\n' "$*"; }
 die()  { printf '\033[31m%s\033[0m\n' "$*" >&2; exit 1; }
 
 # A silent terminal for ten minutes is indistinguishable from a hang, and the
@@ -171,12 +172,37 @@ BUILT="$APP_DIR/build/Build/Products/Release/TimiVet.app"
 [ -d "$BUILT" ] || die "  Build reported success but $BUILT is missing."
 echo "  built $BUILT"
 
+# A build can succeed and still produce a bundle launchd refuses: the app is
+# sandboxed and asks for a keychain group, so it needs a valid signature and an
+# embedded provisioning profile. Without them the only symptom is "Launch
+# failed ... Unknown error: 163" (EBADEXEC) at open time, which says nothing
+# about the cause. Checking here turns that into a message at build time.
+bold "3b. Signature"
+if ! codesign --verify --strict --verbose=1 "$BUILT" 2>&1 | grep -q "valid on disk"; then
+  codesign --verify --strict --verbose=2 "$BUILT" 2>&1 | tail -5 >&2
+  die "  The bundle is not validly signed, so macOS will refuse to launch it."
+fi
+echo "  signature valid"
+if [ -f "$BUILT/Contents/embedded.provisionprofile" ]; then
+  echo "  provisioning profile embedded"
+else
+  warn "  No embedded provisioning profile. A sandboxed app asking for a"
+  warn "  keychain group needs one, and without it launchd fails with"
+  warn "  \"Unknown error: 163\". Xcode creates it the first time it signs with"
+  warn "  a real Apple ID — open Xcode, Settings -> Accounts, add your Apple ID,"
+  warn "  then run this again."
+fi
+
 bold "4. Install"
 if $INSTALL; then
   rm -rf "/Applications/TimiVet.app"
-  cp -R "$BUILT" /Applications/
+  # ditto, not cp -R: cp can mangle the symlink layout inside a bundle and
+  # invalidate the signature that was just verified.
+  ditto "$BUILT" "/Applications/TimiVet.app"
   echo "  /Applications/TimiVet.app"
-  dim "  open -a TimiVet"
+  # By path, not by name: `open -a TimiVet` asks LaunchServices, which happily
+  # picks the copy still sitting in the build directory.
+  dim "  open /Applications/TimiVet.app"
 else
   dim "  skipped (--no-install)"
   dim "  open $BUILT"
