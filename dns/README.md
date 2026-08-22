@@ -11,21 +11,32 @@ Run that after any change. It verifies the one thing a zone file cannot express.
 Cloudflare dashboard → **timinow.pet** → **DNS** → **Records** → **Import and
 Export** → **Import DNS records** → upload `timinow.pet.zone`.
 
-## Then do the part the file cannot do
+## If you imported the earlier version of this file — delete six records
 
-**Cloudflare imports every record as DNS-only (grey cloud).** Proxy status is
-not part of the zone-file format, so it has to be set by hand afterwards — and
-getting it wrong fails quietly in both directions.
+An earlier revision shipped placeholder `AAAA 100::` records for `@`, `www`,
+`app`, `providers`, `admin`, and `voice`. **Delete them.**
 
-| Records | Setting | What happens if it's wrong |
-| --- | --- | --- |
-| `@`, `www`, `app`, `providers`, `admin`, `voice` | **Proxied** (orange) | Grey-clouded, the hostname resolves to `100::` and nothing answers |
-| `clerk`, `accounts`, `clkmail`, `clk._domainkey`, `clk2._domainkey` | **DNS-only** (grey) | Orange-clouded, Clerk's Frontend API breaks and sign-in fails |
+They were for Workers *Routes*. The Workers now use *Custom Domains*, where
+Cloudflare creates and manages the record itself — and it refuses to create one
+when a record already exists at that hostname. Leaving the placeholders in place
+is why nothing answers: the name resolves to the IPv6 discard prefix and the
+request hangs.
 
-`100::` is the IPv6 discard prefix. Those six records exist only so Cloudflare
-has something to attach a Worker route to; no packet ever reaches that address.
-Seeing `100::` come back from a lookup is the signature of a record that was
-imported but never proxied — which is exactly what `check-dns.sh` looks for.
+After deleting them:
+
+```bash
+npm run deploy:all
+./scripts/check-dns.sh
+```
+
+## Proxy status
+
+Only the Clerk records need a decision, and they must stay **DNS-only** (grey
+cloud). Proxying `clerk` or `accounts` breaks the Frontend API and sign-in
+fails.
+
+The application hostnames are not in this file at all — `wrangler deploy`
+creates them, already proxied, with a certificate.
 
 ## The three Clerk records that aren't in the file
 
@@ -70,8 +81,8 @@ Universal SSL. Removing either breaks certificate issuance, which is why
 
 Three places, or it half-works:
 
-1. A proxied placeholder record here.
-2. A `routes` entry in the Worker's `wrangler.*.jsonc`.
-3. The origin in `AUTHORIZED_PARTIES`, or the Worker rejects its own front end.
+1. A `routes` entry with `"custom_domain": true` in the Worker's config.
+2. The origin in `AUTHORIZED_PARTIES`, or the Worker rejects its own front end.
 
-`npm run check` fails if 2 and 3 disagree.
+Nothing to add to this file — Cloudflare creates the record on deploy.
+`npm run check` fails if 1 and 2 disagree.

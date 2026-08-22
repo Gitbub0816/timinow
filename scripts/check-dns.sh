@@ -4,11 +4,10 @@
 #
 #   ./scripts/check-dns.sh
 #
-# A zone file cannot express Cloudflare's proxy toggle, and that toggle is the
-# step most likely to be missed: the six Worker hostnames must be proxied, and
-# the Clerk hostnames must not be. Both mistakes fail quietly — a grey-clouded
-# Worker hostname simply does not answer, and an orange-clouded Clerk hostname
-# breaks sign-in — so check rather than assume.
+# The six application hostnames are Cloudflare Custom Domains, created by
+# `wrangler deploy` — so if one does not resolve, the Worker has not been
+# deployed rather than the DNS being wrong. The Clerk hostnames are ordinary
+# records that must stay DNS-only; proxying one breaks sign-in quietly.
 
 if [ -z "${BASH_VERSION:-}" ]; then
   echo "Run with bash: bash scripts/check-dns.sh" >&2
@@ -35,19 +34,19 @@ else
   exit 1
 fi
 
-# Cloudflare's proxy returns its own anycast addresses, never the 100:: the zone
-# file declares. Seeing 100:: come back is the signature of a record that was
-# imported but never orange-clouded.
+# 100:: is the IPv6 discard prefix. An earlier version of the zone file shipped
+# placeholder records pointing there; they now block Custom Domain creation and
+# must be deleted.
 proxied() {
   local host="$1"
   local answer
   answer="$(lookup "$host" A; lookup "$host" AAAA)"
   if [ -z "$answer" ]; then
-    red "$host does not resolve — record missing"
+    red "$host does not resolve — deploy its Worker: npm run deploy:all"
   elif printf '%s' "$answer" | grep -q '^100::$'; then
-    red "$host resolves to 100:: — imported but not Proxied (orange cloud it)"
+    red "$host resolves to 100:: — a leftover placeholder record. Delete it in the Cloudflare dashboard, then redeploy so the Custom Domain can be created."
   else
-    green "$host proxied"
+    green "$host resolves"
   fi
 }
 
@@ -64,7 +63,7 @@ dns_only_cname() {
   fi
 }
 
-head2 "Worker hostnames (must be Proxied)"
+head2 "Application hostnames (Custom Domains, created by wrangler deploy)"
 proxied "$DOMAIN"
 for sub in www app providers admin voice; do proxied "$sub.$DOMAIN"; done
 

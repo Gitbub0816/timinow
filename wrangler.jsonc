@@ -5,19 +5,22 @@
   "compatibility_date": "2026-08-20",
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": true,
-  // Public site and customer app. The apex and www serve the same
-  // Worker so a link to timinow.pet lands on the real product.
+  // Custom Domains, not Routes. The Worker *is* the origin here, so Cloudflare
+  // creates and manages the DNS record and the certificate itself. A Route
+  // would instead require a separate proxied placeholder record to already
+  // exist at each hostname — a second thing to get right, which fails silently
+  // when it is not.
   "routes": [
-    { "pattern": "timinow.pet/*", "zone_name": "timinow.pet" },
-    { "pattern": "www.timinow.pet/*", "zone_name": "timinow.pet" },
-    { "pattern": "app.timinow.pet/*", "zone_name": "timinow.pet" }
+    { "pattern": "timinow.pet", "custom_domain": true },
+    { "pattern": "www.timinow.pet", "custom_domain": true },
+    { "pattern": "app.timinow.pet", "custom_domain": true }
   ],
   "vars": {
     "SIGN_IN_REQUIRED": "true",
     "DEMO_MODE": "false",
     "SURFACE": "customer",
     "CLERK_JS_URL": "https://cdn.jsdelivr.net/npm/@clerk/clerk-js@5/headless/+esm",
-    "CLERK_PUBLISHABLE_KEY": "",
+    "CLERK_PUBLISHABLE_KEY": "pk_live_y",
     "CLERK_ISSUER": "https://clerk.timinow.pet",
     // Where an invited staff member lands after accepting a Clerk invitation.
     "VET_APP_URL": "https://providers.timinow.pet",

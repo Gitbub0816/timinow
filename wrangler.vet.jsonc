@@ -23,16 +23,16 @@
   "compatibility_date": "2026-08-20",
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": true,
-  // Veterinary console.
+  // Custom Domain: Cloudflare manages the record and certificate.
   "routes": [
-    { "pattern": "providers.timinow.pet/*", "zone_name": "timinow.pet" }
+    { "pattern": "providers.timinow.pet", "custom_domain": true }
   ],
   "vars": {
     "SIGN_IN_REQUIRED": "true",
     "DEMO_MODE": "false",
     "SURFACE": "clinic",
     "CLERK_JS_URL": "https://cdn.jsdelivr.net/npm/@clerk/clerk-js@5/headless/+esm",
-    "CLERK_PUBLISHABLE_KEY": "",
+    "CLERK_PUBLISHABLE_KEY": "pk_live_y",
     "CLERK_ISSUER": "https://clerk.timinow.pet",
     // Where an invited staff member lands after accepting a Clerk invitation.
     "VET_APP_URL": "https://providers.timinow.pet",

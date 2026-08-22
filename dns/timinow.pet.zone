@@ -6,11 +6,12 @@
 ;; ─────────────────────────────────────────────────────────────────────────────
 ;; READ THIS FIRST — Cloudflare imports every record as DNS-only (grey cloud).
 ;;
-;; The six Worker records below MUST be switched to Proxied (orange cloud) after
-;; import or the Workers will not answer on those hostnames. The Clerk records
-;; below MUST stay DNS-only; proxying them breaks Clerk's Frontend API.
+;; The Clerk records below MUST stay DNS-only (grey cloud). Proxying them breaks
+;; Clerk's Frontend API and sign-in fails.
 ;;
-;; A zone file cannot express proxy status, so this is a manual step either way.
+;; The application hostnames are NOT in this file — they are Cloudflare Custom
+;; Domains, created by `wrangler deploy`. See the Workers section below.
+;;
 ;; `./scripts/check-dns.sh` verifies the result.
 ;; ─────────────────────────────────────────────────────────────────────────────
 
@@ -19,18 +20,23 @@ $TTL 300
 
 ;; ═══════════════════════════════════════════════════ Cloudflare Workers ══
 ;;
-;; 100:: is the IPv6 discard prefix. These records exist only so Cloudflare has
-;; something to attach a Worker route to; no packet ever reaches that address.
-;; Traffic is served by the Worker at the edge.
+;; Nothing to add here. The six application hostnames —
 ;;
-;;   PROXIED (orange cloud) — all six.
-
-@                       300  IN  AAAA   100::          ; -> timinow        (public site)
-www                     300  IN  AAAA   100::          ; -> timinow        (same Worker)
-app                     300  IN  AAAA   100::          ; -> timinow        (customer app)
-providers               300  IN  AAAA   100::          ; -> timinow-vet    (veterinary console)
-admin                   300  IN  AAAA   100::          ; -> timinow-admin  (platform operators)
-voice                   300  IN  AAAA   100::          ; -> timinow-voice  (Twilio webhooks)
+;;     timinow.pet   www   app   providers   admin   voice
+;;
+;; are Cloudflare **Custom Domains**, declared in the `routes` block of each
+;; wrangler config. `wrangler deploy` creates the DNS record and provisions the
+;; certificate itself.
+;;
+;; IMPORTANT: a Custom Domain cannot be created if a record already exists at
+;; that hostname. An earlier version of this file shipped placeholder AAAA
+;; records pointing at 100:: — if you imported that version, DELETE those six
+;; records before deploying, or Cloudflare will refuse the hostname.
+;;
+;; Deliberately not Routes. A Route needs a proxied placeholder record to exist
+;; first, which is a second thing to get right and fails silently when it is
+;; not: the hostname resolves to the discard prefix and the request simply
+;; hangs.
 
 ;; ═════════════════════════════════════════════════════════════ Clerk ══
 ;;

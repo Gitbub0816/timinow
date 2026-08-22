@@ -36,24 +36,30 @@ origin to `AUTHORIZED_PARTIES`.
 ## 2. Cloudflare DNS
 
 The zone `timinow.pet` must be on the same Cloudflare account as the Workers.
-Adding a Worker route creates the DNS record for you when the zone is active; if
-you would rather create them first, each is a proxied placeholder:
 
-| Type | Name | Content | Proxy |
-| --- | --- | --- | --- |
-| `AAAA` | `@` | `100::` | Proxied |
-| `AAAA` | `www` | `100::` | Proxied |
-| `AAAA` | `app` | `100::` | Proxied |
-| `AAAA` | `providers` | `100::` | Proxied |
-| `AAAA` | `admin` | `100::` | Proxied |
-| `AAAA` | `voice` | `100::` | Proxied |
+**The six application hostnames need no DNS records.** They are Cloudflare
+*Custom Domains*, declared in each Worker's `routes` block with
+`"custom_domain": true`, and `wrangler deploy` creates the record and the
+certificate itself.
 
-`100::` is the IPv6 discard prefix — the record exists only so Cloudflare has
-something to attach the Worker route to. Traffic never reaches it.
+That is deliberate. The alternative — Workers *Routes* — needs a proxied
+placeholder record to already exist at each hostname, which is a second thing to
+get right and fails silently when it is not: the name resolves to the discard
+prefix and the request hangs with no error anywhere.
 
-Clerk adds its own records; see §4.
+A Custom Domain **cannot be created if a record already exists at that
+hostname**, so if placeholder records were added by hand or by an earlier
+revision of `dns/timinow.pet.zone`, delete them first.
 
----
+What does need adding is in [`dns/timinow.pet.zone`](../dns/timinow.pet.zone) —
+Clerk, mail policy, and certificate authority. Import it at **DNS → Records →
+Import and Export**, then:
+
+```bash
+./scripts/check-dns.sh
+```
+
+Clerk's records add themselves; see §4.
 
 ## 3. Twilio
 
@@ -359,6 +365,24 @@ browser UI, so neither would ever be read.
 
 `.env` itself is never deployed. Cloudflare Workers do not read it; it is a
 reference copy, and the source for `.dev.vars` when running locally.
+
+### If something does not answer
+
+```bash
+./scripts/status.sh
+```
+
+That reads live state from Cloudflare: which Workers exist, which secrets each
+one holds, and whether every hostname answers. It is the fastest way to tell
+"not deployed" from "deployed but misconfigured", which look identical from a
+browser.
+
+Secrets cannot be set on a Worker that has never been deployed — Cloudflare
+rejects it — so if `status.sh` shows a Worker missing, deploy first and then:
+
+```bash
+./scripts/bootstrap.sh ~/Downloads/env.example --secrets-only
+```
 
 ### Afterwards
 

@@ -4,6 +4,7 @@
 #
 #   ./scripts/bootstrap.sh ~/Downloads/env.example
 #   ./scripts/bootstrap.sh ~/Downloads/env.example --dry-run
+#   ./scripts/bootstrap.sh ~/Downloads/env.example --secrets-only
 #
 # Reads a filled-in env file and puts every value where it actually belongs:
 #
@@ -36,7 +37,11 @@ if [ -z "$ENV_FILE" ] || [ ! -f "$ENV_FILE" ]; then
 fi
 
 DRY=false
-[ "$DRY_RUN" = "--dry-run" ] && DRY=true
+SECRETS_ONLY=false
+case "$DRY_RUN" in
+  --dry-run)      DRY=true ;;
+  --secrets-only) SECRETS_ONLY=true ;;
+esac
 
 cd "$(dirname "$0")/.."
 
@@ -216,6 +221,11 @@ echo
 # Backend API — metadata repair and the admin console — and nothing has traffic
 # yet anyway.
 
+if $SECRETS_ONLY; then
+  bold "Secrets only — skipping validation, migration, and deploy"
+  echo
+else
+
 bold "2. Configuration check"
 run npm run check
 echo
@@ -239,6 +249,8 @@ else
   esac
 fi
 echo
+
+fi   # end of the block skipped by --secrets-only
 
 put_secret() { # put_secret KEY CONFIG...
   local key="$1"; shift

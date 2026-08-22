@@ -45,6 +45,7 @@ const requiredFiles = [
   "docs/PRODUCTION-SETUP.md",
   "scripts/bootstrap.sh",
   "scripts/check-dns.sh",
+  "scripts/status.sh",
   "dns/timinow.pet.zone",
   "dns/README.md",
   ".github/workflows/deploy.yml",
