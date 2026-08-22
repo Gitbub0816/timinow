@@ -2,6 +2,20 @@
 
 Tími NOW has two intentionally separate native products. Customer care intake belongs in the SwiftUI mobile app; clinic operations belong in the Windows desktop app. Neither client exposes the other role's interface.
 
+
+## Surfaces
+
+| App | Path | Platform | Role |
+| --- | --- | --- | --- |
+| Tími NOW | `apps/customer-mobile` | iOS 17+, Skip Fuse ready | Customer intake, offers, map, turn-by-turn, CarPlay, Watch |
+| Tími Vet | `apps/vet-windows` | Windows 10/11, .NET 8 WPF | Veterinary operations, tray alerts, floating queue |
+| Tími Vet | `apps/vet-desktop` | macOS 14+, SwiftUI | Same console, native NSPanel floating queue, menu-bar item |
+| Tími Vet Web | `apps/vet-web` | Any Chromium browser | Same console, Document Picture-in-Picture floating queue |
+
+The three veterinary clients speak the same API and share the same design
+tokens. Which one a clinic runs is an operational choice, not a functional one.
+
+
 ## Customer iOS app
 
 Location: `apps/customer-mobile`

@@ -36,7 +36,13 @@ const required = [
   "apps/vet-windows/src/TimiVet/TimiVet.csproj",
   "apps/vet-windows/src/TimiVet/Views/MainWindow.xaml",
   "apps/vet-windows/src/TimiVet/Views/MiniWindow.xaml",
-  "apps/vet-windows/src/TimiVet/Services/AlertService.cs"
+  "apps/vet-windows/src/TimiVet/Services/AlertService.cs",
+  "apps/vet-desktop/Package.swift",
+  "apps/vet-desktop/Darwin/project.yml",
+  "apps/vet-desktop/Sources/TimiVetCore/Skip/skip.yml",
+  "apps/vet-desktop/Sources/TimiVetUI/Skip/skip.yml",
+  "apps/vet-desktop/Sources/TimiVetUI/FloatingPanel.swift",
+  "apps/vet-desktop/Sources/TimiVetCore/AuthController.swift"
 ];
 
 await Promise.all(required.map((path) => access(resolve(root, path))));
@@ -80,6 +86,16 @@ if (appStore.includes("where: { $0.id == self.selectedPetId }")) throw new Error
 if (/public\s+(struct|extension).*ButtonStyle|public\s+func\s+timiCard/.test(theme)) throw new Error("SwiftUI implementation helpers must stay out of the public Skip bridge surface.");
 if (!clinicApi.includes("using System.Net.Http;")) throw new Error("Windows HTTP client namespace is not imported.");
 if (!settingsStore.includes("using System.IO;")) throw new Error("Windows settings storage namespace is not imported.");
+
+// The macOS console must keep the two properties that make it a console rather
+// than another window: a genuinely always-on-top panel, and credentials that
+// never touch the settings file.
+const macPanel = await read("apps/vet-desktop/Sources/TimiVetUI/FloatingPanel.swift");
+if (!macPanel.includes("NSPanel")) throw new Error("The macOS floating console must be an NSPanel.");
+if (!macPanel.includes(".floating")) throw new Error("The macOS floating console must sit at the floating window level.");
+const macSettings = await read("apps/vet-desktop/Sources/TimiVetCore/SettingsStore.swift");
+if (/bearerToken|sessionToken/i.test(macSettings)) throw new Error("macOS credentials must live in the Keychain, not the settings file.");
+if (!nativeWorkflow.includes("apps/vet-desktop")) throw new Error("CI must build the macOS veterinary console.");
 if (!nativeWorkflow.includes('SKIP_BRIDGE=1 swift package resolve') || !nativeWorkflow.includes('install-swift-android-sdk: "true"')) throw new Error("Skip Fuse CI must install and resolve the native Android bridge.");
 if (!nativeWorkflow.includes('timi-swift-test.log')) throw new Error("Skip test output must be bounded so CI failures remain diagnosable.");
 if (!nativeWorkflow.includes('swift test --filter ConcernValidatorTests')) throw new Error("Native CI must run the deterministic intake validator tests without invoking the host-only Android harness.");

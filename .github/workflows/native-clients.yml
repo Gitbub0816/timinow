@@ -5,13 +5,13 @@ on:
     branches: [main]
     paths:
       - "apps/customer-mobile/**"
-      - "apps/customer-mobile/Watch/**"
+      - "apps/vet-desktop/**"
       - "apps/vet-windows/**"
       - ".github/workflows/native-clients.yml"
   pull_request:
     paths:
       - "apps/customer-mobile/**"
-      - "apps/customer-mobile/Watch/**"
+      - "apps/vet-desktop/**"
       - "apps/vet-windows/**"
       - ".github/workflows/native-clients.yml"
 
@@ -104,6 +104,50 @@ jobs:
           -scheme TimiNowWatch
           -sdk watchsimulator
           -destination 'generic/platform=watchOS Simulator'
+          CODE_SIGNING_ALLOWED=NO
+          build
+
+  vet-macos:
+    name: macOS veterinary console build
+    runs-on: macos-15
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: apps/vet-desktop
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Generate Xcode project
+        working-directory: apps/vet-desktop/Darwin
+        run: xcodegen generate
+      - name: Resolve Swift packages
+        run: swift package resolve
+      # The console's core is deliberately platform-agnostic, so its tests run
+      # under plain SwiftPM rather than needing a simulator.
+      - name: Run core tests
+        run: |
+          set +e
+          swift test --filter TimiVetCoreTests > "$RUNNER_TEMP/timi-vet-test.log" 2>&1
+          status=$?
+          if [ "$status" -ne 0 ]; then
+            tail -120 "$RUNNER_TEMP/timi-vet-test.log"
+            exit "$status"
+          fi
+          tail -60 "$RUNNER_TEMP/timi-vet-test.log"
+      - name: Upload test log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vet-macos-test-log
+          path: ${{ runner.temp }}/timi-vet-test.log
+          retention-days: 3
+      - name: Compile macOS app
+        run: >-
+          xcodebuild
+          -workspace Project.xcworkspace
+          -scheme TimiVet
+          -destination 'generic/platform=macOS'
           CODE_SIGNING_ALLOWED=NO
           build
 
