@@ -212,6 +212,15 @@ for (const path of swiftFiles) {
     throw new Error(`${path}: ${leadingDot[0]} passes a leading-dot member to one of our own helpers. Skip cannot infer the owning type — write it out, e.g. Color.white.`);
   }
 
+  // The customer package declares macOS so that `swift test` can run on a Mac
+  // at all, which means every UI source is compiled for macOS too — and these
+  // SwiftUI APIs do not exist there. The app never ships to macOS, so the
+  // macOS branch only has to compile.
+  const macUnavailable = source.match(/\.(fullScreenCover|navigationBarTitleDisplayMode|navigationBarHidden|statusBarHidden|indexViewStyle)\(/);
+  if (macUnavailable && !/os\(macOS\)/.test(source)) {
+    throw new Error(`${path}: uses ${macUnavailable[1]}, which is unavailable on macOS, with no os(macOS) branch. swift test builds this target for the host, so the core unit tests fail on a Mac.`);
+  }
+
   // A default argument is evaluated at the call site, so a public function
   // cannot name a private member in one. Swift rejects this outright; it
   // reached CI once because the only build that compiles this module is the

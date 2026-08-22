@@ -286,6 +286,8 @@ Stripe when that handler lands, not before.
 
 ## 7. Deploy
 
+First time on this machine:
+
 ```bash
 git clone https://github.com/Gitbub0816/timinow.git
 cd timinow
@@ -293,9 +295,24 @@ git checkout claude/multi-platform-clerk-d1-mapbox-atewxd
 npm install
 npx wrangler login
 gh auth login
-./scripts/bootstrap.sh ~/Downloads/env.example --dry-run
+```
+
+Then, and every time after — this one command is the whole deployment:
+
+```bash
 ./scripts/bootstrap.sh ~/Downloads/env.example
 ```
+
+It updates the checkout, writes the public values into the four wrangler
+configs, validates them, migrates the database, deploys all four Workers, sets
+every secret, sets the repository secrets, and checks that each Worker answers.
+There is no separate `git pull`: the script rewrites the wrangler configs from
+the env file on every run, so its own edits to them are never worth a merge
+conflict. Anything else uncommitted stops the run rather than being discarded.
+
+Add `--dry-run` to see what it would do and touch nothing, `--secrets-only` to
+skip straight to the secrets when the Workers are already deployed, or
+`--no-pull` to deploy exactly what is in the checkout.
 
 `wrangler login` opens a browser. `gh auth login` is only needed for the two
 repository secrets; skip it and the script says so and carries on.

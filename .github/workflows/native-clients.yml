@@ -138,6 +138,16 @@ jobs:
         working-directory: apps/vet-desktop
     steps:
       - uses: actions/checkout@v5
+      # TimiVetCore carries the skipstone plugin, so `swift test` runs the
+      # Kotlin side through Gradle as well. Without the Swift Android SDK there
+      # is no native library behind the JNI bridge and every bridged
+      # initializer fails with UnsatisfiedLinkError.
+      - name: Install Skip Fuse Android toolchain
+        uses: skiptools/actions/setup-skip@v1
+        with:
+          install-swift-android-sdk: "true"
+          run-doctor: "false"
+          verify-project: apps/vet-desktop
       - name: Install XcodeGen
         run: brew install xcodegen
       - name: Generate Xcode project

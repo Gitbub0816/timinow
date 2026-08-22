@@ -150,9 +150,18 @@ struct TrackerView: View {
             routePreview = preview?.coordinates ?? []
             if let summary = preview?.summary { store.updateNavigationProgress(step: store.currentNavigationStep, summary: summary) }
         }
+        // fullScreenCover does not exist on macOS. The customer app ships to
+        // iOS and Android only — macOS is just the host `swift test` builds
+        // for — so the macOS branch only has to compile, not look right.
+        #if os(macOS)
+        .sheet(isPresented: $showNavigation) {
+            if let destination = navigationDestination { NavigationScreen(store: store, destination: destination) }
+        }
+        #else
         .fullScreenCover(isPresented: $showNavigation) {
             if let destination = navigationDestination { NavigationScreen(store: store, destination: destination) }
         }
+        #endif
     }
 
     var clinicCard: some View {

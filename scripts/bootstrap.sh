@@ -5,6 +5,13 @@
 #   ./scripts/bootstrap.sh ~/Downloads/env.example
 #   ./scripts/bootstrap.sh ~/Downloads/env.example --dry-run
 #   ./scripts/bootstrap.sh ~/Downloads/env.example --secrets-only
+#   ./scripts/bootstrap.sh ~/Downloads/env.example --no-pull
+#
+# This is the only command needed. It brings the checkout up to date first, so
+# there is no separate pull to remember and no merge conflict to resolve: step
+# 1 rewrites the wrangler configs from the env file on every run, so whatever
+# this script last wrote into them is disposable. Anything else uncommitted
+# stops the run rather than being discarded.
 #
 # Reads a filled-in env file and puts every value where it actually belongs:
 #
@@ -31,16 +38,18 @@ DRY_RUN="${2:-}"
 [ "${1:-}" = "--dry-run" ] && { ENV_FILE=""; DRY_RUN="--dry-run"; }
 
 if [ -z "$ENV_FILE" ] || [ ! -f "$ENV_FILE" ]; then
-  echo "usage: $0 <path-to-env-file> [--dry-run]" >&2
+  echo "usage: $0 <path-to-env-file> [--dry-run|--secrets-only|--no-pull]" >&2
   echo "example: $0 ~/Downloads/env.example" >&2
   exit 1
 fi
 
 DRY=false
 SECRETS_ONLY=false
+PULL=true
 case "$DRY_RUN" in
   --dry-run)      DRY=true ;;
   --secrets-only) SECRETS_ONLY=true ;;
+  --no-pull)      PULL=false ;;
 esac
 
 cd "$(dirname "$0")/.."
@@ -194,6 +203,71 @@ set_var() { # set_var KEY CONFIG...
   done
   $DRY || echo "  set   $key -> $*"
 }
+
+bold "0. Latest code"
+if ! $PULL; then
+  dim "  skipped (--no-pull)"
+elif ! command -v git >/dev/null 2>&1 || [ ! -d .git ]; then
+  dim "  not a git checkout — skipping"
+else
+  CONFIGS="wrangler.jsonc wrangler.vet.jsonc wrangler.admin.jsonc wrangler.voice.jsonc"
+  BRANCH=$(git rev-parse --abbrev-ref HEAD)
+
+  # Step 1 rewrites these four from the env file on every run, so whatever this
+  # script last wrote into them is disposable. Dropping them here is what turns
+  # "pull, resolve a conflict, re-run" into a single command.
+  if $DRY; then
+    dim "    would restore the wrangler configs, then fast-forward $BRANCH"
+  else
+    git checkout -- $CONFIGS 2>/dev/null || true
+  fi
+
+  # Anything else uncommitted is someone's real work, so it stops the run.
+  OTHER=$(git status --porcelain -- . \
+    ":(exclude)wrangler.jsonc" ":(exclude)wrangler.vet.jsonc" \
+    ":(exclude)wrangler.admin.jsonc" ":(exclude)wrangler.voice.jsonc" \
+    | grep -v '^?? ' || true)
+  if [ -n "$OTHER" ]; then
+    die "  Uncommitted changes beyond the wrangler configs, so nothing was pulled
+  and nothing was deployed:
+
+$OTHER
+
+  Commit or stash them and run this again, or deploy exactly what is in this
+  checkout without pulling:
+
+    ./scripts/bootstrap.sh $ENV_FILE --no-pull"
+  fi
+
+  if ! $DRY; then
+    if ! git fetch origin "$BRANCH" >/dev/null 2>&1; then
+      warn "  Could not reach the remote — continuing with the local checkout."
+    else
+      AHEAD=$(git rev-list --count "origin/$BRANCH..HEAD" 2>/dev/null || echo 0)
+      if [ "$AHEAD" != "0" ]; then
+        die "  This checkout has $AHEAD commit(s) the remote does not, so it was left
+  as it is rather than rewound. Push them first, or deploy what you have:
+
+    ./scripts/bootstrap.sh $ENV_FILE --no-pull"
+      fi
+      BEFORE=$(git rev-parse --short HEAD)
+      git merge --ff-only "origin/$BRANCH" >/dev/null 2>&1 \
+        || git reset --hard "origin/$BRANCH" >/dev/null
+      AFTER=$(git rev-parse --short HEAD)
+      if [ "$BEFORE" = "$AFTER" ]; then
+        dim "  already current ($AFTER)"
+      else
+        echo "  updated $BEFORE -> $AFTER"
+        # A pull can move the dependencies the rest of this script runs on.
+        if [ package.json -nt node_modules ]; then
+          dim "  package.json changed — reinstalling"
+          npm install --silent
+        fi
+      fi
+    fi
+  fi
+fi
+echo
 
 bold "1. Public configuration"
 # The voice Worker is deliberately absent from these two: it serves no browser
