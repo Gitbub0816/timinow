@@ -186,9 +186,20 @@ export async function verifyAttemptToken(authToken, attemptId, token) {
  * whole tick.
  */
 export async function placeCall(env, { to, from, url, statusCallback }) {
-  const accountSid = env.TWILIO_ACCOUNT_SID;
-  const authToken = env.TWILIO_AUTH_TOKEN;
+  const accountSid = (env.TWILIO_ACCOUNT_SID || "").trim();
+  const authToken = (env.TWILIO_AUTH_TOKEN || "").trim();
   if (!accountSid || !authToken) throw new Error("TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN must be configured");
+  // Checked before the request, because Twilio answers all of these with the
+  // single word "Authenticate" and a 401, which is true and unhelpful. An API
+  // key SID in particular looks close enough to an Account SID to paste by
+  // mistake and is the most common way to land here.
+  if (!/^AC[0-9a-f]{32}$/i.test(accountSid)) {
+    const kind = accountSid.startsWith("SK") ? "an API Key SID" : accountSid.startsWith("AC") ? "the right shape but the wrong length" : "not an Account SID";
+    throw new Error(`TWILIO_ACCOUNT_SID is ${kind} (${accountSid.length} characters, starts "${accountSid.slice(0, 2)}"). It must be the Account SID from the Twilio console: "AC" followed by 32 hex characters.`);
+  }
+  if (!/^[0-9a-f]{32}$/i.test(authToken)) {
+    throw new Error(`TWILIO_AUTH_TOKEN is ${authToken.length} characters; a Twilio auth token is 32 hex characters. Check for a truncated paste or surrounding quotes.`);
+  }
   const fromNumber = from || env.TWILIO_FROM_NUMBER;
   if (!fromNumber) throw new Error("TWILIO_FROM_NUMBER is not configured — cannot place outbound calls");
 
@@ -212,7 +223,17 @@ export async function placeCall(env, { to, from, url, statusCallback }) {
     body: form.toString()
   });
   const body = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(body?.message || `Twilio call request failed (${response.status})`);
+  if (!response.ok) {
+    // Twilio's own message is often one word. Its numeric code is the part
+    // worth searching for, and 20003 has a specific cause worth naming.
+    const parts = [body?.message || "Twilio rejected the call request", `HTTP ${response.status}`];
+    if (body?.code) parts.push(`Twilio code ${body.code}`);
+    if (Number(body?.code) === 20003) {
+      parts.push("the Account SID and Auth Token do not match an active account — check they come from the same account, and that the token has not been rotated in the Twilio console");
+    }
+    if (body?.more_info) parts.push(body.more_info);
+    throw new Error(parts.join(" — "));
+  }
   return { sid: body.sid, status: body.status, raw: body };
 }
 
