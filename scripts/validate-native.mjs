@@ -11,7 +11,12 @@ async function collectFiles(root, extension) {
     return found;
   }
   for (const entry of entries) {
-    if (["bin", "obj", ".build", ".swiftpm", "node_modules"].includes(entry.name)) continue;
+    // Only our own sources. "build" is where scripts/build-*-app.sh put derived
+    // data, which contains every dependency's full source — checking Mapbox's
+    // brace balance is both meaningless and, since it uses syntax this lexer
+    // does not model, a guaranteed false failure.
+    if (["bin", "obj", "build", ".build", "DerivedData", "SourcePackages",
+         "checkouts", ".swiftpm", "node_modules"].includes(entry.name)) continue;
     const path = join(root, entry.name);
     if (entry.isDirectory()) found.push(...(await collectFiles(path, extension)));
     else if (extname(entry.name) === extension) found.push(path);
