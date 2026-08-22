@@ -60,7 +60,11 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
         #else
         let defaults = UserDefaults.standard
         self.defaults = defaults
-        let storedPets = Self.decode([PetProfile].self, from: defaults.data(forKey: "timi.pets")) ?? [DemoData.pet]
+        // Empty as well as absent: `storedPets[0]` is read three lines down and
+        // again on every launch, so an array that decodes to [] is a crash on
+        // open, not a blank screen.
+        let decodedPets = Self.decode([PetProfile].self, from: defaults.data(forKey: "timi.pets")) ?? []
+        let storedPets = decodedPets.isEmpty ? [DemoData.pet] : decodedPets
         let selectedPetId = defaults.string(forKey: "timi.selectedPet") ?? storedPets[0].id
         let storedHistory = Self.decode([CareHistoryItem].self, from: defaults.data(forKey: "timi.history")) ?? []
         let completedOnboarding = defaults.bool(forKey: "timi.onboarding.complete")
@@ -91,6 +95,22 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
         let gateway = TimiGateway(baseURL: Self.validBaseURL(apiBaseURLText))
         self.gateway = gateway
         self.auth = AuthController(gateway: gateway)
+        // Signing in is the last time these should ever be asked for. Set
+        // after every stored property, which is when `self` may be captured.
+        self.auth.onProfileResolved = { [weak self] profile in self?.adoptOwner(profile) }
+    }
+
+    /// Takes whatever sign-in learned without overwriting anything the owner
+    /// has since typed by hand.
+    func adoptOwner(_ profile: AuthProfile) {
+        if !profile.name.isEmpty { ownerName = profile.name }
+        if !profile.phone.isEmpty { ownerPhone = profile.phone }
+        if !profile.email.isEmpty { ownerEmail = profile.email }
+        // A draft built before sign-in finished is still on screen with empty
+        // contact fields; fill it rather than making them type into it.
+        if draft.ownerName.isEmpty { draft.ownerName = ownerName }
+        if draft.ownerPhone.isEmpty { draft.ownerPhone = ownerPhone }
+        if draft.ownerEmail.isEmpty { draft.ownerEmail = ownerEmail }
     }
 
     /// Single shared instance so the CarPlay scene and the Watch
@@ -98,7 +118,7 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
     /// SwiftUI view hierarchy — observe the same live state as the phone UI.
     public static let shared = AppStore()
 
-    public var selectedPet: PetProfile { pets.first(where: { $0.id == selectedPetId }) ?? pets[0] }
+    public var selectedPet: PetProfile { pets.first(where: { $0.id == selectedPetId }) ?? pets.first ?? DemoData.pet }
     public var isDemoMode: Bool { gateway.isDemo }
     /// What the gateway resolved to, which is not always what is in the text
     /// field — an address that fails validation leaves the gateway on nothing
@@ -189,7 +209,30 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
     public func savePet(_ pet: PetProfile) {
         if let index = pets.firstIndex(where: { $0.id == pet.id }) { pets[index] = pet } else { pets.append(pet) }
         selectedPetId = pet.id
+        if draft.pet.id == pet.id { draft.pet = pet }
         persistPets()
+    }
+
+    /// Removes a profile, keeping at least one.
+    ///
+    /// Not a stylistic limit: `selectedPet`, the draft and the launch path all
+    /// read `pets[0]`, so an empty list is a crash on the next launch rather
+    /// than an empty screen. Returns false when the last one was refused, so
+    /// the caller can say why instead of appearing to do nothing.
+    @discardableResult
+    public func deletePet(_ id: String) -> Bool {
+        guard pets.count > 1 else { return false }
+        guard let index = pets.firstIndex(where: { $0.id == id }) else { return false }
+        pets.remove(at: index)
+        if selectedPetId == id {
+            selectedPetId = pets[0].id
+            #if !os(Android)
+            defaults.set(selectedPetId, forKey: "timi.selectedPet")
+            #endif
+        }
+        if draft.pet.id == id { draft.pet = selectedPet }
+        persistPets()
+        return true
     }
 
     public func startSearch() async {

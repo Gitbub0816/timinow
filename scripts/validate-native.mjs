@@ -974,6 +974,67 @@ for (const path of [
   }
 }
 
+// /api/config is where the Clerk publishable key comes from, so a client that
+// demands a session before it will send the request has locked itself out: no
+// config, no Clerk host, no sign-in, no session, no config. The console
+// reported it as "Could not read https://providers.timinow.pet/api/config —
+// Sign in to Tími before contacting a production Worker", which names the
+// Worker and Clerk and blames neither correctly — the request was never sent.
+{
+  const path = "apps/vet-desktop/Sources/TimiVetCore/ClinicAPIClient.swift";
+  const source = await read(path);
+  if (!/isPublic\(url\)/.test(source) || !/api\/config/.test(source.slice(source.indexOf("isPublic")))) {
+    throw new Error(`${path} throws signInRequired for every unauthenticated request, /api/config included. Sign-in can then never start, because the Clerk key lives behind exactly that request.`);
+  }
+}
+
+// A pet profile you can create and never correct is a bug report waiting to
+// happen: the editor was hardcoded to "Add a pet", so a typo in a name was
+// permanent and a pet that died stayed on the list forever.
+{
+  const store = await read("apps/customer-mobile/Sources/TimiNowCore/AppStore.swift");
+  if (!/func deletePet\(/.test(store)) {
+    throw new Error("apps/customer-mobile/Sources/TimiNowCore/AppStore.swift has no deletePet, so a pet profile can be added and never removed.");
+  }
+  // selectedPet, the draft and the launch path all index pets[0]; an empty
+  // list is a crash on next open, not an empty screen.
+  if (!/pets\.first \?\? DemoData\.pet/.test(store)) {
+    throw new Error("apps/customer-mobile/Sources/TimiNowCore/AppStore.swift: selectedPet falls back to pets[0], which traps on an empty list. Now that pets can be deleted, that is reachable.");
+  }
+  if (!/decodedPets\.isEmpty \? \[DemoData\.pet\] : decodedPets/.test(store)) {
+    throw new Error("apps/customer-mobile/Sources/TimiNowCore/AppStore.swift: a stored pet list that decodes to [] is used as-is, and storedPets[0] is read two lines later. That is a crash on launch, not an empty screen.");
+  }
+  const view = await read("apps/customer-mobile/Sources/TimiNowUI/SupportViews.swift");
+  if (!/var editing: PetProfile\?/.test(view)) {
+    throw new Error("apps/customer-mobile/Sources/TimiNowUI/SupportViews.swift: PetEditor does not take a pet to edit, so every save creates a new profile.");
+  }
+  if (!/id: existing\?\.id \?\? UUID\(\)\.uuidString/.test(view)) {
+    throw new Error("apps/customer-mobile/Sources/TimiNowUI/SupportViews.swift: PetEditor saves without carrying the edited pet's id, so editing adds a duplicate instead of updating.");
+  }
+}
+
+// Sign-up collects the name, email and phone the intake form asks for, and
+// hands them to the store. Without the handover the account knows who you are
+// and the care request still asks, which is the complaint that started this.
+{
+  const path = "apps/customer-mobile/Sources/TimiNowCore/AuthController.swift";
+  const source = await read(path);
+  for (const [pattern, complaint] of [
+    [/case profile/, "has no profile stage, so sign-up sends one address and Clerk never gets the phone number it requires."],
+    [/\("phone_number", phone\)/, "creates the sign-up without a phone number."],
+    [/\("first_name", first\)/, "creates the sign-up without a name, so clinics have nobody to expect."],
+    [/onProfileResolved\(profile\)/, "never hands the profile back, so the intake form keeps asking for details the account already holds."],
+    [/hasPrefix\("reset_password"\)/, "offers Clerk's password-reset strategies as sign-in choices. A phone-only account then shows a two-item picker — \"Text me a code\" and \"Reset password by text\" — instead of going straight to the code screen."],
+    [/unverifiedFields/, "does not read unverified_fields, so a sign-up needing a second code stops with \"another step\" instead of sending it."]
+  ]) {
+    if (!pattern.test(source)) throw new Error(`${path} ${complaint}`);
+  }
+  const store = await read("apps/customer-mobile/Sources/TimiNowCore/AppStore.swift");
+  if (!/auth\.onProfileResolved = /.test(store)) {
+    throw new Error("apps/customer-mobile/Sources/TimiNowCore/AppStore.swift never subscribes to onProfileResolved, so nothing sign-in learns reaches the intake form.");
+  }
+}
+
 const csharpFiles = await collectFiles("apps/vet-windows", ".cs");
 for (const path of csharpFiles) {
   const problems = bracketProblems(await read(path));

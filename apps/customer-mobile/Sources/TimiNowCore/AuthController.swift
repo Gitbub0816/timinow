@@ -19,10 +19,27 @@ import Observation
 
 public enum AuthStage: String, Sendable {
     case identifier
+    /// Only reached when the address is new. Clerk's instance requires a phone
+    /// number, the app wants a name to greet people by, and the intake form
+    /// asks for all three every single time it is opened — so they are
+    /// collected once, here, instead of on every care request.
+    case profile
     case strategyPicker
     case password
     case code
     case signedIn
+}
+
+/// What sign-in learned about the person, for the rest of the app to stop
+/// asking. Handed over the moment a session exists.
+public struct AuthProfile: Sendable, Equatable {
+    public var name: String
+    public var email: String
+    public var phone: String
+    public init(name: String, email: String, phone: String) {
+        self.name = name; self.email = email; self.phone = phone
+    }
+    public var isEmpty: Bool { name.isEmpty && email.isEmpty && phone.isEmpty }
 }
 
 public struct AuthFactorOption: Identifiable, Hashable, Sendable {
@@ -52,6 +69,19 @@ public struct AuthFactorOption: Identifiable, Hashable, Sendable {
     /// Whether the code on screen will create an account or open an existing
     /// one — the wording differs and guessing it is worse than tracking it.
     public var isCreatingAccount = false
+    /// Collected on the sign-up screen. Prefilled from whatever was typed on
+    /// the first screen, so nobody enters the same address twice.
+    public var signUpName = ""
+    public var signUpEmail = ""
+    public var signUpPhone = ""
+    /// Which field the code on screen is verifying, so the copy can name it.
+    public var verifyingField = ""
+    /// Called once a session exists, with everything known about the person.
+    /// The store writes it into the intake defaults; nothing here reaches into
+    /// the store, so the two stay independently testable.
+    /// Non-optional with a no-op default: an optional closure on a
+    /// Skip-bridged type generates a bridge that does not compile.
+    public var onProfileResolved: (AuthProfile) -> Void = { _ in }
 
     private let gateway: TimiGateway
     private let keychain = KeychainStore()
@@ -166,7 +196,7 @@ public struct AuthFactorOption: Identifiable, Hashable, Sendable {
             // No account yet is the normal case for a pet owner, not an error
             // to report. Creating one is the same two screens.
             if Self.looksLikeUnknownAccount(error) {
-                await beginSignUp(identifier: identifier)
+                beginProfileEntry(identifier: identifier)
             } else {
                 errorMessage = error.message
             }
@@ -175,21 +205,52 @@ public struct AuthFactorOption: Identifiable, Hashable, Sendable {
         }
     }
 
-    /// Creates the account and sends a code. Reached only when Clerk says it
-    /// does not know the address.
-    private func beginSignUp(identifier: String) async {
+    /// No account yet. Ask for the rest before creating one.
+    ///
+    /// This used to POST /v1/client/sign_ups with the single address that had
+    /// been typed. On this instance that can never complete — a phone number
+    /// is required — and the app then asked for a name, a phone and an email
+    /// again on every care request, having had a perfectly good place to keep
+    /// them.
+    private func beginProfileEntry(identifier: String) {
         errorMessage = nil
         isCreatingAccount = true
-        let isEmail = identifier.contains("@")
+        if identifier.contains("@") {
+            signUpEmail = identifier
+            signUpPhone = ""
+        } else {
+            signUpPhone = identifier
+            signUpEmail = ""
+        }
+        stage = .profile
+    }
+
+    /// Creates the account from the profile screen and sends the first code.
+    public func submitProfile() async {
+        let name = signUpName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let email = signUpEmail.trimmingCharacters(in: .whitespacesAndNewlines)
+        let phone = Self.normalizeIdentifier(signUpPhone)
+        guard !name.isEmpty else { errorMessage = "Enter your name so clinics know who to expect."; return }
+        guard !email.isEmpty, email.contains("@") else { errorMessage = "Enter an email address."; return }
+        guard phone.hasPrefix("+") else { errorMessage = "Enter a mobile number a clinic can reach you on."; return }
+        signUpPhone = phone
+        isBusy = true; errorMessage = nil
+        defer { isBusy = false }
         do {
+            let (first, last) = Self.splitName(name)
             let data = try await clerkRequest(
                 path: "/v1/client/sign_ups", method: "POST",
-                form: [(isEmail ? "email_address" : "phone_number", identifier)]
+                form: [
+                    ("email_address", email),
+                    ("phone_number", phone),
+                    ("first_name", first),
+                    ("last_name", last)
+                ]
             )
             let signUp = try Self.clerkDecoder.decode(ClerkWireSignUp.self, from: data)
             pendingSignUpId = signUp.id
             if signUp.status == "complete" { try await completeSignUpIfNeeded(signUp); return }
-            guard let signUpId = signUp.id else {
+            guard signUp.id != nil else {
                 errorMessage = "Tími could not create that account."
                 return
             }
@@ -202,24 +263,48 @@ public struct AuthFactorOption: Identifiable, Hashable, Sendable {
                 errorMessage = blocker
                 return
             }
-            let strategy = isEmail ? "email_code" : "phone_code"
-            _ = try await clerkRequest(
-                path: "/v1/client/sign_ups/\(signUpId)/prepare_verification", method: "POST",
-                form: [("strategy", strategy)]
-            )
-            selectedFactor = AuthFactorOption(strategy: strategy, label: isEmail ? "Email code" : "Text message code")
-            stage = .code
+            try await prepareNextVerification(signUp)
         } catch let error as TimiAPIError {
-            // Clerk's own wording for this one is "Authentication unsuccessful
-            // due to failed security validations. Please refresh the page" —
-            // advice for a browser, on a screen that has no page to refresh,
-            // and it names nothing anyone can act on.
+            // Clerk's own wording for the CAPTCHA rejection is "Authentication
+            // unsuccessful due to failed security validations. Please refresh
+            // the page" — advice for a browser, on a screen that has no page to
+            // refresh, naming nothing anyone can act on.
             errorMessage = Self.looksLikeCaptchaRequired(error)
                 ? "Tími could not create the account. Clerk's bot protection is asking for a CAPTCHA this app cannot show — enable the Native API for this instance in the Clerk dashboard."
                 : error.message
         } catch {
-            errorMessage = "Tími could not create an account for that address."
+            errorMessage = "Tími could not create an account for those details."
         }
+    }
+
+    /// Clerk verifies each identifier separately, so a sign-up carrying both an
+    /// email and a phone needs two codes. Rather than assume one, this asks
+    /// Clerk what is still unverified and sends the next code — which also
+    /// means an instance that only wants one is finished after one.
+    private func prepareNextVerification(_ signUp: ClerkWireSignUp) async throws {
+        let unverified = signUp.unverifiedFields ?? []
+        let field = unverified.first(where: { $0 == "phone_number" }) ?? unverified.first
+        guard let field else {
+            errorMessage = "That account needs another step before it can be used."
+            return
+        }
+        let strategy = field == "phone_number" ? "phone_code" : "email_code"
+        guard let signUpId = pendingSignUpId else { return }
+        _ = try await clerkRequest(
+            path: "/v1/client/sign_ups/\(signUpId)/prepare_verification", method: "POST",
+            form: [("strategy", strategy)]
+        )
+        verifyingField = field == "phone_number" ? signUpPhone : signUpEmail
+        selectedFactor = AuthFactorOption(strategy: strategy, label: field == "phone_number" ? "Text message code" : "Email code")
+        codeText = ""
+        stage = .code
+    }
+
+    private static func splitName(_ name: String) -> (String, String) {
+        let parts = name.split(separator: " ").map(String.init).filter { !$0.isEmpty }
+        if parts.isEmpty { return ("", "") }
+        if parts.count == 1 { return (parts[0], "") }
+        return (parts[0], parts.dropFirst().joined(separator: " "))
     }
 
     public func choose(_ factor: AuthFactorOption) async {
@@ -297,6 +382,7 @@ public struct AuthFactorOption: Identifiable, Hashable, Sendable {
         pendingSignInId = nil; pendingSignUpId = nil; pendingFactors = []
         factorOptions = []; selectedFactor = nil
         passwordText = ""; codeText = ""
+        signUpName = ""; signUpEmail = ""; signUpPhone = ""; verifyingField = ""
         isCreatingAccount = false
         errorMessage = nil
         stage = .identifier
@@ -316,10 +402,17 @@ public struct AuthFactorOption: Identifiable, Hashable, Sendable {
     private func completeSignUpIfNeeded(_ signUp: ClerkWireSignUp) async throws {
         pendingSignUpId = signUp.id
         guard signUp.status == "complete", let sessionId = signUp.createdSessionId else {
-            // "Another step" named nothing, and Clerk has already said exactly
-            // which one.
-            errorMessage = Self.signUpBlocker(signUp.missingFields ?? [])
-                ?? "That account needs another step before it can be used."
+            // Clerk has already said exactly what is left. If it is another
+            // identifier to verify, send that code rather than stopping.
+            if let blocker = Self.signUpBlocker(signUp.missingFields ?? []) {
+                errorMessage = blocker
+                return
+            }
+            if !(signUp.unverifiedFields ?? []).isEmpty {
+                try await prepareNextVerification(signUp)
+                return
+            }
+            errorMessage = "That account needs another step before it can be used."
             return
         }
         try await finish(sessionId: sessionId)
@@ -346,6 +439,34 @@ public struct AuthFactorOption: Identifiable, Hashable, Sendable {
         try await mintWorkerToken()
         saveCredential()
         markSignedIn()
+        await publishProfile()
+    }
+
+    /// Hands the rest of the app a name, an email and a phone number so it
+    /// stops asking for them. For a new account they were just typed; for an
+    /// existing one they come from Clerk, which is the only way somebody who
+    /// signed up before this screen existed ever gets a prefilled intake form.
+    private func publishProfile() async {
+        var profile = AuthProfile(
+            name: signUpName.trimmingCharacters(in: .whitespacesAndNewlines),
+            email: signUpEmail.trimmingCharacters(in: .whitespacesAndNewlines),
+            phone: signUpPhone.trimmingCharacters(in: .whitespacesAndNewlines)
+        )
+        if let user = try? await currentUser() {
+            let full = [user.firstName ?? "", user.lastName ?? ""].filter { !$0.isEmpty }.joined(separator: " ")
+            if !full.isEmpty { profile.name = full }
+            if let email = (user.emailAddresses ?? []).first?.emailAddress, !email.isEmpty { profile.email = email }
+            if let phone = (user.phoneNumbers ?? []).first?.phoneNumber, !phone.isEmpty { profile.phone = phone }
+        }
+        guard !profile.isEmpty else { return }
+        onProfileResolved(profile)
+    }
+
+    private func currentUser() async throws -> ClerkWireUser? {
+        let client = try await getClient()
+        let sessions = client.sessions ?? []
+        let match = sessions.first(where: { $0.id == activeSessionId }) ?? sessions.first
+        return match?.user
     }
 
     private func markSignedIn() {
@@ -376,6 +497,7 @@ public struct AuthFactorOption: Identifiable, Hashable, Sendable {
         keychain.clear()
         gateway.bearerToken = nil
         identifierText = ""; passwordText = ""; codeText = ""
+        signUpName = ""; signUpEmail = ""; signUpPhone = ""; verifyingField = ""
         pendingIdentifier = ""; isCreatingAccount = false
         factorOptions = []; selectedFactor = nil
         isSignedIn = false
@@ -621,7 +743,14 @@ public struct AuthFactorOption: Identifiable, Hashable, Sendable {
     private static func labelFactors(_ factors: [ClerkWireFactor]) -> [AuthFactorOption] {
         var seen = Set<String>()
         var options: [AuthFactorOption] = []
-        for factor in factors {
+        // Clerk returns the password-reset strategies alongside the real ones.
+        // Offering "Reset password by text" next to "Text me a code" turns a
+        // one-tap sign-in into a choice between two things that read the same,
+        // one of which is not sign-in at all — and it is what stopped a
+        // phone-only account, whose single real factor is phone_code, from
+        // being sent straight to the code screen.
+        let usable = factors.filter { !$0.strategy.hasPrefix("reset_password") }
+        for factor in (usable.isEmpty ? factors : usable) {
             guard seen.insert(factor.strategy).inserted else { continue }
             let label: String
             switch factor.strategy {
@@ -708,13 +837,25 @@ private struct ClerkWireSignUp: Decodable {
     var status: String?
     var createdSessionId: String?
     /// What the instance still requires. Not the same as `unverifiedFields`,
-    /// which is only the code about to be sent.
+    /// which is only the codes still to be sent.
     var missingFields: [String]?
+    var unverifiedFields: [String]?
+}
+
+private struct ClerkWireEmailAddress: Decodable { var emailAddress: String? }
+private struct ClerkWirePhoneNumber: Decodable { var phoneNumber: String? }
+
+private struct ClerkWireUser: Decodable {
+    var firstName: String?
+    var lastName: String?
+    var emailAddresses: [ClerkWireEmailAddress]?
+    var phoneNumbers: [ClerkWirePhoneNumber]?
 }
 
 private struct ClerkWireSession: Decodable {
     var id: String
     var status: String?
+    var user: ClerkWireUser?
 }
 
 private struct ClerkWireClient: Decodable {

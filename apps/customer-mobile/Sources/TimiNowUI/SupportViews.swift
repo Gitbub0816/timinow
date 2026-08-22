@@ -10,28 +10,102 @@ import SwiftUI
 struct PetsView: View {
     @Bindable var store: AppStore
     @State var showEditor = false
+    /// nil means the sheet is adding; a pet means it is editing that one. Both
+    /// used the same "Add a pet" sheet before, which is why a profile could be
+    /// created and then never corrected.
+    @State var editing: PetProfile?
+    @State var note = ""
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                HStack { VStack(alignment: .leading) { Eyebrow(text: "CARE COMPANIONS"); Text("Your pets").font(.system(size: 40, weight: .bold, design: .serif)) }; Spacer(); Button { showEditor = true } label: { Image(systemName: "plus").font(.title3).frame(width: 44, height: 44).background(TimiColor.coral, in: Circle()).foregroundStyle(.white).overlay(Circle().stroke(TimiColor.ink, lineWidth: 2)) } }
-                ForEach(store.pets) { pet in
-                    Button { store.choosePet(pet.id) } label: {
-                        HStack(spacing: 15) { Image(systemName: pet.species.icon).font(.title).foregroundStyle(.white).frame(width: 62, height: 62).background(pet.colorToken % 2 == 0 ? TimiColor.blue : TimiColor.coral, in: RoundedRectangle(cornerRadius: 19)); VStack(alignment: .leading, spacing: 4) { Text(pet.name).font(.title3).fontWeight(.black); Text([pet.breed, pet.weightLbs.map { String(format: "%.0f lb", $0) }].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · ")).font(.caption).foregroundStyle(TimiColor.muted) }; Spacer(); Image(systemName: store.selectedPetId == pet.id ? "checkmark.circle.fill" : "circle").font(.title2).foregroundStyle(TimiColor.blue) }.timiCard(store.selectedPetId == pet.id ? TimiColor.blueSoft : .white)
-                    }.buttonStyle(.plain)
+                HStack {
+                    VStack(alignment: .leading) {
+                        Eyebrow(text: "CARE COMPANIONS")
+                        Text("Your pets").font(.system(size: 40, weight: .bold, design: .serif))
+                    }
+                    Spacer()
+                    Button {
+                        editing = nil
+                        showEditor = true
+                    } label: {
+                        Image(systemName: "plus").font(.title3).frame(width: 44, height: 44)
+                            .background(TimiColor.coral, in: Circle()).foregroundStyle(.white)
+                            .overlay(Circle().stroke(TimiColor.ink, lineWidth: 2))
+                    }
                 }
-                Text("Pet profiles speed operational intake. Medical records are never sent unless you explicitly include them in a future supported flow.").font(.caption).foregroundStyle(TimiColor.muted)
+                if !note.isEmpty {
+                    Text(note).font(.callout).foregroundStyle(TimiColor.coral)
+                        .padding(12).frame(maxWidth: .infinity, alignment: .leading)
+                        .background(TimiColor.coralSoft, in: RoundedRectangle(cornerRadius: 14))
+                }
+                ForEach(store.pets) { pet in
+                    HStack(spacing: 0) {
+                        Button {
+                            store.choosePet(pet.id)
+                            note = ""
+                        } label: {
+                            HStack(spacing: 15) {
+                                Image(systemName: pet.species.icon).font(.title).foregroundStyle(.white)
+                                    .frame(width: 62, height: 62)
+                                    .background(pet.colorToken % 2 == 0 ? TimiColor.blue : TimiColor.coral, in: RoundedRectangle(cornerRadius: 19))
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(pet.name).font(.title3).fontWeight(.black)
+                                    Text(Self.detail(pet)).font(.caption).foregroundStyle(TimiColor.muted)
+                                }
+                                Spacer()
+                                Image(systemName: store.selectedPetId == pet.id ? "checkmark.circle.fill" : "circle")
+                                    .font(.title2).foregroundStyle(TimiColor.blue)
+                            }
+                        }.buttonStyle(.plain)
+                        // A separate hit target rather than a swipe: a swipe
+                        // needs a List, and there is no affordance telling
+                        // anyone it is there.
+                        Button {
+                            editing = pet
+                            note = ""
+                            showEditor = true
+                        } label: {
+                            Image(systemName: "pencil").font(.title3).foregroundStyle(TimiColor.blue)
+                                .frame(width: 44, height: 44)
+                        }.buttonStyle(.plain)
+                    }
+                    .timiCard(store.selectedPetId == pet.id ? TimiColor.blueSoft : .white)
+                }
+                Text("Pet profiles speed operational intake. Medical records are never sent unless you explicitly include them in a future supported flow.")
+                    .font(.caption).foregroundStyle(TimiColor.muted)
             }.padding(20)
-        }.background(TimiColor.canvas).navigationTitle("Pets").sheet(isPresented: $showEditor) { PetEditor(store: store, isPresented: $showEditor) }
+        }
+        .background(TimiColor.canvas)
+        .navigationTitle("Pets")
+        .sheet(isPresented: $showEditor) {
+            PetEditor(store: store, isPresented: $showEditor, editing: editing, note: $note)
+        }
+    }
+
+    static func detail(_ pet: PetProfile) -> String {
+        var parts: [String] = [pet.species.title]
+        if !pet.breed.isEmpty { parts.append(pet.breed) }
+        if let weight = pet.weightLbs { parts.append(String(format: "%.0f lb", weight)) }
+        return parts.joined(separator: " · ")
     }
 }
 
 struct PetEditor: View {
     @Bindable var store: AppStore
     @Binding var isPresented: Bool
+    /// nil adds, non-nil edits that pet — the id is carried through so saving
+    /// updates the profile instead of adding a second one with the same name.
+    var editing: PetProfile?
+    @Binding var note: String
+
     @State var name = ""
     @State var species: PetSpecies = .dog
     @State var breed = ""
     @State var weight = ""
+    @State var confirmingDelete = false
+    @State var loaded = false
+
     var body: some View {
         NavigationStack {
             Form {
@@ -43,18 +117,60 @@ struct PetEditor: View {
                     TextField("Breed", text: $breed)
                     TextField("Weight in pounds", text: $weight)
                 }
+                if let pet = editing {
+                    Section {
+                        if confirmingDelete {
+                            Text("Remove \(pet.name)? Past requests stay in your activity.")
+                                .font(.caption).foregroundStyle(TimiColor.muted)
+                            Button("Remove \(pet.name)", role: .destructive) {
+                                if store.deletePet(pet.id) {
+                                    note = ""
+                                    isPresented = false
+                                } else {
+                                    note = "Tími keeps at least one pet profile. Add another first, then remove this one."
+                                    isPresented = false
+                                }
+                            }
+                        } else {
+                            Button("Remove this pet", role: .destructive) { confirmingDelete = true }
+                        }
+                    }
+                }
                 Section {
-                    Text("Profiles are stored on this device while accounts are disabled.").font(.caption).foregroundStyle(TimiColor.muted)
+                    Text("Profiles are kept with your account, so they follow you to a new phone.")
+                        .font(.caption).foregroundStyle(TimiColor.muted)
                 }
             }
-            .navigationTitle("Add a pet")
+            .navigationTitle(editing == nil ? "Add a pet" : "Edit pet")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { isPresented = false } }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
-                        store.savePet(PetProfile(name: name, species: species, breed: breed, weightLbs: Double(weight), colorToken: store.pets.count))
+                        let trimmed = name.trimmingCharacters(in: .whitespaces)
+                        let existing = editing
+                        store.savePet(PetProfile(
+                            id: existing?.id ?? UUID().uuidString,
+                            name: trimmed,
+                            species: species,
+                            breed: breed.trimmingCharacters(in: .whitespaces),
+                            weightLbs: Double(weight),
+                            birthYear: existing?.birthYear,
+                            colorToken: existing?.colorToken ?? store.pets.count
+                        ))
                         isPresented = false
                     }.disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+            }
+            // A sheet's @State survives between presentations, so without this
+            // the second pet opened still shows the first one's details.
+            .onAppear {
+                guard !loaded else { return }
+                loaded = true
+                if let pet = editing {
+                    name = pet.name
+                    species = pet.species
+                    breed = pet.breed
+                    weight = pet.weightLbs.map { String(format: "%.0f", $0) } ?? ""
                 }
             }
         }
@@ -94,6 +210,15 @@ struct SettingsView: View {
 
             if store.auth.isSignedIn {
                 Section("Account") {
+                    // Naming the account is the whole point of having one. Not
+                    // saying which one is signed in is why "we have sign-ins
+                    // and it doesn't save anything" was a reasonable reading.
+                    HStack {
+                        Text("Signed in as")
+                        Spacer()
+                        Text(store.ownerEmail.isEmpty ? (store.ownerPhone.isEmpty ? store.ownerName : store.ownerPhone) : store.ownerEmail)
+                            .foregroundStyle(TimiColor.muted)
+                    }
                     Button("Sign out", role: .destructive) { Task { await store.auth.signOut() } }
                 }
             }

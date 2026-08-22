@@ -218,7 +218,7 @@ public final class ClinicAPIClient: @unchecked Sendable {
         } else if Self.isLoopback(url) {
             request.setValue("clinic", forHTTPHeaderField: "x-demo-role")
             request.setValue(settings.tenantId, forHTTPHeaderField: "x-demo-tenant-id")
-        } else {
+        } else if !Self.isPublic(url) {
             throw ClinicAPIError.signInRequired
         }
 
@@ -227,6 +227,21 @@ public final class ClinicAPIClient: @unchecked Sendable {
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         }
         return request
+    }
+
+    /// Endpoints the Worker answers to anyone, and that the console must reach
+    /// *before* it can sign in.
+    ///
+    /// `/api/config` is where the Clerk publishable key comes from, so
+    /// requiring a session to fetch it is a deadlock: no config, no Clerk host,
+    /// no sign-in, no session, no config. The console reported it as "Could not
+    /// read https://providers.timinow.pet/api/config — Sign in to Tími before
+    /// contacting a production Worker", which reads as a Worker or a Clerk
+    /// problem and is neither; the request was never sent. The Windows client
+    /// never hit this only because its ClerkAuthService fetches /api/config
+    /// with its own HttpClient instead of going through the gated one.
+    private static func isPublic(_ url: URL) -> Bool {
+        url.path.hasSuffix("/api/config")
     }
 
     private static func isLoopback(_ url: URL) -> Bool {
