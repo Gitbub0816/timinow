@@ -1,8 +1,11 @@
 name: Native clients
 
 on:
+  # The working branches build too, not only main and open pull requests: a
+  # merged pull request stops triggering anything, and a branch carrying
+  # native changes with no way to build them is a branch nobody can trust.
   push:
-    branches: [main]
+    branches: [main, "claude/**"]
     paths:
       - "apps/customer-mobile/**"
       - "apps/vet-desktop/**"
@@ -14,6 +17,9 @@ on:
       - "apps/vet-desktop/**"
       - "apps/vet-windows/**"
       - ".github/workflows/native-clients.yml"
+  # Re-run the whole matrix on demand, for a fix whose commit touches nothing
+  # under the paths above.
+  workflow_dispatch:
 
 permissions:
   contents: read
