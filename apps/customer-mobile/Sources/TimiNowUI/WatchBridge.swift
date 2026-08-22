@@ -19,11 +19,11 @@ import WatchConnectivity
 /// re-subscribes itself in the `onChange` handler, so every subsequent
 /// state change keeps triggering a push.
 @MainActor
-final class WatchBridge: NSObject, WCSessionDelegate {
-    static let shared = WatchBridge()
+public final class WatchBridge: NSObject, WCSessionDelegate {
+    public static let shared = WatchBridge()
     private var store: AppStore?
 
-    func start(observing store: AppStore) {
+    public func start(observing store: AppStore) {
         self.store = store
         guard WCSession.isSupported() else { return }
         WCSession.default.delegate = self
@@ -80,8 +80,8 @@ final class WatchBridge: NSObject, WCSessionDelegate {
 }
 #else
 @MainActor
-final class WatchBridge {
-    static let shared = WatchBridge()
-    func start(observing store: AppStore) { }
+public final class WatchBridge {
+    public static let shared = WatchBridge()
+    public func start(observing store: AppStore) { }
 }
 #endif

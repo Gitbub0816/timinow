@@ -367,6 +367,38 @@ for (const module of ["apps/vet-desktop/Sources/TimiVetCore", "apps/customer-mob
   }
 }
 
+// A type the app module names has to be public in the module that declares
+// it. Xcode can hide this — the app target may see the sources directly — so
+// it surfaces only in the SwiftPM build, and only once everything ahead of it
+// compiles.
+for (const [appRoot, libraryRoots] of [
+  ["apps/customer-mobile/Sources/TimiNowApp",
+   ["apps/customer-mobile/Sources/TimiNowUI", "apps/customer-mobile/Sources/TimiNowCore"]],
+  ["apps/vet-desktop/Sources/TimiVetApp",
+   ["apps/vet-desktop/Sources/TimiVetUI", "apps/vet-desktop/Sources/TimiVetCore"]]
+]) {
+  const declarations = new Map();
+  for (const root of libraryRoots) {
+    for (const path of await collectFiles(root, ".swift")) {
+      const source = await read(path);
+      for (const d of source.matchAll(/^\s*(public\s+)?(?:@\w+\s+)*(?:final\s+)?(?:struct|class|enum|actor)\s+(\w+)/gm)) {
+        // A name declared twice (conditional variants) counts as public only
+        // when every declaration of it is.
+        const isPublic = Boolean(d[1]);
+        declarations.set(d[2], declarations.has(d[2]) ? declarations.get(d[2]) && isPublic : isPublic);
+      }
+    }
+  }
+  for (const path of await collectFiles(appRoot, ".swift")) {
+    const source = await read(path);
+    for (const [name, isPublic] of declarations) {
+      if (isPublic) continue;
+      if (!new RegExp(`\\b${name}\\b`).test(source)) continue;
+      throw new Error(`${path}: names ${name}, which its own module does not declare public. Every declaration of it has to be public or the SwiftPM build cannot see it across the module boundary.`);
+    }
+  }
+}
+
 const csharpFiles = await collectFiles("apps/vet-windows", ".cs");
 for (const path of csharpFiles) {
   const problems = bracketProblems(await read(path));
