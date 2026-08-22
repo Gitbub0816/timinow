@@ -20,13 +20,16 @@
     "DEMO_MODE": "false",
     "SURFACE": "customer",
     "CLERK_JS_URL": "https://cdn.jsdelivr.net/npm/@clerk/clerk-js@5/headless/+esm",
-    "CLERK_PUBLISHABLE_KEY": "pk_live_y",
+    "CLERK_PUBLISHABLE_KEY": "",
     "CLERK_ISSUER": "https://clerk.timinow.pet",
+    "CLERK_JWKS_URL": "",
+    "CLERK_TOKEN_TEMPLATE": "timinow",
     // Where an invited staff member lands after accepting a Clerk invitation.
     "VET_APP_URL": "https://providers.timinow.pet",
     "AUTHORIZED_PARTIES": "https://app.timinow.pet,https://timinow.pet,https://www.timinow.pet,https://providers.timinow.pet,https://admin.timinow.pet",
     "MAPBOX_PUBLIC_TOKEN": "",
     "MAPBOX_STYLE_URL": "mapbox://styles/calebowen2019/cmt3nci25004d01sya8qxcb4u",
+    "MAPBOX_NAVIGATION_STYLE_URL": "",
     "STRIPE_PUBLISHABLE_KEY": "",
     "VOICE_DRAIN_TOKEN": ""
   },

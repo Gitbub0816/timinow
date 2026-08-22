@@ -275,4 +275,28 @@ if (!moments.some((moment) => PLAYFUL.test(TIMI_ANNOUNCEMENTS.calm[moment]))) {
   throw new Error("The calm register should carry the brand's personality, but reads entirely plain");
 }
 
+// Every key the env template documents must actually reach a Worker. The
+// template is what a person fills in, so a key it describes and the bootstrap
+// never pushes is a silent no-op: the value looks configured and nothing reads
+// it. `# VAR` goes to a wrangler config, `# SECRET` to `wrangler secret put`.
+{
+  const template = (await readFile(".env.example", "utf8")).split("\n");
+  const bootstrap = await readFile("scripts/bootstrap.sh", "utf8");
+  let kind = null;
+  for (const line of template) {
+    const annotation = line.match(/^#\s*(VAR|SECRET)\b/);
+    if (annotation) { kind = annotation[1]; continue; }
+    const assignment = line.match(/^([A-Z][A-Z0-9_]*)=/);
+    if (!assignment) continue;
+    const key = assignment[1];
+    const pushed = kind === "SECRET"
+      ? new RegExp(`put_secret\\s+${key}\\b`).test(bootstrap)
+      : new RegExp(`set_var\\s+${key}\\b`).test(bootstrap);
+    if (kind && !pushed) {
+      throw new Error(`.env.example documents ${key} as a ${kind}, but scripts/bootstrap.sh never pushes it. Add it to the ${kind === "SECRET" ? "put_secret" : "set_var"} list, or stop documenting a value nothing reads.`);
+    }
+    kind = null;
+  }
+}
+
 console.log(`Validated ${requiredFiles.length} files, ${screens.length} screens, ${requiredTables.length} D1 tables, and ${requiredRoutes.length} API groups.`);

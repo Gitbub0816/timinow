@@ -49,17 +49,16 @@ if enableMapbox {
     // downloads token configured fails with "no such module 'UIKit'" from
     // inside Mapbox's own sources. The condition keeps the dependency out of
     // the macOS build while leaving the iOS app and CarPlay builds unchanged.
-    let iOSOnly: TargetDependencyCondition = .when(platforms: [.iOS])
     timiNowUIDependencies.append(contentsOf: [
-        .product(name: "MapboxMaps", package: "mapbox-maps-ios", condition: iOSOnly),
-        .product(name: "MapboxNavigationCore", package: "mapbox-navigation-ios", condition: iOSOnly),
-        .product(name: "MapboxNavigationUIKit", package: "mapbox-navigation-ios", condition: iOSOnly),
-        .product(name: "MapboxDirections", package: "mapbox-navigation-ios", condition: iOSOnly)
+        .product(name: "MapboxMaps", package: "mapbox-maps-ios", condition: .when(platforms: [.iOS])),
+        .product(name: "MapboxNavigationCore", package: "mapbox-navigation-ios", condition: .when(platforms: [.iOS])),
+        .product(name: "MapboxNavigationUIKit", package: "mapbox-navigation-ios", condition: .when(platforms: [.iOS])),
+        .product(name: "MapboxDirections", package: "mapbox-navigation-ios", condition: .when(platforms: [.iOS]))
     ])
     timiNowCarPlayDependencies.append(contentsOf: [
-        .product(name: "MapboxNavigationCore", package: "mapbox-navigation-ios", condition: iOSOnly),
-        .product(name: "MapboxNavigationUIKit", package: "mapbox-navigation-ios", condition: iOSOnly),
-        .product(name: "MapboxDirections", package: "mapbox-navigation-ios", condition: iOSOnly)
+        .product(name: "MapboxNavigationCore", package: "mapbox-navigation-ios", condition: .when(platforms: [.iOS])),
+        .product(name: "MapboxNavigationUIKit", package: "mapbox-navigation-ios", condition: .when(platforms: [.iOS])),
+        .product(name: "MapboxDirections", package: "mapbox-navigation-ios", condition: .when(platforms: [.iOS]))
     ])
 }
 

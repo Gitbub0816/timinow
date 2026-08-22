@@ -301,6 +301,13 @@ for (const path of swiftFiles) {
       throw new Error(`apps/customer-mobile/Package.swift: ${product[1]} is added with no platform condition. Mapbox is iOS-only — add condition: .when(platforms: [.iOS]) or the macOS build of the package fails on 'no such module UIKit'.`);
     }
   }
+  // The condition has to be written out at each call site. Binding it to a
+  // `let x: TargetDependencyCondition` makes Swift pick the obsolete
+  // `when(platforms:)` overload that takes an optional, and the manifest stops
+  // evaluating at all — which reads as the whole toolchain failing to install.
+  if (/:\s*TargetDependencyCondition\b/.test(manifest)) {
+    throw new Error("apps/customer-mobile/Package.swift: a TargetDependencyCondition is bound to a named variable. That selects an obsolete when(platforms:) overload and the manifest fails to evaluate — write .when(platforms: [.iOS]) inline instead.");
+  }
 }
 
 // A protocol requirement spelled `{ get async }` must be satisfied by an
@@ -324,6 +331,29 @@ for (const module of ["apps/vet-desktop/Sources/TimiVetCore", "apps/customer-mob
       if (!asyncRequirements.has(property[1])) continue;
       if (/get\s+async/.test(property[2])) continue;
       throw new Error(`${path}: public var ${property[1]} satisfies a { get async } protocol requirement with a synchronous getter. Skip generates a suspend function for the requirement and a plain one here, so the Kotlin class does not implement it — spell the getter { get async { ... } }.`);
+    }
+  }
+}
+
+// XCTest re-exports Foundation on Apple platforms, so a test can name
+// JSONEncoder or URLSession with no import and still compile — until Skip
+// transpiles it and Kotlin cannot resolve the reference. The same applies to
+// any transpiled source: name a Foundation type, import Foundation.
+{
+  const foundationTypes = /\b(JSONEncoder|JSONDecoder|JSONSerialization|URLSession|URLRequest|URLComponents|DateFormatter|ISO8601DateFormatter|NumberFormatter|UUID|Locale|Calendar|TimeZone|Bundle|NotificationCenter|UserDefaults)\b/;
+  const transpiled = [
+    "apps/vet-desktop/Sources", "apps/vet-desktop/Tests",
+    "apps/customer-mobile/Sources", "apps/customer-mobile/Tests"
+  ];
+  for (const root of transpiled) {
+    for (const path of await collectFiles(root, ".swift")) {
+      // TimiNowCarPlay is Apple-only and never transpiled (see Package.swift).
+      if (path.includes("/TimiNowCarPlay/")) continue;
+      const source = await read(path);
+      const named = source.match(foundationTypes);
+      if (named && !/^import Foundation$/m.test(source)) {
+        throw new Error(`${path}: names ${named[1]} without importing Foundation. XCTest and UIKit re-export it on Apple platforms, so this compiles natively and fails only once Skip transpiles it to Kotlin.`);
+      }
     }
   }
 }

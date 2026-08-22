@@ -199,9 +199,23 @@ bold "1. Public configuration"
 # The voice Worker is deliberately absent from these two: it serves no browser
 # UI, so it needs neither a Clerk publishable key nor a map token.
 set_var CLERK_PUBLISHABLE_KEY  "$CUSTOMER" "$VET" "$ADMIN"
+# The token-verification settings. These were committed values until now, which
+# meant re-pointing at a different Clerk instance took a code change rather than
+# an env-file edit. CLERK_JWKS_URL is normally blank — the Worker derives the
+# JWKS endpoint from the publishable key — and a blank value is skipped, so
+# leaving it empty keeps the derivation.
+set_var CLERK_ISSUER           "$CUSTOMER" "$VET" "$ADMIN"
+set_var CLERK_JWKS_URL         "$CUSTOMER" "$VET" "$ADMIN"
+set_var CLERK_TOKEN_TEMPLATE   "$CUSTOMER" "$VET" "$ADMIN"
+set_var AUTHORIZED_PARTIES     "$CUSTOMER" "$VET" "$ADMIN"
 set_var MAPBOX_PUBLIC_TOKEN    "$CUSTOMER" "$VET" "$ADMIN"
+set_var MAPBOX_STYLE_URL       "$CUSTOMER" "$VET" "$ADMIN" "$VOICE"
+set_var MAPBOX_NAVIGATION_STYLE_URL "$CUSTOMER" "$VET" "$ADMIN"
 set_var STRIPE_PUBLISHABLE_KEY "$CUSTOMER"
 set_var TWILIO_FROM_NUMBER     "$VOICE"
+set_var VOICE_PUBLIC_URL       "$VOICE"
+set_var VOICE_CALLS_ENABLED    "$VOICE"
+set_var VOICE_MAX_ATTEMPTS     "$VOICE"
 set_var PLATFORM_ADMIN_EMAILS  "$ADMIN"
 set_var PLATFORM_ADMIN_USER_IDS "$ADMIN"
 # Shared by both ends of the immediate-dispatch path, so it goes to both.
