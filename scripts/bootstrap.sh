@@ -51,11 +51,44 @@ for arg in "$@"; do
   esac
 done
 
-if [ -z "$ENV_FILE" ] || [ ! -f "$ENV_FILE" ]; then
+if [ -z "$ENV_FILE" ]; then
   echo "usage: $0 <path-to-env-file> [--dry-run] [--secrets-only] [--no-pull]" >&2
   echo "example: $0 ~/Downloads/env.example" >&2
   exit 1
 fi
+
+# "It printed the usage" and "that file is not where you think it is" are two
+# different problems, and printing the first for the second sends you off to
+# re-read the flags when the answer is a path.
+if [ ! -f "$ENV_FILE" ]; then
+  echo "no env file at: $ENV_FILE" >&2
+  case "$ENV_FILE" in
+    /*) ;;
+    *)  echo "  (looked relative to $PWD)" >&2 ;;
+  esac
+  # A file of that name sitting somewhere obvious is worth naming, since the
+  # usual mistake is the directory rather than the name.
+  BASENAME="$(basename "$ENV_FILE")"
+  for WHERE in "$PWD" "$HOME" "$HOME/Downloads" "$HOME/Desktop" "$(dirname "$0")/.."; do
+    if [ -f "$WHERE/$BASENAME" ]; then
+      # Canonicalised, so the suggestion is a path worth copying rather than
+      # one with a scripts/.. in the middle of it.
+      FOUND="$(cd "$WHERE" && pwd)/$BASENAME"
+      echo >&2
+      echo "found one here — did you mean:" >&2
+      echo "    $0 $FOUND" >&2
+      break
+    fi
+  done
+  exit 1
+fi
+
+# Absolute before the cd below, or a relative path stops resolving the moment
+# the script moves to the repository root.
+case "$ENV_FILE" in
+  /*) ;;
+  *)  ENV_FILE="$PWD/$ENV_FILE" ;;
+esac
 
 cd "$(dirname "$0")/.."
 
