@@ -76,19 +76,35 @@ and a ranked list card instead of a live map.
 
 **To build with real Mapbox maps and navigation on a Mac:**
 
+`./scripts/build-ios-app.sh` does all of this, and picks the Mapbox path
+automatically when `~/.netrc` has the downloads token. By hand:
+
 ```
 export TIMI_MAPBOX=1
 # ~/.netrc must already have the sk. downloads token above
 cd apps/customer-mobile/Darwin && xcodegen generate && cd ..
 SKIP_BRIDGE=1 swift package resolve
 xcodebuild -workspace Darwin/Project.xcworkspace -scheme TimiNow \
-  -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' build
+  -destination 'generic/platform=iOS Simulator' build
 ```
 
-CI (`.github/workflows/native-clients.yml`) does **not** set `TIMI_MAPBOX`,
-so its `ios` job builds and runs `ConcernValidatorTests` against the
-non-Mapbox fallback path only. Exercising the real Mapbox build currently
-requires a local Mac with the secret token configured.
+No `-sdk`: it would pin one SDK across every target in the scheme, and the
+embedded watchOS target then compiles against the iOS SDK and fails on
+`import WatchKit`. The destination alone lets each target use its own.
+
+**The toolchain has to be new enough.** Mapbox ships binary frameworks, and a
+binary Swift module can only be read by a compiler at least as new as the one
+that built it — Maps 11.26 is built with Swift 6.2. An older Xcode fails with
+`failed to build module 'MapboxCoreMaps'; this SDK is not supported by the
+compiler`, followed by every Mapbox type appearing to be missing. Check with
+`swift --version` before believing the errors.
+
+CI (`.github/workflows/native-clients.yml`) sets `TIMI_MAPBOX=1` in its `ios`
+job when the `MAPBOX_DOWNLOADS_TOKEN` repository secret is present *and* the
+runner has an Xcode with Swift 6.2 or newer; the job runs on `macos-26` for
+that reason. Without either, it builds the non-Mapbox fallback path and says
+so in the log — a fork, or a pull request from one, gets that path and still
+goes green.
 
 ## Changing driving-instruction wording
 

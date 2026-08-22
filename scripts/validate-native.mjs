@@ -528,6 +528,26 @@ for (const path of [
   }
 }
 
+// The Mapbox frameworks are binary, and a binary Swift module can only be read
+// by a compiler at least as new as the one that built it. Enabling Mapbox in CI
+// without first checking the runner's toolchain fails with "this SDK is not
+// supported by the compiler" and a cascade of missing types — a failure that
+// belongs to the runner image, not to the diff being tested.
+{
+  const workflow = await read(".github/workflows/native-clients.yml");
+  const step = workflow.slice(workflow.indexOf("- name: Configure Mapbox downloads"));
+  const configure = step.slice(0, step.indexOf("- name: Resolve Swift packages"));
+  if (!/TIMI_MAPBOX=1/.test(configure)) {
+    throw new Error(".github/workflows/native-clients.yml: the Mapbox step no longer sets TIMI_MAPBOX=1, so CI never compiles the Mapbox path at all.");
+  }
+  if (!/Apple Swift version/.test(configure)) {
+    throw new Error(".github/workflows/native-clients.yml: the Mapbox step enables TIMI_MAPBOX=1 without checking the runner's Swift version. The Mapbox binaries need Swift 6.2 or newer; an older toolchain fails with \"failed to build module 'MapboxCoreMaps'\".");
+  }
+  if (!/DEVELOPER_DIR:\s*\$\{\{\s*env\.MAPBOX_DEVELOPER_DIR\s*\}\}/.test(workflow)) {
+    throw new Error(".github/workflows/native-clients.yml: the iOS build does not use MAPBOX_DEVELOPER_DIR, so the toolchain the Mapbox step selected is never the one xcodebuild runs.");
+  }
+}
+
 // `#if canImport(M)` asks whether M is available. It does not import it. A
 // file that guards on canImport and then names a type from M, without an
 // `import M` anywhere, compiles fine while M is absent and fails the moment it

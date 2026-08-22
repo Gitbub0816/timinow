@@ -27,7 +27,12 @@ permissions:
 jobs:
   ios:
     name: Swift tests and iOS build
-    runs-on: macos-15
+    # macos-26, not macos-15, only because of Mapbox: its binary frameworks are
+    # built with Swift 6.2 and cannot be read by the Swift 6.1 that ships in
+    # macos-15's newest Xcode. The step below still probes for a new-enough
+    # toolchain rather than assuming this one, so the job degrades to the
+    # non-Mapbox path instead of breaking if the image changes under us.
+    runs-on: macos-26
     timeout-minutes: 30
     defaults:
       run:
@@ -48,14 +53,56 @@ jobs:
       # The Mapbox SDKs are only fetched when a downloads token is configured;
       # without the secret the build takes the non-Mapbox fallback path, which
       # is what a fork or a first-time contributor gets.
+      #
+      # They also ship as binary frameworks, and a binary Swift module can only
+      # be read by a compiler at least as new as the one that built it. Maps
+      # 11.26 is built with Swift 6.2, so an older toolchain fails with
+      #
+      #   failed to build module 'MapboxCoreMaps'; this SDK is not supported by
+      #   the compiler
+      #
+      # and then a cascade of missing types. Which Xcode versions a runner
+      # image carries is not ours to pin, so this picks the newest installed
+      # one and takes the documented non-Mapbox path when none is new enough,
+      # rather than failing on somebody else's release schedule.
       - name: Configure Mapbox downloads
         env:
           MAPBOX_DOWNLOADS_TOKEN: ${{ secrets.MAPBOX_DOWNLOADS_TOKEN }}
         run: |
+          set -euo pipefail
+          # Whatever happens below, later steps get a usable toolchain: an
+          # empty DEVELOPER_DIR is worse than no DEVELOPER_DIR, because xcrun
+          # honours it and then finds nothing.
+          echo "MAPBOX_DEVELOPER_DIR=$(xcode-select -p)" >> "$GITHUB_ENV"
+
           if [ -z "$MAPBOX_DOWNLOADS_TOKEN" ]; then
             echo "No Mapbox downloads token; building the non-Mapbox fallback path."
             exit 0
           fi
+
+          # Newest first, so the first new-enough one wins.
+          chosen=""
+          for app in $(ls -d /Applications/Xcode*.app 2>/dev/null | sort -Vr || true); do
+            version="$("$app/Contents/Developer/usr/bin/swift" --version 2>/dev/null \
+              | grep -oE 'Apple Swift version [0-9]+\.[0-9]+' | awk '{ print $4 }' || true)"
+            [ -n "$version" ] || continue
+            echo "  $app: Swift $version"
+            major="${version%%.*}"
+            minor="${version#*.}"
+            if [ "$major" -gt 6 ] || { [ "$major" -eq 6 ] && [ "$minor" -ge 2 ]; }; then
+              chosen="$app/Contents/Developer"
+              break
+            fi
+          done
+
+          if [ -z "$chosen" ]; then
+            echo "::warning::No installed Xcode has Swift 6.2 or newer, which the Mapbox"
+            echo "::warning::binary frameworks require. Building the non-Mapbox fallback path."
+            exit 0
+          fi
+
+          echo "Building with Mapbox against $chosen"
+          echo "MAPBOX_DEVELOPER_DIR=$chosen" >> "$GITHUB_ENV"
           printf 'machine api.mapbox.com\n  login mapbox\n  password %s\n' \
             "$MAPBOX_DOWNLOADS_TOKEN" > "$HOME/.netrc"
           chmod 600 "$HOME/.netrc"
@@ -85,6 +132,8 @@ jobs:
       # plugin that has not been trusted interactively — "Validate plug-in
       # skipstone in package skip" fails the build with no other explanation.
       - name: Compile iOS app
+        env:
+          DEVELOPER_DIR: ${{ env.MAPBOX_DEVELOPER_DIR }}
         run: >-
           xcodebuild
           -workspace Project.xcworkspace
