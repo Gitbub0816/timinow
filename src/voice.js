@@ -77,8 +77,21 @@ function sayXml(text, { voice = DEFAULT_SAY_VOICE } = {}) {
   return `<Say voice="${escapeXml(voice)}">${pronounceBrand(escapeXml(text))}</Say>`;
 }
 
-function gatherXml({ actionUrl, sayText, numDigits = 1, timeout = 8, voice }) {
-  return `<Gather input="dtmf" numDigits="${numDigits}" timeout="${timeout}" action="${escapeXml(actionUrl)}" method="POST">${sayXml(sayText, { voice })}</Gather>`;
+/**
+ * A line of the call: pre-rendered audio when there is any, spoken text
+ * otherwise.
+ *
+ * The fallback is the point. Twilio cannot speak a voice it does not host, so
+ * a custom voice has to arrive as a file — and if that file is not there when
+ * the phone is already ringing, the clinic hears nothing at all. Falling back
+ * to <Say> costs the voice and keeps the call.
+ */
+function lineXml(text, { voice, audioUrl } = {}) {
+  return audioUrl ? `<Play>${escapeXml(audioUrl)}</Play>` : sayXml(text, { voice });
+}
+
+function gatherXml({ actionUrl, sayText, numDigits = 1, timeout = 8, voice, audioUrl }) {
+  return `<Gather input="dtmf" numDigits="${numDigits}" timeout="${timeout}" action="${escapeXml(actionUrl)}" method="POST">${lineXml(sayText, { voice, audioUrl })}</Gather>`;
 }
 
 function redirectXml(url) {
@@ -94,28 +107,28 @@ function responseXml(inner) {
 }
 
 /** The very first thing the clinic hears: the intro, then the Gather prompt. Falls through to `repeatActionUrl` on no input. */
-export function outboundTwiml({ script, gatherActionUrl, repeatActionUrl, voice }) {
+export function outboundTwiml({ script, gatherActionUrl, repeatActionUrl, voice, audio = {} }) {
   return responseXml(
-    sayXml(script.intro, { voice }) +
-    gatherXml({ actionUrl: gatherActionUrl, sayText: script.prompt, voice }) +
+    lineXml(script.intro, { voice, audioUrl: audio.intro }) +
+    gatherXml({ actionUrl: gatherActionUrl, sayText: script.prompt, voice, audioUrl: audio.prompt }) +
     redirectXml(repeatActionUrl)
   );
 }
 
 /** Re-plays the prompt (pressed 9, or no input yet within the repeat budget). */
-export function repeatTwiml({ script, gatherActionUrl, repeatActionUrl, voice }) {
+export function repeatTwiml({ script, gatherActionUrl, repeatActionUrl, voice, audio = {} }) {
   return responseXml(
-    gatherXml({ actionUrl: gatherActionUrl, sayText: script.repeat, voice }) +
+    gatherXml({ actionUrl: gatherActionUrl, sayText: script.repeat, voice, audioUrl: audio.repeat }) +
     redirectXml(repeatActionUrl)
   );
 }
 
-export function acceptedTwiml(script, { voice } = {}) {
-  return responseXml(sayXml(script.accepted, { voice }) + hangupXml());
+export function acceptedTwiml(script, { voice, audioUrl } = {}) {
+  return responseXml(lineXml(script.accepted, { voice, audioUrl }) + hangupXml());
 }
 
-export function declinedTwiml(script, { voice } = {}) {
-  return responseXml(sayXml(script.declined, { voice }) + hangupXml());
+export function declinedTwiml(script, { voice, audioUrl } = {}) {
+  return responseXml(lineXml(script.declined, { voice, audioUrl }) + hangupXml());
 }
 
 /** The search was already filled (max offers reached, expired, or selected) by the time the clinic answered. */
@@ -124,8 +137,8 @@ export function alreadyFilledTwiml({ voice } = {}) {
 }
 
 /** No digits after the repeat budget is exhausted. */
-export function noResponseTwiml(script, { voice } = {}) {
-  return responseXml(sayXml(script.goodbye, { voice }) + hangupXml());
+export function noResponseTwiml(script, { voice, audioUrl } = {}) {
+  return responseXml(lineXml(script.goodbye, { voice, audioUrl }) + hangupXml());
 }
 
 export function errorTwiml(message = "Sorry, something went wrong. Goodbye.", { voice } = {}) {

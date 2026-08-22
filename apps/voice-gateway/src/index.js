@@ -25,6 +25,7 @@ import {
   tenantIdForClerkOrg
 } from "../../../src/db.js";
 import { isPlatformAdmin } from "../../../src/tenancy.js";
+import { geminiConfigured, geminiVoice, synthesizeSpeech } from "../../../src/gemini-tts.js";
 import {
   acceptedTwiml,
   alreadyFilledTwiml,
@@ -44,6 +45,42 @@ import {
   verifyTwilioSignature,
   withinQuietHours
 } from "../../../src/voice.js";
+
+const TEST_SCRIPT_INPUT = {
+  locationName: "your clinic",
+  spokenConcern: "a dog that has vomited three times since this morning",
+  travelMinutes: 12,
+  urgency: "urgent"
+};
+
+/** How the line should be read. Gemini's TTS models take direction in the
+ *  prompt itself, and a clinic answering the phone at 2am should not be read
+ *  to brightly. */
+const CALL_STYLE = "Read this warmly and calmly, at an unhurried pace, as a real person calling a veterinary clinic. Do not sound cheerful or promotional.";
+
+/**
+ * Audio for one line, cached on its own URL.
+ *
+ * Every fixed line — the prompt, the acceptance, the decline — is identical on
+ * every call, so the first synthesis pays for all of them. The cache is keyed
+ * by the request URL, which already carries the part and the voice, so nothing
+ * else has to be invented to key it.
+ */
+async function cachedSpeech(request, env, text) {
+  const cache = caches.default;
+  const hit = await cache.match(request);
+  if (hit) return hit;
+  const { wav } = await synthesizeSpeech(env, { text, style: CALL_STYLE });
+  const response = new Response(wav, {
+    headers: {
+      "content-type": "audio/wav",
+      "content-length": String(wav.length),
+      "cache-control": "public, max-age=86400"
+    }
+  });
+  await cache.put(request, response.clone());
+  return response;
+}
 
 /** Twilio voice names are letters, digits, dots and dashes. Constrained at the
  * door rather than escaped downstream: this value becomes a TwiML attribute,
@@ -721,36 +758,72 @@ async function handleApi(request, env) {
   // What the test call says. Twilio fetches this, so it answers GET too.
   if ((method === "POST" || method === "GET") && path === "/api/voice/test-script") {
     const origin = voiceOrigin(env, request);
-    const script = buildCallScript({
-      locationName: "your clinic",
-      spokenConcern: "a dog that has vomited three times since this morning",
-      travelMinutes: 12,
-      urgency: "urgent"
-    });
+    const script = buildCallScript(TEST_SCRIPT_INPUT);
     const voice = cleanVoiceName(url.searchParams.get("voice")) || sayVoice(env);
+    // Synthesised here rather than left for Twilio to fetch blind: if Gemini
+    // is going to fail, it fails now, while there is still a <Say> to fall
+    // back to. Once the phone is ringing a missing file is silence.
+    //
+    // All lines or none. A call that opens in a custom voice and answers in
+    // Polly is worse than one that is consistently either.
+    let audio = {};
+    if (geminiConfigured(env)) {
+      try {
+        const base = `${origin}/api/voice/test-audio?voice=${encodeURIComponent(geminiVoice(env))}`;
+        await Promise.all([
+          cachedSpeech(new Request(`${base}&part=intro`), env, script.intro),
+          cachedSpeech(new Request(`${base}&part=prompt`), env, script.prompt)
+        ]);
+        audio = { intro: `${base}&part=intro`, prompt: `${base}&part=prompt` };
+      } catch (error) {
+        console.warn(JSON.stringify({ event: "voice_tts_fallback", message: error.message }));
+      }
+    }
     return xmlResponse(outboundTwiml({
       script,
       gatherActionUrl: `${origin}/api/voice/test-gather?voice=${encodeURIComponent(voice)}`,
       repeatActionUrl: `${origin}/api/voice/test-script?voice=${encodeURIComponent(voice)}`,
-      voice
+      voice,
+      audio
     }));
+  }
+
+  // The audio itself. Twilio fetches this from <Play>, so it is a plain GET
+  // with no signature — it returns a fixed sample sentence and nothing else.
+  if (method === "GET" && path === "/api/voice/test-audio") {
+    if (!geminiConfigured(env)) return apiError(409, "TTS_NOT_CONFIGURED", "GEMINI_API_KEY is not set.");
+    const script = buildCallScript(TEST_SCRIPT_INPUT);
+    const text = script[url.searchParams.get("part")];
+    if (!text) return apiError(422, "UNKNOWN_PART", "Ask for intro, prompt, repeat, accepted, declined or goodbye.");
+    try {
+      return await cachedSpeech(request, env, text);
+    } catch (error) {
+      console.error(JSON.stringify({ event: "voice_tts_failed", message: error.message }));
+      return apiError(502, "TTS_FAILED", error.message);
+    }
   }
 
   // The keypad answer. Says what a real acceptance or decline says, and — this
   // being a test — changes nothing anywhere.
   if (method === "POST" && path === "/api/voice/test-gather") {
     const params = Object.fromEntries(new URLSearchParams(await request.text()));
-    const script = buildCallScript({
-      locationName: "your clinic",
-      spokenConcern: "a dog that has vomited three times since this morning",
-      travelMinutes: 12,
-      urgency: "urgent"
-    });
+    const script = buildCallScript(TEST_SCRIPT_INPUT);
     const digit = String(params.Digits || "");
     const voice = cleanVoiceName(url.searchParams.get("voice")) || sayVoice(env);
-    if (digit === "1") return xmlResponse(acceptedTwiml(script, { voice }));
-    if (digit === "2") return xmlResponse(declinedTwiml(script, { voice }));
-    return xmlResponse(noResponseTwiml(script, { voice }));
+    const part = digit === "1" ? "accepted" : digit === "2" ? "declined" : "goodbye";
+    let audioUrl;
+    if (geminiConfigured(env)) {
+      const candidate = `${voiceOrigin(env, request)}/api/voice/test-audio?voice=${encodeURIComponent(geminiVoice(env))}&part=${part}`;
+      try {
+        await cachedSpeech(new Request(candidate), env, script[part]);
+        audioUrl = candidate;
+      } catch (error) {
+        console.warn(JSON.stringify({ event: "voice_tts_fallback", message: error.message }));
+      }
+    }
+    if (digit === "1") return xmlResponse(acceptedTwiml(script, { voice, audioUrl }));
+    if (digit === "2") return xmlResponse(declinedTwiml(script, { voice, audioUrl }));
+    return xmlResponse(noResponseTwiml(script, { voice, audioUrl }));
   }
 
   // The phone number's own Voice configuration points here. See
