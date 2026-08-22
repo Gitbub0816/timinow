@@ -11,6 +11,12 @@ SWIFT_VERSION = 5.9
 PRODUCT_MODULE_NAME = TimiNowHost
 CODE_SIGN_STYLE = Automatic
 
+// Here rather than in project.yml's target settings, so the include below can
+// override it: a target setting outranks an xcconfig, and a device build has
+// to be able to swap in an entitlements file without the restricted CarPlay
+// key. See project.yml and docs/NAVIGATION.md.
+CODE_SIGN_ENTITLEMENTS = TimiNow.entitlements
+
 // Optional per-developer settings — DEVELOPMENT_TEAM, mainly. Git-ignored.
 // Comments here are //, not #: xcconfig reads a leading # as a preprocessor
 // directive, so a shell-style comment fails the build with "unsupported

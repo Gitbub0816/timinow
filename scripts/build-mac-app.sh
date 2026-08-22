@@ -26,61 +26,7 @@ fi
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-bold() { printf '\n\033[1m%s\033[0m\n' "$*"; }
-dim()  { printf '\033[2m%s\033[0m\n' "$*"; }
-warn() { printf '\033[33m%s\033[0m\n' "$*"; }
-die()  { printf '\033[31m%s\033[0m\n' "$*" >&2; exit 1; }
-
-# A silent terminal for ten minutes is indistinguishable from a hang, and the
-# first build genuinely takes that long: Skip transpiles its whole stack before
-# Xcode compiles anything. So the output is piped through a filter rather than
-# hidden in a log — the log is still written, for summarising a failure.
-#
-# Piped rather than followed with `tail -f`: in `a | b | c &` the shell reports
-# only c's pid, so killing it would leave tail running after the script exits.
-# Matches the phase headings xcodebuild prints, plus anything that names an
-# error. The skipstone plugin's own output is thousands of note: lines naming
-# every transpiled file, which is the one phase that must NOT be echoed — so
-# the heartbeat below covers the silence instead.
-BUILD_FILTER='^(Skip |Compiling|Compile|Build|Ld |Link|CodeSign|Signing|Touch|Copy|Prepare|Resolve|Apply build tool|Process build tool|Create|Validate|\*\* |error:|.*: error:)'
-
-# xcodebuild goes quiet for minutes at a time while Skip transpiles its stack.
-# Without this there is no way to tell that from a hang — and it does hang: two
-# builds at once block on SwiftPM's shared lock with no message at all. So the
-# heartbeat watches the log grow, and says so when it stops.
-start_heartbeat() { # start_heartbeat LOGFILE
-  ( log="$1"
-    elapsed=0
-    last_size=0
-    stalled=0
-    while true; do
-      sleep 30
-      elapsed=$(( elapsed + 30 ))
-      size=$(wc -c < "$log" 2>/dev/null || echo 0)
-      if [ "$size" -eq "$last_size" ]; then
-        stalled=$(( stalled + 30 ))
-      else
-        stalled=0
-        last_size="$size"
-      fi
-      if [ "$stalled" -ge 120 ]; then
-        printf '\033[33m  Nothing written for %dm. Last line:\033[0m\n' "$(( stalled / 60 ))"
-        printf '\033[2m    %s\033[0m\n' "$(tail -1 "$log" 2>/dev/null | cut -c1-100)"
-        printf '\033[33m  If another xcodebuild or Xcode itself is open on this package, they are\033[0m\n'
-        printf '\033[33m  sharing SwiftPM'"'"'s lock and this one waits forever. Check with:\033[0m\n'
-        printf '\033[2m    ps -eo pid,etime,args | grep [x]codebuild\033[0m\n'
-        stalled=0
-      else
-        printf '\033[2m  … still building (%dm%02ds)\033[0m\n' "$(( elapsed / 60 ))" "$(( elapsed % 60 ))"
-      fi
-    done ) &
-  HEARTBEAT_PID=$!
-}
-
-stop_heartbeat() {
-  [ -n "${HEARTBEAT_PID:-}" ] && kill "$HEARTBEAT_PID" 2>/dev/null
-  HEARTBEAT_PID=""
-}
+. scripts/lib/apple-build.sh
 
 # A killed script must not leave the heartbeat behind.
 trap 'stop_heartbeat' EXIT INT TERM
@@ -102,18 +48,8 @@ command -v xcodebuild >/dev/null || die "Xcode is required (xcode-select --insta
 command -v xcodegen   >/dev/null || die "xcodegen is required: brew install xcodegen"
 
 bold "1. Signing identity"
-if [ -z "$TEAM" ] && [ -f "$LOCAL_CONFIG" ]; then
-  TEAM="$(awk -F'=' '/^[[:space:]]*DEVELOPMENT_TEAM/ { gsub(/[[:space:]]/, "", $2); print $2 }' "$LOCAL_CONFIG")"
-  [ -n "$TEAM" ] && dim "  from $LOCAL_CONFIG"
-fi
 if [ -z "$TEAM" ]; then
-  # The team id is the OU of the Apple Development certificate. The name in
-  # parentheses on the certificate is the individual, not the team, so reading
-  # it from there gives a value that looks right and signs nothing.
-  TEAM="$(security find-certificate -c "Apple Development" -p 2>/dev/null \
-    | openssl x509 -noout -subject 2>/dev/null \
-    | tr ',/' '\n\n' | awk -F'=' '/OU=/ { gsub(/[[:space:]]/, "", $2); print $2; exit }')"
-  [ -n "$TEAM" ] && dim "  from the Apple Development certificate in your login keychain"
+  TEAM="$(resolve_team "$LOCAL_CONFIG")"
 fi
 if [ -z "$TEAM" ]; then
   die "  No Apple development team found.
@@ -127,6 +63,7 @@ if [ -z "$TEAM" ]; then
   https://developer.apple.com/account (Membership details)."
 fi
 echo "  team $TEAM"
+if [ -n "${RESOLVED_TEAM_SOURCE:-}" ]; then dim "  from $RESOLVED_TEAM_SOURCE"; fi
 
 printf '// Written by scripts/build-mac-app.sh. Git-ignored, personal to this machine.\nDEVELOPMENT_TEAM = %s\n' "$TEAM" > "$LOCAL_CONFIG"
 
@@ -137,33 +74,24 @@ echo "  generated"
 bold "3. Build"
 dim "  Plain macOS package, no dependencies — this should take well under a minute."
 dim "  Full output: /tmp/timi-mac-build.log"
-set +e +o pipefail
-start_heartbeat /tmp/timi-mac-build.log
-# -allowProvisioningUpdates lets Xcode create the development profile for the
-# keychain-access-group on first run rather than failing with a bare
-# "requires a development certificate". It talks to Apple to do that, so if
-# this stalls at signing, the account it needs is not signed in: open Xcode ->
-# Settings -> Accounts, add your Apple ID, then run this again.
-( cd "$APP_DIR" && xcodebuild \
-    -workspace Project.xcworkspace \
-    -scheme TimiVet \
-    -destination 'generic/platform=macOS' \
-    -configuration Release \
-    -derivedDataPath build \
-    -skipPackagePluginValidation \
-    -skipMacroValidation \
-    -allowProvisioningUpdates \
-    DEVELOPMENT_TEAM="$TEAM" \
-    build ) 2>&1 \
-  | tee /tmp/timi-mac-build.log \
-  | grep --line-buffered -E "$BUILD_FILTER" \
-  | awk '{ if (length($0) > 110) $0 = substr($0, 1, 107) "..."; print "  " $0; fflush() }'
-BUILD_STATUS=${PIPESTATUS[0]}
-set -e -o pipefail
-stop_heartbeat
+# -allowProvisioningUpdates lets Xcode create the development profile on first
+# run rather than failing with a bare "requires a development certificate". It
+# talks to Apple to do that, so if this stalls at signing, the account it needs
+# is not signed in: open Xcode -> Settings -> Accounts, add your Apple ID, then
+# run this again.
+run_build /tmp/timi-mac-build.log "$APP_DIR" xcodebuild \
+  -workspace Project.xcworkspace \
+  -scheme TimiVet \
+  -destination 'generic/platform=macOS' \
+  -configuration Release \
+  -derivedDataPath build \
+  -skipPackagePluginValidation \
+  -skipMacroValidation \
+  -allowProvisioningUpdates \
+  DEVELOPMENT_TEAM="$TEAM" \
+  build
 if [ "$BUILD_STATUS" -ne 0 ]; then
-  echo >&2
-  grep -E "error:" /tmp/timi-mac-build.log | sort -u | head -20 >&2
+  summarise_failure /tmp/timi-mac-build.log
   die "  Build failed after $(( SECONDS / 60 ))m. Full log: /tmp/timi-mac-build.log"
 fi
 echo "  finished in $(( SECONDS / 60 ))m $(( SECONDS % 60 ))s"

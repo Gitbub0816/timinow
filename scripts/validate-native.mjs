@@ -585,6 +585,55 @@ for (const path of await collectFiles("apps/customer-mobile/Sources", ".swift"))
   }
 }
 
+// Getting the app onto a phone, by cable or through TestFlight, needs a real
+// signature and a version pair. Each of these is a failure whose message names
+// something other than its cause, so they are checked here instead.
+{
+  const project = await read("apps/customer-mobile/Darwin/project.yml");
+  const info = await read("apps/customer-mobile/Darwin/Info.plist");
+  const xcconfig = await read("apps/customer-mobile/Darwin/TimiNow.xcconfig");
+
+  // A target setting outranks the xcconfig, so declaring it in both places
+  // means the scripts' entitlements override is silently ignored and the
+  // restricted CarPlay key stays in the build.
+  if (/^\s*CODE_SIGN_ENTITLEMENTS\s*:/m.test(project)) {
+    throw new Error("apps/customer-mobile/Darwin/project.yml sets CODE_SIGN_ENTITLEMENTS as a target setting, which outranks TimiNow.xcconfig. The device and TestFlight scripts override it through Local.xcconfig, and cannot while this is here.");
+  }
+  if (!/^CODE_SIGN_ENTITLEMENTS\s*=/m.test(xcconfig)) {
+    throw new Error("apps/customer-mobile/Darwin/TimiNow.xcconfig no longer sets CODE_SIGN_ENTITLEMENTS, so the app builds with no entitlements at all.");
+  }
+  if (!/#include\?\s+"Local\.xcconfig"/.test(xcconfig)) {
+    throw new Error("apps/customer-mobile/Darwin/TimiNow.xcconfig must include Local.xcconfig last — that is where the build scripts write the team and the entitlements override.");
+  }
+
+  // GENERATE_INFOPLIST_FILE is NO for this target, so nothing injects the
+  // version keys. Without them devicectl refuses the install and App Store
+  // Connect refuses the upload, neither of them mentioning Info.plist.
+  for (const key of ["CFBundleVersion", "CFBundleShortVersionString"]) {
+    if (!info.includes(`<key>${key}</key>`)) {
+      throw new Error(`apps/customer-mobile/Darwin/Info.plist has no ${key}. Installing on a device and uploading to TestFlight both fail without it, and neither error names the plist.`);
+    }
+  }
+  for (const setting of ["MARKETING_VERSION", "CURRENT_PROJECT_VERSION"]) {
+    if (!new RegExp(`^\\s*${setting}\\s*:`, "m").test(project)) {
+      throw new Error(`apps/customer-mobile/Darwin/project.yml does not set ${setting}, which Info.plist reads through $(${setting}). It would resolve to an empty string.`);
+    }
+  }
+
+  // CODE_SIGNING_ALLOWED=NO is right for a compile check and produces a bundle
+  // no device will run. These two scripts exist precisely to sign for real.
+  for (const path of ["scripts/install-ios-device.sh", "scripts/upload-testflight.sh"]) {
+    const script = await read(path);
+    const executable = script.split("\n").filter((line) => !/^\s*#/.test(line)).join("\n");
+    if (/CODE_SIGNING_ALLOWED\s*=\s*NO/.test(executable)) {
+      throw new Error(`${path} disables code signing. The bundle would build and then be refused by the device or by App Store Connect.`);
+    }
+    if (!script.includes("-allowProvisioningUpdates")) {
+      throw new Error(`${path} must pass -allowProvisioningUpdates so Xcode can create the provisioning profile rather than failing with "requires a development certificate".`);
+    }
+  }
+}
+
 // `#if canImport(M)` asks whether M is available. It does not import it. A
 // file that guards on canImport and then names a type from M, without an
 // `import M` anywhere, compiles fine while M is absent and fails the moment it

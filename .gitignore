@@ -24,6 +24,10 @@ apps/vet-desktop/xcuserdata/
 # Per-developer signing identity for the Apple apps. Created by
 # scripts/build-mac-app.sh; holds a DEVELOPMENT_TEAM and nothing else.
 apps/*/Darwin/Local.xcconfig
+# The committed entitlements with the restricted CarPlay key removed, written
+# per build by scripts/install-ios-device.sh and scripts/upload-testflight.sh.
+# Generated, never edited — change TimiNow.entitlements instead.
+apps/*/Darwin/*.local.entitlements
 apps/*/build/
 
 # Xcode per-user state. It lands inside the committed Project.xcworkspace, so

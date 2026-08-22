@@ -7,6 +7,15 @@ options:
 packages:
   TimiNowPackage:
     path: ..
+# The iPhone app and its watch companion have to carry the same version pair,
+# or App Store Connect rejects the upload. Set once, here, and read by
+# Info.plist through $(MARKETING_VERSION) / $(CURRENT_PROJECT_VERSION).
+# scripts/upload-testflight.sh overrides CURRENT_PROJECT_VERSION per upload,
+# since every build sent to TestFlight needs a higher one than the last.
+settings:
+  base:
+    MARKETING_VERSION: "1.0"
+    CURRENT_PROJECT_VERSION: "1"
 targets:
   TimiNow:
     type: application
@@ -38,11 +47,13 @@ targets:
         PRODUCT_NAME: TimiNow
         PRODUCT_MODULE_NAME: TimiNowHost
         CODE_SIGN_STYLE: Automatic
-        # Requires Apple's separate CarPlay entitlement approval before this
-        # will actually sign for a device build — see
-        # Darwin/TimiNow.entitlements and docs/NAVIGATION.md. Simulator
-        # builds with CODE_SIGNING_ALLOWED=NO (as in CI) are unaffected.
-        CODE_SIGN_ENTITLEMENTS: TimiNow.entitlements
+        # CODE_SIGN_ENTITLEMENTS is deliberately NOT set here. It lives in
+        # TimiNow.xcconfig instead, because a target setting outranks the
+        # xcconfig and scripts/install-ios-device.sh has to be able to point
+        # this at a copy with the restricted CarPlay entitlement removed —
+        # Apple issues no development profile carrying an entitlement it has
+        # not granted, so a device build fails at signing without that. See
+        # Darwin/TimiNow.entitlements and docs/NAVIGATION.md.
         TARGETED_DEVICE_FAMILY: "1,2"
         SUPPORTS_MACCATALYST: NO
         SWIFT_VERSION: "5.9"

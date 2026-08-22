@@ -494,6 +494,66 @@ if ! $DRY; then
 fi
 echo
 
+bold "8. Clerk"
+# Every Worker can be deployed correctly and every client still stuck on
+# "Tími could not reach Clerk": the publishable key names a Frontend API host,
+# and if that host does not answer, sign-in cannot start anywhere. The apps
+# have no way to tell that apart from a bad Worker URL, so it is checked here,
+# where the answer is knowable.
+if ! $DRY; then
+  CONFIG="$(curl -fsS --max-time 10 "https://timinow.pet/api/config" 2>/dev/null || true)"
+  CLERK_HOST="$(printf '%s' "$CONFIG" | node -e '
+    let raw = "";
+    process.stdin.on("data", (chunk) => { raw += chunk; });
+    process.stdin.on("end", () => {
+      let key;
+      try { key = JSON.parse(raw).clerkPublishableKey; } catch { return; }
+      if (typeof key !== "string") return;
+      const encoded = key.replace(/^pk_(live|test)_/, "");
+      if (encoded === key) return;
+      // Clerk base64-encodes the host and terminates it with a dollar sign.
+      const host = Buffer.from(encoded, "base64").toString("utf8").replace(/\$$/, "");
+      if (/^[a-z0-9.-]+\.[a-z]{2,}$/i.test(host)) process.stdout.write(host);
+    });
+  ' 2>/dev/null || true)"
+  if [ -z "$CLERK_HOST" ]; then
+    warn "  timinow.pet/api/config serves no usable CLERK_PUBLISHABLE_KEY, so"
+    warn "  sign-in cannot start on any surface. Set CLERK_PUBLISHABLE_KEY in"
+    warn "  your env file and run this again."
+  else
+    printf '  %-26s ' "$CLERK_HOST"
+    JWKS="$(curl -fsS --max-time 10 "https://$CLERK_HOST/.well-known/jwks.json" 2>/dev/null || true)"
+    if printf '%s' "$JWKS" | grep -q '"keys"'; then
+      echo "serving JWKS"
+    else
+      echo "NOT ANSWERING"
+      warn "  Until this host answers, every client says \"could not reach Clerk\"."
+      case "$JWKS" in
+        *"prohibited IP"*|*"Error 1000"*)
+          warn "  Cloudflare is refusing it — \"DNS points to prohibited IP\". The"
+          warn "  record for $CLERK_HOST is proxied (orange cloud), and Clerk's"
+          warn "  own frontend-api.clerk.services sits behind Cloudflare too, so"
+          warn "  the proxy resolves to itself and stops."
+          dim  "  Cloudflare -> DNS: set clerk, accounts, clkmail, clk._domainkey"
+          dim  "  and clk2._domainkey to DNS only (grey cloud). Nothing else changes."
+          ;;
+        "")
+          warn "  Nothing answered at all, so the DNS record is missing entirely."
+          dim  "  Clerk's dashboard lists the CNAMEs to add, under Configure -> Domains."
+          ;;
+        *)
+          warn "  It answered, but not with a JWKS:"
+          dim  "    $(printf '%s' "$JWKS" | head -1 | cut -c1-96)"
+          ;;
+      esac
+      warn "  The key itself may also simply be the wrong instance's — a key from"
+      warn "  a deleted or renamed Clerk application decodes to a host that no"
+      warn "  longer exists, and looks exactly like this."
+    fi
+  fi
+fi
+echo
+
 bold "Done."
 echo "Public values changed in the wrangler configs. They are deployed already —"
 echo "committing them is optional, and only worth it for values you want other"

@@ -3,6 +3,15 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleDisplayName</key><string>Tími NOW</string>
+    <!--
+      Set from MARKETING_VERSION / CURRENT_PROJECT_VERSION in project.yml.
+      They are spelled out here because GENERATE_INFOPLIST_FILE is NO for this
+      target, and the build system only injects the version keys when it is
+      generating the file itself. Without them an install on a real device and
+      every App Store Connect upload fail, and neither error names the plist.
+    -->
+    <key>CFBundleShortVersionString</key><string>$(MARKETING_VERSION)</string>
+    <key>CFBundleVersion</key><string>$(CURRENT_PROJECT_VERSION)</string>
     <key>ITSAppUsesNonExemptEncryption</key><false/>
     <key>NSLocationWhenInUseUsageDescription</key><string>Tími uses your location to find participating veterinary clinics near you and estimate travel distance.</string>
     <key>NSUserNotificationsUsageDescription</key><string>Tími can notify you when a clinic sends an availability offer or updates your arrival.</string>

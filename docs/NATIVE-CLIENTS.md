@@ -45,6 +45,59 @@ Demo mode is complete and interactive. Live mode uses the Worker clinic endpoint
 - Clinic responses communicate operational capacity, not a diagnosis, medical advice, guaranteed appointment, or triage priority.
 - Emergency language always instructs customers to call a clinic directly and seek immediate care.
 
+## Building and installing
+
+Four scripts, none of which needs an Xcode window:
+
+| Command | Produces |
+| --- | --- |
+| `./scripts/build-mac-app.sh` | The veterinary console, signed, in `/Applications`. |
+| `./scripts/build-ios-app.sh` | The customer app running on a simulator. No Apple account needed. |
+| `./scripts/install-ios-device.sh` | The customer app on an iPhone over USB-C. |
+| `./scripts/upload-testflight.sh` | The customer app on TestFlight. |
+
+They share `scripts/lib/apple-build.sh`, which filters xcodebuild's output down
+to its phases and prints a heartbeat while it is quiet — the first customer-app
+build transpiles the whole Skip stack before Xcode compiles anything, and ten
+silent minutes is indistinguishable from a hang.
+
+### On a phone, by cable
+
+Needs an Apple ID signed in under Xcode → Settings → Accounts (a free one is
+enough; the app then expires after seven days and re-running the script
+reinstalls it), Developer Mode on the phone under Settings → Privacy &
+Security, and the phone unlocked and trusting the Mac.
+
+The script strips `com.apple.developer.carplay-driving-navigation` from the
+build. That entitlement is restricted: Apple issues no provisioning profile
+carrying it until a separate CarPlay request is approved, and leaving it in
+fails at signing with a message about profiles rather than about CarPlay. iOS
+never instantiates the CarPlay scene without the grant anyway, so nothing
+testable on the phone is lost. Pass `--carplay` once the approval lands.
+
+### On TestFlight
+
+Needs a paid Apple Developer Program membership, an app record in App Store
+Connect for `solutions.clearkey.timinow`, and an App Store Connect API key
+(Users and Access → Integrations) with its `.p8` saved to
+`~/.appstoreconnect/private_keys/AuthKey_<KEYID>.p8` — Apple offers that file
+for download exactly once.
+
+```
+./scripts/upload-testflight.sh --api-key <KEY ID> --api-issuer <ISSUER ID>
+```
+
+The build number defaults to a `yymmddHHMM` stamp, because App Store Connect
+rejects any upload whose `CFBundleVersion` is not higher than the last one it
+accepted. `--build N` overrides it; `--export-only` produces an `.ipa` without
+uploading.
+
+Both scripts write `Darwin/Local.xcconfig` with the resolved team and the
+entitlements file to use. It is git-ignored, included last by
+`Darwin/TimiNow.xcconfig`, and rewritten on every run — which is why
+`CODE_SIGN_ENTITLEMENTS` must not also appear in `Darwin/project.yml`, where a
+target setting would outrank it.
+
 ## Verification
 
 Repository checks validate native scaffolding on every platform. GitHub Actions additionally compiles the WPF app on Windows and runs Swift tests plus an iOS Simulator build on macOS. Signed App Store and Windows installer builds remain release-pipeline responsibilities because signing identities are account-specific.
