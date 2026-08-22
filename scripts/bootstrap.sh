@@ -340,17 +340,32 @@ if [ -n "$TEST_CALL" ]; then
   [ -n "$ORIGIN" ] || ORIGIN="https://voice.timinow.pet"
   ORIGIN="${ORIGIN%/}"
   TOKEN="$(env_value VOICE_DRAIN_TOKEN)"
+  SOURCE="$ENV_FILE"
+  # Falling back to the wrangler config, because that is what was deployed and
+  # therefore what the Worker is actually checking against. A blank value in the
+  # env file leaves whatever the config held — set_var skips blanks by design,
+  # so "keep the current value" is a legitimate answer — and the two can drift.
+  # Testing against the env file alone reports a token missing while the Worker
+  # is happily holding one.
+  if [ -z "$TOKEN" ]; then
+    TOKEN="$(CONFIG="$VOICE" node -e '
+      const fs = require("fs");
+      const text = fs.readFileSync(process.env.CONFIG, "utf8").replace(/^\s*\/\/.*$/gm, "");
+      process.stdout.write((JSON.parse(text).vars || {}).VOICE_DRAIN_TOKEN || "");
+    ' 2>/dev/null || true)"
+    [ -n "$TOKEN" ] && SOURCE="$VOICE (blank in the env file)"
+  fi
   bold "Test call"
   echo "  to      $TEST_CALL"
   echo "  through $ORIGIN"
   if [ -z "$TOKEN" ]; then
-    die "  VOICE_DRAIN_TOKEN is blank in $ENV_FILE, and the endpoint will not
-  place a billable call without it. Add one and deploy it:
+    die "  VOICE_DRAIN_TOKEN is blank in $ENV_FILE and in $VOICE, and the endpoint
+  will not place a billable call without it. Add one and deploy it:
 
     echo \"VOICE_DRAIN_TOKEN=\$(openssl rand -hex 24)\" >> $ENV_FILE
     $0 $ENV_FILE"
   fi
-  dim "  token   ${TOKEN%${TOKEN#??}}… ${#TOKEN} characters"
+  dim "  token   ${TOKEN%${TOKEN#??}}… ${#TOKEN} characters, from $SOURCE"
   echo
   curl -sS -X POST "$ORIGIN/api/voice/test-call" \
     -H "x-timi-drain-token: $TOKEN" \
