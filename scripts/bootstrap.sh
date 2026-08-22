@@ -158,6 +158,25 @@ set_var() { # set_var KEY CONFIG...
   value="$(env_value "$key")"
   [ -n "$value" ] || { dim "  skip  $key (blank in env file)"; return 0; }
 
+  # A setting whose name ends in _URL has to be one. Catching it here beats
+  # letting it reach the configuration check, which can only report that
+  # something downstream could not parse it.
+  case "$key" in
+    *_URL)
+      case "$value" in
+        https://*/) die "  $key is \"$value\". Drop the trailing slash — it makes every
+  signed callback URL differ from the one Twilio signs. Nothing was changed." ;;
+        https://*)  ;;
+        http://*)   die "  $key is \"$value\". It must be https. Nothing was changed." ;;
+        mapbox://*) ;;
+        *)          die "  $key is \"$value\", which is not a URL. It needs the scheme:
+
+    $key=https://$value
+
+  Nothing was changed." ;;
+      esac ;;
+  esac
+
   local why
   if why="$(looks_secret "$key" "$value")"; then
     echo >&2

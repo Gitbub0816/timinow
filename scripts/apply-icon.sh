@@ -102,13 +102,58 @@ echo "  $MAC"
 bold "4. Windows icon"
 WIN="apps/vet-windows/src/TimiVet/Assets"
 mkdir -p "$WIN"
-ICONSET=$(mktemp -d)/timinow.iconset
-mkdir -p "$ICONSET"
-for size in 16 32 64 128 256 512; do
-  png "$size" "$ICONSET/icon_${size}x${size}.png"
+STAGE=$(mktemp -d)
+for size in 16 32 48 64 128 256; do
+  png "$size" "$STAGE/icon-$size.png"
 done
-# .ico is a container of PNGs; sips writes one directly from the largest.
-sips -s format microsoft-icon "$ICONSET/icon_256x256.png" --out "$WIN/timinow.ico" >/dev/null
+# Written here rather than with `sips -s format microsoft-icon`, which cannot
+# write that format on current macOS — it prints "Can't write format" and then
+# segfaults. An .ico is only a small header followed by the PNG files
+# themselves, so building it directly is both shorter and reliable.
+node -e '
+const fs = require("fs");
+const sizes = [16, 32, 48, 64, 128, 256];
+const stage = process.argv[1];
+const out = process.argv[2];
+const images = sizes.map((size) => ({ size, data: fs.readFileSync(`${stage}/icon-${size}.png`) }));
+
+const header = Buffer.alloc(6);
+header.writeUInt16LE(0, 0);              // reserved
+header.writeUInt16LE(1, 2);              // 1 = icon
+header.writeUInt16LE(images.length, 4);
+
+const directory = Buffer.alloc(16 * images.length);
+let offset = header.length + directory.length;
+images.forEach((image, index) => {
+  const at = index * 16;
+  // 256 is stored as 0: the field is one byte and 256 does not fit.
+  directory.writeUInt8(image.size === 256 ? 0 : image.size, at);
+  directory.writeUInt8(image.size === 256 ? 0 : image.size, at + 1);
+  directory.writeUInt8(0, at + 2);       // palette size
+  directory.writeUInt8(0, at + 3);       // reserved
+  directory.writeUInt16LE(1, at + 4);    // colour planes
+  directory.writeUInt16LE(32, at + 6);   // bits per pixel
+  directory.writeUInt32LE(image.data.length, at + 8);
+  directory.writeUInt32LE(offset, at + 12);
+  offset += image.data.length;
+});
+
+fs.writeFileSync(out, Buffer.concat([header, directory, ...images.map((i) => i.data)]));
+' "$STAGE" "$WIN/timinow.ico"
+node -e '
+const fs = require("fs");
+const data = fs.readFileSync(process.argv[1]);
+if (data.readUInt16LE(0) !== 0 || data.readUInt16LE(2) !== 1) throw new Error("not an icon file");
+const count = data.readUInt16LE(4);
+if (!count) throw new Error("no images");
+for (let index = 0; index < count; index += 1) {
+  const at = 6 + index * 16;
+  const size = data.readUInt32LE(at + 8);
+  const offset = data.readUInt32LE(at + 12);
+  if (offset + size > data.length) throw new Error("entry " + index + " points past the end");
+  if (data.subarray(offset, offset + 8).toString("hex") !== "89504e470d0a1a0a") throw new Error("entry " + index + " is not a PNG");
+}
+' "$WIN/timinow.ico" || die "  Wrote an invalid $WIN/timinow.ico."
 echo "  $WIN/timinow.ico"
 
 bold "5. Source of truth"

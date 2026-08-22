@@ -157,7 +157,21 @@ if (/env\.DB|prepare\(|await /.test(fallbackBody.slice(0, fallbackBody.indexOf("
 const voicePublicUrl = wranglerVoice.match(/"VOICE_PUBLIC_URL":\s*"([^"]*)"/)?.[1] || "";
 const voiceRoutes = [...wranglerVoice.matchAll(/"pattern":\s*"([^"]+)"/g)].map((match) => match[1]);
 if (voicePublicUrl) {
-  const host = new URL(voicePublicUrl).host;
+  // Parsed defensively: `new URL("voice.timinow.pet")` throws a bare
+  // TypeError naming neither the setting nor the fix, and a missing scheme is
+  // the most natural way to get this wrong.
+  let host;
+  try {
+    host = new URL(voicePublicUrl).host;
+  } catch {
+    throw new Error(`VOICE_PUBLIC_URL is "${voicePublicUrl}", which is not a full URL. Twilio signs the whole callback URL, so this must include the scheme and no trailing slash — https://${voicePublicUrl.replace(/^\/+|\/+$/g, "")}`);
+  }
+  if (!/^https:$/.test(new URL(voicePublicUrl).protocol)) {
+    throw new Error(`VOICE_PUBLIC_URL is "${voicePublicUrl}"; Twilio requires https for callbacks.`);
+  }
+  if (voicePublicUrl.endsWith("/")) {
+    throw new Error(`VOICE_PUBLIC_URL is "${voicePublicUrl}"; the trailing slash makes every signed URL differ from the one Twilio signs. Drop it.`);
+  }
   if (!voiceRoutes.some((route) => route.split("/")[0] === host)) {
     throw new Error(`VOICE_PUBLIC_URL is ${voicePublicUrl} but no route serves ${host}; Twilio signature verification would reject every call`);
   }

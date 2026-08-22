@@ -25,3 +25,10 @@ apps/vet-desktop/xcuserdata/
 # scripts/build-mac-app.sh; holds a DEVELOPMENT_TEAM and nothing else.
 apps/*/Darwin/Local.xcconfig
 apps/*/build/
+
+# Xcode per-user state. It lands inside the committed Project.xcworkspace, so
+# the existing xcuserdata rules do not cover it and it rides along in commits.
+apps/*/Project.xcworkspace/xcuserdata/
+apps/*/Project.xcworkspace/xcshareddata/swiftpm/Package.resolved
+**/xcuserdata/
+**/*.xcuserstate
