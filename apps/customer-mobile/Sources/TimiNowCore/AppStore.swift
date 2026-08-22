@@ -78,6 +78,13 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
 
     public var selectedPet: PetProfile { pets.first(where: { $0.id == selectedPetId }) ?? pets[0] }
     public var isDemoMode: Bool { gateway.isDemo }
+    /// What the gateway resolved to, which is not always what is in the text
+    /// field — an address that fails validation leaves the gateway on nothing
+    /// at all, and the difference is worth being able to see.
+    public var resolvedAPIAddress: String {
+        let address = gateway.configuredAddress
+        return address.isEmpty ? "nothing — demo data" : address
+    }
     public var concernValidation: ConcernValidation { ConcernValidator.evaluate(summary: draft.summary, symptoms: draft.symptomKeys, startedWhen: draft.startedWhen) }
 
     public func completeOnboarding(name: String, species: PetSpecies) {
@@ -126,14 +133,14 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
             locations = try await gateway.locations(latitude: draft.latitude, longitude: draft.longitude, species: draft.pet.species)
             currentSearch = try await gateway.startSearch(draft, locationIds: locations.prefix(30).map(\.id))
             route = .searching
-        } catch { errorMessage = error.localizedDescription }
+        } catch { errorMessage = Self.describe(error) }
         isWorking = false
     }
 
     public func refreshSearch() async {
         guard let search = currentSearch, !gateway.isDemo, ["collecting", "offers_ready"].contains(search.status) else { return }
         do { currentSearch = try await gateway.refreshSearch(search.id) }
-        catch { errorMessage = error.localizedDescription }
+        catch { errorMessage = Self.describe(error) }
     }
 
     public func selectOffer(_ offer: CareOffer) async {
@@ -148,7 +155,7 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
             showCelebration = true
             history.insert(CareHistoryItem(id: result.intake.id, petName: result.intake.pet?.name ?? selectedPet.name, clinicName: (result.location ?? offer.location)?.name ?? "Veterinary clinic", status: result.intake.status, dateISO: result.intake.decisionAt ?? ""), at: 0)
             persistHistory()
-        } catch { errorMessage = error.localizedDescription }
+        } catch { errorMessage = Self.describe(error) }
         isWorking = false
     }
 
@@ -157,14 +164,14 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
         if gateway.isDemo { intake.status = status; currentIntake = intake }
         else {
             do { currentIntake = try await gateway.updateIntake(intake.id, status: status) }
-            catch { errorMessage = error.localizedDescription }
+            catch { errorMessage = Self.describe(error) }
         }
     }
 
     public func record(_ milestone: String) async {
         guard var intake = currentIntake else { return }
         do { try await gateway.recordObservation(intake: intake, milestone: milestone); intake.status = milestone; currentIntake = intake }
-        catch { errorMessage = error.localizedDescription }
+        catch { errorMessage = Self.describe(error) }
     }
 
     public func resetCareFlow() {
@@ -228,5 +235,15 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
         #endif
     }
     private static func decode<T: Decodable>(_ type: T.Type, from data: Data?) -> T? { guard let data else { return nil }; return try? JSONDecoder().decode(type, from: data) }
+    /// TimiAPIError is not a LocalizedError — Skip cannot translate one — so
+    /// `localizedDescription` on it yields "The operation couldn't be
+    /// completed. (TimiNowCore.TimiAPIError error 0.)" and nothing else.
+    /// Every catch block goes through here so the real message reaches the
+    /// screen.
+    static func describe(_ error: Error) -> String {
+        if let apiError = error as? TimiAPIError { return apiError.message }
+        return error.localizedDescription
+    }
+
     private static func validBaseURL(_ text: String) -> URL? { guard let url = URL(string: text), url.scheme == "https", url.host != nil else { return nil }; return url }
 }

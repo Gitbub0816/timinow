@@ -192,7 +192,22 @@ public struct CareIntake: Identifiable, Codable, Hashable, Sendable {
 public struct CareSearchEnvelope: Codable, Sendable { public var search: CareSearch }
 public struct LocationsEnvelope: Codable, Sendable { public var locations: [ClinicLocation] }
 public struct IntakeEnvelope: Codable, Sendable { public var intake: CareIntake; public var location: ClinicLocation?; public var search: CareSearch? }
-public struct APIErrorEnvelope: Codable, Sendable { public var error: String?; public var message: String?; public var details: [String]? }
+/// Matches what the Worker actually sends.
+///
+/// `apiError` in src/index.js returns `{ "error": { "code", "message",
+/// "details" } }` — a nested object. This was declared with `error` and
+/// `message` as top-level strings, so decoding threw on every single error
+/// response, the `try?` swallowed it, and the app fell back to a generic
+/// sentence. Every server error the app has ever shown has been that
+/// fallback: the Worker's actual reason has never once reached the screen.
+public struct APIErrorEnvelope: Codable, Sendable {
+    public struct Failure: Codable, Sendable {
+        public var code: String?
+        public var message: String?
+        public var details: [String]?
+    }
+    public var error: Failure?
+}
 
 public struct CareHistoryItem: Identifiable, Codable, Hashable, Sendable {
     public var id: String

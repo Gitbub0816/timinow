@@ -72,7 +72,7 @@ struct SettingsView: View {
     @Bindable var store: AppStore
     var body: some View {
         Form {
-            Section("Connection") { TextField("https://your-worker.workers.dev", text: $store.apiBaseURLText); Button("Save API address") { store.saveAPIBaseURL() }; LabeledContent("Mode", value: store.isDemoMode ? "Interactive demo" : "Live Worker") }
+            Section("Connection") { TextField("https://your-worker.workers.dev", text: $store.apiBaseURLText); Button("Save API address") { store.saveAPIBaseURL() }; LabeledContent("Mode", value: store.isDemoMode ? "Interactive demo" : "Live Worker"); LabeledContent("Talking to", value: store.resolvedAPIAddress) }
             Section("Permissions") { Toggle("Offer notifications", isOn: $store.notificationsEnabled); Toggle("Use precise location", isOn: $store.locationEnabled) }
             Section("Navigation") {
                 Toggle("Spoken turn-by-turn", isOn: $store.navigationPreferences.voiceEnabled)

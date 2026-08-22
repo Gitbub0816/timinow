@@ -83,7 +83,15 @@ for (const [source, needle, label] of expectations) {
 }
 
 if (gateway.includes("bearerToken: String? = nil, session:")) throw new Error("URLSession must not appear in the public Skip bridge surface.");
-if (gateway.includes("LocalizedError") || gateway.includes("errorDescription")) throw new Error("Swift-only LocalizedError overrides cannot be translated by Skip.");
+// Comments stripped first. The file explains this very rule, and a guard that
+// fires on its own explanation can never be satisfied — the same trap the
+// xcconfig and keychain checks already had to be taught.
+{
+  const executable = gateway.split("\n").filter((line) => !/^\s*\/\//.test(line)).join("\n");
+  if (executable.includes("LocalizedError") || executable.includes("errorDescription")) {
+    throw new Error("Swift-only LocalizedError overrides cannot be translated by Skip. Callers read TimiAPIError.message through AppStore.describe instead.");
+  }
+}
 if (appStore.includes("init(defaults: UserDefaults")) throw new Error("UserDefaults must not appear in the public Skip bridge surface.");
 if (appStore.includes("where: { $0.id == self.selectedPetId }")) throw new Error("AppStore initialization must not capture self before all members are initialized.");
 if (/public\s+(struct|extension).*ButtonStyle|public\s+func\s+timiCard/.test(theme)) throw new Error("SwiftUI implementation helpers must stay out of the public Skip bridge surface.");
@@ -756,6 +764,23 @@ for (const app of ["customer-mobile", "vet-desktop"]) {
   const companion = project.match(/INFOPLIST_KEY_WKCompanionAppBundleIdentifier:\s*(\S+)/);
   if (companion && companion[1] !== bundleId) {
     throw new Error(`apps/customer-mobile/Darwin/project.yml: the watch app names ${companion[1]} as its companion, but the phone app is ${bundleId}. The watch would never pair.`);
+  }
+}
+
+// The Worker answers a failure with { "error": { "code", "message" } } — a
+// nested object. The client decoded `error` as a top-level string, so every
+// error response failed to decode, the `try?` swallowed it, and the app showed
+// a generic sentence instead. The Worker's actual reason never once reached a
+// screen, which is why every failure in this app has been unreadable.
+{
+  const worker = await read("src/index.js");
+  const nests = /return json\(\s*\{\s*error:\s*\{\s*code\s*,\s*message/.test(worker);
+  const models = await read("apps/customer-mobile/Sources/TimiNowCore/Models.swift");
+  const envelope = models.match(/struct APIErrorEnvelope[\s\S]*?\n\}/);
+  if (!envelope) throw new Error("apps/customer-mobile/Sources/TimiNowCore/Models.swift no longer declares APIErrorEnvelope, so no server error can be read.");
+  const nestsToo = /struct \w+: Codable[\s\S]*?var code/.test(envelope[0]) && /var error:\s*\w+\?/.test(envelope[0]);
+  if (nests && !nestsToo) {
+    throw new Error("src/index.js answers errors as { error: { code, message } }, but APIErrorEnvelope decodes them flat. Decoding fails on every error response and the real reason is replaced by a generic fallback.");
   }
 }
 
