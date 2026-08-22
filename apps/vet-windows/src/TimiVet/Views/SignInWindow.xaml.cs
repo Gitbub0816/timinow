@@ -4,6 +4,14 @@ using System.Windows.Input;
 using TimiVet.Models;
 using TimiVet.ViewModels;
 
+// The project enables both UseWPF and UseWindowsForms — WinForms only for the
+// tray icon — so `TextBox`, `KeyEventArgs`, and `Clipboard` each name two
+// different types once implicit usings pull in System.Windows.Forms. These
+// aliases pin the WPF ones for this file.
+using TextBox = System.Windows.Controls.TextBox;
+using KeyEventArgs = System.Windows.Input.KeyEventArgs;
+using Clipboard = System.Windows.Clipboard;
+
 namespace TimiVet.Views;
 
 public partial class SignInWindow : Window

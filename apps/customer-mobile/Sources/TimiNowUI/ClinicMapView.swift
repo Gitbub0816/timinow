@@ -172,7 +172,7 @@ struct ClinicMapView: View {
                     Spacer()
                 }
             }
-        }.padding(14).timiCard(.white)
+        }.padding(14).timiCard(Color.white)
     }
 }
 

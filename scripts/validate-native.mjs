@@ -182,6 +182,37 @@ for (const path of swiftFiles) {
   if (problems.length) throw new Error(`Unbalanced Swift source ${path}: ${problems.join(", ")}`);
 }
 
+/**
+ * Two patterns Swift accepts happily and Skip's Android transpile rejects. Both
+ * cost a full CI round trip to discover, and neither error message points
+ * obviously at the line that caused it, so catch them here.
+ */
+for (const path of swiftFiles) {
+  const source = await read(path);
+
+  // Skip can only merge properties and functions into a type declared in
+  // another module. An initializer in such an extension fails with "this
+  // extension cannot be merged into its extended Kotlin type".
+  const ownTypes = /^(?:public |internal )?(?:struct|enum|class|actor|protocol)\s+(\w+)/gm;
+  const declared = new Set([...source.matchAll(ownTypes)].map((match) => match[1]));
+  for (const match of source.matchAll(/^extension\s+(\w+)[^{]*\{/gm)) {
+    const extended = match[1];
+    if (declared.has(extended)) continue;
+    const body = source.slice(match.index + match[0].length);
+    const end = body.indexOf("\n}");
+    if (/^\s+(?:public\s+|internal\s+)?(?:convenience\s+)?init[(<]/m.test(body.slice(0, end === -1 ? undefined : end))) {
+      throw new Error(`${path}: extension on ${extended} declares an initializer. Skip can only merge properties and functions into a type from another module — use a static factory on one of our own types instead.`);
+    }
+  }
+
+  // Skip cannot resolve a leading-dot member against a parameter of a function
+  // we declare ourselves: "unable to determine the owning type for member".
+  const leadingDot = source.match(/\.(?:timiCard|timiVetCard|timiVetEyebrow)\(\s*\.\w+/);
+  if (leadingDot) {
+    throw new Error(`${path}: ${leadingDot[0]} passes a leading-dot member to one of our own helpers. Skip cannot infer the owning type — write it out, e.g. Color.white.`);
+  }
+}
+
 const csharpFiles = await collectFiles("apps/vet-windows", ".cs");
 for (const path of csharpFiles) {
   const problems = bracketProblems(await read(path));

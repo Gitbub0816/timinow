@@ -12,39 +12,54 @@ import SwiftUI
 // surface, matching apps/customer-mobile/Sources/TimiNowUI/Theme.swift.
 
 enum TimiVetColor {
+    /// A factory rather than `extension Color { init(hex:) }`.
+    ///
+    /// Skip cannot merge an initializer into a type declared in another module —
+    /// an extension on a foreign type may only add properties and functions — so
+    /// the extension form fails the Android transpile with a message that does
+    /// not obviously point here. A static function on our own type has no such
+    /// restriction and reads the same at the call site.
+    static func hex(_ value: UInt32) -> Color {
+        Color(
+            red: Double((value >> 16) & 0xFF) / 255,
+            green: Double((value >> 8) & 0xFF) / 255,
+            blue: Double(value & 0xFF) / 255
+        )
+    }
+
     // Platform-contract tokens.
-    static let ink = Color(hex: 0x111B3B)
-    static let inkSoft = Color(hex: 0x3F4862)
-    static let paper = Color(hex: 0xFFFAF0)
-    static let blue = Color(hex: 0x2357D9)
-    static let blueDark = Color(hex: 0x173C9A)
-    static let blueSoft = Color(hex: 0xE5ECFF)
-    static let coral = Color(hex: 0xF25F4C)
-    static let coralDark = Color(hex: 0xBD3E31)
-    static let coralSoft = Color(hex: 0xFFE5DF)
-    static let gold = Color(hex: 0xF7C84B)
-    static let goldSoft = Color(hex: 0xFFF0B9)
-    static let canvas = Color(hex: 0xF3F5FA)
-    static let line = Color(hex: 0xD9D8D2)
-    static let muted = Color(hex: 0x6F7483)
-    static let danger = Color(hex: 0xBD3E31)
+    static let ink = hex(0x111B3B)
+    static let inkSoft = hex(0x3F4862)
+    static let paper = hex(0xFFFAF0)
+    static let blue = hex(0x2357D9)
+    static let blueDark = hex(0x173C9A)
+    static let blueSoft = hex(0xE5ECFF)
+    static let coral = hex(0xF25F4C)
+    static let coralDark = hex(0xBD3E31)
+    static let coralSoft = hex(0xFFE5DF)
+    static let gold = hex(0xF7C84B)
+    static let goldSoft = hex(0xFFF0B9)
+    static let canvas = hex(0xF3F5FA)
+    static let line = hex(0xD9D8D2)
+    static let muted = hex(0x6F7483)
+    static let danger = hex(0xBD3E31)
 
     // Inline values used throughout Theme.xaml / MainWindow.xaml — the dark
     // left rail, cards, and mini console specifically.
-    static let railDeepInk = Color(hex: 0x202B50)
-    static let railMutedText = Color(hex: 0xAEB6CB)
-    static let railFooterText = Color(hex: 0x8F9AB7)
-    static let railDisclaimer = Color(hex: 0x96A0B9)
-    static let railFootnote = Color(hex: 0x69738E)
-    static let railTag = Color(hex: 0x9DA7C1)
-    static let publicCapacityBackground = Color(hex: 0xFFF9E8)
-    static let cardBorder = Color(hex: 0xE0E3EA)
-    static let cardBorderAlt = Color(hex: 0xE4E6EC)
-    static let miniCardBackground = Color(hex: 0xFBFCFF)
-    static let miniDivider = Color(hex: 0xE3E6EE)
-    static let fieldBorder = Color(hex: 0xCCD1DC)
-    static let sectionBorder = Color(hex: 0xD9DCE5)
-    static let offerBannerBackground = Color(hex: 0xFFF1ED)
+    static let railDeepInk = hex(0x202B50)
+    static let railMutedText = hex(0xAEB6CB)
+    static let railFooterText = hex(0x8F9AB7)
+    static let railDisclaimer = hex(0x96A0B9)
+    static let railFootnote = hex(0x69738E)
+    static let railTag = hex(0x9DA7C1)
+    static let publicCapacityBackground = hex(0xFFF9E8)
+    static let cardBorder = hex(0xE0E3EA)
+    static let cardBorderAlt = hex(0xE4E6EC)
+    static let miniCardBackground = hex(0xFBFCFF)
+    static let miniDivider = hex(0xE3E6EE)
+    static let fieldBorder = hex(0xCCD1DC)
+    static let sectionBorder = hex(0xD9DCE5)
+    static let offerBannerBackground = hex(0xFFF1ED)
 }
 
 enum TimiVetFont {
@@ -61,15 +76,6 @@ enum TimiVetFont {
 enum TimiVetMetrics {
     static let cardRadius: CGFloat = 14
     static let miniRadius: CGFloat = 18
-}
-
-extension Color {
-    init(hex: UInt32) {
-        let r = Double((hex >> 16) & 0xFF) / 255
-        let g = Double((hex >> 8) & 0xFF) / 255
-        let b = Double(hex & 0xFF) / 255
-        self.init(red: r, green: g, blue: b)
-    }
 }
 
 struct TimiVetPrimaryButtonStyle: ButtonStyle {
