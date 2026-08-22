@@ -1,0 +1,3 @@
+# Skip application-module configuration.
+build:
+  contents:

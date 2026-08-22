@@ -24,6 +24,15 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
     public var locationEnabled = false
     public var currentLatitude = 37.6688
     public var currentLongitude = -122.0808
+    public var mapToken: String?
+    public var mapStyleURL = MapDefaults.styleURL
+    public var navigationStyleURL = MapDefaults.styleURL
+    public var navigationDestination: NavigationDestination?
+    public var currentNavigationStep: NavigationStepModel?
+    public var currentRouteSummary: RouteSummary?
+    public var navigationPreferences: NavigationPreferences {
+        didSet { persistNavigationPreferences() }
+    }
 
     #if !os(Android)
     private let defaults: UserDefaults
@@ -37,6 +46,7 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
         let storedHistory: [CareHistoryItem] = []
         let completedOnboarding = false
         let apiBaseURLText = ""
+        let storedNavigationPreferences = NavigationPreferences.default
         #else
         let defaults = UserDefaults.standard
         self.defaults = defaults
@@ -45,6 +55,7 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
         let storedHistory = Self.decode([CareHistoryItem].self, from: defaults.data(forKey: "timi.history")) ?? []
         let completedOnboarding = defaults.bool(forKey: "timi.onboarding.complete")
         let apiBaseURLText = defaults.string(forKey: "timi.apiBaseURL") ?? ""
+        let storedNavigationPreferences = Self.decode(NavigationPreferences.self, from: defaults.data(forKey: "timi.navigation.preferences")) ?? .default
         #endif
         self.pets = storedPets
         self.selectedPetId = selectedPetId
@@ -53,8 +64,14 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
         self.history = storedHistory
         self.hasCompletedOnboarding = completedOnboarding
         self.apiBaseURLText = apiBaseURLText
+        self.navigationPreferences = storedNavigationPreferences
         self.gateway = TimiGateway(baseURL: Self.validBaseURL(apiBaseURLText))
     }
+
+    /// Single shared instance so the CarPlay scene and the Watch
+    /// connectivity bridge — both instantiated by the OS outside the main
+    /// SwiftUI view hierarchy — observe the same live state as the phone UI.
+    public static let shared = AppStore()
 
     public var selectedPet: PetProfile { pets.first(where: { $0.id == selectedPetId }) ?? pets[0] }
     public var isDemoMode: Bool { gateway.isDemo }
@@ -147,7 +164,32 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
         catch { errorMessage = error.localizedDescription }
     }
 
-    public func resetCareFlow() { currentSearch = nil; currentIntake = nil; route = .home; selectedTab = 0 }
+    public func resetCareFlow() {
+        currentSearch = nil; currentIntake = nil; route = .home; selectedTab = 0
+        navigationDestination = nil; currentNavigationStep = nil; currentRouteSummary = nil
+    }
+
+    /// Refreshes the Mapbox token and style URLs from `GET /api/config`.
+    /// Falls back silently to the compiled-in `MapDefaults.styleURL` (already
+    /// the initial value of `mapStyleURL`/`navigationStyleURL`) whenever the
+    /// Worker is unreachable or running in demo mode.
+    public func loadMapConfig() async {
+        guard let config = try? await gateway.fetchMapConfig() else { return }
+        if let token = config.token, !token.isEmpty { mapToken = token }
+        if let styleUrl = config.styleUrl, !styleUrl.isEmpty { mapStyleURL = styleUrl }
+        if let navStyleUrl = config.navigationStyleUrl, !navStyleUrl.isEmpty { navigationStyleURL = navStyleUrl }
+    }
+
+    /// Called from the navigation screen as Mapbox reports progress, and
+    /// mirrored to the Watch app by `WatchBridge`.
+    public func updateNavigationProgress(step: NavigationStepModel?, summary: RouteSummary?) {
+        currentNavigationStep = step
+        currentRouteSummary = summary
+    }
+
+    public func beginNavigation(to destination: NavigationDestination) {
+        navigationDestination = destination
+    }
 
     public func saveAPIBaseURL() {
         let trimmed = apiBaseURLText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -175,6 +217,11 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
     private func persistHistory() {
         #if !os(Android)
         defaults.set(try? JSONEncoder().encode(history), forKey: "timi.history")
+        #endif
+    }
+    private func persistNavigationPreferences() {
+        #if !os(Android)
+        defaults.set(try? JSONEncoder().encode(navigationPreferences), forKey: "timi.navigation.preferences")
         #endif
     }
     private static func decode<T: Decodable>(_ type: T.Type, from data: Data?) -> T? { guard let data else { return nil }; return try? JSONDecoder().decode(type, from: data) }

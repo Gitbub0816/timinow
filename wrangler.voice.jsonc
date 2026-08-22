@@ -1,0 +1,58 @@
+{
+  // Voice gateway — timinow-voice.
+  //
+  // Drains the `notification_outbox` rows with `channel = 'voice'` that
+  // `createCareSearch` (src/index.js) enqueues per clinic and places an
+  // automated Twilio call asking whether the clinic can take the patient.
+  // Deploys separately from `timinow`, `timinow-vet`, and `timinow-admin` so a
+  // Twilio webhook never shares an origin with an authenticated console. See
+  // apps/voice-gateway/README.md for the call script and Twilio console setup,
+  // and docs/PLATFORM-CONTRACT.md for the shared authorization model.
+  //
+  // Deploy: npx wrangler deploy --config wrangler.voice.jsonc
+  //
+  // Required secrets (set with `wrangler secret put <NAME> --config wrangler.voice.jsonc`):
+  //   TWILIO_ACCOUNT_SID   Twilio account SID. Used for the REST Calls API and
+  //                        to verify inbound webhook signatures.
+  //   TWILIO_AUTH_TOKEN    Twilio auth token. Same two uses as above — this is
+  //                        also the HMAC key for the per-call anti-replay token.
+  //   CLERK_SECRET_KEY     Clerk Backend API secret key, needed only for the
+  //                        platform-operator lookup on GET /api/voice/attempts.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "timinow-voice",
+  "main": "apps/voice-gateway/src/index.js",
+  "compatibility_date": "2026-08-20",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "vars": {
+    "SIGN_IN_REQUIRED": "true",
+    "DEMO_MODE": "false",
+    "SURFACE": "voice",
+    "MAPBOX_STYLE_URL": "mapbox://styles/calebowen2019/cmt3nci25004d01sya8qxcb4u",
+    "TWILIO_FROM_NUMBER": "",
+    "VOICE_CALLS_ENABLED": "true",
+    "VOICE_MAX_ATTEMPTS": "2",
+    "VOICE_PUBLIC_URL": ""
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "timinow",
+      "database_id": "eae5bd15-686f-4827-9354-e99973daa803",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "assets": {
+    "directory": "./apps/voice-gateway/public",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
+  },
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  },
+  "triggers": {
+    "crons": ["* * * * *"]
+  }
+}

@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Tími NOW — Voice Gateway</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <main class="wrap">
+    <header class="head">
+      <p class="eyebrow">Tími NOW</p>
+      <h1>Voice gateway</h1>
+      <p class="lede">
+        This Worker holds no customer-facing or clinic-facing screens. It exists so a clinic with
+        nobody watching a console still gets asked, by phone, whether they can take a patient.
+      </p>
+    </header>
+
+    <section class="card">
+      <h2>What this is</h2>
+      <p>
+        When a customer's care search fans out to nearby clinics, most of them have no one looking
+        at a screen. <strong>timinow-voice</strong> drains that queue every minute, places a short
+        automated call, and lets the clinic answer with the phone's keypad — press
+        <strong>1</strong> to confirm they can see the patient, <strong>2</strong> to decline.
+        Pressing 1 has the identical effect as a staffer clicking "accept" on the console: it
+        creates the same clinic offer, honors the same five-offer cap, and respects the same
+        expiry.
+      </p>
+      <p>
+        There is nothing to sign in to here and nothing to click. The veterinary console at
+        <code>timinow-vet</code> is where a clinic manages requests by hand; this Worker is the
+        unattended fallback for the calls that would otherwise go unanswered.
+      </p>
+    </section>
+
+    <section class="card">
+      <h2>Live status</h2>
+      <div id="health" class="health" aria-live="polite">
+        <p class="muted">Checking <code>/api/health</code>…</p>
+      </div>
+    </section>
+
+    <footer class="foot">
+      <p>Outbound automated calls to businesses. Call recording is not enabled.</p>
+    </footer>
+  </main>
+
+  <script>
+    (function () {
+      var el = document.getElementById("health");
+      fetch("/api/health")
+        .then(function (response) { return response.json().then(function (body) { return { ok: response.ok, body: body }; }); })
+        .then(function (result) {
+          var body = result.body || {};
+          var rows = [
+            ["Service", body.service || "unknown"],
+            ["Database connected", body.database ? "yes" : "no"],
+            ["Twilio configured", body.twilioConfigured ? "yes" : "no"],
+            ["Reachable", result.ok ? "yes" : "no"]
+          ];
+          el.innerHTML = "<dl>" + rows.map(function (pair) {
+            return "<div class=\"row\"><dt>" + pair[0] + "</dt><dd>" + pair[1] + "</dd></div>";
+          }).join("") + "</dl>";
+        })
+        .catch(function () {
+          el.innerHTML = "<p class=\"muted\">Could not reach <code>/api/health</code>.</p>";
+        });
+    })();
+  </script>
+</body>
+</html>

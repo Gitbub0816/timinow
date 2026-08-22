@@ -1,0 +1,112 @@
+<Window x:Class="TimiVet.Views.PeopleWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Tími Vet · People" Width="720" Height="640" MinWidth="560" MinHeight="440"
+        WindowStartupLocation="CenterScreen" Loaded="Window_Loaded">
+    <Window.Resources>
+        <BooleanToVisibilityConverter x:Key="B2V"/>
+    </Window.Resources>
+    <Grid Margin="24">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <StackPanel Grid.Row="0">
+            <TextBlock Text="WORKSPACE PEOPLE" Style="{StaticResource Eyebrow}"/>
+            <TextBlock Text="Manage the veterinary team" FontFamily="Georgia" FontSize="27" FontWeight="Bold" Margin="0,3,0,0"/>
+        </StackPanel>
+
+        <Border Grid.Row="1" Background="#EEF1F8" CornerRadius="10" Padding="12" Margin="0,14,0,0">
+            <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="{StaticResource Muted}"
+                       Text="This screen manages people inside your existing workspace only. Creating a brand-new workspace is a Tími platform operation performed from the admin console, not from Tími Vet."/>
+        </Border>
+
+        <Border Grid.Row="2" Style="{StaticResource Card}" Margin="0,14,0,0" Visibility="{Binding IsAdmin, Converter={StaticResource B2V}}">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition/>
+                    <ColumnDefinition Width="160"/>
+                    <ColumnDefinition Width="14"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel>
+                    <TextBlock Text="Add by email" FontWeight="SemiBold"/>
+                    <TextBox Text="{Binding NewMemberEmail, UpdateSourceTrigger=PropertyChanged}" Margin="0,6,0,0"/>
+                </StackPanel>
+                <StackPanel Grid.Column="1">
+                    <TextBlock Text="Role" FontWeight="SemiBold"/>
+                    <ComboBox ItemsSource="{Binding RoleOptions}" SelectedItem="{Binding NewMemberRole}" Margin="0,6,0,0"/>
+                </StackPanel>
+                <Button Grid.Column="3" Content="Invite" Command="{Binding AddMemberCommand}" Style="{StaticResource PrimaryButton}" VerticalAlignment="Bottom"/>
+            </Grid>
+        </Border>
+
+        <Border Grid.Row="3" Style="{StaticResource Card}" Margin="0,14,0,0" Padding="0">
+            <Grid>
+                <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+                <TextBlock Grid.Row="0" Text="ROSTER" Style="{StaticResource Eyebrow}" Margin="16,16,16,8"/>
+                <ListBox Grid.Row="1" ItemsSource="{Binding Members}" BorderThickness="0" Background="Transparent">
+                    <ListBox.ItemTemplate>
+                        <DataTemplate>
+                            <Border BorderBrush="#E4E6EC" BorderThickness="0,1,0,0" Padding="16,10">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition/>
+                                        <ColumnDefinition Width="150"/>
+                                        <ColumnDefinition Width="100"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel>
+                                        <TextBlock Text="{Binding Name}" FontWeight="SemiBold"/>
+                                        <TextBlock Text="{Binding Email}" FontSize="11" Foreground="{StaticResource Muted}"/>
+                                    </StackPanel>
+                                    <ComboBox Grid.Column="1" ItemsSource="{Binding DataContext.RoleOptions, RelativeSource={RelativeSource AncestorType=Window}}"
+                                              SelectedItem="{Binding Role}" IsEnabled="{Binding DataContext.IsAdmin, RelativeSource={RelativeSource AncestorType=Window}}" Margin="0,0,8,0"/>
+                                    <TextBlock Grid.Column="2" Text="{Binding JoinedLabel}" FontSize="10" VerticalAlignment="Center" Foreground="{StaticResource Muted}"/>
+                                    <Button Grid.Column="3" Content="Save role" Margin="8,0" Style="{StaticResource QuietButton}"
+                                            Command="{Binding DataContext.ChangeRoleCommand, RelativeSource={RelativeSource AncestorType=Window}}" CommandParameter="{Binding}"
+                                            Visibility="{Binding DataContext.IsAdmin, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource B2V}}"/>
+                                    <Button Grid.Column="4" Content="Remove" Style="{StaticResource QuietButton}"
+                                            Command="{Binding DataContext.RemoveMemberCommand, RelativeSource={RelativeSource AncestorType=Window}}" CommandParameter="{Binding}"
+                                            Visibility="{Binding DataContext.IsAdmin, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource B2V}}"/>
+                                </Grid>
+                            </Border>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+                <TextBlock Grid.Row="2" Text="PENDING INVITATIONS" Style="{StaticResource Eyebrow}" Margin="16,16,16,8"/>
+                <ListBox Grid.Row="3" ItemsSource="{Binding Invitations}" BorderThickness="0" Background="Transparent">
+                    <ListBox.ItemTemplate>
+                        <DataTemplate>
+                            <Border BorderBrush="#E4E6EC" BorderThickness="0,1,0,0" Padding="16,10">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition/>
+                                        <ColumnDefinition Width="100"/>
+                                        <ColumnDefinition Width="100"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="{Binding Email}" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                    <TextBlock Grid.Column="1" Text="{Binding Role}" FontSize="11" VerticalAlignment="Center" Foreground="{StaticResource Muted}"/>
+                                    <TextBlock Grid.Column="2" Text="{Binding CreatedLabel}" FontSize="10" VerticalAlignment="Center" Foreground="{StaticResource Muted}"/>
+                                    <Button Grid.Column="3" Content="Revoke" Style="{StaticResource QuietButton}"
+                                            Command="{Binding DataContext.RevokeInvitationCommand, RelativeSource={RelativeSource AncestorType=Window}}" CommandParameter="{Binding}"
+                                            Visibility="{Binding DataContext.IsAdmin, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource B2V}}"/>
+                                </Grid>
+                            </Border>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+            </Grid>
+        </Border>
+
+        <TextBlock Grid.Row="4" Text="{Binding StatusMessage}" Foreground="{StaticResource Muted}" FontSize="11" Margin="0,10,0,0"/>
+        <TextBlock Grid.Row="5" Text="Non-admins see a read-only roster. Only a workspace administrator can invite, change roles, remove people, or revoke invitations." Foreground="{StaticResource Muted}" FontSize="10" Margin="0,6,0,0" TextWrapping="Wrap"/>
+    </Grid>
+</Window>

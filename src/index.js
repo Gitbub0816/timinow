@@ -1,4 +1,14 @@
-import { actorForRequest, roleAllows, signInRequired } from "./auth.js";
+import { actorForRequest, isOrgAdmin, roleAllows, signInRequired } from "./auth.js";
+import { publicConfig } from "./config.js";
+import { describeSession } from "./session.js";
+import {
+  addMember,
+  changeMemberRole,
+  listMembers,
+  removeMember,
+  requireTenantAdmin,
+  revokeInvitation
+} from "./tenant-admin.js";
 import { DEMO_LOCATIONS, RED_FLAG_TERMS, VALID_INTAKE_STATUS, VALID_SPECIES, VALID_URGENCY } from "./catalog.js";
 import {
   getCareOffer,
@@ -135,16 +145,7 @@ function authRequiredResponse() {
 }
 
 async function handleConfig(env) {
-  return json({
-    appName: "Tími NOW",
-    version: "1.1.0-multi-offer",
-    signInRequired: signInRequired(env),
-    clerkPublishableKey: signInRequired(env) ? (env.CLERK_PUBLISHABLE_KEY || null) : null,
-    clerkJsUrl: signInRequired(env) ? (env.CLERK_JS_URL || "https://cdn.jsdelivr.net/npm/@clerk/clerk-js@5/+esm") : null,
-    stripePublishableKey: env.STRIPE_PUBLISHABLE_KEY || null,
-    demoMode: env.DEMO_MODE === "true",
-    database: hasDatabase(env) ? "d1" : "fixtures"
-  });
+  return json(publicConfig(env));
 }
 
 async function handleLocationSearch(url, env) {
@@ -166,6 +167,39 @@ async function handleLocationSearch(url, env) {
 
 function humanizeOnset(value) {
   return ({ within_hour: "Started within the last hour", today: "Started today", one_to_three_days: "Started 1–3 days ago", more_than_three_days: "Started more than 3 days ago", unknown: "Onset unknown" })[value] || "Onset not reported";
+}
+
+/**
+ * A single spoken clause describing the patient, for the automated clinic call.
+ *
+ * Deliberately short and free of slashes and abbreviations: this text is read
+ * aloud down a phone line, often in a noisy treatment area, and a listener gets
+ * one pass at it. Anything a receptionist cannot act on is left out.
+ */
+function spokenConcern(species, symptoms, startedWhen) {
+  const spoken = {
+    vomiting_or_diarrhea: "vomiting or diarrhea",
+    breathing_or_coughing: "breathing trouble or coughing",
+    pain_or_limping: "pain or limping",
+    not_eating_or_drinking: "not eating or drinking",
+    urination_or_stool: "urination or stool changes",
+    injury_or_bleeding: "an injury or bleeding",
+    energy_or_behavior: "a change in energy or behavior",
+    eye_ear_or_skin: "an eye, ear, or skin problem",
+    other_observable: "another observable change"
+  };
+  const onset = {
+    within_hour: "starting within the last hour",
+    today: "starting today",
+    one_to_three_days: "over the last few days",
+    more_than_three_days: "for more than three days",
+    unknown: ""
+  }[startedWhen] || "";
+  const described = symptoms.map((value) => spoken[value]).filter(Boolean);
+  const list = described.length > 1
+    ? `${described.slice(0, -1).join(", ")} and ${described[described.length - 1]}`
+    : described[0] || "an urgent concern";
+  return [`a ${species} with ${list}`, onset].filter(Boolean).join(", ");
 }
 
 function humanizeSymptom(value) {
@@ -435,25 +469,83 @@ async function createCareSearch(request, env, actor) {
         INSERT INTO notification_outbox (
           id, tenant_id, channel, template_key, payload_json, available_at
         ) VALUES (?, ?, 'dashboard', 'new_care_search', ?, ?)
-      `).bind(newId("notification"), location.tenantId, JSON.stringify({ searchId, targetId, petName: cleanString(validated.pet.name, 80), urgency: validated.urgency }), now)
+      `).bind(newId("notification"), location.tenantId, JSON.stringify({ searchId, targetId, petName: cleanString(validated.pet.name, 80), urgency: validated.urgency }), now),
+      /**
+       * A parallel voice request. The console notification reaches whoever is
+       * already looking at a screen; the phone call reaches a clinic that is
+       * mid-appointment with nobody at the desk, which is most of them. The
+       * voice gateway Worker drains this queue and honors each tenant's own
+       * calling preferences — a tenant that has not opted in is skipped there,
+       * not here, so the audit trail still records that Tími tried.
+       */
+      env.DB.prepare(`
+        INSERT INTO notification_outbox (
+          id, tenant_id, channel, recipient, template_key, payload_json, available_at
+        ) VALUES (?, ?, 'voice', ?, 'care_search_call', ?, ?)
+      `).bind(
+        newId("notification"),
+        location.tenantId,
+        location.phone,
+        JSON.stringify({
+          searchId,
+          targetId,
+          locationId: location.id,
+          locationName: location.name,
+          petName: cleanString(validated.pet.name, 80),
+          species: validated.species,
+          urgency: validated.urgency,
+          spokenConcern: spokenConcern(validated.species, validated.symptoms, validated.startedWhen),
+          travelMinutes,
+          expiresAt: searchExpiresAt
+        }),
+        now
+      )
     );
   });
   await env.DB.batch(statements);
   return json({ search: await getCareSearch(env, searchId) }, { status: 201 });
 }
 
-async function respondToCareSearch(request, env, actor, tenantId, targetId) {
-  if (!hasDatabase(env)) return apiError(503, "DATABASE_REQUIRED", "D1 is required for multi-clinic offer responses.");
-  const body = await readJson(request).catch(() => null);
-  const decision = cleanString(body?.decision, 20);
-  if (!new Set(["offer", "decline"]).has(decision)) return apiError(422, "INVALID_DECISION", "Choose offer or decline.");
+/**
+ * Apply a clinic's decision to one care-search target.
+ *
+ * This is the single implementation of "a clinic said yes or no", shared by the
+ * console (`respondToCareSearch` below), the veterinary desktop clients, and
+ * the automated phone call in the voice gateway. It deliberately takes plain
+ * values rather than a Request, because a Twilio webhook has no JSON body and
+ * no Clerk actor — and a second copy of this SQL is exactly the kind of thing
+ * that drifts silently until a clinic's phone acceptance stops creating an
+ * offer.
+ *
+ * Returns `{ ok: true, ... }` or `{ ok: false, status, code, message }`; it
+ * never builds an HTTP response itself.
+ */
+export async function applyCareSearchDecision(env, {
+  targetId,
+  tenantId,
+  decision,
+  actorUserId = null,
+  responseType: requestedResponseType,
+  arrivalWindowMinutes,
+  availableAt: requestedAvailableAt,
+  waitMin: requestedWaitMin,
+  waitMax: requestedWaitMax,
+  holdMinutes,
+  note: requestedNote
+} = {}) {
+  const fail = (status, code, message) => ({ ok: false, status, code, message });
+
+  if (!hasDatabase(env)) return fail(503, "DATABASE_REQUIRED", "D1 is required for multi-clinic offer responses.");
+  if (!new Set(["offer", "decline"]).has(decision)) return fail(422, "INVALID_DECISION", "Choose offer or decline.");
+
   const target = await getClinicSearchTarget(env, targetId, tenantId);
-  if (!target) return apiError(404, "SEARCH_TARGET_NOT_FOUND", "This clinic request was not found.");
-  if (target.status !== "pending") return apiError(409, "ALREADY_DECIDED", "This clinic request has already been handled.");
+  if (!target) return fail(404, "SEARCH_TARGET_NOT_FOUND", "This clinic request was not found.");
+  if (target.status !== "pending") return fail(409, "ALREADY_DECIDED", "This clinic request has already been handled.");
+
   const search = await getCareSearch(env, target.searchId);
   const now = new Date().toISOString();
   if (!search || !["collecting", "offers_ready"].includes(search.status) || timestampMs(search.collectionExpiresAt || search.searchExpiresAt) <= Date.now()) {
-    return apiError(409, "SEARCH_CLOSED", "The customer is no longer collecting clinic offers.");
+    return fail(409, "SEARCH_CLOSED", "The customer is no longer collecting clinic offers.");
   }
 
   if (decision === "decline") {
@@ -461,30 +553,30 @@ async function respondToCareSearch(request, env, actor, tenantId, targetId) {
       UPDATE care_search_targets SET status = 'declined', responded_at = ?, updated_at = ?
       WHERE id = ? AND tenant_id = ? AND status IN ('contacting', 'awaiting_response')
     `).bind(now, now, target.id, tenantId).run();
-    if (!result.meta?.changes) return apiError(409, "TARGET_CHANGED", "Another team member handled this request first.");
-    return json({ target: { ...target, status: "declined", respondedAt: now } });
+    if (!result.meta?.changes) return fail(409, "TARGET_CHANGED", "Another team member handled this request first.");
+    return { ok: true, target: { ...target, status: "declined", respondedAt: now } };
   }
 
-  const responseType = cleanString(body?.responseType, 30) || (search.urgency === "emergency" ? "emergency_intake" : "available_now");
-  if (!new Set(["available_now", "available_at", "emergency_intake"]).has(responseType)) return apiError(422, "INVALID_OFFER_TYPE", "Choose a supported availability offer.");
+  const responseType = cleanString(requestedResponseType, 30) || (search.urgency === "emergency" ? "emergency_intake" : "available_now");
+  if (!new Set(["available_now", "available_at", "emergency_intake"]).has(responseType)) return fail(422, "INVALID_OFFER_TYPE", "Choose a supported availability offer.");
   const location = await getClinicLocation(env, tenantId);
-  if (!location || location.id !== target.locationId) return apiError(409, "LOCATION_MISMATCH", "The active clinic cannot respond for this location.");
-  const arrivalMinutes = numberInRange(body.arrivalWindowMinutes, 5, 360, location.arrivalWindowMinutes || 20);
-  const suppliedAvailableAt = cleanString(body.availableAt, 40);
-  if (responseType === "available_at" && !suppliedAvailableAt) return apiError(422, "AVAILABLE_TIME_REQUIRED", "Provide the time when this clinic can receive the patient.");
+  if (!location || location.id !== target.locationId) return fail(409, "LOCATION_MISMATCH", "The active clinic cannot respond for this location.");
+  const arrivalMinutes = numberInRange(arrivalWindowMinutes, 5, 360, location.arrivalWindowMinutes || 20);
+  const suppliedAvailableAt = cleanString(requestedAvailableAt, 40);
+  if (responseType === "available_at" && !suppliedAvailableAt) return fail(422, "AVAILABLE_TIME_REQUIRED", "Provide the time when this clinic can receive the patient.");
   const availableAtMs = suppliedAvailableAt ? Date.parse(suppliedAvailableAt) : Date.now();
   if (!Number.isFinite(availableAtMs) || availableAtMs < Date.now() - 60_000 || availableAtMs > Date.now() + 12 * 60 * 60_000) {
-    return apiError(422, "INVALID_AVAILABLE_TIME", "Availability must be between now and 12 hours from now.");
+    return fail(422, "INVALID_AVAILABLE_TIME", "Availability must be between now and 12 hours from now.");
   }
-  const waitMin = numberInRange(body.waitMin, 0, 1440, location.availability.stableWaitMin);
-  const waitMax = numberInRange(body.waitMax, 0, 1440, location.availability.stableWaitMax);
-  if (waitMin !== null && waitMax !== null && waitMin > waitMax) return apiError(422, "INVALID_WAIT_RANGE", "Minimum wait cannot exceed maximum wait.");
+  const waitMin = numberInRange(requestedWaitMin, 0, 1440, location.availability.stableWaitMin);
+  const waitMax = numberInRange(requestedWaitMax, 0, 1440, location.availability.stableWaitMax);
+  if (waitMin !== null && waitMax !== null && waitMin > waitMax) return fail(422, "INVALID_WAIT_RANGE", "Minimum wait cannot exceed maximum wait.");
   const offerId = newId("offer");
-  const offerExpiresAt = isoAfter(numberInRange(body.holdMinutes, 2, 10, 5));
+  const offerExpiresAt = isoAfter(numberInRange(holdMinutes, 2, 10, 5));
   const availableAt = new Date(availableAtMs).toISOString();
   const arrivalBy = new Date(availableAtMs + arrivalMinutes * 60_000).toISOString();
   const policy = location.policy || { depositRequired: false, depositAmountCents: 0 };
-  const note = cleanString(body.note, 500) || null;
+  const note = cleanString(requestedNote, 500) || null;
 
   const results = await env.DB.batch([
     env.DB.prepare(`
@@ -499,7 +591,7 @@ async function respondToCareSearch(request, env, actor, tenantId, targetId) {
     `).bind(
       offerId, search.id, target.id, location.id, tenantId, responseType, availableAt, arrivalBy,
       waitMin, waitMax, note, JSON.stringify(policy), policy.depositAmountCents || 0,
-      location.baseExamFeeCents, now, offerExpiresAt, actor.userId || null, search.id, now, search.id
+      location.baseExamFeeCents, now, offerExpiresAt, actorUserId, search.id, now, search.id
     ),
     env.DB.prepare(`
       UPDATE care_search_targets
@@ -524,8 +616,30 @@ async function respondToCareSearch(request, env, actor, tenantId, targetId) {
             >= (SELECT max_offers FROM care_searches WHERE id = ?)
     `).bind(now, now, search.id, search.id, now, search.id)
   ]);
-  if (!results[0]?.meta?.changes) return apiError(409, "OFFER_WINDOW_FULL", "The customer already has five active clinic offers.");
-  return json({ search: await getCareSearch(env, search.id), offerId });
+  if (!results[0]?.meta?.changes) return fail(409, "OFFER_WINDOW_FULL", "The customer already has five active clinic offers.");
+  return { ok: true, offerId, search: await getCareSearch(env, search.id) };
+}
+
+/** HTTP wrapper for the clinic console and the desktop clients. */
+export async function respondToCareSearch(request, env, actor, tenantId, targetId) {
+  const body = await readJson(request).catch(() => null);
+  const result = await applyCareSearchDecision(env, {
+    targetId,
+    tenantId,
+    decision: cleanString(body?.decision, 20),
+    actorUserId: actor?.userId || null,
+    responseType: body?.responseType,
+    arrivalWindowMinutes: body?.arrivalWindowMinutes,
+    availableAt: body?.availableAt,
+    waitMin: body?.waitMin,
+    waitMax: body?.waitMax,
+    holdMinutes: body?.holdMinutes,
+    note: body?.note
+  });
+  if (!result.ok) return apiError(result.status, result.code, result.message);
+  return result.target
+    ? json({ target: result.target })
+    : json({ search: result.search, offerId: result.offerId });
 }
 
 async function selectCareOffer(request, env, actor, searchId) {
@@ -680,7 +794,7 @@ async function recordObservation(request, env, actor) {
   return json({ recorded: true, observedAt: now }, { status: 201 });
 }
 
-async function clinicDashboard(env, tenantId) {
+export async function clinicDashboard(env, tenantId) {
   const location = await getClinicLocation(env, tenantId);
   if (!location) return apiError(404, "CLINIC_NOT_FOUND", "No clinic is mapped to the active Clerk organization.");
   const [intakes, searchTargets] = await Promise.all([
@@ -714,7 +828,7 @@ async function clinicDashboard(env, tenantId) {
   });
 }
 
-async function setClinicAvailability(request, env, actor, tenantId) {
+export async function setClinicAvailability(request, env, actor, tenantId) {
   const location = await getClinicLocation(env, tenantId);
   if (!location) return apiError(404, "CLINIC_NOT_FOUND", "The clinic location was not found.");
   const body = await readJson(request).catch(() => null);
@@ -757,7 +871,7 @@ async function setClinicAvailability(request, env, actor, tenantId) {
   return json({ location: enrichLocation(await getLocation(env, location.id)) }, { status: 201 });
 }
 
-async function decideIntake(request, env, actor, tenantId, intakeId) {
+export async function decideIntake(request, env, actor, tenantId, intakeId) {
   const body = await readJson(request).catch(() => null);
   const decision = cleanString(body?.decision, 20);
   if (!new Set(["accept", "decline"]).has(decision)) return apiError(422, "INVALID_DECISION", "Choose accept or decline.");
@@ -915,6 +1029,46 @@ async function expireStaleState(env) {
   console.log(JSON.stringify({ event: "scheduled_expiry_complete", at: now, expired: expired.results.length, noShows: noShows.results.length, closedCollections: closedCollections.results.length, expiredSearches: expiredSearches.results.length, expiredOffers: expiredOffers.results.length }));
 }
 
+/**
+ * Workspace people management. Mounted on every Worker so the veterinary console
+ * and the tenant view of the admin console share one implementation. Creating a
+ * tenant is deliberately absent here — that is platform-operator only.
+ */
+async function handleTenantAdmin(request, env, actor, path, method) {
+  const tenantId = actor?.tenantId || (actor?.clerkOrgId ? await tenantIdForClerkOrg(env, actor.clerkOrgId) : null);
+  const guard = requireTenantAdmin(actor, tenantId);
+  if (guard) return apiError(guard.status, guard.code, guard.message);
+
+  const respond = (result) => (result.code
+    ? apiError(result.status, result.code, result.message)
+    : json(result.body, { status: result.status }));
+
+  try {
+    if (method === "GET" && path === "/api/tenant/members") return json(await listMembers(env, actor, tenantId));
+    if (method === "POST" && path === "/api/tenant/members") {
+      const body = await readJson(request).catch(() => null);
+      return respond(await addMember(env, actor, tenantId, body || {}));
+    }
+    const memberMatch = path.match(/^\/api\/tenant\/members\/([^/]+)$/);
+    if (memberMatch) {
+      const memberId = decodeURIComponent(memberMatch[1]);
+      if (method === "PATCH") {
+        const body = await readJson(request).catch(() => null);
+        return respond(await changeMemberRole(env, actor, tenantId, memberId, body || {}));
+      }
+      if (method === "DELETE") return respond(await removeMember(env, actor, tenantId, memberId));
+    }
+    const inviteMatch = path.match(/^\/api\/tenant\/invitations\/([^/]+)$/);
+    if (method === "DELETE" && inviteMatch) {
+      return respond(await revokeInvitation(env, actor, tenantId, decodeURIComponent(inviteMatch[1])));
+    }
+  } catch (error) {
+    if (error.name === "ClerkError") return apiError(error.status >= 400 && error.status < 600 ? error.status : 502, "CLERK_REQUEST_FAILED", error.message);
+    throw error;
+  }
+  return null;
+}
+
 async function handleApi(request, env) {
   const url = new URL(request.url);
   const path = url.pathname;
@@ -930,6 +1084,16 @@ async function handleApi(request, env) {
 
   const actor = await authenticatedActor(request, env);
   if (signInRequired(env) && !actor) return authRequiredResponse();
+
+  if (method === "GET" && path === "/api/session") {
+    const session = await describeSession(env, actor);
+    return session ? json({ session }) : authRequiredResponse();
+  }
+
+  if (path.startsWith("/api/tenant/")) {
+    const tenantResponse = await handleTenantAdmin(request, env, actor, path, method);
+    if (tenantResponse) return tenantResponse;
+  }
 
   if (method === "POST" && path === "/api/intakes") return createIntake(request, env, actor);
   if (method === "POST" && path === "/api/searches") return createCareSearch(request, env, actor);

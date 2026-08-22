@@ -1,0 +1,39 @@
+name: TimiVet
+options:
+  bundleIdPrefix: solutions.clearkey
+  deploymentTarget:
+    macOS: "14.0"
+packages:
+  TimiVetPackage:
+    path: ..
+targets:
+  TimiVet:
+    type: application
+    platform: macOS
+    sources:
+      - Sources
+    dependencies:
+      - package: TimiVetPackage
+        product: TimiVetApp
+    configFiles:
+      Debug: TimiVet.xcconfig
+      Release: TimiVet.xcconfig
+    settings:
+      base:
+        INFOPLIST_FILE: Info.plist
+        PRODUCT_NAME: TimiVet
+        PRODUCT_MODULE_NAME: TimiVetHost
+        CODE_SIGN_STYLE: Automatic
+        CODE_SIGN_ENTITLEMENTS: TimiVet.entitlements
+        MACOSX_DEPLOYMENT_TARGET: "14.0"
+        ENABLE_HARDENED_RUNTIME: YES
+        SWIFT_VERSION: "5.9"
+schemes:
+  TimiVet:
+    build:
+      targets:
+        TimiVet: all
+    run:
+      config: Debug
+    archive:
+      config: Release

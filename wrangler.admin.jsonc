@@ -1,0 +1,58 @@
+{
+  // Platform operator console — timinow-admin.
+  //
+  // This Worker deploys separately from `timinow` (customer) and `timinow-vet`
+  // (veterinary console) so the tenant-creation surface never shares an origin
+  // with any app a customer or clinic staffer can reach. See
+  // docs/PLATFORM-CONTRACT.md for the full authorization model.
+  //
+  // Deploy: npx wrangler deploy --config wrangler.admin.jsonc
+  //
+  // Required secret (set with `wrangler secret put <NAME> --config wrangler.admin.jsonc`):
+  //   CLERK_SECRET_KEY   Clerk Backend API secret key. Used to verify session
+  //                      tokens, create/rename/delete organizations, seat and
+  //                      remove members, and merge Clerk metadata.
+  //
+  // To become a platform operator once this Worker is deployed, either:
+  //   - add your Clerk user id to PLATFORM_ADMIN_USER_IDS (comma separated), or
+  //   - add your account email to PLATFORM_ADMIN_EMAILS (comma separated), or
+  //   - insert a row into the `platform_admins` D1 table.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "timinow-admin",
+  "main": "apps/admin-console/src/index.js",
+  "compatibility_date": "2026-08-20",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "vars": {
+    "SIGN_IN_REQUIRED": "true",
+    "DEMO_MODE": "false",
+    "SURFACE": "admin",
+    "CLERK_JS_URL": "https://cdn.jsdelivr.net/npm/@clerk/clerk-js@5/headless/+esm",
+    "CLERK_PUBLISHABLE_KEY": "",
+    "CLERK_ISSUER": "",
+    "AUTHORIZED_PARTIES": "",
+    "MAPBOX_PUBLIC_TOKEN": "",
+    "MAPBOX_STYLE_URL": "mapbox://styles/calebowen2019/cmt3nci25004d01sya8qxcb4u",
+    "STRIPE_PUBLISHABLE_KEY": "",
+    "PLATFORM_ADMIN_USER_IDS": "",
+    "PLATFORM_ADMIN_EMAILS": ""
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "timinow",
+      "database_id": "eae5bd15-686f-4827-9354-e99973daa803",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "assets": {
+    "directory": "./apps/admin-console/public",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
+  },
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  }
+}

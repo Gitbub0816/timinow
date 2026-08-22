@@ -1,0 +1,40 @@
+// Local development override.
+//
+// The committed `wrangler.jsonc` is the production configuration: authentication
+// enforced, demo mode off, bound to the real D1 database. Copy this file to
+// `wrangler.local.jsonc` (git-ignored) to run the stack locally against a local
+// D1 replica with sign-in disabled.
+//
+//   cp wrangler.local.example.jsonc wrangler.local.jsonc
+//   npm run db:migrate:local
+//   npm run dev:local
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "timinow-local",
+  "main": "src/index.js",
+  "compatibility_date": "2026-08-20",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "vars": {
+    "SIGN_IN_REQUIRED": "false",
+    "DEMO_MODE": "true",
+    "SURFACE": "customer",
+    "CLERK_JS_URL": "https://cdn.jsdelivr.net/npm/@clerk/clerk-js@5/headless/+esm",
+    "MAPBOX_PUBLIC_TOKEN": "",
+    "MAPBOX_STYLE_URL": "mapbox://styles/calebowen2019/cmt3nci25004d01sya8qxcb4u"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "timinow",
+      "database_id": "REPLACE_WITH_YOUR_D1_DATABASE_ID",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
+  }
+}

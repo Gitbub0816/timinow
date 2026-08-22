@@ -6,10 +6,25 @@
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": true,
   "vars": {
-    "SIGN_IN_REQUIRED": "false",
-    "DEMO_MODE": "true",
-    "CLERK_JS_URL": "https://cdn.jsdelivr.net/npm/@clerk/clerk-js@5/+esm"
+    "SIGN_IN_REQUIRED": "true",
+    "DEMO_MODE": "false",
+    "SURFACE": "customer",
+    "CLERK_JS_URL": "https://cdn.jsdelivr.net/npm/@clerk/clerk-js@5/headless/+esm",
+    "CLERK_PUBLISHABLE_KEY": "",
+    "CLERK_ISSUER": "",
+    "AUTHORIZED_PARTIES": "",
+    "MAPBOX_PUBLIC_TOKEN": "",
+    "MAPBOX_STYLE_URL": "mapbox://styles/calebowen2019/cmt3nci25004d01sya8qxcb4u",
+    "STRIPE_PUBLISHABLE_KEY": ""
   },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "timinow",
+      "database_id": "eae5bd15-686f-4827-9354-e99973daa803",
+      "migrations_dir": "migrations"
+    }
+  ],
   "assets": {
     "directory": "./public",
     "binding": "ASSETS",
@@ -24,11 +39,3 @@
     "crons": ["*/5 * * * *"]
   }
 }
-// wrangler.jsonc
-"d1_databases": [
-  {
-    "binding": "DB",
-    "database_name": "timinow",
-    "database_id": "eae5bd15-686f-4827-9354-e99973daa803"   // from: wrangler d1 list
-  }
-]

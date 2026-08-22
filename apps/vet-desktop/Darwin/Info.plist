@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDisplayName</key><string>Tími Vet</string>
+    <key>CFBundleName</key><string>Tími Vet</string>
+    <key>LSApplicationCategoryType</key><string>public.app-category.medical</string>
+    <key>LSMinimumSystemVersion</key><string>14.0</string>
+    <key>LSUIElement</key><false/>
+    <key>ITSAppUsesNonExemptEncryption</key><false/>
+    <key>NSUserNotificationsUsageDescription</key><string>Tími Vet notifies your front desk when a new intake or emergency request arrives.</string>
+    <key>NSAppTransportSecurity</key><dict><key>NSAllowsArbitraryLoads</key><false/></dict>
+    <key>CFBundleURLTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleURLName</key><string>solutions.clearkey.timivet.auth</string>
+            <key>CFBundleURLSchemes</key><array><string>timivet</string></array>
+        </dict>
+    </array>
+</dict>
+</plist>

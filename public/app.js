@@ -1,3 +1,18 @@
+import {
+  VoiceGuide,
+  clearRoute,
+  configureMap,
+  drawRoute,
+  fetchRoute,
+  formatDistance,
+  formatDuration,
+  mapAvailable,
+  phraseInstruction,
+  renderClinicMap,
+  announcement,
+  toneFor
+} from "./map.js";
+
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 
@@ -9,13 +24,16 @@ const STORAGE_KEYS = {
   intake: "timi_current_intake_v1",
   search: "timi_current_search_v1",
   clinicAvailability: "timi_demo_clinic_availability_v1",
-  clinicDecisions: "timi_demo_clinic_decisions_v1"
+  clinicDecisions: "timi_demo_clinic_decisions_v1",
+  navigation: "timi_navigation_preferences_v1"
 };
 
 const state = {
   route: "home",
   config: null,
   clerk: null,
+  session: null,
+  auth: null,
   intakeStep: 1,
   intakeDraft: readStorage(STORAGE_KEYS.draft, {
     position: DEFAULT_POSITION,
@@ -43,7 +61,22 @@ const state = {
   stripeElements: null,
   clinicData: null,
   knownClinicRequests: new Set(),
-  clinicInitialized: false
+  clinicInitialized: false,
+  resultsMap: null,
+  trackerMap: null,
+  activeRoute: null,
+  navigationActive: false,
+  navigationWatchId: null,
+  voiceGuide: null,
+  navigationPreferences: readStorage(STORAGE_KEYS.navigation, {
+    voiceEnabled: true,
+    voiceURI: null,
+    rate: 1,
+    units: "imperial",
+    avoidTolls: false,
+    avoidHighways: false,
+    avoidFerries: false
+  })
 };
 
 function readStorage(key, fallback) {
@@ -160,12 +193,16 @@ function clearTimers() {
 
 async function renderRoute() {
   clearTimers();
+  releaseMaps();
   $$('dialog[open]').forEach((dialog) => dialog.close());
   document.body.classList.remove("dialog-open");
   let route = parseRoute();
   if (state.config?.signInRequired && PROTECTED_ROUTES.has(route) && !state.clerk?.user) {
     sessionStorage.setItem("timi_return_route", route);
     route = "sign-in";
+  }
+  if (state.config?.signInRequired && state.clerk?.user && !state.session) {
+    try { state.session = (await api("/api/session")).session; } catch { state.session = null; }
   }
   state.route = route;
 
@@ -215,11 +252,18 @@ async function renderRoute() {
     state.trackerTimer = window.setInterval(refreshCurrentIntake, 5000);
   }
   if (route === "clinic") {
-    mountOrganizationSwitcher();
-    await loadClinicDashboard();
-    state.clinicTimer = window.setInterval(loadClinicDashboard, 15000);
+    renderAccountMenu();
+    renderClinicWorkspaceSwitch();
+    const denied = state.config?.signInRequired && state.session && state.session.surfaces && !state.session.surfaces.clinic;
+    $("[data-clinic-denied]").hidden = !denied;
+    $("[data-clinic-console-body]").hidden = denied;
+    if (!denied) {
+      await loadClinicDashboard();
+      state.clinicTimer = window.setInterval(loadClinicDashboard, 15000);
+    }
   }
   if (route === "sign-in") await renderSignIn();
+  if (APP_ROUTES.has(route) && route !== "sign-in") renderAccountMenu();
 }
 
 async function api(path, options = {}) {
@@ -227,7 +271,9 @@ async function api(path, options = {}) {
   headers.set("accept", "application/json");
   if (options.body && !headers.has("content-type")) headers.set("content-type", "application/json");
   if (state.config?.signInRequired && state.clerk?.session) {
-    const token = await state.clerk.session.getToken();
+    let token = null;
+    try { token = await state.clerk.session.getToken({ template: "timinow" }); }
+    catch { token = await state.clerk.session.getToken(); }
     if (token) headers.set("authorization", `Bearer ${token}`);
   } else if (options.clinic) {
     headers.set("x-demo-role", "clinic");
@@ -251,6 +297,7 @@ async function loadConfig() {
   } catch {
     state.config = { signInRequired: false, demoMode: true, database: "fixtures" };
   }
+  configureMap(state.config.map);
   if (state.config.signInRequired) await initializeClerk();
 }
 
@@ -261,47 +308,376 @@ async function initializeClerk() {
     const Clerk = clerkModule.Clerk || clerkModule.default?.Clerk || clerkModule.default;
     state.clerk = new Clerk(state.config.clerkPublishableKey);
     await state.clerk.load();
-    state.clerk.addListener(() => {
-      if (state.route === "sign-in" && state.clerk.user) {
-        const returnRoute = sessionStorage.getItem("timi_return_route") || "find";
-        sessionStorage.removeItem("timi_return_route");
-        setRoute(returnRoute);
-      }
-    });
+    await maybeHandleOAuthRedirect();
+    state.clerk.addListener(() => renderAccountMenu());
   } catch (error) {
     console.error("Clerk initialization failed", error);
   }
 }
 
+async function maybeHandleOAuthRedirect() {
+  if (!state.clerk) return;
+  const hasRedirectParams = /[?&](__clerk_status|__clerk_handshake|__clerk_ticket|rotating_token_nonce)=/.test(location.href);
+  if (!hasRedirectParams) return;
+  try {
+    await state.clerk.handleRedirectCallback({
+      afterSignInUrl: `${location.origin}/#find`,
+      afterSignUpUrl: `${location.origin}/#find`
+    });
+  } catch (error) {
+    console.error("Clerk redirect handling failed", error);
+  }
+}
+
+/* ---------------------------------------------------------------------- */
+/* Custom Clerk-headless auth state machine                               */
+/* ---------------------------------------------------------------------- */
+
+function resetAuthFlow() {
+  state.auth = {
+    step: "identifier",
+    signIn: null,
+    signUp: null,
+    factors: [],
+    activeFactor: null,
+    flowKind: "sign-in",
+    signUpChannel: null,
+    signUpIdentifier: "",
+    resendAvailableAt: 0,
+    resendTimer: null,
+    memberships: [],
+    pendingRoute: null,
+    forceOrgPicker: false
+  };
+  $("[data-auth-identifier-form]")?.reset();
+  $("[data-auth-password-form]")?.reset();
+  $("[data-auth-signup-form]")?.reset();
+  $("[data-auth-reset-form]")?.reset();
+  clearOtpInputs();
+  setAuthStep("identifier");
+}
+
+function setAuthStep(step) {
+  $$('[data-auth-step]').forEach((panel) => { panel.hidden = panel.dataset.authStep !== step; });
+  if (state.auth) state.auth.step = step;
+  clearAuthError();
+  if (step === "code") requestAnimationFrame(focusFirstOtp);
+}
+
+function showAuthError(error) {
+  const message = error?.errors?.[0]?.longMessage || error?.message || "Something went wrong. Please try again.";
+  const box = $("[data-auth-error]");
+  if (!box) return;
+  box.querySelector("[data-auth-error-text]").textContent = message;
+  box.hidden = false;
+}
+
+function clearAuthError() {
+  const box = $("[data-auth-error]");
+  if (box) box.hidden = true;
+}
+
+function setSubmitting(form, submitting, label) {
+  const button = form.querySelector(".auth-submit");
+  if (!button) return;
+  button.disabled = submitting;
+  button.textContent = submitting ? "Please wait…" : label;
+}
+
 async function renderSignIn() {
-  const mount = document.getElementById("clerk-sign-in");
   const disabled = $("[data-auth-disabled]");
+  const steps = $("[data-auth-steps]");
   if (!state.config?.signInRequired) {
-    mount.hidden = true;
+    steps.hidden = true;
     disabled.hidden = false;
     return;
   }
   disabled.hidden = true;
-  mount.hidden = false;
+  steps.hidden = false;
   if (!state.clerk) {
-    mount.innerHTML = '<div class="safety-callout"><strong>Clerk is not configured.</strong><p>Add the Clerk publishable key and issuer before setting SIGN_IN_REQUIRED=true.</p></div>';
+    setAuthStep("identifier");
+    showAuthError({ errors: [{ longMessage: "Clerk is not configured. Add the Clerk publishable key and issuer before setting SIGN_IN_REQUIRED=true." }] });
+    return;
+  }
+  if (state.auth?.forceOrgPicker) {
+    state.auth.forceOrgPicker = false;
+    renderOrgPicker(state.clerk.user?.organizationMemberships || []);
     return;
   }
   if (state.clerk.user) {
-    const returnRoute = sessionStorage.getItem("timi_return_route") || "find";
-    setRoute(returnRoute);
+    await afterAuthenticated();
     return;
   }
-  mount.innerHTML = "";
-  state.clerk.mountSignIn(mount);
+  resetAuthFlow();
 }
 
-function mountOrganizationSwitcher() {
-  const mount = document.getElementById("clerk-org-switcher");
-  if (!mount || !state.config?.signInRequired || !state.clerk?.user) return;
-  mount.hidden = false;
-  mount.innerHTML = "";
-  state.clerk.mountOrganizationSwitcher(mount, { hidePersonal: true, afterSelectOrganizationUrl: "/#clinic" });
+async function afterAuthenticated() {
+  try { state.session = (await api("/api/session")).session; }
+  catch { state.session = null; }
+  const returnRoute = (state.auth && state.auth.pendingRoute) || sessionStorage.getItem("timi_return_route") || "find";
+  const memberships = state.clerk.user?.organizationMemberships || [];
+  if (returnRoute === "clinic" && !state.clerk.organization) {
+    if (memberships.length > 1) {
+      if (!state.auth) state.auth = { pendingRoute: null };
+      state.auth.pendingRoute = "clinic";
+      renderOrgPicker(memberships);
+      return;
+    }
+    if (memberships.length === 1) {
+      try {
+        await state.clerk.setActive({ organization: memberships[0].organization.id });
+        state.session = (await api("/api/session")).session;
+      } catch { /* fall through with whatever session we already have */ }
+    }
+  }
+  finalizeRouting(returnRoute);
+}
+
+function finalizeRouting(returnRoute) {
+  sessionStorage.removeItem("timi_return_route");
+  if (state.auth) state.auth.pendingRoute = null;
+  renderAccountMenu();
+  if (returnRoute === "clinic" && state.session && state.session.surfaces && !state.session.surfaces.clinic) {
+    setAuthStep("denied");
+    $("[data-auth-denied-message]").textContent = "This account is not part of a veterinary workspace. Sign in with a clinic account, or return to the customer app.";
+    return;
+  }
+  setRoute(returnRoute);
+}
+
+function renderOrgPicker(memberships) {
+  state.auth.memberships = memberships;
+  const list = $("[data-auth-org-list]");
+  list.innerHTML = memberships.map((membership, index) => `
+    <button class="auth-org-card" type="button" data-org-index="${index}">
+      <span class="auth-org-avatar">${escapeHtml(initials(membership.organization?.name || "Org"))}</span>
+      <span><strong>${escapeHtml(membership.organization?.name || "Workspace")}</strong><small>${escapeHtml(humanize(membership.role || ""))}</small></span>
+    </button>`).join("");
+  setAuthStep("organization");
+}
+
+function openOrgSwitcher() {
+  const memberships = state.clerk?.user?.organizationMemberships || [];
+  if (memberships.length < 2) return showToast("This account has only one workspace.");
+  if (!state.auth) resetAuthFlow();
+  state.auth.pendingRoute = state.route === "sign-in" ? "clinic" : state.route;
+  state.auth.forceOrgPicker = true;
+  setRoute("sign-in");
+}
+
+function strategyLabel(factor) {
+  switch (factor.strategy) {
+    case "password": return { title: "Use your password", detail: "" };
+    case "email_code": return { title: "Email me a code", detail: factor.safeIdentifier || "" };
+    case "phone_code": return { title: "Text me a code", detail: factor.safeIdentifier || "" };
+    case "passkey": return { title: "Use a passkey", detail: "" };
+    case "reset_password_email_code": return { title: "Reset your password", detail: "Emails a reset code" };
+    default: return { title: humanize(factor.strategy), detail: "" };
+  }
+}
+
+function renderStrategyStep(signIn) {
+  const factors = signIn.supportedFirstFactors || [];
+  state.auth.factors = factors;
+  if (factors.length <= 1) {
+    if (factors[0]) return startFactor(factors[0]);
+    return showAuthError({ errors: [{ longMessage: "No sign-in method is available for this account." }] });
+  }
+  const list = $("[data-auth-strategy-list]");
+  list.innerHTML = factors.map((factor, index) => {
+    const label = strategyLabel(factor);
+    return `<button class="auth-strategy-option" type="button" data-factor-index="${index}"><span>${escapeHtml(label.title)}</span>${label.detail ? `<small>${escapeHtml(label.detail)}</small>` : ""}</button>`;
+  }).join("");
+  setAuthStep("strategy");
+}
+
+async function startFactor(factor) {
+  switch (factor.strategy) {
+    case "password":
+      setAuthStep("password");
+      break;
+    case "email_code":
+    case "phone_code":
+    case "reset_password_email_code":
+      await prepareAndShowCode(factor);
+      break;
+    case "passkey":
+      await signInWithPasskey();
+      break;
+    default:
+      showAuthError({ errors: [{ longMessage: `Unsupported sign-in method: ${humanize(factor.strategy)}` }] });
+  }
+}
+
+async function prepareAndShowCode(factor) {
+  try {
+    const params = { strategy: factor.strategy };
+    if (factor.emailAddressId) params.emailAddressId = factor.emailAddressId;
+    if (factor.phoneNumberId) params.phoneNumberId = factor.phoneNumberId;
+    const updated = await state.auth.signIn.prepareFirstFactor(params);
+    state.auth.signIn = updated;
+    state.auth.activeFactor = factor;
+    state.auth.flowKind = "sign-in";
+    $("[data-auth-code-lede]").textContent = factor.strategy === "reset_password_email_code"
+      ? `Enter the reset code sent to ${factor.safeIdentifier || "your email"}.`
+      : `Enter the 6-digit code sent to ${factor.safeIdentifier || "you"}.`;
+    clearOtpInputs();
+    startResendCooldown();
+    setAuthStep("code");
+  } catch (error) { showAuthError(error); }
+}
+
+async function signInWithPasskey() {
+  try {
+    const signIn = state.auth.signIn || state.clerk.client.signIn;
+    const result = await signIn.authenticateWithPasskey();
+    state.auth.signIn = result;
+    await handleSignInResult(result);
+  } catch (error) { showAuthError(error); }
+}
+
+async function startOAuth(strategy) {
+  if (!state.clerk) return;
+  try {
+    await state.clerk.client.signIn.authenticateWithRedirect({
+      strategy,
+      redirectUrl: `${location.origin}/#sign-in`,
+      redirectUrlComplete: `${location.origin}/#find`
+    });
+  } catch (error) { showAuthError(error); }
+}
+
+async function handleSignInResult(signIn) {
+  state.auth.signIn = signIn;
+  switch (signIn.status) {
+    case "complete":
+      await completeSignIn(signIn.createdSessionId);
+      break;
+    case "needs_first_factor":
+      renderStrategyStep(signIn);
+      break;
+    case "needs_second_factor":
+      showAuthError({ errors: [{ longMessage: "This account requires a second verification step that isn't supported here yet. Please contact your workspace administrator." }] });
+      break;
+    case "needs_new_password":
+      setAuthStep("reset");
+      break;
+    case "needs_identifier":
+      resetAuthFlow();
+      break;
+    default:
+      showAuthError({ errors: [{ longMessage: `Unexpected sign-in status: ${signIn.status}` }] });
+  }
+}
+
+async function completeSignIn(sessionId) {
+  await state.clerk.setActive({ session: sessionId });
+  await afterAuthenticated();
+}
+
+async function signOut() {
+  try { await state.clerk?.signOut(); } catch (error) { console.error("Sign out failed", error); }
+  state.session = null;
+  closeAccountMenus();
+  renderAccountMenu();
+  setRoute("home");
+}
+
+/* One-time-code input helpers */
+function otpInputs() { return $$('[data-otp-input] input'); }
+function clearOtpInputs() { otpInputs().forEach((input) => { input.value = ""; }); }
+function getOtpValue() { return otpInputs().map((input) => input.value).join(""); }
+function focusFirstOtp() { otpInputs()[0]?.focus(); }
+
+async function submitCode() {
+  const code = getOtpValue();
+  if (code.length !== 6) return;
+  try {
+    if (state.auth.flowKind === "sign-up") {
+      const signUp = state.auth.signUp;
+      const result = state.auth.signUpChannel === "phone"
+        ? await signUp.attemptPhoneNumberVerification({ code })
+        : await signUp.attemptEmailAddressVerification({ code });
+      state.auth.signUp = result;
+      if (result.status === "complete") await completeSignIn(result.createdSessionId);
+      else showAuthError({ errors: [{ longMessage: `Verification incomplete (${humanize(result.status)}).` }] });
+    } else {
+      const factor = state.auth.activeFactor;
+      const attempted = await state.auth.signIn.attemptFirstFactor({ strategy: factor.strategy, code });
+      state.auth.signIn = attempted;
+      if (factor.strategy === "reset_password_email_code" && attempted.status === "needs_new_password") return setAuthStep("reset");
+      await handleSignInResult(attempted);
+    }
+  } catch (error) {
+    showAuthError(error);
+    clearOtpInputs();
+    focusFirstOtp();
+  }
+}
+
+function startResendCooldown() {
+  state.auth.resendAvailableAt = Date.now() + 30_000;
+  updateResendButton();
+  window.clearInterval(state.auth.resendTimer);
+  state.auth.resendTimer = window.setInterval(updateResendButton, 1000);
+}
+
+function updateResendButton() {
+  const button = $("[data-auth-resend]");
+  if (!button) return;
+  const remaining = Math.ceil((state.auth.resendAvailableAt - Date.now()) / 1000);
+  if (remaining > 0) { button.disabled = true; button.textContent = `Resend code (${remaining}s)`; }
+  else { button.disabled = false; button.textContent = "Resend code"; window.clearInterval(state.auth.resendTimer); }
+}
+
+async function resendCode() {
+  try {
+    if (state.auth.flowKind === "sign-up") {
+      const signUp = state.auth.signUp;
+      if (state.auth.signUpChannel === "phone") await signUp.preparePhoneNumberVerification({ strategy: "phone_code" });
+      else await signUp.prepareEmailAddressVerification({ strategy: "email_code" });
+      startResendCooldown();
+    } else if (state.auth.activeFactor) {
+      await prepareAndShowCode(state.auth.activeFactor);
+    }
+  } catch (error) { showAuthError(error); }
+}
+
+/* Custom workspace switcher for the clinic console */
+function renderClinicWorkspaceSwitch() {
+  const button = $("[data-workspace-switch]");
+  if (!button) return;
+  if (!state.config?.signInRequired || !state.clerk?.user) { button.hidden = true; return; }
+  button.hidden = false;
+  button.querySelector("[data-workspace-switch-label]").textContent = state.clerk.organization?.name || "Choose workspace";
+}
+
+/* Custom header account menu */
+function closeAccountMenus() {
+  $$('[data-account-panel]').forEach((panel) => { panel.hidden = true; });
+}
+
+function renderAccountMenu() {
+  const containers = $$('[data-account-menu]');
+  const user = state.clerk?.user;
+  containers.forEach((container) => {
+    if (!state.config?.signInRequired || !user) { container.hidden = true; container.innerHTML = ""; return; }
+    container.hidden = false;
+    const name = user.fullName || user.username || user.primaryEmailAddress?.emailAddress || "Account";
+    const email = user.primaryEmailAddress?.emailAddress || "";
+    const orgName = state.clerk.organization?.name;
+    const memberships = user.organizationMemberships || [];
+    container.innerHTML = `
+      <button class="account-menu-trigger" type="button" data-account-toggle aria-haspopup="true" aria-expanded="false">
+        <span class="account-avatar">${escapeHtml(initials(name))}</span>
+        ${orgName ? `<span class="account-org-label">${escapeHtml(orgName)}</span>` : ""}
+      </button>
+      <div class="account-menu-panel" data-account-panel hidden>
+        <div class="account-menu-identity"><strong>${escapeHtml(name)}</strong>${email ? `<small>${escapeHtml(email)}</small>` : ""}</div>
+        ${memberships.length > 1 ? '<button class="account-menu-item" type="button" data-switch-workspace>Switch workspace</button>' : ""}
+        <button class="account-menu-item" type="button" data-sign-out>Sign out</button>
+      </div>`;
+  });
 }
 
 function hydrateIntakeForm() {
@@ -475,6 +851,7 @@ function renderLocations() {
   }
   const launchNote = $("[data-search-launch-note]");
   if (launchNote) launchNote.textContent = `Tími will contact ${eligibleCount} matching clinic${eligibleCount === 1 ? "" : "s"} and show up to five active offers. Nothing is booked until you choose.`;
+  renderResultsMap();
   list.innerHTML = locations.map((location) => {
     const status = location.availability.intakeStatus;
     const disabled = ["closed", "diverting"].includes(status) && careType() !== "emergency";
@@ -771,6 +1148,7 @@ function renderTracker() {
   if (!intake) return;
   $("[data-search-stage]").hidden = true;
   $("[data-confirmed-stage]").hidden = false;
+  renderTrackerMap();
   const location = intake.location || state.locations.find((candidate) => candidate.id === intake.locationId) || {};
   $("[data-tracker-hospital]").textContent = location.name || "Veterinary hospital";
   $("[data-tracker-address]").textContent = location.address || "Location available after confirmation";
@@ -1142,6 +1520,167 @@ document.addEventListener("click", (event) => {
   if (closeDialog) { closeDialog.closest("dialog")?.close(); document.body.classList.remove("dialog-open"); }
   const toastButton = event.target.closest("[data-toast-message]");
   if (toastButton) showToast(toastButton.dataset.toastMessage);
+
+  const oauthButton = event.target.closest("[data-oauth]");
+  if (oauthButton) startOAuth(oauthButton.dataset.oauth);
+  const passkeyButton = event.target.closest("[data-passkey-signin]");
+  if (passkeyButton) signInWithPasskey();
+  const authBack = event.target.closest("[data-auth-back]");
+  if (authBack) setAuthStep("identifier");
+  const authToggleMode = event.target.closest("[data-auth-toggle-mode]");
+  if (authToggleMode) {
+    const currentStep = event.target.closest("[data-auth-step]")?.dataset.authStep;
+    setAuthStep(currentStep === "sign-up" ? "identifier" : "sign-up");
+  }
+  const forgotPassword = event.target.closest("[data-auth-forgot-password]");
+  if (forgotPassword) {
+    const resetFactor = (state.auth?.factors || []).find((factor) => factor.strategy === "reset_password_email_code");
+    if (resetFactor) prepareAndShowCode(resetFactor);
+    else showAuthError({ errors: [{ longMessage: "Password reset is not available for this account." }] });
+  }
+  const codeSubmit = event.target.closest("[data-auth-code-submit]");
+  if (codeSubmit) submitCode();
+  const resendButton = event.target.closest("[data-auth-resend]");
+  if (resendButton && !resendButton.disabled) resendCode();
+  const factorOption = event.target.closest("[data-factor-index]");
+  if (factorOption) {
+    const factor = state.auth?.factors?.[Number(factorOption.dataset.factorIndex)];
+    if (factor) startFactor(factor);
+  }
+  const orgCard = event.target.closest("[data-org-index]");
+  if (orgCard) selectOrganization(orgCard);
+  const workspaceSwitch = event.target.closest("[data-workspace-switch]");
+  if (workspaceSwitch) openOrgSwitcher();
+
+  const accountToggle = event.target.closest("[data-account-toggle]");
+  if (accountToggle) {
+    const panel = accountToggle.nextElementSibling;
+    const wasOpen = panel && !panel.hidden;
+    closeAccountMenus();
+    if (panel) { panel.hidden = wasOpen; accountToggle.setAttribute("aria-expanded", String(!wasOpen)); }
+  } else if (!event.target.closest("[data-account-panel]")) {
+    closeAccountMenus();
+  }
+  const switchWorkspaceItem = event.target.closest("[data-switch-workspace]");
+  if (switchWorkspaceItem) openOrgSwitcher();
+  const signOutItem = event.target.closest("[data-sign-out]");
+  if (signOutItem) signOut();
+});
+
+async function selectOrganization(button) {
+  const membership = state.auth?.memberships?.[Number(button.dataset.orgIndex)];
+  if (!membership) return;
+  button.disabled = true;
+  try {
+    await state.clerk.setActive({ organization: membership.organization.id });
+    try { state.session = (await api("/api/session")).session; } catch { state.session = null; }
+    finalizeRouting((state.auth && state.auth.pendingRoute) || "find");
+  } catch (error) {
+    showAuthError(error);
+    button.disabled = false;
+  }
+}
+
+$("[data-auth-identifier-form]")?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const identifier = form.elements.identifier.value.trim();
+  if (!identifier) return;
+  setSubmitting(form, true, "Continue");
+  try {
+    const signIn = await state.clerk.client.signIn.create({ identifier });
+    state.auth.signIn = signIn;
+    state.auth.flowKind = "sign-in";
+    await handleSignInResult(signIn);
+  } catch (error) { showAuthError(error); }
+  finally { setSubmitting(form, false, "Continue"); }
+});
+
+$("[data-auth-password-form]")?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const password = form.elements.password.value;
+  setSubmitting(form, true, "Sign in");
+  try {
+    const attempted = await state.auth.signIn.attemptFirstFactor({ strategy: "password", password });
+    state.auth.signIn = attempted;
+    await handleSignInResult(attempted);
+  } catch (error) { showAuthError(error); }
+  finally { setSubmitting(form, false, "Sign in"); }
+});
+
+$("[data-auth-reset-form]")?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const values = new FormData(form);
+  const password = String(values.get("password") || "");
+  const confirmPassword = String(values.get("confirmPassword") || "");
+  if (password.length < 8) return showAuthError({ errors: [{ longMessage: "Password must be at least 8 characters." }] });
+  if (password !== confirmPassword) return showAuthError({ errors: [{ longMessage: "Passwords do not match." }] });
+  setSubmitting(form, true, "Set new password");
+  try {
+    const result = await state.auth.signIn.resetPassword({ password });
+    state.auth.signIn = result;
+    await handleSignInResult(result);
+  } catch (error) { showAuthError(error); }
+  finally { setSubmitting(form, false, "Set new password"); }
+});
+
+$("[data-auth-signup-form]")?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const values = new FormData(form);
+  const firstName = String(values.get("firstName") || "").trim();
+  const lastName = String(values.get("lastName") || "").trim();
+  const identifier = String(values.get("identifier") || "").trim();
+  const password = String(values.get("password") || "");
+  const isPhone = identifier.includes("@") === false && /^[+0-9()\-\s]{7,}$/.test(identifier);
+  setSubmitting(form, true, "Create account");
+  try {
+    const payload = { firstName, lastName, password };
+    if (isPhone) payload.phoneNumber = identifier; else payload.emailAddress = identifier;
+    const signUp = await state.clerk.client.signUp.create(payload);
+    state.auth.signUp = signUp;
+    state.auth.flowKind = "sign-up";
+    state.auth.signUpChannel = isPhone ? "phone" : "email";
+    state.auth.signUpIdentifier = identifier;
+    if (isPhone) await signUp.preparePhoneNumberVerification({ strategy: "phone_code" });
+    else await signUp.prepareEmailAddressVerification({ strategy: "email_code" });
+    $("[data-auth-code-lede]").textContent = `Enter the 6-digit code sent to ${identifier}.`;
+    clearOtpInputs();
+    startResendCooldown();
+    setAuthStep("code");
+  } catch (error) { showAuthError(error); }
+  finally { setSubmitting(form, false, "Create account"); }
+});
+
+$("[data-otp-input]")?.addEventListener("input", (event) => {
+  const input = event.target;
+  if (!input.matches("input")) return;
+  input.value = input.value.replace(/\D/g, "").slice(-1);
+  const inputs = otpInputs();
+  const index = inputs.indexOf(input);
+  if (input.value && index < inputs.length - 1) inputs[index + 1].focus();
+  if (getOtpValue().length === 6) submitCode();
+});
+
+$("[data-otp-input]")?.addEventListener("keydown", (event) => {
+  if (event.key !== "Backspace") return;
+  const input = event.target;
+  if (!input.matches("input")) return;
+  const inputs = otpInputs();
+  const index = inputs.indexOf(input);
+  if (!input.value && index > 0) inputs[index - 1].focus();
+});
+
+$("[data-otp-input]")?.addEventListener("paste", (event) => {
+  const text = (event.clipboardData || window.clipboardData).getData("text").replace(/\D/g, "").slice(0, 6);
+  if (!text) return;
+  event.preventDefault();
+  const inputs = otpInputs();
+  text.split("").forEach((digit, index) => { if (inputs[index]) inputs[index].value = digit; });
+  inputs[Math.min(text.length, inputs.length - 1)]?.focus();
+  if (text.length === 6) submitCode();
 });
 
 $("[data-intake-form]")?.addEventListener("change", (event) => {
@@ -1188,3 +1727,302 @@ window.addEventListener("hashchange", () => { if (state.route === "find") persis
 window.addEventListener("load", async () => { await loadConfig(); await renderRoute(); });
 
 if ("serviceWorker" in navigator) window.addEventListener("load", () => navigator.serviceWorker.register("/sw.js").catch(() => {}));
+
+/* ============================== map and navigation ============================== */
+
+/**
+ * The map is optional infrastructure: when no Mapbox token is configured the
+ * panels stay hidden and every existing text-based flow still works.
+ */
+function mapPanel(selector) {
+  const panel = $(selector);
+  if (!panel) return null;
+  if (!mapAvailable()) {
+    panel.hidden = true;
+    return null;
+  }
+  panel.hidden = false;
+  return panel;
+}
+
+async function renderResultsMap() {
+  const panel = mapPanel("[data-results-map-panel]");
+  if (!panel) return;
+  const container = $("[data-results-map]", panel);
+  const clinics = sortLocations(state.locations).slice(0, 30);
+  if (!clinics.length) {
+    panel.hidden = true;
+    return;
+  }
+  try {
+    state.resultsMap?.destroy();
+    state.resultsMap = await renderClinicMap(container, {
+      origin: state.intakeDraft.position,
+      clinics,
+      onSelect: (clinic) => openHospitalDialog(clinic.id)
+    });
+  } catch (error) {
+    panel.hidden = true;
+    console.warn("Map unavailable", error.message);
+  }
+}
+
+async function renderTrackerMap() {
+  const panel = mapPanel("[data-tracker-map-panel]");
+  if (!panel) return;
+  const intake = state.currentIntake;
+  const location = intake?.location || state.locations.find((candidate) => candidate.id === intake?.locationId);
+  if (!location || !Number.isFinite(location.latitude)) {
+    panel.hidden = true;
+    return;
+  }
+  const origin = state.intakeDraft.position;
+  try {
+    state.trackerMap?.destroy();
+    state.trackerMap = await renderClinicMap($("[data-tracker-map]", panel), {
+      origin,
+      clinics: [location]
+    });
+    await refreshRoute(origin, location);
+  } catch (error) {
+    panel.hidden = true;
+    console.warn("Tracker map unavailable", error.message);
+  }
+}
+
+async function refreshRoute(origin, location) {
+  if (!state.trackerMap || !origin) return;
+  try {
+    const route = await fetchRoute(origin, location, { preferences: state.navigationPreferences });
+    state.activeRoute = { ...route, clinic: location };
+    drawRoute(state.trackerMap.map, route);
+    const summary = $("[data-route-summary]");
+    if (summary) {
+      summary.hidden = false;
+      $("[data-route-eta]", summary).textContent = `${formatDuration(route.durationSeconds)} away`;
+      $("[data-route-distance]", summary).textContent =
+        `${formatDistance(route.distanceMeters, state.navigationPreferences.units)} · ${location.name}`;
+    }
+    state.trackerMap.map.fitBounds(routeBounds(route), { padding: 48, duration: 0 });
+  } catch (error) {
+    console.warn("Route unavailable", error.message);
+  }
+}
+
+function routeBounds(route) {
+  const coordinates = route.geometry?.coordinates || [];
+  return coordinates.reduce(
+    (bounds, point) => [
+      [Math.min(bounds[0][0], point[0]), Math.min(bounds[0][1], point[1])],
+      [Math.max(bounds[1][0], point[0]), Math.max(bounds[1][1], point[1])]
+    ],
+    [[180, 90], [-180, -90]]
+  );
+}
+
+/**
+ * Which speaking register the current trip is in. Derived from the intake's
+ * urgency rather than a setting, so a driver never has to think about it: the
+ * playful lines simply do not exist on an emergency run.
+ */
+function navigationTone() {
+  return toneFor(state.currentIntake?.urgency || state.intakeDraft?.urgency || "same_day");
+}
+
+function persistNavigationPreferences() {
+  writeStorage(STORAGE_KEYS.navigation, state.navigationPreferences);
+}
+
+function populateVoicePicker() {
+  const picker = $("[data-navigation-voice-picker]");
+  if (!picker || !VoiceGuide.supported()) return;
+  const voices = VoiceGuide.voices(navigator.language || "en");
+  if (!voices.length) return;
+  picker.innerHTML = voices
+    .map((voice) => `<option value="${escapeHtml(voice.voiceURI)}">${escapeHtml(voice.name)}${voice.local ? "" : " (network)"}</option>`)
+    .join("");
+  if (state.navigationPreferences.voiceURI) picker.value = state.navigationPreferences.voiceURI;
+}
+
+function startNavigation() {
+  const route = state.activeRoute;
+  if (!route) return;
+  const panel = $("[data-navigation-panel]");
+  if (!panel) return;
+  panel.hidden = false;
+  state.navigationActive = true;
+  state.voiceGuide = new VoiceGuide({
+    enabled: state.navigationPreferences.voiceEnabled,
+    rate: state.navigationPreferences.rate,
+    voiceURI: state.navigationPreferences.voiceURI,
+    tone: navigationTone()
+  });
+  populateVoicePicker();
+  renderNavigationSteps(route);
+
+  const pet = state.currentIntake?.pet?.name || "your pet";
+  state.voiceGuide.say(
+    announcement("start", { tone: navigationTone(), clinic: route.clinic.name, pet }),
+    { force: true }
+  );
+
+  if (navigator.geolocation) {
+    state.navigationWatchId = navigator.geolocation.watchPosition(
+      (position) => advanceNavigation(position.coords),
+      () => {},
+      { enableHighAccuracy: true, maximumAge: 5000, timeout: 20000 }
+    );
+  }
+  updateIntakeStatus("en_route").catch(() => {});
+}
+
+function renderNavigationSteps(route) {
+  const list = $("[data-navigation-steps]");
+  if (!list) return;
+  list.innerHTML = route.steps
+    .map((step) => `<li><strong>${escapeHtml(phraseInstruction(step, { clinic: route.clinic.name }))}</strong>` +
+      `<small>${escapeHtml(formatDistance(step.distanceMeters, state.navigationPreferences.units))}</small></li>`)
+    .join("");
+  const first = route.steps[0];
+  if (first) {
+    $("[data-navigation-instruction]").textContent = phraseInstruction(first, { clinic: route.clinic.name });
+    $("[data-navigation-distance]").textContent = formatDistance(first.distanceMeters, state.navigationPreferences.units);
+    $("[data-maneuver-glyph]").textContent = maneuverGlyph(first);
+  }
+}
+
+function maneuverGlyph(step) {
+  const modifier = String(step.modifier || "").toLowerCase();
+  if (step.type === "arrive") return "◎";
+  if (modifier.includes("left")) return modifier.includes("slight") ? "↰" : "←";
+  if (modifier.includes("right")) return modifier.includes("slight") ? "↱" : "→";
+  if (modifier.includes("uturn")) return "↺";
+  return "↑";
+}
+
+/**
+ * Advance the banner as the driver moves. Deliberately simple: the browser has
+ * no map-matching engine, so this snaps to the nearest upcoming maneuver rather
+ * than pretending to do full route-following. The native clients use Mapbox's
+ * real navigator for that.
+ */
+function advanceNavigation(coordinates) {
+  const route = state.activeRoute;
+  if (!route || !state.navigationActive) return;
+  const remaining = route.steps.filter((step) => step.location);
+  if (!remaining.length) return;
+
+  let closest = remaining[0];
+  let closestDistance = Number.POSITIVE_INFINITY;
+  for (const step of remaining) {
+    const distance = haversineMeters(coordinates.latitude, coordinates.longitude, step.location[1], step.location[0]);
+    if (distance < closestDistance) {
+      closestDistance = distance;
+      closest = step;
+    }
+  }
+
+  const clinic = route.clinic.name;
+  $("[data-navigation-instruction]").textContent = phraseInstruction(closest, { clinic });
+  $("[data-navigation-distance]").textContent = formatDistance(closestDistance, state.navigationPreferences.units);
+  $("[data-maneuver-glyph]").textContent = maneuverGlyph(closest);
+
+  if (closestDistance < 220) {
+    state.voiceGuide?.say(phraseInstruction(closest, { clinic }));
+  }
+
+  const toClinic = haversineMeters(coordinates.latitude, coordinates.longitude, route.clinic.latitude, route.clinic.longitude);
+  if (toClinic < 900) {
+    state.voiceGuide?.say(announcement("approaching", {
+      tone: navigationTone(),
+      clinic,
+      pet: state.currentIntake?.pet?.name,
+      kind: humanize(route.clinic.kind || "main")
+    }));
+  }
+  if (toClinic < 120) {
+    state.voiceGuide?.say(
+      announcement("arrival", {
+        tone: navigationTone(),
+        clinic,
+        pet: state.currentIntake?.pet?.name
+      }),
+      { force: true }
+    );
+    endNavigation();
+    recordObservation("arrived").catch(() => {});
+  }
+}
+
+function endNavigation() {
+  state.navigationActive = false;
+  state.voiceGuide?.stop();
+  state.voiceGuide = null;
+  if (state.navigationWatchId !== null && navigator.geolocation) {
+    navigator.geolocation.clearWatch(state.navigationWatchId);
+    state.navigationWatchId = null;
+  }
+  const panel = $("[data-navigation-panel]");
+  if (panel) panel.hidden = true;
+}
+
+function haversineMeters(lat1, lon1, lat2, lon2) {
+  const toRadians = (degrees) => (degrees * Math.PI) / 180;
+  const earthRadius = 6371000;
+  const latitudeDelta = toRadians(lat2 - lat1);
+  const longitudeDelta = toRadians(lon2 - lon1);
+  const a = Math.sin(latitudeDelta / 2) ** 2
+    + Math.cos(toRadians(lat1)) * Math.cos(toRadians(lat2)) * Math.sin(longitudeDelta / 2) ** 2;
+  return 2 * earthRadius * Math.asin(Math.sqrt(a));
+}
+
+$("[data-start-navigation]")?.addEventListener("click", startNavigation);
+$("[data-end-navigation]")?.addEventListener("click", endNavigation);
+$("[data-navigation-voice]")?.addEventListener("change", (event) => {
+  state.navigationPreferences.voiceEnabled = event.target.checked;
+  if (state.voiceGuide) state.voiceGuide.preferences.enabled = event.target.checked;
+  persistNavigationPreferences();
+});
+$("[data-navigation-voice-picker]")?.addEventListener("change", (event) => {
+  state.navigationPreferences.voiceURI = event.target.value;
+  if (state.voiceGuide) state.voiceGuide.preferences.voiceURI = event.target.value;
+  persistNavigationPreferences();
+});
+$("[data-navigation-rate]")?.addEventListener("input", (event) => {
+  state.navigationPreferences.rate = Number(event.target.value);
+  if (state.voiceGuide) state.voiceGuide.preferences.rate = state.navigationPreferences.rate;
+  persistNavigationPreferences();
+});
+$("[data-navigation-units]")?.addEventListener("change", (event) => {
+  state.navigationPreferences.units = event.target.value;
+  persistNavigationPreferences();
+  if (state.activeRoute) renderNavigationSteps(state.activeRoute);
+});
+$$("[data-navigation-avoid]").forEach((input) => {
+  const key = `avoid${input.dataset.navigationAvoid.charAt(0).toUpperCase()}${input.dataset.navigationAvoid.slice(1)}`;
+  input.checked = Boolean(state.navigationPreferences[key]);
+  input.addEventListener("change", () => {
+    state.navigationPreferences[key] = input.checked;
+    persistNavigationPreferences();
+    const intake = state.currentIntake;
+    const location = intake?.location || state.locations.find((candidate) => candidate.id === intake?.locationId);
+    if (location) refreshRoute(state.intakeDraft.position, location);
+  });
+});
+if (VoiceGuide.supported()) speechSynthesis.addEventListener?.("voiceschanged", populateVoicePicker);
+
+/**
+ * Tear down any live map before a route change. WebGL contexts are a limited
+ * browser resource, so leaving them attached to hidden screens eventually
+ * refuses to create new ones.
+ */
+function releaseMaps() {
+  if (state.navigationActive) endNavigation();
+  state.resultsMap?.destroy();
+  state.resultsMap = null;
+  state.trackerMap?.destroy();
+  state.trackerMap = null;
+  state.activeRoute = null;
+  const summary = $("[data-route-summary]");
+  if (summary) summary.hidden = true;
+}

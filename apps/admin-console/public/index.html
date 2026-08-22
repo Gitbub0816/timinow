@@ -1,0 +1,277 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#111b3b">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="description" content="Tími platform operator console — create and manage veterinary tenants.">
+  <link rel="stylesheet" href="/styles.css">
+  <!-- Mapbox GL is loaded unconditionally; app.js only touches window.mapboxgl
+       when a MAPBOX_PUBLIC_TOKEN is configured, so the console still runs
+       correctly when the script is blocked or the token is empty. -->
+  <link rel="icon" href="/assets/icons/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="https://api.mapbox.com/mapbox-gl-js/v3.15.0/mapbox-gl.css">
+  <script src="https://api.mapbox.com/mapbox-gl-js/v3.15.0/mapbox-gl.js" defer></script>
+  <title>Tími — Platform Console</title>
+</head>
+<body>
+  <a class="sr-only" href="#main">Skip to content</a>
+
+  <header class="admin-header">
+    <span class="brand-mark">Tími <small>Platform Console</small></span>
+    <nav class="admin-nav" data-operator-nav hidden aria-label="Platform console navigation">
+      <a href="#tenants" data-nav="tenants">Tenants</a>
+      <a href="#audit" data-nav="audit">Audit log</a>
+    </nav>
+    <div class="account-menu" data-account-menu hidden>
+      <button class="account-trigger" type="button" data-account-trigger aria-haspopup="true" aria-expanded="false">
+        <span class="account-avatar" data-account-avatar>–</span>
+        <span class="account-email" data-account-email>&nbsp;</span>
+      </button>
+      <div class="account-dropdown" data-account-dropdown hidden role="menu">
+        <div class="who">
+          <strong>Signed in as</strong>
+          <small data-account-dropdown-email></small>
+        </div>
+        <button type="button" data-sign-out role="menuitem">Sign out</button>
+      </div>
+    </div>
+  </header>
+
+  <main id="main">
+
+    <section class="screen" data-screen="loading" aria-live="polite">
+      <div class="loading-state" style="min-height: calc(100svh - 68px);">
+        <span class="spinner" aria-hidden="true"></span>
+        <p>Loading the platform console…</p>
+      </div>
+    </section>
+
+    <!-- ------------------------------------------------------- sign in --- -->
+    <section class="screen" data-screen="sign-in" aria-labelledby="sign-in-title">
+      <div class="sign-in-screen">
+        <div class="sign-in-card">
+          <p class="eyebrow coral">Platform operators only</p>
+          <h1 id="sign-in-title">Sign in</h1>
+          <p class="lede">This console creates and administers Tími tenants. It is separate from the customer and veterinary applications.</p>
+
+          <div data-sign-in-error hidden class="sign-in-error"></div>
+          <div data-clerk-missing hidden class="sign-in-error">Clerk is not configured on this Worker. Set CLERK_PUBLISHABLE_KEY, CLERK_ISSUER, and the CLERK_SECRET_KEY secret before signing in.</div>
+
+          <!-- Step 1: identifier -->
+          <form data-step="identifier">
+            <div class="form-grid">
+              <label class="field">
+                <span>Email, username, or phone</span>
+                <input type="text" name="identifier" autocomplete="username" required>
+              </label>
+            </div>
+            <button class="button button-primary button-block" type="submit">Continue</button>
+          </form>
+
+          <!-- Step 2: choose a first-factor strategy -->
+          <div data-step="strategy" hidden>
+            <button class="button button-quiet sign-in-back" type="button" data-back-to="identifier">← Use a different account</button>
+            <p class="identity-line" data-strategy-identity></p>
+            <div class="strategy-list" data-strategy-list></div>
+          </div>
+
+          <!-- Step 3a: password -->
+          <form data-step="password" hidden>
+            <button class="button button-quiet sign-in-back" type="button" data-back-to="strategy">← Choose another way to sign in</button>
+            <div class="form-grid">
+              <label class="field">
+                <span>Password</span>
+                <input type="password" name="password" autocomplete="current-password" required>
+              </label>
+            </div>
+            <button class="button button-primary button-block" type="submit">Sign in</button>
+          </form>
+
+          <!-- Step 3b: one-time code (email_code / phone_code) -->
+          <form data-step="code" hidden>
+            <button class="button button-quiet sign-in-back" type="button" data-back-to="strategy">← Choose another way to sign in</button>
+            <p class="lede" data-code-lede>Enter the 6-digit code we sent you.</p>
+            <div class="form-grid">
+              <label class="field">
+                <span>Verification code</span>
+                <input type="text" name="code" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="one-time-code" required>
+              </label>
+            </div>
+            <button class="button button-primary button-block" type="submit">Verify and sign in</button>
+          </form>
+
+          <div class="divider" data-step="identifier-extras">or</div>
+          <div class="oauth-row" data-step="identifier-extras">
+            <button class="button button-block" type="button" data-passkey>Sign in with a passkey</button>
+            <button class="button button-block" type="button" data-oauth="oauth_google">Continue with Google</button>
+            <button class="button button-block" type="button" data-oauth="oauth_apple">Continue with Apple</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- --------------------------------------------------- not-operator --- -->
+    <section class="screen" data-screen="unauthorized" aria-labelledby="unauthorized-title">
+      <div class="unauthorized-shell">
+        <div class="sketch-lock" aria-hidden="true">🔒</div>
+        <h1 id="unauthorized-title">You're signed in, but not a platform operator</h1>
+        <p class="page-lede" style="margin: 0 auto 1rem;">Tenant creation and workspace administration are restricted to Tími platform operators. Ask an existing operator to add your account, or add it yourself if you manage this Worker's configuration.</p>
+        <div class="panel">
+          <div class="identity-card">
+            <span class="account-avatar" data-unauthorized-avatar>–</span>
+            <div>
+              <strong data-unauthorized-email>—</strong>
+              <small data-unauthorized-id style="color: var(--muted); font-size: .68rem; word-break: break-all;"></small>
+            </div>
+          </div>
+          <p>To grant this account access, add its Clerk user id to the <code class="env-var">PLATFORM_ADMIN_USER_IDS</code> Worker variable (or its email to <code class="env-var">PLATFORM_ADMIN_EMAILS</code>) in <code class="env-var">wrangler.admin.jsonc</code>, then redeploy — or insert a row into the <code class="env-var">platform_admins</code> D1 table.</p>
+          <div class="form-actions" style="justify-content: flex-start;">
+            <button class="button" type="button" data-retry-bootstrap>I've updated access — check again</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- -------------------------------------------------------- tenants --- -->
+    <section class="screen" data-screen="tenants" aria-labelledby="tenants-title">
+      <div class="shell">
+        <div class="page-head">
+          <div>
+            <p class="eyebrow">Platform operator console</p>
+            <h1 class="page-title" id="tenants-title">Tenants</h1>
+            <p class="page-lede">Every veterinary workspace on Tími. Creating a tenant here provisions its Clerk organization, first location, and deposit policy in one step.</p>
+          </div>
+          <a class="button button-primary" href="#tenants/new">+ Create tenant</a>
+        </div>
+        <div data-tenants-table></div>
+      </div>
+    </section>
+
+    <!-- ---------------------------------------------------- tenants/new --- -->
+    <section class="screen" data-screen="tenants-new" aria-labelledby="tenants-new-title">
+      <div class="shell shell-narrow">
+        <a class="button button-quiet" href="#tenants" style="margin-bottom: 1rem; padding-left: 0;">← Back to tenants</a>
+        <p class="eyebrow coral">New workspace</p>
+        <h1 class="page-title" id="tenants-new-title">Create a tenant</h1>
+        <p class="page-lede">This creates a Clerk organization, a Tími tenant, its first location, an initial deposit policy, and (optionally) seats the first workspace administrator — atomically.</p>
+
+        <form data-form="create-tenant" novalidate>
+          <div data-form-errors class="form-errors" hidden></div>
+
+          <div class="panel">
+            <h2 class="section-title">Workspace</h2>
+            <div class="form-grid two-col">
+              <label class="field wide"><span>Workspace name *</span><input type="text" name="name" required></label>
+              <label class="field"><span>Slug<span class="hint"> — leave blank to generate from the name</span></span><input type="text" name="slug" placeholder="hearth-paw"></label>
+              <label class="field"><span>Contact email</span><input type="email" name="contactEmail"></label>
+              <label class="field wide"><span>First administrator's email<span class="hint"> — seated as org:admin, invited if they don't have a Tími account yet</span></span><input type="email" name="adminEmail" placeholder="owner@clinic.example"></label>
+            </div>
+
+            <h2 class="section-title">Primary location</h2>
+            <div class="form-grid two-col">
+              <label class="field wide"><span>Location name *</span><input type="text" name="loc_name" required></label>
+              <label class="field">
+                <span>Kind *</span>
+                <select name="loc_kind" required>
+                  <option value="general">General practice</option>
+                  <option value="urgent" selected>Urgent care</option>
+                  <option value="emergency">Emergency</option>
+                  <option value="specialty">Specialty</option>
+                </select>
+              </label>
+              <label class="field"><span>Phone *</span><input type="tel" name="loc_phone" required></label>
+              <label class="field wide"><span>Address line 1 *</span><input type="text" name="loc_address" required></label>
+              <label class="field"><span>City *</span><input type="text" name="loc_city" required></label>
+              <label class="field"><span>State / region *</span><input type="text" name="loc_region" required></label>
+              <label class="field"><span>Postal code *</span><input type="text" name="loc_postal" required></label>
+              <label class="field"><span>Timezone</span><input type="text" name="loc_timezone" value="America/Los_Angeles"></label>
+            </div>
+
+            <div class="map-field" style="margin-top: 1rem;">
+              <label class="field"><span>Pin the location *</span></label>
+              <div id="tenant-map"></div>
+              <div data-map-notice class="map-notice" hidden>Add <code class="env-var">MAPBOX_PUBLIC_TOKEN</code> to <code class="env-var">wrangler.admin.jsonc</code> to place the pin visually. Enter coordinates manually below — the form still works.</div>
+              <div class="latlng-row">
+                <label class="field"><span>Latitude *</span><input type="number" name="loc_latitude" step="0.000001" min="-90" max="90" required></label>
+                <label class="field"><span>Longitude *</span><input type="number" name="loc_longitude" step="0.000001" min="-180" max="180" required></label>
+              </div>
+            </div>
+
+            <div class="form-grid three-col" style="margin-top: 1rem;">
+              <label class="checkbox-row"><input type="checkbox" name="loc_open24"> Open 24 hours</label>
+              <label class="checkbox-row"><input type="checkbox" name="loc_walkins" checked> Accepts walk-ins</label>
+              <label class="checkbox-row"><input type="checkbox" name="loc_autoaccept"> Auto-accept routine intake</label>
+            </div>
+
+            <div class="form-grid two-col" style="margin-top: 1rem;">
+              <label class="field"><span>Arrival window (minutes)</span><input type="number" name="loc_arrival" min="5" max="180" value="20"></label>
+              <label class="field"><span>Base exam fee (USD)<span class="hint"> — optional</span></span><input type="number" name="loc_examfee" min="0" step="0.01"></label>
+            </div>
+            <fieldset style="margin-top: 1rem;">
+              <legend>Species treated *</legend>
+              <div class="form-grid three-col">
+                <label class="checkbox-row"><input type="checkbox" name="species" value="dog" checked> Dog</label>
+                <label class="checkbox-row"><input type="checkbox" name="species" value="cat" checked> Cat</label>
+                <label class="checkbox-row"><input type="checkbox" name="species" value="bird"> Bird</label>
+                <label class="checkbox-row"><input type="checkbox" name="species" value="rabbit"> Rabbit</label>
+                <label class="checkbox-row"><input type="checkbox" name="species" value="reptile"> Reptile</label>
+                <label class="checkbox-row"><input type="checkbox" name="species" value="small_mammal"> Small mammal</label>
+              </div>
+            </fieldset>
+            <label class="field" style="margin-top: 1rem;"><span>Capabilities<span class="hint"> — comma separated (e.g. surgery, imaging, oxygen)</span></span><input type="text" name="loc_capabilities" placeholder="urgent, imaging, same_day"></label>
+          </div>
+
+          <div class="panel">
+            <h2 class="section-title">Deposit policy<span class="hint"> — prefilled with the Tími baseline; adjust per tenant</span></h2>
+            <div class="form-grid two-col">
+              <label class="checkbox-row wide"><input type="checkbox" name="pol_required" checked> Require an arrival deposit</label>
+              <label class="field"><span>Deposit amount (USD)</span><input type="number" name="pol_amount" min="0" step="0.01" value="50.00"></label>
+              <label class="checkbox-row"><input type="checkbox" name="pol_refundable" checked> Deposit is refundable</label>
+              <label class="field"><span>Free cancellation window (minutes)</span><input type="number" name="pol_freecancel" min="0" value="30"></label>
+              <label class="field"><span>Completed-visit platform fee (USD)</span><input type="number" name="pol_completed" min="0" step="0.01" value="20.00"></label>
+              <label class="field"><span>No-show platform fee (USD)</span><input type="number" name="pol_noshow" min="0" step="0.01" value="5.00"></label>
+              <label class="field"><span>Late-cancellation platform fee (USD)</span><input type="number" name="pol_latecancel" min="0" step="0.01" value="5.00"></label>
+            </div>
+          </div>
+
+          <div class="form-actions">
+            <a class="button" href="#tenants">Cancel</a>
+            <button class="button button-primary" type="submit" data-submit-create>Create tenant</button>
+          </div>
+        </form>
+      </div>
+    </section>
+
+    <!-- --------------------------------------------------- tenant detail --- -->
+    <section class="screen" data-screen="tenant-detail" aria-labelledby="tenant-detail-title">
+      <div class="shell">
+        <a class="button button-quiet" href="#tenants" style="margin-bottom: 1rem; padding-left: 0;">← Back to tenants</a>
+        <div data-tenant-detail-body>
+          <div class="loading-state"><span class="spinner" aria-hidden="true"></span><p>Loading tenant…</p></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ----------------------------------------------------------- audit --- -->
+    <section class="screen" data-screen="audit" aria-labelledby="audit-title">
+      <div class="shell">
+        <div class="page-head">
+          <div>
+            <p class="eyebrow">Platform-wide</p>
+            <h1 class="page-title" id="audit-title">Audit log</h1>
+            <p class="page-lede">Every privileged action recorded across the platform: tenant creation, renames, status changes, and workspace people management.</p>
+          </div>
+        </div>
+        <div data-audit-list></div>
+      </div>
+    </section>
+
+  </main>
+
+  <div class="toast" data-toast role="status" aria-live="polite"></div>
+
+  <script src="/app.js" type="module"></script>
+</body>
+</html>

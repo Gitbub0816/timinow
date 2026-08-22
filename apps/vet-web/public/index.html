@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Tími Vet · Live Intake</title>
+  <meta name="description" content="Tími veterinary operations console — public capacity, live intake queue, and availability decisions.">
+  <meta name="theme-color" content="#111b3b">
+  <link rel="icon" href="/assets/icons/icon.svg" type="image/svg+xml">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <main id="main">
+
+    <!-- ============================================================ sign-in -->
+    <section class="screen sign-in-screen" data-screen="sign-in" aria-labelledby="sign-in-title">
+      <div class="sign-in-card">
+        <img class="brand-mark" src="/assets/brand/timinow-wordmark.svg" alt="Tími NOW">
+        <p class="eyebrow">SECURE ACCESS · VETERINARY TEAMS</p>
+        <h1 id="sign-in-title">Sign in to Tími Vet.</h1>
+        <p class="lede">Veterinary staff join by invitation from a workspace administrator. There is no open sign-up on this console.</p>
+        <div data-sign-in-body></div>
+        <p class="sign-in-note" data-auth-disabled hidden>Sign-in is not configured on this deployment yet. Set CLERK_PUBLISHABLE_KEY, CLERK_JS_URL, and CLERK_SECRET_KEY.</p>
+      </div>
+    </section>
+
+    <!-- =========================================================== workspace -->
+    <section class="screen workspace-screen" data-screen="workspace" aria-labelledby="workspace-title">
+      <div class="workspace-shell">
+        <p class="eyebrow">CHOOSE A WORKSPACE</p>
+        <h1 id="workspace-title">Which clinic are you working from?</h1>
+        <p class="lede">Tími routes each veterinary organization to its own workspace. Pick one to continue.</p>
+        <div data-workspace-body></div>
+      </div>
+    </section>
+
+    <!-- ============================================================= console -->
+    <section class="screen console-screen" data-screen="console" aria-labelledby="console-title">
+      <aside class="vet-rail">
+        <div>
+          <img class="brand-mark" src="/assets/brand/timinow-wordmark.svg" alt="Tími NOW">
+          <p class="rail-kicker">VETERINARY OPERATIONS</p>
+        </div>
+        <div class="rail-clinic">
+          <small>LIVE OPERATIONS</small>
+          <strong data-clinic-name>Tími veterinary console</strong>
+          <p data-clinic-address></p>
+        </div>
+        <nav class="rail-nav">
+          <a href="#console" data-nav="console">Operations</a>
+          <a href="#people" data-nav="people">People</a>
+          <a href="#legal?section=clinics" data-nav="legal">Legal</a>
+        </nav>
+        <div class="rail-mode">
+          <div class="mode-card">
+            <small>CURRENT MODE</small>
+            <strong data-connection-mode>Connecting…</strong>
+          </div>
+          <div class="rail-actions">
+            <button class="button button-quiet" type="button" data-action="open-mini">Open floating console</button>
+            <button class="button button-quiet" type="button" data-action="refresh-now">Refresh now</button>
+          </div>
+        </div>
+        <div class="rail-spacer"></div>
+        <div class="rail-footer">
+          <p>Tími routes operational intake. It does not diagnose or replace clinical triage.</p>
+          <p>Closing this tab keeps alerts running only while it stays open — the floating console can stay open separately.</p>
+          <button class="button rail-signout" type="button" data-action="sign-out">Sign out</button>
+        </div>
+      </aside>
+
+      <div class="vet-main">
+        <header class="vet-header">
+          <div>
+            <p class="eyebrow">IMMEDIATE INTAKE CONTROL</p>
+            <h1 id="console-title">Clinic operations</h1>
+          </div>
+          <div class="vet-status">
+            <p data-status-message>Connecting to Tími…</p>
+            <div class="progress-line" data-progress hidden></div>
+          </div>
+        </header>
+
+        <div class="top-grid">
+          <section class="card capacity-card">
+            <p class="eyebrow">PUBLIC CAPACITY</p>
+            <h2>What pet owners see right now</h2>
+            <form data-availability-form>
+              <div class="capacity-grid">
+                <div>
+                  <label class="field">Intake status
+                    <select name="intakeStatus">
+                      <option value="available">Available</option>
+                      <option value="limited">Limited</option>
+                      <option value="confirm_first">Confirm first</option>
+                      <option value="critical_only">Critical only</option>
+                      <option value="diverting">Diverting</option>
+                      <option value="closed">Closed</option>
+                    </select>
+                  </label>
+                  <label class="field" style="margin-top:12px">Public note
+                    <textarea name="note" rows="4" maxlength="500"></textarea>
+                  </label>
+                </div>
+                <div>
+                  <div class="compact-grid-2x2">
+                    <label class="field">Wait min<input name="stableWaitMin" type="number" min="0" max="1440"></label>
+                    <label class="field">Wait max<input name="stableWaitMax" type="number" min="0" max="1440"></label>
+                    <label class="field">Capacity<input name="capacityCount" type="number" min="0" max="100"></label>
+                    <label class="field">Expires (min)<input name="ttlMinutes" type="number" min="5" max="180"></label>
+                  </div>
+                  <label class="inline-check"><input type="checkbox" name="acceptsCritical"> Accepting critical patients</label>
+                  <button class="button button-primary button-block" type="submit">Publish live status</button>
+                </div>
+              </div>
+            </form>
+          </section>
+
+          <div class="metrics-grid">
+            <div class="card"><p class="eyebrow">WAITING</p><strong data-metric-pending>0</strong></div>
+            <div class="card"><p class="eyebrow">ACTIVE ARRIVALS</p><strong data-metric-active>0</strong></div>
+            <div class="card"><p class="eyebrow">COMPLETED TODAY</p><strong data-metric-completed>0</strong></div>
+            <div class="card"><p class="eyebrow">DECLINED TODAY</p><strong data-metric-declined>0</strong></div>
+          </div>
+        </div>
+
+        <div class="mid-grid">
+          <section class="card queue-card">
+            <div class="queue-head">
+              <div><p class="eyebrow" style="margin-bottom:2px">REVIEW QUEUE</p><h2>Requests awaiting a decision</h2></div>
+              <span class="pending-pill" data-queue-count>0</span>
+            </div>
+            <div class="queue-list" data-queue-list>
+              <div class="queue-empty">Queue clear. New requests will appear here as they arrive.</div>
+            </div>
+          </section>
+
+          <section class="card workspace-card">
+            <p class="eyebrow">DECISION WORKSPACE</p>
+            <div data-workspace-content>
+              <p class="workspace-empty">Select a request from the review queue.</p>
+            </div>
+          </section>
+        </div>
+
+        <details class="settings-details">
+          <summary>Connection, alerts, and startup settings</summary>
+          <div class="settings-body">
+            <div class="settings-col">
+              <label class="field">Polling interval, seconds
+                <input type="number" min="3" max="60" data-setting="pollSeconds">
+              </label>
+              <label class="inline-check"><input type="checkbox" data-setting="alertsEnabled"> Desktop intake alerts</label>
+              <label class="inline-check"><input type="checkbox" data-setting="playSound"> Play alert sound</label>
+              <label class="inline-check"><input type="checkbox" data-setting="autoOpenMini"> Auto-open floating console on new requests (always on top)</label>
+            </div>
+            <div class="settings-col">
+              <button class="button button-quiet" type="button" data-action="request-notifications">Enable desktop notifications</button>
+              <p style="font-size:.68rem;color:var(--muted);margin:0" data-notification-status></p>
+              <p style="font-size:.68rem;color:var(--muted);line-height:1.5;margin:0">The floating console uses your browser's Document Picture-in-Picture window when available (Chrome, Edge, and other Chromium browsers). Other browsers fall back to a plain pop-up window.</p>
+            </div>
+          </div>
+        </details>
+
+        <footer class="vet-footer">
+          <span>Independent clinical triage controls all treatment priority.</span>
+          <span>Tími NOW · ClearKey Solutions, LLC</span>
+        </footer>
+      </div>
+    </section>
+
+    <!-- =============================================================== people -->
+    <section class="screen people-screen" data-screen="people" aria-labelledby="people-title">
+      <aside class="vet-rail">
+        <div>
+          <img class="brand-mark" src="/assets/brand/timinow-wordmark.svg" alt="Tími NOW">
+          <p class="rail-kicker">VETERINARY OPERATIONS</p>
+        </div>
+        <nav class="rail-nav" style="margin-top:42px">
+          <a href="#console" data-nav="console">Operations</a>
+          <a href="#people" data-nav="people">People</a>
+          <a href="#legal?section=clinics" data-nav="legal">Legal</a>
+        </nav>
+        <div class="rail-spacer"></div>
+        <div class="rail-footer">
+          <button class="button rail-signout" type="button" data-action="sign-out">Sign out</button>
+        </div>
+      </aside>
+      <div class="people-main">
+        <p class="eyebrow">WORKSPACE PEOPLE</p>
+        <h1 id="people-title" style="font-family:var(--serif);font-size:2rem;margin-bottom:.3rem">Roster</h1>
+        <p class="people-note">Creating a <strong>new workspace</strong> is a Tími platform operation and is not available here — only a platform operator can create a tenant. Administrators here may only add, re-role, or remove people inside this one workspace.</p>
+        <div data-people-body></div>
+      </div>
+    </section>
+
+    <!-- ================================================================ legal -->
+    <section class="screen legal-screen" data-screen="legal" aria-labelledby="legal-title">
+      <div class="legal-back-bar">
+        <img class="brand-mark" style="width:120px" src="/assets/brand/timinow-wordmark.svg" alt="Tími NOW">
+        <button class="button button-quiet" type="button" data-route="console">Back to console</button>
+      </div>
+      <div class="legal-shell">
+        <p class="eyebrow">LEGAL CENTER</p>
+        <h1 id="legal-title">Clinic participation terms.</h1>
+        <article id="clinics">
+          <p class="eyebrow">CLINIC PARTICIPATION TERMS</p>
+          <h2 style="font-family:var(--serif);font-size:1.6rem">Independent practice, accountable capacity.</h2>
+          <p>Participating clinics remain independent veterinary providers and are solely responsible for licensure, staffing, medical judgment, triage, treatment, records, informed consent, billing, insurance, and regulatory compliance. Clinics must keep facility, capability, hours, deposit policy, and capacity reports accurate and must promptly offer availability, decline, or allow requests to expire.</p>
+          <p>An availability response is a temporary operational offer for the displayed hold period. The customer may compare up to five offers. Only the clinic selected by the customer receives confirmation; all other offers are automatically released. Emergency-intake responses remain subject to independent triage and do not reserve examination priority.</p>
+          <p>Clinic users may access intake information only for evaluating and providing requested care, must protect credentials, and must follow applicable privacy and security obligations. A clinic may not present a Tími status as a guarantee of examination time.</p>
+          <p>Where Stripe Connect is enabled, the clinic must complete Stripe onboarding, accept the applicable Stripe Connected Account Agreement, and authorize the disclosed payment, refund, fee, and payout flows. Tími provides a policy snapshot and monthly settlement record; the clinic remains responsible for its own taxes and veterinary invoices.</p>
+          <p style="margin-top:1.5rem;color:var(--muted);font-size:.72rem">Tími NOW is operated by ClearKey Solutions, LLC. Effective August 21, 2026.</p>
+        </article>
+      </div>
+    </section>
+
+  </main>
+
+  <div class="toast" role="status" aria-live="polite" data-toast></div>
+  <script src="/app.js" type="module"></script>
+</body>
+</html>

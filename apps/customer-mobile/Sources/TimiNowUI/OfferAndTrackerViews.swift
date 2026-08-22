@@ -61,6 +61,13 @@ struct OfferSearchView: View {
             Eyebrow(text: "\(offers.count) OF \(store.currentSearch?.maxOffers ?? 5) OFFERS", color: TimiColor.blue)
             Text("\(store.draft.pet.name) has options.").font(.system(size: 40, weight: .bold, design: .serif))
             Text("Compare the clinics below. Nothing is confirmed until you choose.").foregroundStyle(TimiColor.muted)
+            ClinicMapView(
+                clinics: offers.compactMap(\.location),
+                selectedClinicId: nil,
+                userLatitude: store.currentLatitude,
+                userLongitude: store.currentLongitude,
+                styleURL: store.mapStyleURL
+            ).frame(height: 220).clipShape(RoundedRectangle(cornerRadius: 20)).overlay(RoundedRectangle(cornerRadius: 20).stroke(TimiColor.ink, lineWidth: 2))
             Picker("Sort offers", selection: $sort) { Text("Recommended").tag("recommended"); Text("Closest").tag("distance"); Text("Shortest wait").tag("wait"); Text("Lowest deposit").tag("cost") }.pickerStyle(.segmented)
             ForEach(Array(offers.enumerated()), id: \.element.id) { index, offer in
                 OfferCard(offer: offer, rank: index + 1, isWorking: store.isWorking) { Task { await store.selectOffer(offer) } }
@@ -95,8 +102,15 @@ struct OfferCard: View {
 
 struct TrackerView: View {
     @Bindable var store: AppStore
+    @State var showNavigation = false
+    @State var routePreview: [GeoPoint] = []
     var intake: CareIntake? { store.currentIntake }
     var clinic: ClinicLocation? { intake?.location }
+
+    var navigationDestination: NavigationDestination? {
+        guard let clinic, let latitude = clinic.latitude, let longitude = clinic.longitude else { return nil }
+        return NavigationDestination(clinicId: clinic.id, name: clinic.name, address: clinic.address ?? "", latitude: latitude, longitude: longitude, phone: clinic.phone, kind: clinic.kind)
+    }
 
     var body: some View {
         NavigationStack {
@@ -105,6 +119,16 @@ struct TrackerView: View {
                     HStack { TimiWordmark(compact: true); Spacer(); Text(intake?.publicCode ?? "CONFIRMED").font(.caption).fontWeight(.black).foregroundStyle(TimiColor.blue) }
                     Eyebrow(text: "CLINIC SELECTED", color: TimiColor.blue)
                     Text("\(intake?.pet?.name ?? store.selectedPet.name) has a place to go.").font(.system(size: 41, weight: .bold, design: .serif))
+                    if let clinic {
+                        ClinicMapView(
+                            clinics: [clinic],
+                            selectedClinicId: clinic.id,
+                            userLatitude: store.currentLatitude,
+                            userLongitude: store.currentLongitude,
+                            styleURL: store.mapStyleURL,
+                            routeCoordinates: routePreview
+                        ).frame(height: 220).clipShape(RoundedRectangle(cornerRadius: 20)).overlay(RoundedRectangle(cornerRadius: 20).stroke(TimiColor.ink, lineWidth: 2))
+                    }
                     clinicCard
                     timeline
                     if (intake?.depositAmountCents ?? 0) > 0 { depositCard }
@@ -114,13 +138,28 @@ struct TrackerView: View {
                 }.padding(20).padding(.bottom, 34)
             }.background(TimiColor.canvas)
         }
+        .task {
+            guard let destination = navigationDestination else { return }
+            let origin = GeoPoint(latitude: store.currentLatitude, longitude: store.currentLongitude)
+            let preview = await RoutePreviewFetcher.fetch(
+                from: origin,
+                to: GeoPoint(latitude: destination.latitude, longitude: destination.longitude),
+                preferences: store.navigationPreferences,
+                mapToken: store.mapToken ?? ""
+            )
+            routePreview = preview?.coordinates ?? []
+            if let summary = preview?.summary { store.updateNavigationProgress(step: store.currentNavigationStep, summary: summary) }
+        }
+        .fullScreenCover(isPresented: $showNavigation) {
+            if let destination = navigationDestination { NavigationScreen(store: store, destination: destination) }
+        }
     }
 
     var clinicCard: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack { Image(systemName: "building.2.fill").font(.title).foregroundStyle(.white).frame(width: 54, height: 54).background(TimiColor.blue, in: RoundedRectangle(cornerRadius: 16)); VStack(alignment: .leading) { Text(clinic?.name ?? "Veterinary clinic").font(.title3).fontWeight(.black); Text(clinic?.address ?? "Address unavailable").font(.caption).foregroundStyle(TimiColor.muted) } }
             Divider(); Text(intake?.clinicNote ?? "The clinic is expecting your arrival. Capacity and clinical priority can still change.").font(.callout)
-            HStack { if let phone = clinic?.phone, let url = URL(string: "tel:\(phone.filter { $0.isNumber || $0 == "+" })") { Link(destination: url) { Label("Call", systemImage: "phone.fill") } }; Spacer(); if let address = clinic?.address, let url = URL(string: "https://maps.apple.com/?q=\(address.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "")") { Link(destination: url) { Label("Directions", systemImage: "arrow.triangle.turn.up.right.diamond.fill") } } }.fontWeight(.bold).foregroundStyle(TimiColor.blue)
+            HStack { if let phone = clinic?.phone, let url = URL(string: "tel:\(phone.filter { $0.isNumber || $0 == "+" })") { Link(destination: url) { Label("Call", systemImage: "phone.fill") } }; Spacer(); Button { showNavigation = true } label: { Label("Navigate", systemImage: "arrow.triangle.turn.up.right.diamond.fill") }.disabled(navigationDestination == nil) }.fontWeight(.bold).foregroundStyle(TimiColor.blue)
         }.timiCard(.white)
     }
 

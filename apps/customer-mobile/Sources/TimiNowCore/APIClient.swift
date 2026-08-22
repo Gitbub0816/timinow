@@ -86,6 +86,15 @@ public final class TimiGateway: @unchecked Sendable {
         let _: ObservationEnvelope = try await send(baseURL.appendingPathComponent("api/observations"), method: "POST", body: ObservationPayload(intakeId: intake.id, locationId: intake.locationId, milestone: milestone))
     }
 
+    /// `GET /api/config` → `map`: the Mapbox public token and the style URL,
+    /// per docs/PLATFORM-CONTRACT.md. Returns `nil` in demo mode so callers
+    /// keep the compiled-in `MapDefaults.styleURL`.
+    public func fetchMapConfig() async throws -> MapConfig? {
+        guard let baseURL else { return nil }
+        let envelope: AppConfigEnvelope = try await send(baseURL.appendingPathComponent("api/config"))
+        return envelope.map
+    }
+
     private func send<Response: Decodable>(_ url: URL, method: String = "GET") async throws -> Response {
         try await send(url, method: method, data: nil)
     }

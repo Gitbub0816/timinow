@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!--
+      ============================================================
+      IMPORTANT — READ BEFORE A DEVICE BUILD OR ARCHIVE
+      ============================================================
+      com.apple.developer.carplay-driving-navigation is a RESTRICTED
+      entitlement. Apple only grants it after a developer submits a
+      separate CarPlay entitlement request (from the Apple Developer
+      account's "Additional Capabilities" request form) explaining the
+      app's turn-by-turn navigation use case, and Apple approves it —
+      this is an application/review process with Apple, not a checkbox
+      you flip in Xcode or in this file. See docs/NAVIGATION.md for the
+      request process and current status.
+
+      Until that approval lands for this app's bundle ID
+      (solutions.clearkey.timinow):
+        - Xcode will refuse to create/download a provisioning profile
+          that satisfies this entitlement for a real device or archive
+          build.
+        - Simulator builds with CODE_SIGNING_ALLOWED=NO (as used in CI —
+          see .github/workflows/native-clients.yml) are unaffected, since
+          entitlement enforcement happens at code-signing time.
+        - iOS never instantiates CarPlaySceneDelegate at all without this
+          grant, regardless of what Info.plist declares.
+      ============================================================
+    -->
+    <key>com.apple.developer.carplay-driving-navigation</key>
+    <true/>
+</dict>
+</plist>
