@@ -39,6 +39,14 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
     #endif
     private var gateway: TimiGateway
 
+    /// Sign-in, and the token every Worker call carries.
+    ///
+    /// A plain stored property, not `lazy`: @Observable rewrites stored
+    /// properties into computed ones backed by init accessors, and neither
+    /// `lazy` nor a default expression referring to another property survives
+    /// that. Built in init, after the gateway it needs.
+    public private(set) var auth: AuthController
+
     public init() {
         #if os(Android)
         let storedPets = [DemoData.pet]
@@ -80,14 +88,10 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
         self.ownerPhone = storedOwner.1
         self.ownerEmail = storedOwner.2
         self.navigationPreferences = storedNavigationPreferences
-        self.gateway = TimiGateway(baseURL: Self.validBaseURL(apiBaseURLText))
+        let gateway = TimiGateway(baseURL: Self.validBaseURL(apiBaseURLText))
+        self.gateway = gateway
+        self.auth = AuthController(gateway: gateway)
     }
-
-    /// Sign-in, and the token every Worker call carries.
-    ///
-    /// Built here rather than in a view so a session restored at launch is
-    /// already in place before the first screen asks for anything.
-    public private(set) lazy var auth: AuthController = AuthController(gateway: gateway)
 
     /// Single shared instance so the CarPlay scene and the Watch
     /// connectivity bridge — both instantiated by the OS outside the main

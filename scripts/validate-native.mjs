@@ -816,6 +816,20 @@ for (const app of ["customer-mobile", "vet-desktop"]) {
   }
 }
 
+// @Observable rewrites every stored property into a computed one backed by an
+// init accessor, and those accessors may only refer to other stored
+// properties. So `lazy` is rejected outright, and a default expression naming
+// another property fails with "init accessor cannot refer to property" from a
+// generated file with no line of yours in it. Both belong in init instead.
+for (const path of await collectFiles("apps/customer-mobile/Sources", ".swift")) {
+  const source = await read(path);
+  if (!/@Observable/.test(source)) continue;
+  const lazyStored = source.match(/^\s*(?:public\s+)?(?:private\(set\)\s+)?lazy\s+var\s+(\w+)/m);
+  if (lazyStored) {
+    throw new Error(`${path}: '${lazyStored[1]}' is lazy inside an @Observable type. The macro turns stored properties into computed ones, and lazy cannot be used on a computed property — assign it in init instead.`);
+  }
+}
+
 // `#if canImport(M)` asks whether M is available. It does not import it. A
 // file that guards on canImport and then names a type from M, without an
 // `import M` anywhere, compiles fine while M is absent and fails the moment it
