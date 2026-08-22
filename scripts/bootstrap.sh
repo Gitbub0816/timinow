@@ -339,6 +339,40 @@ if $SECRETS_ONLY; then
   echo
 else
 
+bold "1b. Sign-in is possible"
+# A blank CLERK_PUBLISHABLE_KEY is not a configuration, it is an outage: the
+# Worker deploys, the page loads, and /api/config serves null, so ClerkJS never
+# initialises and nobody can sign in on any surface. Every other blank value in
+# the env file is a legitimate "keep the default", which is why set_var skips
+# them — this is the one where skipping ships a dead site. Checked against the
+# configs about to be deployed, not against the env file, so a value that was
+# never written is caught the same as one that was cleared.
+for CONFIG in "$CUSTOMER" "$VET" "$ADMIN"; do
+  REQUIRED="$(CONFIG="$CONFIG" node -e '
+    const fs = require("fs");
+    const text = fs.readFileSync(process.env.CONFIG, "utf8").replace(/^\s*\/\/.*$/gm, "");
+    const vars = JSON.parse(text).vars || {};
+    process.stdout.write(vars.SIGN_IN_REQUIRED === "true" ? (vars.CLERK_PUBLISHABLE_KEY || "") : "exempt");
+  ')"
+  if [ -z "$REQUIRED" ]; then
+    die "  $CONFIG requires sign-in and has no CLERK_PUBLISHABLE_KEY.
+
+  Deploying it would serve a sign-in page that cannot sign anyone in: the
+  browser asks /api/config for the key, gets null, and ClerkJS never starts.
+  Nothing was deployed.
+
+  Put the publishable key from your Clerk instance in $ENV_FILE:
+
+    CLERK_PUBLISHABLE_KEY=pk_live_...
+
+  It is on Clerk's dashboard under Configure -> API keys, and it is public —
+  it is served to every browser by design. The matching CLERK_SECRET_KEY is
+  not, and goes in the same file as a secret."
+  fi
+done
+echo "  all three browser surfaces have a publishable key"
+echo
+
 bold "2. Configuration check"
 if $DRY; then
   dim "    would run: npm run check"
