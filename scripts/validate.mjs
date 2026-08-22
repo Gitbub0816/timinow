@@ -36,6 +36,12 @@ const requiredFiles = [
   "wrangler.local.example.jsonc",
   "wrangler.vet.jsonc",
   "wrangler.admin.jsonc",
+  "wrangler.voice.jsonc",
+  "src/voice.js",
+  "apps/voice-gateway/src/index.js",
+  "migrations/0005_voice_calls.sql",
+  "scripts/voice-test.mjs",
+  ".env.example",
   "apps/vet-web/public/index.html",
   "apps/vet-web/public/app.js",
   "apps/vet-web/src/index.js",
@@ -57,6 +63,10 @@ const wrangler = await readFile("wrangler.jsonc", "utf8");
 const wranglerLocalExample = await readFile("wrangler.local.example.jsonc", "utf8");
 const wranglerVet = await readFile("wrangler.vet.jsonc", "utf8");
 const wranglerAdmin = await readFile("wrangler.admin.jsonc", "utf8");
+const wranglerVoice = await readFile("wrangler.voice.jsonc", "utf8");
+const voiceWorker = await readFile("apps/voice-gateway/src/index.js", "utf8");
+const voiceModule = await readFile("src/voice.js", "utf8");
+const envExample = await readFile(".env.example", "utf8");
 const tenancyMigration = await readFile("migrations/0004_tenancy_admin.sql", "utf8");
 const vetApp = await readFile("apps/vet-web/public/app.js", "utf8");
 const adminApp = await readFile("apps/admin-console/public/app.js", "utf8");
@@ -71,9 +81,10 @@ for (const screen of expectedScreens) {
   if (!screens.includes(screen)) throw new Error(`Missing application screen: ${screen}`);
 }
 
-const requiredTables = ["tenants", "locations", "availability_reports", "tenant_policies", "intake_requests", "intake_events", "customer_observations", "notification_outbox", "care_searches", "care_search_targets", "care_offers", "platform_admins", "tenant_members", "tenant_invitations", "admin_audit_log"];
+const voiceMigration = await readFile("migrations/0005_voice_calls.sql", "utf8");
+const requiredTables = ["tenants", "locations", "availability_reports", "tenant_policies", "intake_requests", "intake_events", "customer_observations", "notification_outbox", "care_searches", "care_search_targets", "care_offers", "platform_admins", "tenant_members", "tenant_invitations", "admin_audit_log", "clinic_call_attempts"];
 for (const table of requiredTables) {
-  if (!`${migration}\n${multiOfferMigration}\n${tenancyMigration}`.includes(`CREATE TABLE IF NOT EXISTS ${table}`)) throw new Error(`Missing D1 table: ${table}`);
+  if (!`${migration}\n${multiOfferMigration}\n${tenancyMigration}\n${voiceMigration}`.includes(`CREATE TABLE IF NOT EXISTS ${table}`)) throw new Error(`Missing D1 table: ${table}`);
 }
 
 const requiredRoutes = ["/api/config", "/api/locations", "/api/intakes", "/api/searches", "select-offer", "/api/observations", "/api/clinic/dashboard", "/api/clinic/availability", "search-targets", "/api/session", "/api/tenant/members"];
@@ -98,6 +109,35 @@ for (const [label, config] of [["veterinary", wranglerVet], ["admin", wranglerAd
   if (!config.includes('"d1_databases"')) throw new Error(`The ${label} Worker must bind the D1 database`);
 }
 if (!wranglerAdmin.includes("PLATFORM_ADMIN_USER_IDS")) throw new Error("The admin Worker must declare the platform operator allowlist");
+
+// The voice gateway is the one Worker that answers requests Clerk cannot
+// authenticate, so its own authentication is the Twilio signature. Losing that
+// check would let anyone accept an offer on a clinic's behalf.
+if (!wranglerVoice.includes('"name": "timinow-voice"')) throw new Error("The voice Worker must deploy under its own name");
+if (!wranglerVoice.includes('"d1_databases"')) throw new Error("The voice Worker must bind the D1 database");
+if (!wranglerVoice.includes('"crons"')) throw new Error("The voice Worker must run a cron trigger to drain the call queue");
+if (!voiceModule.includes("verifyTwilioSignature")) throw new Error("The voice module must verify Twilio request signatures");
+if (!voiceModule.includes("SHA-1")) throw new Error("Twilio signature verification must use HMAC-SHA1, as Twilio specifies");
+for (const route of ["/api/voice/outbound/", "/api/voice/gather/", "/api/voice/status/"]) {
+  if (!voiceWorker.includes(route)) throw new Error(`The voice Worker is missing its ${route} webhook`);
+}
+if (!voiceWorker.includes("verifyTwilioSignature")) throw new Error("The voice Worker must verify every Twilio webhook signature");
+if (!voiceWorker.includes("verifyAttemptToken")) throw new Error("Voice webhooks must be scoped to a single call attempt");
+
+// A clinic answering the phone must take exactly the same path as a clinic
+// clicking accept. A second implementation is the failure mode this guards.
+if (!voiceWorker.includes("applyCareSearchDecision")) throw new Error("The voice Worker must reuse the shared care-search decision, not reimplement it");
+if (/INSERT INTO care_offers/i.test(voiceWorker)) throw new Error("The voice Worker must not carry its own copy of the offer SQL");
+
+// Secrets belong in the environment template, never in a committed config.
+for (const key of ["TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "TWILIO_FROM_NUMBER", "CLERK_SECRET_KEY", "STRIPE_SECRET_KEY", "MAPBOX_PUBLIC_TOKEN"]) {
+  if (!envExample.includes(key)) throw new Error(`.env.example is missing ${key}`);
+}
+for (const [label, config] of [["customer", wrangler], ["veterinary", wranglerVet], ["admin", wranglerAdmin], ["voice", wranglerVoice]]) {
+  if (/(?:CLERK_SECRET_KEY|TWILIO_AUTH_TOKEN|STRIPE_SECRET_KEY)"\s*:\s*"[^"]+"/.test(config)) {
+    throw new Error(`The ${label} Worker config appears to contain a secret value; use wrangler secret put`);
+  }
+}
 
 // Tenant creation is a platform-operator capability and must exist nowhere else.
 if (!adminWorker.includes("/api/admin/tenants")) throw new Error("The admin Worker must expose tenant creation");

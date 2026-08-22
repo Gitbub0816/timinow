@@ -9,12 +9,25 @@ Tími NOW is a real-time veterinary intake network. It answers **“Which veteri
 | Customer PWA — intake, live capacity, offer comparison, map, turn-by-turn | `public/`, `src/` | Worker `timinow` |
 | Veterinary web console — queue, capacity, decisions, always-on-top mini window | `apps/vet-web/` | Worker `timinow-vet` |
 | Platform operator console — the only place a tenant can be created | `apps/admin-console/` | Worker `timinow-admin` |
+| Voice gateway — calls clinics automatically and takes a keypad answer | `apps/voice-gateway/` | Worker `timinow-voice` |
 | Customer iOS app — SwiftUI, Skip Fuse ready, Mapbox navigation, CarPlay, Watch | `apps/customer-mobile/` | App Store |
 | Veterinary Windows app — WPF, tray alerts, floating queue | `apps/vet-windows/` | Signed installer |
 | Veterinary macOS app — SwiftUI, floating panel, menu-bar item | `apps/vet-desktop/` | Developer ID / Mac App Store |
 
-All three Workers bind the same D1 database and share the same session, tenancy,
+All four Workers bind the same D1 database and share the same session, tenancy,
 and Clerk metadata code in `src/`.
+
+## Reaching clinics that are not looking at a screen
+
+A care search contacts up to 30 clinics. Most of them have nobody at a console,
+so `timinow-voice` phones them and asks one question:
+
+> "Do you have time to see a dog with vomiting or diarrhea, starting today,
+> about 11 minutes away? Press 1 to confirm, or press 2 to decline."
+
+Pressing 1 creates exactly the offer that clicking accept in the console would —
+the same function, not a similar one. See
+[`apps/voice-gateway/README.md`](apps/voice-gateway/README.md).
 
 ## Product routes
 
@@ -82,6 +95,7 @@ npm run db:migrate:local
 npm run dev            # customer PWA
 npm run dev:vet        # veterinary console, port 8788
 npm run dev:admin      # admin console, port 8789
+npm run dev:voice      # voice gateway, port 8790
 ```
 
 The committed `wrangler.jsonc` is the **production** configuration. Local
@@ -103,7 +117,13 @@ required; without them sign-in and the map stay dark.
 npx wrangler secret put CLERK_SECRET_KEY
 npx wrangler secret put CLERK_SECRET_KEY --config wrangler.vet.jsonc
 npx wrangler secret put CLERK_SECRET_KEY --config wrangler.admin.jsonc
+npx wrangler secret put CLERK_SECRET_KEY  --config wrangler.voice.jsonc
+npx wrangler secret put TWILIO_ACCOUNT_SID --config wrangler.voice.jsonc
+npx wrangler secret put TWILIO_AUTH_TOKEN  --config wrangler.voice.jsonc
 ```
+
+Every variable and secret, per Worker, is listed in
+[`.env.example`](.env.example).
 
 ## Payments
 

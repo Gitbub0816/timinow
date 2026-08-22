@@ -133,7 +133,49 @@ because turn-by-turn is materially more expensive than showing a styled map.
 
 ---
 
-## 4. Stripe — deposits are off until these exist
+## 4. Twilio — automated clinic calling
+
+The voice gateway phones clinics that are not watching a console. Without these
+it stays dormant; the console notification still goes out either way.
+
+| Name | Kind | Where |
+| --- | --- | --- |
+| `TWILIO_ACCOUNT_SID` | **secret** | Twilio console → Account Info (starts `AC`) |
+| `TWILIO_AUTH_TOKEN` | **secret** | Twilio console → Account Info |
+| `TWILIO_FROM_NUMBER` | var | A Voice-capable number you own, E.164 |
+| `VOICE_PUBLIC_URL` | var | The voice Worker's public https origin |
+
+```bash
+npx wrangler secret put TWILIO_ACCOUNT_SID --config wrangler.voice.jsonc
+npx wrangler secret put TWILIO_AUTH_TOKEN  --config wrangler.voice.jsonc
+npx wrangler secret put CLERK_SECRET_KEY   --config wrangler.voice.jsonc
+```
+
+Three things are easy to get wrong:
+
+- **The auth token is not only a credential.** It also signs every inbound
+  webhook, which is what proves a "press 1" really came from Twilio and not from
+  someone who guessed a URL. Rotating it invalidates calls already in flight.
+- **`VOICE_PUBLIC_URL` must be the exact origin Twilio will reach**, because the
+  signature covers the whole URL. The Worker also checks `request.url`, so a
+  mismatch degrades gracefully rather than 403-ing every call — but set it
+  correctly anyway.
+- **Buy a number clinics can call back.** It shows on their caller ID, and a
+  clinic that dials it should not reach a dead line.
+
+**Cost**: outbound voice is billed per minute, plus the number's monthly rental.
+A fan-out to 30 clinics is up to 30 calls; the script is deliberately under 30
+seconds. Set `VOICE_CALLS_ENABLED` to `"false"` to stop all calling without
+redeploying anything else.
+
+**Compliance**: these are automated outbound calls to businesses. Call recording
+is not enabled and no customer identifying details are spoken. Confirm your own
+obligations in each state you operate in before turning this on — the
+`docs/LEGAL-LAUNCH-CHECKLIST.md` items apply here too.
+
+---
+
+## 5. Stripe — deposits are off until these exist
 
 | Name | Kind |
 | --- | --- |
@@ -151,7 +193,7 @@ Account Agreement disclosures listed in `docs/LEGAL-LAUNCH-CHECKLIST.md`.
 
 ---
 
-## 5. Apple — for the iOS app, CarPlay, and the Watch app
+## 6. Apple — for the iOS app, CarPlay, and the Watch app
 
 | What | Notes |
 | --- | --- |
@@ -163,7 +205,7 @@ Account Agreement disclosures listed in `docs/LEGAL-LAUNCH-CHECKLIST.md`.
 
 ---
 
-## 6. Microsoft — for shipping the Windows app
+## 7. Microsoft — for shipping the Windows app
 
 | What | Notes |
 | --- | --- |
@@ -172,11 +214,11 @@ Account Agreement disclosures listed in `docs/LEGAL-LAUNCH-CHECKLIST.md`.
 
 ---
 
-## 7. Not needed yet, but on the horizon
+## 8. Not needed yet, but on the horizon
 
 | What | Why |
 | --- | --- |
-| SMS provider (Twilio or similar) | `notification_outbox` has an `sms` channel with no delivery worker behind it |
+| SMS provider | `notification_outbox` has an `sms` channel with no delivery worker behind it. The Twilio account above can serve it |
 | Email provider (Resend, Postmark, SES) | Same table, `email` channel |
 | Cloudflare Turnstile | `docs/MVP-ARCHITECTURE.md` lists it as a pre-launch requirement on public intake mutations |
 
@@ -196,8 +238,9 @@ npm run db:migrate:remote
 npx wrangler secret put CLERK_SECRET_KEY
 npx wrangler secret put CLERK_SECRET_KEY --config wrangler.vet.jsonc
 npx wrangler secret put CLERK_SECRET_KEY --config wrangler.admin.jsonc
+npx wrangler secret put CLERK_SECRET_KEY --config wrangler.voice.jsonc
 
-# 4. Deploy all three Workers
+# 4. Deploy all four Workers
 npm run deploy:all
 
 # 5. Open the admin console, sign in, create your first tenant

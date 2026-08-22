@@ -13,17 +13,20 @@
     "deploy": "wrangler deploy",
     "deploy:vet": "wrangler deploy --config wrangler.vet.jsonc",
     "deploy:admin": "wrangler deploy --config wrangler.admin.jsonc",
-    "deploy:all": "npm run deploy && npm run deploy:vet && npm run deploy:admin",
+    "deploy:all": "npm run deploy && npm run deploy:vet && npm run deploy:admin && npm run deploy:voice",
     "types": "wrangler types",
     "build": "wrangler deploy --dry-run --outdir .wrangler/build",
     "build:vet": "wrangler deploy --dry-run --config wrangler.vet.jsonc --outdir .wrangler/build-vet",
     "build:admin": "wrangler deploy --dry-run --config wrangler.admin.jsonc --outdir .wrangler/build-admin",
-    "build:all": "npm run build && npm run build:vet && npm run build:admin",
+    "build:all": "npm run build && npm run build:vet && npm run build:admin && npm run build:voice",
     "check:native": "node scripts/validate-native.mjs",
-    "smoke": "node scripts/smoke.mjs && node scripts/auth-test.mjs && node scripts/tenancy-test.mjs && node scripts/e2e.mjs",
-    "check": "node scripts/syntax.mjs && node scripts/validate.mjs && node scripts/validate-native.mjs && node scripts/smoke.mjs && node scripts/auth-test.mjs && node scripts/tenancy-test.mjs && node scripts/e2e.mjs",
+    "smoke": "node scripts/smoke.mjs && node scripts/auth-test.mjs && node scripts/tenancy-test.mjs && node scripts/voice-test.mjs && node scripts/e2e.mjs",
+    "check": "node scripts/syntax.mjs && node scripts/validate.mjs && node scripts/validate-native.mjs && node scripts/smoke.mjs && node scripts/auth-test.mjs && node scripts/tenancy-test.mjs && node scripts/voice-test.mjs && node scripts/e2e.mjs",
     "test:ui": "node scripts/ui-test.mjs",
-    "sync:phrases": "node scripts/sync-phrases.mjs"
+    "sync:phrases": "node scripts/sync-phrases.mjs",
+    "dev:voice": "wrangler dev --config wrangler.voice.jsonc --local --persist-to .wrangler/state --port 8790",
+    "deploy:voice": "wrangler deploy --config wrangler.voice.jsonc",
+    "build:voice": "wrangler deploy --dry-run --config wrangler.voice.jsonc --outdir .wrangler/build-voice"
   },
   "devDependencies": {
     "wrangler": "^4.32.0"

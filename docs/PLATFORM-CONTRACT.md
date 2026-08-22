@@ -11,9 +11,10 @@ shares the same design tokens. This document is the contract between them.
 | `timinow` | `wrangler.jsonc` | `customer` | Public PWA, customer API, map and navigation |
 | `timinow-vet` | `wrangler.vet.jsonc` | `clinic` | Veterinary operations console + tenant people management |
 | `timinow-admin` | `wrangler.admin.jsonc` | `admin` | Platform operator console. Tenant creation lives only here |
+| `timinow-voice` | `wrangler.voice.jsonc` | `voice` | Automated clinic calling. No human UI |
 
-All three bind the same D1 database (`timinow`, `eae5bd15-686f-4827-9354-e99973daa803`)
-and all three set `SIGN_IN_REQUIRED = "true"` and `DEMO_MODE = "false"`.
+All four bind the same D1 database (`timinow`, `eae5bd15-686f-4827-9354-e99973daa803`)
+and all four set `SIGN_IN_REQUIRED = "true"` and `DEMO_MODE = "false"`.
 
 ## Authorization model
 
@@ -162,6 +163,49 @@ Supported strategies, all with Tími-designed screens:
 
 Organization switching uses `clerk.setActive({ organization })` behind a custom
 picker, never `mountOrganizationSwitcher`.
+
+## Automated clinic calling
+
+A care search fans out to as many as 30 clinics, most of which have nobody
+watching a console. `timinow-voice` calls them.
+
+`createCareSearch` writes one `notification_outbox` row per clinic with
+`channel = 'voice'`; the voice Worker's cron drains that queue every minute and
+places a Twilio call:
+
+> "Hi, this is Tími calling for {clinic}. A pet owner nearby is looking for
+> immediate care for **a dog with vomiting or diarrhea, starting today**, about
+> 11 minutes away. Do you have time to see them? Press 1 to confirm you can take
+> them, or press 2 to decline. Press 9 to hear this again."
+
+The pet's name is never spoken — the clinic gets it on the console, and a phone
+tree is not the place for identifying details.
+
+| Method | Path | Who |
+| --- | --- | --- |
+| `POST` | `/api/voice/outbound/:targetId` | Twilio — serves the TwiML prompt |
+| `POST` | `/api/voice/gather/:targetId` | Twilio — receives the pressed digit |
+| `POST` | `/api/voice/status/:callId` | Twilio — call lifecycle |
+| `GET` | `/api/voice/attempts?searchId=` | Clerk, tenant-scoped — the call log |
+
+**The webhooks cannot be authenticated by Clerk**, because Twilio cannot sign
+in. Their authentication is Twilio's request signature (HMAC-SHA1 over the full
+URL plus the sorted POST parameters), plus a per-attempt HMAC token embedded in
+the callback URL so a leaked URL cannot be replayed against a different clinic.
+Both checks run even in demo mode; demo mode only suppresses *placing* calls.
+
+**Pressing 1 is the same code path as clicking accept.** Both call
+`applyCareSearchDecision` in `src/index.js`, which takes plain values rather than
+a Request precisely so a webhook with no JSON body and no actor can share it.
+`scripts/validate.mjs` fails the build if the voice Worker grows its own copy of
+the offer SQL, and `scripts/voice-test.mjs` asserts the two produce identical
+`care_offers` rows.
+
+Tenants control their own phones: `tenants.voice_calls_enabled`,
+`locations.voice_calls_enabled`, `locations.voice_phone`, and
+`tenants.voice_quiet_hours_json`. A call blocked by quiet hours is cancelled
+rather than deferred — a care search expires in six and a half minutes, so a
+call held until morning would ring about a pet seen hours earlier.
 
 ## Design tokens
 

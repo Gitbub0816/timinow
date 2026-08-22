@@ -6,25 +6,16 @@
  * automated Twilio call, and lets the clinic answer with a two-question
  * touch-tone tree: press 1 to take the patient, 2 to decline.
  *
- * ACCEPT-PATH DRIFT WARNING — read this before touching `acceptSearchTargetByPhone`:
- * pressing "1" must have the identical effect as a clinic staffer clicking
- * "accept" in the console, which is implemented by `respondToCareSearch` in
- * ../../../src/index.js. That function is already exported and already
- * imported directly by ../vet-web/src/index.js — but it expects an
- * authenticated `actor` and a JSON request body, neither of which exists on a
- * Twilio webhook, and this Worker was asked not to edit src/index.js. So
- * `acceptSearchTargetByPhone`/`declineSearchTargetByPhone` below are a
- * deliberate re-implementation of the same guards and the same D1 statements,
- * using the same defaults `respondToCareSearch` would apply for an empty
- * request body (default `responseType`, the location's own
- * `arrivalWindowMinutes`/stable wait range, a 5-minute offer hold). If
- * `respondToCareSearch` changes, these two functions must change with it —
- * there is no shared code path enforcing that today. See the session report
- * for the exact statement-by-statement comparison.
+ * Pressing "1" has the identical effect as a clinic staffer clicking "accept"
+ * in the console: both call `applyCareSearchDecision` in ../../../src/index.js,
+ * which exists as a plain-value function precisely so a Twilio webhook — with
+ * no JSON body and no Clerk actor — can share it rather than carry a copy of
+ * the offer SQL that drifts out of step.
  */
 
 import { actorForRequest, roleAllows, signInRequired } from "../../../src/auth.js";
 import { publicConfig } from "../../../src/config.js";
+import { applyCareSearchDecision } from "../../../src/index.js";
 import {
   getCareSearch,
   getClinicLocation,
@@ -169,7 +160,30 @@ async function verifyWebhook(request, env, url) {
   const bodyText = await request.text();
   const formParams = Object.fromEntries(new URLSearchParams(bodyText));
   const signature = request.headers.get("x-twilio-signature");
-  const signatureOk = await verifyTwilioSignature(env.TWILIO_AUTH_TOKEN, request.url, formParams, signature);
+
+  /**
+   * Twilio signs the URL string it was handed, which this Worker built from
+   * VOICE_PUBLIC_URL. That is normally byte-identical to what Cloudflare
+   * reports as `request.url`, but a custom domain in front of a workers.dev
+   * origin — or a proxy that rewrites the host — makes them differ, and the
+   * failure mode is silent and total: every clinic call 403s and nobody is
+   * ever reached. Checking the configured origin as well costs one extra HMAC
+   * and removes that class of outage. Both candidates are still real
+   * signatures over real URLs; neither weakens the check.
+   */
+  const candidates = [request.url];
+  const configured = String(env.VOICE_PUBLIC_URL || "").trim().replace(/\/+$/, "");
+  if (configured) {
+    const rebuilt = `${configured}${url.pathname}${url.search}`;
+    if (rebuilt !== request.url) candidates.push(rebuilt);
+  }
+  let signatureOk = false;
+  for (const candidate of candidates) {
+    if (await verifyTwilioSignature(env.TWILIO_AUTH_TOKEN, candidate, formParams, signature)) {
+      signatureOk = true;
+      break;
+    }
+  }
   if (!signatureOk) return { ok: false, formParams };
   const attemptId = url.searchParams.get("attempt");
   const tok = url.searchParams.get("tok");
@@ -197,105 +211,23 @@ async function recordAttemptOutcome(env, attemptId, digits, outcome, { terminal 
 
 /* ------------------------------------------------------- accept / decline --- */
 /**
- * Mirrors `respondToCareSearch`'s decline branch exactly: same table, same
- * SET list, same WHERE clause (status must still be contacting/awaiting_response,
- * tenant-scoped). See src/index.js lines ~523-529 at the time this was written.
+ * A clinic answering the phone must do exactly what a clinic clicking the
+ * console button does. Rather than reimplement the offer SQL here — the kind of
+ * duplicate that drifts silently until phone acceptances quietly stop creating
+ * offers — both paths call `applyCareSearchDecision`, which takes plain values
+ * precisely so a webhook with no JSON body and no Clerk actor can use it.
+ *
+ * The reason codes below exist only to choose which sentence the caller hears.
  */
-async function declineSearchTargetByPhone(env, tenantId, targetId) {
+async function decideByPhone(env, tenantId, targetId, decision) {
   const target = await getClinicSearchTarget(env, targetId, tenantId);
-  if (!target) return { ok: false, reason: "not_found" };
-  if (target.status !== "pending") {
-    return { ok: target.status === "declined", reason: target.status === "declined" ? "already_declined" : "unavailable" };
-  }
-  const search = await getCareSearch(env, target.searchId);
-  if (!search || !["collecting", "offers_ready"].includes(search.status) || timestampMs(search.collectionExpiresAt || search.searchExpiresAt) <= Date.now()) {
-    return { ok: false, reason: "search_closed" };
-  }
-  const now = new Date().toISOString();
-  const result = await env.DB.prepare(`
-    UPDATE care_search_targets SET status = 'declined', responded_at = ?, updated_at = ?
-    WHERE id = ? AND tenant_id = ? AND status IN ('contacting', 'awaiting_response')
-  `).bind(now, now, target.id, tenantId).run();
-  if (!result.meta?.changes) return { ok: false, reason: "target_changed" };
-  return { ok: true };
-}
+  const settled = decision === "offer" ? "offered" : "declined";
+  // Pressing the same key twice should sound like confirmation, not an error.
+  if (target && target.status === settled) return { ok: true, reason: "already_settled" };
 
-/**
- * Mirrors `respondToCareSearch`'s accept branch (decision === "offer") using
- * the same defaults it would apply for a bare `{ decision: "offer" }` body:
- * `responseType` defaults from the search's urgency, `arrivalWindowMinutes`
- * from the location, `availableAt` is "now", wait range from the location's
- * current availability report, and a 5-minute offer hold. Same four
- * statements in the same order: insert-if-room, flip the target, tighten the
- * search status, and release any siblings once the cap is hit. See
- * src/index.js lines ~532-591 at the time this was written.
- */
-async function acceptSearchTargetByPhone(env, tenantId, targetId) {
-  const target = await getClinicSearchTarget(env, targetId, tenantId);
-  if (!target) return { ok: false, reason: "not_found" };
-  if (target.status !== "pending") {
-    return { ok: target.status === "offered", reason: target.status === "offered" ? "already_offered" : "unavailable" };
-  }
-  const search = await getCareSearch(env, target.searchId);
-  if (!search || !["collecting", "offers_ready"].includes(search.status) || timestampMs(search.collectionExpiresAt || search.searchExpiresAt) <= Date.now()) {
-    return { ok: false, reason: "search_closed" };
-  }
-  const location = await getClinicLocation(env, tenantId);
-  if (!location || location.id !== target.locationId) return { ok: false, reason: "location_mismatch" };
-
-  const now = new Date().toISOString();
-  const responseType = search.urgency === "emergency" ? "emergency_intake" : "available_now";
-  const arrivalMinutes = location.arrivalWindowMinutes || 20;
-  const availableAtMs = Date.now();
-  const availableAt = new Date(availableAtMs).toISOString();
-  const arrivalBy = new Date(availableAtMs + arrivalMinutes * 60_000).toISOString();
-  const waitMin = location.availability?.stableWaitMin ?? null;
-  const waitMax = location.availability?.stableWaitMax ?? null;
-  const policy = location.policy || { depositRequired: false, depositAmountCents: 0 };
-  const offerId = newId("offer");
-  const offerExpiresAt = isoAfter(PHONE_OFFER_HOLD_MINUTES);
-  const note = "Confirmed by automated phone call.";
-
-  const results = await env.DB.batch([
-    env.DB.prepare(`
-      INSERT INTO care_offers (
-        id, search_id, target_id, location_id, tenant_id, response_type, status,
-        available_at, arrival_by, wait_min, wait_max, clinic_note, policy_snapshot_json,
-        deposit_amount_cents, base_exam_fee_cents, offered_at, expires_at, created_by
-      )
-      SELECT ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
-      WHERE (SELECT COUNT(*) FROM care_offers WHERE search_id = ? AND status = 'active' AND datetime(expires_at) > datetime(?))
-            < (SELECT max_offers FROM care_searches WHERE id = ?)
-    `).bind(
-      offerId, search.id, target.id, location.id, tenantId, responseType, availableAt, arrivalBy,
-      waitMin, waitMax, note, JSON.stringify(policy), policy.depositAmountCents || 0,
-      location.baseExamFeeCents, now, offerExpiresAt, null, search.id, now, search.id
-    ),
-    env.DB.prepare(`
-      UPDATE care_search_targets
-      SET status = CASE WHEN EXISTS (SELECT 1 FROM care_offers WHERE id = ?) THEN 'offered' ELSE 'released' END,
-          responded_at = ?, released_at = CASE WHEN EXISTS (SELECT 1 FROM care_offers WHERE id = ?) THEN NULL ELSE ? END,
-          updated_at = ?
-      WHERE id = ? AND status IN ('contacting', 'awaiting_response')
-    `).bind(offerId, now, offerId, now, now, target.id),
-    env.DB.prepare(`
-      UPDATE care_searches
-      SET status = CASE
-        WHEN (SELECT COUNT(*) FROM care_offers WHERE search_id = ? AND status = 'active' AND datetime(expires_at) > datetime(?)) >= max_offers THEN 'offers_ready'
-        ELSE status END,
-        updated_at = ?
-      WHERE id = ? AND status IN ('collecting', 'offers_ready')
-    `).bind(search.id, now, now, search.id),
-    env.DB.prepare(`
-      UPDATE care_search_targets
-      SET status = 'released', released_at = ?, updated_at = ?
-      WHERE search_id = ? AND status IN ('contacting', 'awaiting_response')
-        AND (SELECT COUNT(*) FROM care_offers WHERE search_id = ? AND status = 'active' AND datetime(expires_at) > datetime(?))
-            >= (SELECT max_offers FROM care_searches WHERE id = ?)
-    `).bind(now, now, search.id, search.id, now, search.id)
-  ]);
-  if (!results[0]?.meta?.changes) return { ok: false, reason: "offer_window_full" };
-  return { ok: true, offerId };
+  const result = await applyCareSearchDecision(env, { targetId, tenantId, decision });
+  if (result.ok) return { ok: true };
+  return { ok: false, reason: result.code };
 }
 
 /* ----------------------------------------------------------------- webhooks --- */
@@ -336,14 +268,14 @@ async function handleVoiceGather(request, env, targetId, url) {
   const payloadLike = payloadLikeFromUrl(url);
 
   if (digits === "1") {
-    const result = await acceptSearchTargetByPhone(env, attempt.tenant_id, targetId);
-    const accepted = result.ok || result.reason === "already_offered";
+    const result = await decideByPhone(env, attempt.tenant_id, targetId, "offer");
+    const accepted = result.ok;
     await recordAttemptOutcome(env, attemptId, digits, accepted ? "accepted" : "error");
     return xmlResponse(accepted ? acceptedTwiml(script) : alreadyFilledTwiml());
   }
   if (digits === "2") {
-    const result = await declineSearchTargetByPhone(env, attempt.tenant_id, targetId);
-    const declined = result.ok || result.reason === "already_declined";
+    const result = await decideByPhone(env, attempt.tenant_id, targetId, "decline");
+    const declined = result.ok;
     await recordAttemptOutcome(env, attemptId, digits, declined ? "declined" : "error");
     return xmlResponse(declined ? declinedTwiml(script) : alreadyFilledTwiml());
   }
@@ -412,7 +344,7 @@ async function handleVoiceStatus(request, env, callId, url) {
 
 async function processOutboxRow(env, row, nowIso) {
   const cancel = async (reason) => {
-    await env.DB.prepare("UPDATE notification_outbox SET status = 'cancelled', last_error = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'queued'")
+    await env.DB.prepare("UPDATE notification_outbox SET status = 'cancelled', last_error = ? WHERE id = ? AND status = 'queued'")
       .bind(reason, row.id).run();
   };
 
@@ -441,6 +373,14 @@ async function processOutboxRow(env, row, nowIso) {
   } catch {
     quietHours = {};
   }
+  /**
+   * Cancelled rather than deferred, deliberately. A care search stops collecting
+   * offers after 90 seconds and expires entirely at six and a half minutes, so a
+   * call held until quiet hours end would ring a clinic about a pet whose owner
+   * was seen — or gave up — hours earlier. The tenant's quiet hours stay
+   * authoritative even for an emergency search: a vendor that decides on a
+   * clinic's behalf when its phone may ring at 3am does not stay a vendor.
+   */
   if (withinQuietHours(nowIso, quietHours)) return cancel("Tenant is inside its configured quiet hours");
 
   const targetRow = await env.DB.prepare("SELECT status FROM care_search_targets WHERE id = ? LIMIT 1").bind(targetId).first();
@@ -462,7 +402,7 @@ async function processOutboxRow(env, row, nowIso) {
           INSERT INTO clinic_call_attempts (id, outbox_id, search_id, target_id, tenant_id, location_id, to_number, from_number, provider, status, attempt)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'twilio', 'queued', ?)
         `).bind(attemptId, row.id, searchId, targetId, tenantId, locationId, toNumber, env.TWILIO_FROM_NUMBER || null, attemptNumber),
-        env.DB.prepare("UPDATE notification_outbox SET status = 'sent', sent_at = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(nowIso, row.id)
+        env.DB.prepare("UPDATE notification_outbox SET status = 'sent', sent_at = ? WHERE id = ?").bind(nowIso, row.id)
       ]);
       return;
     }
@@ -473,7 +413,7 @@ async function processOutboxRow(env, row, nowIso) {
         INSERT INTO clinic_call_attempts (id, outbox_id, search_id, target_id, tenant_id, location_id, to_number, from_number, provider, provider_call_sid, status, attempt, started_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'twilio', ?, 'queued', ?, ?)
       `).bind(attemptId, row.id, searchId, targetId, tenantId, locationId, toNumber, env.TWILIO_FROM_NUMBER || null, call.sid, attemptNumber, nowIso),
-      env.DB.prepare("UPDATE notification_outbox SET status = 'sent', sent_at = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(nowIso, row.id)
+      env.DB.prepare("UPDATE notification_outbox SET status = 'sent', sent_at = ? WHERE id = ?").bind(nowIso, row.id)
     ]);
   } catch (error) {
     const maxAttempts = Number(env.VOICE_MAX_ATTEMPTS || 2);
@@ -484,11 +424,11 @@ async function processOutboxRow(env, row, nowIso) {
     `).bind(attemptId, row.id, searchId, targetId, tenantId, locationId, toNumber, env.TWILIO_FROM_NUMBER || null, attemptNumber, error.message).run();
 
     if (nextAttempts >= maxAttempts) {
-      await env.DB.prepare("UPDATE notification_outbox SET status = 'failed', attempts = ?, last_error = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
+      await env.DB.prepare("UPDATE notification_outbox SET status = 'failed', attempts = ?, last_error = ? WHERE id = ?")
         .bind(nextAttempts, error.message, row.id).run();
     } else {
       const availableAt = new Date(Date.now() + 2 * nextAttempts * 60_000).toISOString();
-      await env.DB.prepare("UPDATE notification_outbox SET attempts = ?, last_error = ?, available_at = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
+      await env.DB.prepare("UPDATE notification_outbox SET attempts = ?, last_error = ?, available_at = ? WHERE id = ?")
         .bind(nextAttempts, error.message, availableAt, row.id).run();
     }
   }

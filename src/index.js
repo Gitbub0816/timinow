@@ -506,18 +506,46 @@ async function createCareSearch(request, env, actor) {
   return json({ search: await getCareSearch(env, searchId) }, { status: 201 });
 }
 
-export async function respondToCareSearch(request, env, actor, tenantId, targetId) {
-  if (!hasDatabase(env)) return apiError(503, "DATABASE_REQUIRED", "D1 is required for multi-clinic offer responses.");
-  const body = await readJson(request).catch(() => null);
-  const decision = cleanString(body?.decision, 20);
-  if (!new Set(["offer", "decline"]).has(decision)) return apiError(422, "INVALID_DECISION", "Choose offer or decline.");
+/**
+ * Apply a clinic's decision to one care-search target.
+ *
+ * This is the single implementation of "a clinic said yes or no", shared by the
+ * console (`respondToCareSearch` below), the veterinary desktop clients, and
+ * the automated phone call in the voice gateway. It deliberately takes plain
+ * values rather than a Request, because a Twilio webhook has no JSON body and
+ * no Clerk actor — and a second copy of this SQL is exactly the kind of thing
+ * that drifts silently until a clinic's phone acceptance stops creating an
+ * offer.
+ *
+ * Returns `{ ok: true, ... }` or `{ ok: false, status, code, message }`; it
+ * never builds an HTTP response itself.
+ */
+export async function applyCareSearchDecision(env, {
+  targetId,
+  tenantId,
+  decision,
+  actorUserId = null,
+  responseType: requestedResponseType,
+  arrivalWindowMinutes,
+  availableAt: requestedAvailableAt,
+  waitMin: requestedWaitMin,
+  waitMax: requestedWaitMax,
+  holdMinutes,
+  note: requestedNote
+} = {}) {
+  const fail = (status, code, message) => ({ ok: false, status, code, message });
+
+  if (!hasDatabase(env)) return fail(503, "DATABASE_REQUIRED", "D1 is required for multi-clinic offer responses.");
+  if (!new Set(["offer", "decline"]).has(decision)) return fail(422, "INVALID_DECISION", "Choose offer or decline.");
+
   const target = await getClinicSearchTarget(env, targetId, tenantId);
-  if (!target) return apiError(404, "SEARCH_TARGET_NOT_FOUND", "This clinic request was not found.");
-  if (target.status !== "pending") return apiError(409, "ALREADY_DECIDED", "This clinic request has already been handled.");
+  if (!target) return fail(404, "SEARCH_TARGET_NOT_FOUND", "This clinic request was not found.");
+  if (target.status !== "pending") return fail(409, "ALREADY_DECIDED", "This clinic request has already been handled.");
+
   const search = await getCareSearch(env, target.searchId);
   const now = new Date().toISOString();
   if (!search || !["collecting", "offers_ready"].includes(search.status) || timestampMs(search.collectionExpiresAt || search.searchExpiresAt) <= Date.now()) {
-    return apiError(409, "SEARCH_CLOSED", "The customer is no longer collecting clinic offers.");
+    return fail(409, "SEARCH_CLOSED", "The customer is no longer collecting clinic offers.");
   }
 
   if (decision === "decline") {
@@ -525,30 +553,30 @@ export async function respondToCareSearch(request, env, actor, tenantId, targetI
       UPDATE care_search_targets SET status = 'declined', responded_at = ?, updated_at = ?
       WHERE id = ? AND tenant_id = ? AND status IN ('contacting', 'awaiting_response')
     `).bind(now, now, target.id, tenantId).run();
-    if (!result.meta?.changes) return apiError(409, "TARGET_CHANGED", "Another team member handled this request first.");
-    return json({ target: { ...target, status: "declined", respondedAt: now } });
+    if (!result.meta?.changes) return fail(409, "TARGET_CHANGED", "Another team member handled this request first.");
+    return { ok: true, target: { ...target, status: "declined", respondedAt: now } };
   }
 
-  const responseType = cleanString(body?.responseType, 30) || (search.urgency === "emergency" ? "emergency_intake" : "available_now");
-  if (!new Set(["available_now", "available_at", "emergency_intake"]).has(responseType)) return apiError(422, "INVALID_OFFER_TYPE", "Choose a supported availability offer.");
+  const responseType = cleanString(requestedResponseType, 30) || (search.urgency === "emergency" ? "emergency_intake" : "available_now");
+  if (!new Set(["available_now", "available_at", "emergency_intake"]).has(responseType)) return fail(422, "INVALID_OFFER_TYPE", "Choose a supported availability offer.");
   const location = await getClinicLocation(env, tenantId);
-  if (!location || location.id !== target.locationId) return apiError(409, "LOCATION_MISMATCH", "The active clinic cannot respond for this location.");
-  const arrivalMinutes = numberInRange(body.arrivalWindowMinutes, 5, 360, location.arrivalWindowMinutes || 20);
-  const suppliedAvailableAt = cleanString(body.availableAt, 40);
-  if (responseType === "available_at" && !suppliedAvailableAt) return apiError(422, "AVAILABLE_TIME_REQUIRED", "Provide the time when this clinic can receive the patient.");
+  if (!location || location.id !== target.locationId) return fail(409, "LOCATION_MISMATCH", "The active clinic cannot respond for this location.");
+  const arrivalMinutes = numberInRange(arrivalWindowMinutes, 5, 360, location.arrivalWindowMinutes || 20);
+  const suppliedAvailableAt = cleanString(requestedAvailableAt, 40);
+  if (responseType === "available_at" && !suppliedAvailableAt) return fail(422, "AVAILABLE_TIME_REQUIRED", "Provide the time when this clinic can receive the patient.");
   const availableAtMs = suppliedAvailableAt ? Date.parse(suppliedAvailableAt) : Date.now();
   if (!Number.isFinite(availableAtMs) || availableAtMs < Date.now() - 60_000 || availableAtMs > Date.now() + 12 * 60 * 60_000) {
-    return apiError(422, "INVALID_AVAILABLE_TIME", "Availability must be between now and 12 hours from now.");
+    return fail(422, "INVALID_AVAILABLE_TIME", "Availability must be between now and 12 hours from now.");
   }
-  const waitMin = numberInRange(body.waitMin, 0, 1440, location.availability.stableWaitMin);
-  const waitMax = numberInRange(body.waitMax, 0, 1440, location.availability.stableWaitMax);
-  if (waitMin !== null && waitMax !== null && waitMin > waitMax) return apiError(422, "INVALID_WAIT_RANGE", "Minimum wait cannot exceed maximum wait.");
+  const waitMin = numberInRange(requestedWaitMin, 0, 1440, location.availability.stableWaitMin);
+  const waitMax = numberInRange(requestedWaitMax, 0, 1440, location.availability.stableWaitMax);
+  if (waitMin !== null && waitMax !== null && waitMin > waitMax) return fail(422, "INVALID_WAIT_RANGE", "Minimum wait cannot exceed maximum wait.");
   const offerId = newId("offer");
-  const offerExpiresAt = isoAfter(numberInRange(body.holdMinutes, 2, 10, 5));
+  const offerExpiresAt = isoAfter(numberInRange(holdMinutes, 2, 10, 5));
   const availableAt = new Date(availableAtMs).toISOString();
   const arrivalBy = new Date(availableAtMs + arrivalMinutes * 60_000).toISOString();
   const policy = location.policy || { depositRequired: false, depositAmountCents: 0 };
-  const note = cleanString(body.note, 500) || null;
+  const note = cleanString(requestedNote, 500) || null;
 
   const results = await env.DB.batch([
     env.DB.prepare(`
@@ -563,7 +591,7 @@ export async function respondToCareSearch(request, env, actor, tenantId, targetI
     `).bind(
       offerId, search.id, target.id, location.id, tenantId, responseType, availableAt, arrivalBy,
       waitMin, waitMax, note, JSON.stringify(policy), policy.depositAmountCents || 0,
-      location.baseExamFeeCents, now, offerExpiresAt, actor.userId || null, search.id, now, search.id
+      location.baseExamFeeCents, now, offerExpiresAt, actorUserId, search.id, now, search.id
     ),
     env.DB.prepare(`
       UPDATE care_search_targets
@@ -588,8 +616,30 @@ export async function respondToCareSearch(request, env, actor, tenantId, targetI
             >= (SELECT max_offers FROM care_searches WHERE id = ?)
     `).bind(now, now, search.id, search.id, now, search.id)
   ]);
-  if (!results[0]?.meta?.changes) return apiError(409, "OFFER_WINDOW_FULL", "The customer already has five active clinic offers.");
-  return json({ search: await getCareSearch(env, search.id), offerId });
+  if (!results[0]?.meta?.changes) return fail(409, "OFFER_WINDOW_FULL", "The customer already has five active clinic offers.");
+  return { ok: true, offerId, search: await getCareSearch(env, search.id) };
+}
+
+/** HTTP wrapper for the clinic console and the desktop clients. */
+export async function respondToCareSearch(request, env, actor, tenantId, targetId) {
+  const body = await readJson(request).catch(() => null);
+  const result = await applyCareSearchDecision(env, {
+    targetId,
+    tenantId,
+    decision: cleanString(body?.decision, 20),
+    actorUserId: actor?.userId || null,
+    responseType: body?.responseType,
+    arrivalWindowMinutes: body?.arrivalWindowMinutes,
+    availableAt: body?.availableAt,
+    waitMin: body?.waitMin,
+    waitMax: body?.waitMax,
+    holdMinutes: body?.holdMinutes,
+    note: body?.note
+  });
+  if (!result.ok) return apiError(result.status, result.code, result.message);
+  return result.target
+    ? json({ target: result.target })
+    : json({ search: result.search, offerId: result.offerId });
 }
 
 async function selectCareOffer(request, env, actor, searchId) {
