@@ -43,16 +43,23 @@ if enableMapbox {
     // it for Waypoint, RouteOptions, RoadClasses, RouteStep, and
     // SpokenInstruction, but does not re-export it, so files that name those
     // types need the product on the target as well as an import.
+    // Conditioned on iOS. These SDKs import UIKit, which does not exist on
+    // macOS, and `swift test` builds the whole package for the host — so
+    // without the condition, running the core unit tests on a Mac that has a
+    // downloads token configured fails with "no such module 'UIKit'" from
+    // inside Mapbox's own sources. The condition keeps the dependency out of
+    // the macOS build while leaving the iOS app and CarPlay builds unchanged.
+    let iOSOnly: TargetDependencyCondition = .when(platforms: [.iOS])
     timiNowUIDependencies.append(contentsOf: [
-        .product(name: "MapboxMaps", package: "mapbox-maps-ios"),
-        .product(name: "MapboxNavigationCore", package: "mapbox-navigation-ios"),
-        .product(name: "MapboxNavigationUIKit", package: "mapbox-navigation-ios"),
-        .product(name: "MapboxDirections", package: "mapbox-navigation-ios")
+        .product(name: "MapboxMaps", package: "mapbox-maps-ios", condition: iOSOnly),
+        .product(name: "MapboxNavigationCore", package: "mapbox-navigation-ios", condition: iOSOnly),
+        .product(name: "MapboxNavigationUIKit", package: "mapbox-navigation-ios", condition: iOSOnly),
+        .product(name: "MapboxDirections", package: "mapbox-navigation-ios", condition: iOSOnly)
     ])
     timiNowCarPlayDependencies.append(contentsOf: [
-        .product(name: "MapboxNavigationCore", package: "mapbox-navigation-ios"),
-        .product(name: "MapboxNavigationUIKit", package: "mapbox-navigation-ios"),
-        .product(name: "MapboxDirections", package: "mapbox-navigation-ios")
+        .product(name: "MapboxNavigationCore", package: "mapbox-navigation-ios", condition: iOSOnly),
+        .product(name: "MapboxNavigationUIKit", package: "mapbox-navigation-ios", condition: iOSOnly),
+        .product(name: "MapboxDirections", package: "mapbox-navigation-ios", condition: iOSOnly)
     ])
 }
 

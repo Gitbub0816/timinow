@@ -337,7 +337,14 @@ public struct AuthWorkspaceOption: Identifiable, Hashable, Sendable {
 
     // MARK: - ClinicSessionTokenProviding
 
-    public var hasSession: Bool { activeSessionId != nil && workerToken != nil }
+    // Spelled `get async` to match ClinicSessionTokenProviding's requirement
+    // exactly. Swift lets a @MainActor synchronous property satisfy an async
+    // requirement — the hop supplies the await — but Skip transpiles the
+    // requirement to `suspend fun hasSession()` and a plain getter to a
+    // non-suspend one, so Kotlin sees an unimplemented abstract member.
+    public var hasSession: Bool {
+        get async { activeSessionId != nil && workerToken != nil }
+    }
 
     public func ensureFreshToken() async throws -> String {
         guard activeSessionId != nil else { throw ClinicAPIError.invalidResponse }

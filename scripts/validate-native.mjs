@@ -291,6 +291,43 @@ for (const path of swiftFiles) {
   }
 }
 
+// The Mapbox SDKs import UIKit, so they must stay out of any non-iOS build:
+// `swift test` compiles the whole package for the host, and a Mac with a
+// downloads token configured would otherwise fail inside Mapbox's own sources.
+{
+  const manifest = await read("apps/customer-mobile/Package.swift");
+  for (const product of manifest.matchAll(/\.product\(name:\s*"(Mapbox\w+)"[^)]*\)/g)) {
+    if (!/condition:/.test(product[0])) {
+      throw new Error(`apps/customer-mobile/Package.swift: ${product[1]} is added with no platform condition. Mapbox is iOS-only — add condition: .when(platforms: [.iOS]) or the macOS build of the package fails on 'no such module UIKit'.`);
+    }
+  }
+}
+
+// A protocol requirement spelled `{ get async }` must be satisfied by an
+// equally async implementation. Swift accepts a @MainActor synchronous
+// property, but Skip transpiles the requirement to a suspend function and the
+// synchronous getter to a plain one, so Kotlin reports the abstract member as
+// unimplemented.
+for (const module of ["apps/vet-desktop/Sources/TimiVetCore", "apps/customer-mobile/Sources/TimiNowCore"]) {
+  const sources = await collectFiles(module, ".swift");
+  const asyncRequirements = new Set();
+  const bodies = [];
+  for (const path of sources) {
+    const source = await read(path);
+    bodies.push({ path, source });
+    for (const requirement of source.matchAll(/^\s*var\s+(\w+)\s*:[^{]+\{\s*get\s+async\s*\}/gm)) {
+      asyncRequirements.add(requirement[1]);
+    }
+  }
+  for (const { path, source } of bodies) {
+    for (const property of source.matchAll(/^\s*public\s+var\s+(\w+)\s*:[^{=]+\{([^}]*)\}/gm)) {
+      if (!asyncRequirements.has(property[1])) continue;
+      if (/get\s+async/.test(property[2])) continue;
+      throw new Error(`${path}: public var ${property[1]} satisfies a { get async } protocol requirement with a synchronous getter. Skip generates a suspend function for the requirement and a plain one here, so the Kotlin class does not implement it — spell the getter { get async { ... } }.`);
+    }
+  }
+}
+
 const csharpFiles = await collectFiles("apps/vet-windows", ".cs");
 for (const path of csharpFiles) {
   const problems = bracketProblems(await read(path));
