@@ -44,8 +44,8 @@ struct TimiPrimaryButtonStyle: ButtonStyle {
             .padding(.horizontal, 18)
             .background(color.faded(configuration.isPressed ? 0.82 : 1), in: RoundedRectangle(cornerRadius: 17))
             .overlay(RoundedRectangle(cornerRadius: 17).stroke(TimiColor.ink, lineWidth: 2))
-            .offset(y: configuration.isPressed ? 3 : 0)
-            .shadow(color: TimiColor.ink, radius: 0, x: configuration.isPressed ? 0 : 4, y: configuration.isPressed ? 0 : 5)
+            .offset(y: CGFloat(configuration.isPressed ? 3 : 0))
+            .shadow(color: TimiColor.ink, radius: 0, x: CGFloat(configuration.isPressed ? 0 : 4), y: CGFloat(configuration.isPressed ? 0 : 5))
             .animation(.easeOut(duration: 0.14), value: configuration.isPressed)
     }
 }

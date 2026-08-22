@@ -688,6 +688,30 @@ for (const path of await collectFiles("apps/customer-mobile/Sources", ".swift"))
   }
 }
 
+// A ternary of bare numeric literals handed to an overloaded SwiftUI modifier
+// — scaleEffect, opacity, offset, frame, shadow, lineWidth — leaves the
+// literal's type for the solver to pick, and several overloads accept it. The
+// error is "ambiguous use of <that modifier>", it names a modifier nobody
+// touched, and it only appears once the module's overload set is crowded
+// enough, which is why the Mapbox build hits it and the fallback CI build does
+// not. CGFloat(...) or Double(...) around the ternary settles it.
+{
+  const MODIFIERS = "scaleEffect|opacity|offset|frame|shadow|lineWidth|zoom|padding|blur|rotationEffect";
+  const bare = new RegExp(`\\b(${MODIFIERS})\\(([^()]*?)\\?[^:()]*:\\s*-?\\d+(?:\\.\\d+)?\\s*[,)]`);
+  for (const path of await collectFiles("apps/customer-mobile/Sources/TimiNowUI", ".swift")) {
+    const source = await read(path);
+    for (const [index, line] of source.split("\n").entries()) {
+      // Only the argument itself matters; a conversion anywhere in it means the
+      // literal already has a type.
+      const stripped = line.replace(/\b(?:CGFloat|Double|Int|Float)\([^()]*(?:\([^()]*\)[^()]*)*\)/g, "TYPED");
+      const hit = stripped.match(bare);
+      if (hit) {
+        throw new Error(`${path}:${index + 1}: .${hit[1]}(...) is given a ternary of bare numeric literals. Wrap it in CGFloat(...) or Double(...) — untyped, several overloads accept it and the build fails with "ambiguous use of '${hit[1]}'".`);
+      }
+    }
+  }
+}
+
 // `#if canImport(M)` asks whether M is available. It does not import it. A
 // file that guards on canImport and then names a type from M, without an
 // `import M` anywhere, compiles fine while M is absent and fails the moment it

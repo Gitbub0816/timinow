@@ -44,7 +44,7 @@ struct IntakeFlowView: View {
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 145))], spacing: 10) {
                 ForEach(symptoms, id: \.0) { item in
                     let selected = store.draft.symptomKeys.contains(item.0)
-                    Button { if selected { store.draft.symptomKeys.removeAll(where: { $0 == item.0 }) } else { store.draft.symptomKeys.append(item.0) } } label: { HStack(spacing: 8) { Image(systemName: item.2); Text(item.1).font(.caption).fontWeight(.bold); Spacer() }.padding(12).frame(minHeight: 54).background(selected ? TimiColor.blueSoft : .white, in: RoundedRectangle(cornerRadius: 15)).overlay(RoundedRectangle(cornerRadius: 15).stroke(selected ? TimiColor.blue : TimiColor.ink.faded(0.14), lineWidth: selected ? 2 : 1)) }.buttonStyle(.plain)
+                    Button { if selected { store.draft.symptomKeys.removeAll(where: { $0 == item.0 }) } else { store.draft.symptomKeys.append(item.0) } } label: { HStack(spacing: 8) { Image(systemName: item.2); Text(item.1).font(.caption).fontWeight(.bold); Spacer() }.padding(12).frame(minHeight: 54).background(selected ? TimiColor.blueSoft : .white, in: RoundedRectangle(cornerRadius: 15)).overlay(RoundedRectangle(cornerRadius: 15).stroke(selected ? TimiColor.blue : TimiColor.ink.faded(0.14), lineWidth: CGFloat(selected ? 2 : 1))) }.buttonStyle(.plain)
                 }
             }
             VStack(alignment: .leading, spacing: 8) { Text("When did it begin?").font(.headline); TextField("Example: around 7 AM today", text: $store.draft.startedWhen).textFieldStyle(.roundedBorder) }

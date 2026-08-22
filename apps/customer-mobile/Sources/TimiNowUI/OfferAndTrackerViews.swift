@@ -71,7 +71,7 @@ struct OfferSearchView: View {
             Picker("Sort offers", selection: $sort) { Text("Recommended").tag("recommended"); Text("Closest").tag("distance"); Text("Shortest wait").tag("wait"); Text("Lowest deposit").tag("cost") }.pickerStyle(.segmented)
             ForEach(Array(offers.enumerated()), id: \.element.id) { index, offer in
                 OfferCard(offer: offer, rank: index + 1, isWorking: store.isWorking) { Task { await store.selectOffer(offer) } }
-                    .offset(y: appeared.contains(offer.id) ? 0 : 22).opacity(appeared.contains(offer.id) ? 1 : 0)
+                    .offset(y: CGFloat(appeared.contains(offer.id) ? 0 : 22)).opacity(Double(appeared.contains(offer.id) ? 1 : 0))
                     .onAppear { withAnimation(.spring(response: 0.48, dampingFraction: 0.82).delay(Double(index) * 0.08)) { _ = appeared.insert(offer.id) } }
             }
             Text("Availability and waits are reported by clinics and may change. Emergency hospitals independently triage every arriving patient.").font(.caption).foregroundStyle(TimiColor.muted).padding(.top, 6)
