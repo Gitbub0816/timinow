@@ -1,0 +1,81 @@
+# Manual deploy to production.
+#
+# Deliberately `workflow_dispatch` only. Nothing here fires on a push: a
+# veterinary intake network should not redeploy because someone edited a README,
+# and a surprise production deploy during a busy evening is the kind of thing
+# you find out about from a clinic rather than from a dashboard.
+#
+# Repository secrets consumed:
+#   CLOUDFLARE_API_TOKEN   Workers Scripts:Edit + D1:Edit
+#   CLOUDFLARE_ACCOUNT_ID
+#
+# Worker secrets (Clerk, Twilio, Stripe) are set once with `wrangler secret put`
+# and live in Cloudflare, not here. This workflow never sees them.
+name: Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Which Workers to deploy
+        required: true
+        default: all
+        type: choice
+        options: [all, customer, vet, admin, voice]
+      migrate:
+        description: Apply pending D1 migrations first
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy ${{ inputs.target }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+      - run: npm ci
+
+      # The same gate that runs locally. A config that disagrees with itself —
+      # a voice URL that no route serves, an origin missing from
+      # AUTHORIZED_PARTIES — fails here rather than in front of a clinic.
+      - name: Validate
+        run: npm run check
+
+      - name: Apply migrations
+        if: ${{ inputs.migrate }}
+        run: npm run db:migrate:remote
+
+      - name: Deploy
+        run: |
+          case "${{ inputs.target }}" in
+            all)      npm run deploy:all ;;
+            customer) npm run deploy ;;
+            vet)      npm run deploy:vet ;;
+            admin)    npm run deploy:admin ;;
+            voice)    npm run deploy:voice ;;
+          esac
+
+      - name: Health
+        run: |
+          status=0
+          for host in timinow.pet providers.timinow.pet admin.timinow.pet voice.timinow.pet; do
+            printf '%-24s ' "$host"
+            if curl -fsS --max-time 15 "https://$host/api/health"; then echo; else echo "no response"; status=1; fi
+          done
+          exit $status

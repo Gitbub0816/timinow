@@ -1,5 +1,9 @@
 # Keys, secrets, and accounts you still need
 
+> Hostnames, DNS records, Twilio endpoints, and every dashboard field are in
+> [`PRODUCTION-SETUP.md`](PRODUCTION-SETUP.md). This document explains what each
+> value *is*; that one tells you exactly what to paste where.
+
 Everything below is either **missing** from the repository today or must be
 created in a third-party dashboard. Nothing here is checked in, and nothing here
 should ever be checked in.

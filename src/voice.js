@@ -37,7 +37,16 @@ export function buildCallScript({ locationName, spokenConcern, travelMinutes, ur
 
 /* --------------------------------------------------------------- TwiML --- */
 
-function sayXml(text, { voice = "Polly.Joanna" } = {}) {
+/**
+ * Twilio's neural Polly voices cost marginally more per character than the
+ * standard ones and sound markedly less synthetic. This is the first thing a
+ * veterinary practice hears from Tími, often over a speakerphone in a noisy
+ * treatment area, so the better voice is worth it. Override with
+ * VOICE_SAY_VOICE if you prefer another.
+ */
+export const DEFAULT_SAY_VOICE = "Polly.Joanna-Neural";
+
+function sayXml(text, { voice = DEFAULT_SAY_VOICE } = {}) {
   return `<Say voice="${escapeXml(voice)}">${escapeXml(text)}</Say>`;
 }
 
@@ -258,4 +267,54 @@ export function normalizePhone(value) {
   if (digits.length === 10) return `+1${digits}`;
   if (digits.length === 11 && digits.startsWith("1")) return `+${digits}`;
   return null;
+}
+
+/* ------------------------------------------------------------- inbound --- */
+
+/**
+ * A clinic ringing the number back.
+ *
+ * Tími only ever dials out, but the number it dials from lands on the clinic's
+ * caller ID, and a clinic that missed the call will try it. Left unconfigured
+ * they reach Twilio's stock demo message, which is a poor thing for a
+ * veterinary practice to hear from a company asking them to take a patient.
+ *
+ * When the caller's number matches a clinic with a request still open, this
+ * offers the same keypad choice the outbound call did — the missed call becomes
+ * a second chance to take the patient rather than a dead end.
+ */
+export function inboundTwiml({ locationName, spokenConcern, travelMinutes, gatherActionUrl }) {
+  const greeting = locationName
+    ? `Hi, this is Tími. Thanks for calling back, ${locationName}.`
+    : "Hi, this is Tími, the veterinary intake network.";
+
+  if (!spokenConcern || !gatherActionUrl) {
+    const nothingOpen = `${greeting} There are no open requests for your clinic right now. ` +
+      "You can see everything Tími has sent you at providers dot timinow dot pet. Goodbye.";
+    return `<?xml version="1.0" encoding="UTF-8"?><Response>${sayXml(nothingOpen)}<Hangup/></Response>`;
+  }
+
+  const minutes = Number.isFinite(travelMinutes) ? ` about ${travelMinutes} minutes away` : "";
+  const body = `${greeting} There is still an open request: a pet owner is looking for immediate care for ` +
+    `${spokenConcern}${minutes}. Do you have time to see them? ` +
+    "Press 1 to confirm you can take them, or press 2 to decline.";
+
+  return '<?xml version="1.0" encoding="UTF-8"?><Response>' +
+    `<Gather input="dtmf" numDigits="1" timeout="8" action="${escapeXml(gatherActionUrl)}" method="POST">` +
+    `${sayXml(body)}</Gather>` +
+    sayXml("We didn't receive a response. You can respond at providers dot timinow dot pet. Goodbye.") +
+    "<Hangup/></Response>";
+}
+
+/**
+ * The fallback Twilio calls when the primary request URL errors or times out.
+ *
+ * Deliberately static: no database, no lookups, nothing that can fail twice. A
+ * fallback that depends on the thing that just broke is not a fallback.
+ */
+export function inboundFallbackTwiml() {
+  const message = "Hi, this is Tími, the veterinary intake network. " +
+    "We can't take calls on this line right now. " +
+    "If Tími called you about a patient, you can respond at providers dot timinow dot pet. Goodbye.";
+  return `<?xml version="1.0" encoding="UTF-8"?><Response>${sayXml(message)}<Hangup/></Response>`;
 }

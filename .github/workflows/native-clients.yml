@@ -39,6 +39,22 @@ jobs:
       - name: Generate Xcode project
         working-directory: apps/customer-mobile/Darwin
         run: xcodegen generate
+      # The Mapbox SDKs are only fetched when a downloads token is configured;
+      # without the secret the build takes the non-Mapbox fallback path, which
+      # is what a fork or a first-time contributor gets.
+      - name: Configure Mapbox downloads
+        env:
+          MAPBOX_DOWNLOADS_TOKEN: ${{ secrets.MAPBOX_DOWNLOADS_TOKEN }}
+        run: |
+          if [ -z "$MAPBOX_DOWNLOADS_TOKEN" ]; then
+            echo "No Mapbox downloads token; building the non-Mapbox fallback path."
+            exit 0
+          fi
+          printf 'machine api.mapbox.com\n  login mapbox\n  password %s\n' \
+            "$MAPBOX_DOWNLOADS_TOKEN" > "$HOME/.netrc"
+          chmod 600 "$HOME/.netrc"
+          echo "TIMI_MAPBOX=1" >> "$GITHUB_ENV"
+
       - name: Resolve Swift packages
         run: SKIP_BRIDGE=1 swift package resolve
       - name: Run core tests

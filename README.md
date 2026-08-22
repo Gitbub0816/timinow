@@ -146,7 +146,8 @@ end-to-end suites.
 ## Documents
 
 - [`docs/PLATFORM-CONTRACT.md`](docs/PLATFORM-CONTRACT.md) — the cross-surface contract
-- [`docs/PRODUCTION-KEYS.md`](docs/PRODUCTION-KEYS.md) — every key and dashboard setting still needed
+- [`docs/PRODUCTION-SETUP.md`](docs/PRODUCTION-SETUP.md) — hostnames, DNS, Twilio endpoints, every dashboard field
+- [`docs/PRODUCTION-KEYS.md`](docs/PRODUCTION-KEYS.md) — what each key is and where to find it
 - [`docs/NAVIGATION.md`](docs/NAVIGATION.md) — voices, instruction wording, CarPlay, Watch
 - [`docs/MVP-ARCHITECTURE.md`](docs/MVP-ARCHITECTURE.md)
 - [`docs/PAYMENTS-AND-TENANT-POLICIES.md`](docs/PAYMENTS-AND-TENANT-POLICIES.md)

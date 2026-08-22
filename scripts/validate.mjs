@@ -42,6 +42,9 @@ const requiredFiles = [
   "migrations/0005_voice_calls.sql",
   "scripts/voice-test.mjs",
   ".env.example",
+  "docs/PRODUCTION-SETUP.md",
+  "scripts/bootstrap.sh",
+  ".github/workflows/deploy.yml",
   "apps/vet-web/public/index.html",
   "apps/vet-web/public/app.js",
   "apps/vet-web/src/index.js",
@@ -118,11 +121,55 @@ if (!wranglerVoice.includes('"d1_databases"')) throw new Error("The voice Worker
 if (!wranglerVoice.includes('"crons"')) throw new Error("The voice Worker must run a cron trigger to drain the call queue");
 if (!voiceModule.includes("verifyTwilioSignature")) throw new Error("The voice module must verify Twilio request signatures");
 if (!voiceModule.includes("SHA-1")) throw new Error("Twilio signature verification must use HMAC-SHA1, as Twilio specifies");
-for (const route of ["/api/voice/outbound/", "/api/voice/gather/", "/api/voice/status/"]) {
+for (const route of ["/api/voice/outbound/", "/api/voice/gather/", "/api/voice/status/", "/api/voice/inbound", "/api/voice/inbound/gather", "/api/voice/inbound-fallback"]) {
   if (!voiceWorker.includes(route)) throw new Error(`The voice Worker is missing its ${route} webhook`);
 }
 if (!voiceWorker.includes("verifyTwilioSignature")) throw new Error("The voice Worker must verify every Twilio webhook signature");
 if (!voiceWorker.includes("verifyAttemptToken")) throw new Error("Voice webhooks must be scoped to a single call attempt");
+
+/**
+ * Twilio calls the fallback URL precisely when the primary one has failed, so a
+ * fallback that reads the database is not a fallback. It must stay static.
+ */
+if (!voiceModule.includes("inboundFallbackTwiml")) throw new Error("The voice module must provide static fallback TwiML");
+const fallbackBody = voiceModule.slice(voiceModule.indexOf("export function inboundFallbackTwiml"));
+if (/env\.DB|prepare\(|await /.test(fallbackBody.slice(0, fallbackBody.indexOf("\n}")))) {
+  throw new Error("The inbound fallback TwiML must not depend on anything that can fail");
+}
+
+/**
+ * Twilio signs the whole callback URL, so VOICE_PUBLIC_URL must name exactly
+ * the host the voice Worker answers on. A mismatch does not degrade — every
+ * clinic call is rejected and nobody is ever reached — and it is invisible
+ * until someone reads the logs, so it is worth a build failure.
+ */
+const voicePublicUrl = wranglerVoice.match(/"VOICE_PUBLIC_URL":\s*"([^"]*)"/)?.[1] || "";
+const voiceRoutes = [...wranglerVoice.matchAll(/"pattern":\s*"([^"]+)"/g)].map((match) => match[1]);
+if (voicePublicUrl) {
+  const host = new URL(voicePublicUrl).host;
+  if (!voiceRoutes.some((route) => route.split("/")[0] === host)) {
+    throw new Error(`VOICE_PUBLIC_URL is ${voicePublicUrl} but no route serves ${host}; Twilio signature verification would reject every call`);
+  }
+} else if (voiceRoutes.length) {
+  throw new Error("The voice Worker has a route but no VOICE_PUBLIC_URL, so it cannot build Twilio callback URLs");
+}
+
+/**
+ * Every origin a browser loads a Clerk session on must be an authorized party,
+ * or the Worker rejects its own front end.
+ */
+const authorizedParties = (wrangler.match(/"AUTHORIZED_PARTIES":\s*"([^"]*)"/)?.[1] || "")
+  .split(",").map((entry) => entry.trim()).filter(Boolean);
+if (authorizedParties.length) {
+  for (const [label, config] of [["customer", wrangler], ["veterinary", wranglerVet], ["admin", wranglerAdmin]]) {
+    for (const pattern of [...config.matchAll(/"pattern":\s*"([^"]+)"/g)].map((match) => match[1])) {
+      const origin = `https://${pattern.split("/")[0]}`;
+      if (!authorizedParties.includes(origin)) {
+        throw new Error(`The ${label} Worker serves ${origin} but it is not in AUTHORIZED_PARTIES, so Clerk sessions from it would be rejected`);
+      }
+    }
+  }
+}
 
 // A clinic answering the phone must take exactly the same path as a clinic
 // clicking accept. A second implementation is the failure mode this guards.
@@ -133,9 +180,31 @@ if (/INSERT INTO care_offers/i.test(voiceWorker)) throw new Error("The voice Wor
 for (const key of ["TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "TWILIO_FROM_NUMBER", "CLERK_SECRET_KEY", "STRIPE_SECRET_KEY", "MAPBOX_PUBLIC_TOKEN"]) {
   if (!envExample.includes(key)) throw new Error(`.env.example is missing ${key}`);
 }
+/**
+ * Two different mistakes, both of which put a secret in version control.
+ *
+ * The first is naming it: a `CLERK_SECRET_KEY` with a value in a committed
+ * config. The second is subtler and is the one that actually happened — a
+ * secret pasted into a *public* slot, where the name looks innocent but the
+ * value is served to every browser by `/api/config`. Check the shape of the
+ * value, not only the name of the key.
+ */
+const SECRET_SHAPES = [
+  [/"sk\.[A-Za-z0-9._-]{8,}"/, "a Mapbox secret token (sk.)"],
+  [/"sk_(?:live|test)_[A-Za-z0-9]{8,}"/, "a Clerk or Stripe secret key (sk_)"],
+  [/"rk_(?:live|test)_[A-Za-z0-9]{8,}"/, "a Stripe restricted key (rk_)"],
+  [/"whsec_[A-Za-z0-9]{8,}"/, "a webhook signing secret (whsec_)"],
+  [/"SG\.[A-Za-z0-9._-]{16,}"/, "a SendGrid key (SG.)"],
+  [/"TWILIO_AUTH_TOKEN"\s*:\s*"[0-9a-f]{32}"/, "a Twilio auth token"]
+];
 for (const [label, config] of [["customer", wrangler], ["veterinary", wranglerVet], ["admin", wranglerAdmin], ["voice", wranglerVoice]]) {
-  if (/(?:CLERK_SECRET_KEY|TWILIO_AUTH_TOKEN|STRIPE_SECRET_KEY)"\s*:\s*"[^"]+"/.test(config)) {
-    throw new Error(`The ${label} Worker config appears to contain a secret value; use wrangler secret put`);
+  if (/(?:CLERK_SECRET_KEY|TWILIO_AUTH_TOKEN|STRIPE_SECRET_KEY|STRIPE_WEBHOOK_SECRET)"\s*:\s*"[^"]+"/.test(config)) {
+    throw new Error(`The ${label} Worker config names a secret with a value; use wrangler secret put instead`);
+  }
+  for (const [shape, description] of SECRET_SHAPES) {
+    if (shape.test(config)) {
+      throw new Error(`The ${label} Worker config contains ${description}. Committed config is public and is served to browsers by /api/config — move it to wrangler secret put and rotate the exposed value.`);
+    }
   }
 }
 
