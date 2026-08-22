@@ -37,7 +37,31 @@ die()  { printf '\033[31m%s\033[0m\n' "$*" >&2; exit 1; }
 #
 # Piped rather than followed with `tail -f`: in `a | b | c &` the shell reports
 # only c's pid, so killing it would leave tail running after the script exits.
-BUILD_FILTER='^(Skip |Compiling|Compile|Build|Ld |CodeSign|Signing|Touch|Copy|Prepare|Resolve|error:|.*: error:)'
+# Matches the phase headings xcodebuild prints, plus anything that names an
+# error. The skipstone plugin's own output is thousands of note: lines naming
+# every transpiled file, which is the one phase that must NOT be echoed — so
+# the heartbeat below covers the silence instead.
+BUILD_FILTER='^(Skip |Compiling|Compile|Build|Ld |Link|CodeSign|Signing|Touch|Copy|Prepare|Resolve|Apply build tool|Process build tool|Create|Validate|\*\* |error:|.*: error:)'
+
+# xcodebuild goes quiet for minutes at a time while Skip transpiles its stack.
+# Without this there is no way to tell that from a hang.
+start_heartbeat() {
+  ( elapsed=0
+    while true; do
+      sleep 30
+      elapsed=$(( elapsed + 30 ))
+      printf '\033[2m  … still building (%dm%02ds)\033[0m\n' "$(( elapsed / 60 ))" "$(( elapsed % 60 ))"
+    done ) &
+  HEARTBEAT_PID=$!
+}
+
+stop_heartbeat() {
+  [ -n "${HEARTBEAT_PID:-}" ] && kill "$HEARTBEAT_PID" 2>/dev/null
+  HEARTBEAT_PID=""
+}
+
+# A killed script must not leave the heartbeat behind.
+trap 'stop_heartbeat' EXIT INT TERM
 
 TEAM="${DEVELOPMENT_TEAM:-}"
 INSTALL=true
@@ -92,6 +116,7 @@ bold "3. Build"
 dim "  The first build compiles the whole Skip stack — expect several minutes."
 dim "  Full output: /tmp/timi-mac-build.log"
 set +e +o pipefail
+start_heartbeat
 # -allowProvisioningUpdates lets Xcode create the development profile for the
 # keychain-access-group on first run rather than failing with a bare
 # "requires a development certificate". It talks to Apple to do that, so if
@@ -113,6 +138,7 @@ set +e +o pipefail
   | awk '{ if (length($0) > 110) $0 = substr($0, 1, 107) "..."; print "  " $0; fflush() }'
 BUILD_STATUS=${PIPESTATUS[0]}
 set -e -o pipefail
+stop_heartbeat
 if [ "$BUILD_STATUS" -ne 0 ]; then
   echo >&2
   grep -E "error:" /tmp/timi-mac-build.log | sort -u | head -20 >&2
