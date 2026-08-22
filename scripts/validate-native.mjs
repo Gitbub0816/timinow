@@ -67,7 +67,9 @@ const nativeWorkflow = await read(".github/workflows/native-clients.yml");
 
 const expectations = [
   [validator, "not acting like", "deterministic vague-concern rule"],
-  [validator, "words.count < 8", "concern detail threshold"],
+  // The Worker's threshold, not a second opinion: it measures characters as
+  // well as words, and this asked for eight words and counted no characters.
+  [validator, "trimmed.count < 30 || words.count < 6", "concern detail threshold"],
   [gateway, "targetLimit: 30", "30-clinic fan-out contract"],
   [tracker, "sorted.prefix(5)", "five-offer comparison"],
   [onboarding, "completeOnboarding", "guided onboarding completion"],
@@ -1032,6 +1034,105 @@ for (const path of [
   const store = await read("apps/customer-mobile/Sources/TimiNowCore/AppStore.swift");
   if (!/auth\.onProfileResolved = /.test(store)) {
     throw new Error("apps/customer-mobile/Sources/TimiNowCore/AppStore.swift never subscribes to onProfileResolved, so nothing sign-in learns reaches the intake form.");
+  }
+}
+
+// Every closed set the Worker validates, checked against what the phone app
+// actually sends. This is the class of bug that made the app unusable rather
+// than merely broken: `startedWhen` was a free-text field — placeholder
+// "Example: around 7 AM today" — and the Worker takes one of five tokens, so
+// no care request the app has ever sent could be accepted. The web form
+// (public/index.html) had the right dropdown all along, which is exactly why
+// nobody caught it: the surface being exercised was not the surface shipping.
+{
+  const worker = await read("src/index.js");
+  const catalog = await read("src/catalog.js");
+  const setFrom = (source, name) => {
+    const match = source.match(new RegExp(`${name} = new Set\\(\\[([^\\]]*)\\]`));
+    if (!match) throw new Error(`Could not read ${name} from the Worker.`);
+    return new Set([...match[1].matchAll(/"([^"]+)"/g)].map((hit) => hit[1]));
+  };
+  const rawValues = (source, enumName) => {
+    const body = source.match(new RegExp(`enum ${enumName}[^{]*\\{([\\s\\S]*?)\\n\\}`));
+    if (!body) throw new Error(`Could not read ${enumName} from the Swift sources.`);
+    const values = new Set();
+    for (const line of body[1].split("\n")) {
+      const explicit = line.match(/^\s*case\s+(\w+)\s*=\s*"([^"]+)"/);
+      if (explicit) { values.add(explicit[2]); continue; }
+      const implicit = line.match(/^\s*case\s+([\w,\s]+)$/);
+      // `case dog, cat, rabbit` — a bare case's raw value is its own name.
+      if (implicit) for (const name of implicit[1].split(",")) {
+        const trimmed = name.trim();
+        if (trimmed) values.add(trimmed);
+      }
+    }
+    return values;
+  };
+  const models = await read("apps/customer-mobile/Sources/TimiNowCore/Models.swift");
+  const validator = await read("apps/customer-mobile/Sources/TimiNowCore/ConcernValidator.swift");
+  const intake = await read("apps/customer-mobile/Sources/TimiNowUI/IntakeFlowView.swift");
+
+  const symptomList = intake.match(/let symptoms = \[([\s\S]*?)\n\s*\]/);
+  if (!symptomList) throw new Error("apps/customer-mobile/Sources/TimiNowUI/IntakeFlowView.swift no longer declares the symptom option list.");
+  const symptomKeys = new Set([...symptomList[1].matchAll(/\("([a-z_]+)",/g)].map((hit) => hit[1]));
+
+  const comparisons = [
+    ["startedWhen", rawValues(validator, "ConcernOnset"), setFrom(worker, "VALID_ONSETS"), "src/index.js VALID_ONSETS", "ConcernOnset"],
+    ["symptoms", symptomKeys, setFrom(worker, "VALID_SYMPTOMS"), "src/index.js VALID_SYMPTOMS", "IntakeFlowView's symptom list"],
+    ["pet.species", rawValues(models, "PetSpecies"), setFrom(catalog, "VALID_SPECIES"), "src/catalog.js VALID_SPECIES", "PetSpecies"],
+    ["urgency", rawValues(models, "CareUrgency"), setFrom(catalog, "VALID_URGENCY"), "src/catalog.js VALID_URGENCY", "CareUrgency"]
+  ];
+  for (const [field, sent, accepted, workerName, swiftName] of comparisons) {
+    const rejected = [...sent].filter((value) => !accepted.has(value));
+    if (rejected.length) {
+      throw new Error(`${swiftName} can send ${field} = ${rejected.join(", ")}, which ${workerName} does not accept. Every care request choosing one is refused with 422 VALIDATION_FAILED on the last screen of the flow.`);
+    }
+  }
+  // Onsets are the one set that must match in both directions: a token the
+  // Worker takes and the app never offers is a choice a customer cannot make.
+  const onsets = rawValues(validator, "ConcernOnset");
+  const missing = [...setFrom(worker, "VALID_ONSETS")].filter((value) => !onsets.has(value));
+  if (missing.length) {
+    throw new Error(`ConcernOnset does not offer ${missing.join(", ")}, which src/index.js accepts. Nobody can choose them.`);
+  }
+  // And it has to be a choice, not typed.
+  if (/TextField\([^)]*text: \$store\.draft\.startedWhen/.test(intake)) {
+    throw new Error("apps/customer-mobile/Sources/TimiNowUI/IntakeFlowView.swift binds startedWhen to a TextField. Free text cannot match the Worker's five tokens, so every request is rejected.");
+  }
+
+  // The two closed sets the tracker screen posts into, which live as bare
+  // string literals scattered across the UI rather than as a type.
+  const literalsIn = (sources, pattern) => {
+    const found = new Set();
+    for (const source of sources) for (const hit of source.matchAll(pattern)) found.add(hit[1]);
+    return found;
+  };
+  const uiSources = [];
+  for (const path of await collectFiles("apps/customer-mobile/Sources/TimiNowUI", ".swift")) {
+    uiSources.push(await read(path));
+  }
+  const setLiteral = (name) => {
+    const match = worker.match(new RegExp(`const ${name} = new Set\\(\\[([^\\]]*)\\]`));
+    return match ? new Set([...match[1].matchAll(/"([^"]+)"/g)].map((hit) => hit[1])) : null;
+  };
+  // These are declared inline in their handlers, so read them by their message.
+  const milestones = new Set(["arrived", "triaged", "seen", "departed", "staff_wait_quote"]);
+  const customerStatuses = new Set(["cancelled", "en_route", "arrived"]);
+  if (!worker.includes('new Set(["arrived", "triaged", "seen", "departed", "staff_wait_quote"])')) {
+    throw new Error("src/index.js no longer declares the observation milestone set this check compares against — update scripts/validate-native.mjs alongside it.");
+  }
+  if (!worker.includes('new Set(["cancelled", "en_route", "arrived"])')) {
+    throw new Error("src/index.js no longer declares the customer intake-status set this check compares against — update scripts/validate-native.mjs alongside it.");
+  }
+  void setLiteral;
+  for (const [label, sent, accepted, endpoint] of [
+    ["milestone", literalsIn(uiSources, /store\.record\("([a-z_]+)"\)/g), milestones, "POST /api/observations"],
+    ["status", literalsIn(uiSources, /updateIntake\(status: "([a-z_]+)"\)/g), customerStatuses, "POST /api/intakes/{id}/status"]
+  ]) {
+    const rejected = [...sent].filter((value) => !accepted.has(value));
+    if (rejected.length) {
+      throw new Error(`The tracker screen posts ${label} = ${rejected.join(", ")} to ${endpoint}, which the Worker rejects with 422.`);
+    }
   }
 }
 

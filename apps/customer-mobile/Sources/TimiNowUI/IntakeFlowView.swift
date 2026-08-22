@@ -47,7 +47,29 @@ struct IntakeFlowView: View {
                     Button { if selected { store.draft.symptomKeys.removeAll(where: { $0 == item.0 }) } else { store.draft.symptomKeys.append(item.0) } } label: { HStack(spacing: 8) { Image(systemName: item.2); Text(item.1).font(.caption).fontWeight(.bold); Spacer() }.padding(12).frame(minHeight: 54).background(selected ? TimiColor.blueSoft : .white, in: RoundedRectangle(cornerRadius: 15)).overlay(RoundedRectangle(cornerRadius: 15).stroke(selected ? TimiColor.blue : TimiColor.ink.faded(0.14), lineWidth: CGFloat(selected ? 2 : 1))) }.buttonStyle(.plain)
                 }
             }
-            VStack(alignment: .leading, spacing: 8) { Text("When did it begin?").font(.headline); TextField("Example: around 7 AM today", text: $store.draft.startedWhen).textFieldStyle(.roundedBorder) }
+            // Five choices, not a text field. The Worker validates this against
+            // a closed set and rejects everything else with "Choose when the
+            // concern started", so "around 7 AM today" — the placeholder this
+            // used to show — could never be accepted.
+            VStack(alignment: .leading, spacing: 8) {
+                Text("When did it begin?").font(.headline)
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 145))], spacing: 10) {
+                    ForEach(ConcernOnset.allCases, id: \.self) { onset in
+                        let selected = store.draft.startedWhen == onset.rawValue
+                        Button { store.draft.startedWhen = selected ? "" : onset.rawValue } label: {
+                            HStack(spacing: 8) {
+                                Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                                Text(onset.title).font(.caption).fontWeight(.bold)
+                                Spacer()
+                            }
+                            .padding(12)
+                            .frame(minHeight: 54)
+                            .background(selected ? TimiColor.blueSoft : .white, in: RoundedRectangle(cornerRadius: 15))
+                            .overlay(RoundedRectangle(cornerRadius: 15).stroke(selected ? TimiColor.blue : TimiColor.ink.faded(0.14), lineWidth: CGFloat(selected ? 2 : 1)))
+                        }.buttonStyle(.plain)
+                    }
+                }
+            }
             VStack(alignment: .leading, spacing: 8) {
                 HStack { Text("What exactly have you noticed?").font(.headline); Spacer(); Text("\(store.concernValidation.score)% specific").font(.caption).fontWeight(.black).foregroundStyle(store.concernValidation.isReady ? TimiColor.blue : TimiColor.coral) }
                 TextEditor(text: $store.draft.summary).frame(minHeight: 128).padding(10).background(.white, in: RoundedRectangle(cornerRadius: 15)).overlay(RoundedRectangle(cornerRadius: 15).stroke(TimiColor.ink.faded(0.18)))
