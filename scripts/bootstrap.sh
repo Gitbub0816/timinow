@@ -84,6 +84,14 @@ fi
 # read from the file on demand rather than held in a map. There are about twenty
 # lookups; the cost is irrelevant and the script runs everywhere.
 
+# The last non-empty assignment wins, which is what a shell does when it sources
+# the same file, and what the file looks like it means. Reading the first one
+# instead — as this did — makes a copy of .env.example with the real values
+# appended below the placeholders resolve to every placeholder: the key is
+# plainly in the file, and every lookup comes back blank.
+#
+# `export KEY=value` counts too. Stripping all whitespace from the key turned
+# that into `exportKEY`, which matched nothing, with the same silent result.
 env_value() {
   awk -v want="$1" '
     /^[[:space:]]*#/ { next }
@@ -92,15 +100,16 @@ env_value() {
       if (idx == 0) next
       key = substr($0, 1, idx - 1)
       val = substr($0, idx + 1)
+      sub(/^[[:space:]]*export[[:space:]]+/, "", key)
       gsub(/[[:space:]]/, "", key)
       if (key != want) next
       sub(/[[:space:]]+$/, "", val)
       sub(/^[[:space:]]+/, "", val)
       if (val ~ /^".*"$/) val = substr(val, 2, length(val) - 2)
       else if (val ~ /^\047.*\047$/) val = substr(val, 2, length(val) - 2)
-      print val
-      exit
+      if (val != "") last = val
     }
+    END { if (last != "") print last }
   ' "$ENV_FILE"
 }
 
@@ -119,6 +128,29 @@ FOUND=$(awk '
 ' "$ENV_FILE")
 
 bold "Read $FOUND non-empty values from $ENV_FILE"
+# Say so when a key is assigned more than once. It is legal and the last
+# non-empty one wins, but it is also exactly what a half-filled copy of
+# .env.example looks like, and the reader deserves to know which value is
+# actually in play before it turns up in production.
+DUPLICATES="$(awk '
+  /^[[:space:]]*#/ { next }
+  {
+    idx = index($0, "=")
+    if (idx == 0) next
+    key = substr($0, 1, idx - 1)
+    sub(/^[[:space:]]*export[[:space:]]+/, "", key)
+    gsub(/[[:space:]]/, "", key)
+    if (key == "") next
+    seen[key]++
+  }
+  END { for (k in seen) if (seen[k] > 1) printf "%s ", k }
+' "$ENV_FILE")"
+if [ -n "$DUPLICATES" ]; then
+  warn "  Assigned more than once: $DUPLICATES"
+  dim  "  The last non-empty value wins, as a shell would. If you copied"
+  dim  "  .env.example and added your values below rather than filling in the"
+  dim  "  placeholders, those placeholders are the earlier, blank ones."
+fi
 echo
 
 
