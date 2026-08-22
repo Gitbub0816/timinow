@@ -46,6 +46,8 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
         let storedHistory: [CareHistoryItem] = []
         let completedOnboarding = false
         let apiBaseURLText = TimiEnvironment.defaultAPIBaseURL
+        let storedOwner = ("", "", "")
+        let storedDeveloperMode = false
         let storedNavigationPreferences = NavigationPreferences.default
         #else
         let defaults = UserDefaults.standard
@@ -58,6 +60,12 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
         // pin the app in demo mode forever.
         let storedBaseURL = defaults.string(forKey: "timi.apiBaseURL") ?? ""
         let apiBaseURLText = storedBaseURL.isEmpty ? TimiEnvironment.defaultAPIBaseURL : storedBaseURL
+        let storedDeveloperMode = defaults.bool(forKey: "timi.developerMode")
+        let storedOwner = (
+            defaults.string(forKey: "timi.owner.name") ?? "",
+            defaults.string(forKey: "timi.owner.phone") ?? "",
+            defaults.string(forKey: "timi.owner.email") ?? ""
+        )
         let storedNavigationPreferences = Self.decode(NavigationPreferences.self, from: defaults.data(forKey: "timi.navigation.preferences")) ?? .default
         #endif
         self.pets = storedPets
@@ -67,6 +75,10 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
         self.history = storedHistory
         self.hasCompletedOnboarding = completedOnboarding
         self.apiBaseURLText = apiBaseURLText
+        self.developerModeEnabled = storedDeveloperMode
+        self.ownerName = storedOwner.0
+        self.ownerPhone = storedOwner.1
+        self.ownerEmail = storedOwner.2
         self.navigationPreferences = storedNavigationPreferences
         self.gateway = TimiGateway(baseURL: Self.validBaseURL(apiBaseURLText))
     }
@@ -100,11 +112,57 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
         persistPets()
     }
 
+    /// Who to call, remembered.
+    ///
+    /// The draft is rebuilt from scratch on every care request — it has to be,
+    /// since the concern is new each time — and that wiped the owner's name,
+    /// phone and email along with it. Typing your own phone number again while
+    /// your dog is being sick is not a small annoyance. Kept separately from
+    /// the draft for exactly that reason, and written back whenever it changes.
+    /// Reveals the Worker address and the onboarding replay. Off for everyone
+    /// who has not deliberately turned it on.
+    public var developerModeEnabled: Bool {
+        didSet {
+            #if !os(Android)
+            defaults.set(developerModeEnabled, forKey: "timi.developerMode")
+            #endif
+        }
+    }
+
+    public var ownerName: String {
+        didSet { persistOwner() }
+    }
+    public var ownerPhone: String {
+        didSet { persistOwner() }
+    }
+    public var ownerEmail: String {
+        didSet { persistOwner() }
+    }
+
     public func beginCare() {
         draft = CareDraft(pet: selectedPet)
         draft.latitude = currentLatitude
         draft.longitude = currentLongitude
+        draft.ownerName = ownerName
+        draft.ownerPhone = ownerPhone
+        draft.ownerEmail = ownerEmail
         route = .intake
+    }
+
+    /// Called when a search is submitted, so details typed into the intake
+    /// screen are remembered even if Settings was never opened.
+    func rememberOwnerFromDraft() {
+        if !draft.ownerName.isEmpty { ownerName = draft.ownerName }
+        if !draft.ownerPhone.isEmpty { ownerPhone = draft.ownerPhone }
+        if !draft.ownerEmail.isEmpty { ownerEmail = draft.ownerEmail }
+    }
+
+    private func persistOwner() {
+        #if !os(Android)
+        defaults.set(ownerName, forKey: "timi.owner.name")
+        defaults.set(ownerPhone, forKey: "timi.owner.phone")
+        defaults.set(ownerEmail, forKey: "timi.owner.email")
+        #endif
     }
 
     public func setLocation(latitude: Double, longitude: Double) {
@@ -128,6 +186,7 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
         guard concernValidation.isReady, draft.legalConsent, draft.contactConsent else {
             errorMessage = "Complete the observable concern details and required acknowledgements first."; return
         }
+        rememberOwnerFromDraft()
         isWorking = true; errorMessage = nil
         do {
             locations = try await gateway.locations(latitude: draft.latitude, longitude: draft.longitude, species: draft.pet.species)

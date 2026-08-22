@@ -70,9 +70,27 @@ struct ActivityView: View {
 
 struct SettingsView: View {
     @Bindable var store: AppStore
+    @State var versionTaps = 0
+
+    func registerVersionTap() {
+        versionTaps += 1
+        if versionTaps >= 7 { store.developerModeEnabled = true }
+    }
+
     var body: some View {
         Form {
-            Section("Connection") { TextField("https://your-worker.workers.dev", text: $store.apiBaseURLText); Button("Save API address") { store.saveAPIBaseURL() }; LabeledContent("Mode", value: store.isDemoMode ? "Interactive demo" : "Live Worker"); LabeledContent("Talking to", value: store.resolvedAPIAddress) }
+            // What a pet owner actually needs from this screen: who the clinic
+            // calls. Typed once here or once on the intake form, then
+            // remembered — not re-entered on every care request.
+            Section {
+                TextField("Your name", text: $store.ownerName).textContentType(.name)
+                TextField("Mobile number", text: $store.ownerPhone).textContentType(.telephoneNumber).keyboardType(.phonePad)
+                TextField("Email (optional)", text: $store.ownerEmail).textContentType(.emailAddress).keyboardType(.emailAddress).autocorrectionDisabled()
+            } header: {
+                Text("Your details")
+            } footer: {
+                Text("Used to fill in your next care request, and given to the clinic you choose so they can reach you.")
+            }
             Section("Permissions") { Toggle("Offer notifications", isOn: $store.notificationsEnabled); Toggle("Use precise location", isOn: $store.locationEnabled) }
             Section("Navigation") {
                 Toggle("Spoken turn-by-turn", isOn: $store.navigationPreferences.voiceEnabled)
@@ -124,7 +142,34 @@ struct SettingsView: View {
                 #endif
             }
             Section("Legal and support") { NavigationLink("Terms, privacy, and veterinary safety") { LegalView() }; Link("Privacy requests", destination: URL(string: "mailto:privacy@clearkey.solutions")!); Link("Billing support", destination: URL(string: "mailto:billing@clearkey.solutions")!) }
-            Section("Development") { Button("Replay guided onboarding") { store.resetOnboarding() }; Text("Authentication remains controlled by the Worker's exact SIGN_IN_REQUIRED flag. The app operates in fixture mode until a valid HTTPS Worker URL is saved.").font(.caption).foregroundStyle(TimiColor.muted) }
+
+            // The Worker address, the mode, the onboarding replay: all of it is
+            // ours, none of it is a pet owner's, and a settings screen that
+            // opens with "https://your-worker.workers.dev" tells them they are
+            // holding something unfinished. Tapping the version seven times
+            // brings it back — the same idiom Apple's own apps use, and the
+            // only people who know to do it are the people who need it.
+            Section {
+                Text("Tími NOW")
+                    .font(.footnote).foregroundStyle(TimiColor.muted)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .contentShape(Rectangle())
+                    .onTapGesture { registerVersionTap() }
+            }
+            .listRowBackground(Color.clear)
+
+            if store.developerModeEnabled {
+                Section("Connection") {
+                    TextField("https://your-worker.workers.dev", text: $store.apiBaseURLText)
+                    Button("Save API address") { store.saveAPIBaseURL() }
+                    LabeledContent("Mode", value: store.isDemoMode ? "Interactive demo" : "Live Worker")
+                    LabeledContent("Talking to", value: store.resolvedAPIAddress)
+                }
+                Section("Development") {
+                    Button("Replay guided onboarding") { store.resetOnboarding() }
+                    Button("Hide developer settings") { store.developerModeEnabled = false; versionTaps = 0 }
+                }
+            }
         }.navigationTitle("Settings")
     }
 }
