@@ -158,6 +158,39 @@ curl -s -o /dev/null -w '%{http_code}\n' -X POST \
 
 ---
 
+## 3b. The native apps
+
+Two scripts, one each. Both regenerate the Xcode project first, so there is
+nothing to do by hand.
+
+```bash
+./scripts/build-mac-app.sh      # veterinary console -> /Applications
+./scripts/build-ios-app.sh      # customer app -> a running simulator
+```
+
+**The macOS console has to be signed properly.** It keeps its Clerk
+credentials in the Keychain rather than in the settings file, which means the
+app declares a `keychain-access-group`, which means macOS will not run it
+signed ad-hoc. `CODE_SIGNING_ALLOWED=NO` builds a bundle that then refuses to
+launch. The script finds your Apple development team — from `--team`, from
+`DEVELOPMENT_TEAM`, from `Darwin/Local.xcconfig`, or from the Apple
+Development certificate in your login keychain — and writes it to
+`Darwin/Local.xcconfig`, which is git-ignored and read by every later build
+and by Xcode itself. If you have never opened Xcode and signed in under
+Settings → Accounts, do that once first.
+
+**The iOS build needs no account** as long as it targets a simulator. Putting
+it on a real iPhone does: open `Project.xcworkspace`, pick your team under
+Signing & Capabilities, and run it from Xcode.
+
+The map and turn-by-turn are only compiled into the iOS app when a Mapbox
+downloads token is present in `~/.netrc` — `./scripts/bootstrap.sh` puts it
+there. Without it the app builds and runs against the non-Mapbox fallback: a
+ranked clinic list, no live map, no navigation. The script says which of the
+two you got rather than leaving you to discover it.
+
+---
+
 ## 4. Clerk
 
 Create a **production** instance for `timinow.pet` (a development instance

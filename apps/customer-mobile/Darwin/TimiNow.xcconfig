@@ -10,3 +10,6 @@ SWIFT_EMIT_LOC_STRINGS = YES
 SWIFT_VERSION = 5.9
 PRODUCT_MODULE_NAME = TimiNowHost
 CODE_SIGN_STYLE = Automatic
+
+# Optional per-developer settings — DEVELOPMENT_TEAM, mainly. Git-ignored.
+#include? "Local.xcconfig"

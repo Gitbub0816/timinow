@@ -20,3 +20,8 @@ apps/vet-desktop/Package.resolved
 apps/vet-desktop/Darwin/TimiVet.xcodeproj/
 apps/vet-desktop/xcuserdata/
 *.user
+
+# Per-developer signing identity for the Apple apps. Created by
+# scripts/build-mac-app.sh; holds a DEVELOPMENT_TEAM and nothing else.
+apps/*/Darwin/Local.xcconfig
+apps/*/build/

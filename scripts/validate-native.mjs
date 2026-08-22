@@ -438,6 +438,31 @@ for (const [manifestPath, projectPath] of [
   }
 }
 
+// The console stores credentials in the Keychain, so it declares a
+// keychain-access-group, so macOS refuses to launch it signed ad-hoc. Building
+// it with CODE_SIGNING_ALLOWED=NO produces a bundle that looks fine and then
+// does nothing, which is why there is a script that signs it for real.
+{
+  const entitlements = await read("apps/vet-desktop/Darwin/TimiVet.entitlements");
+  const builder = await read("scripts/build-mac-app.sh");
+  if (entitlements.includes("keychain-access-groups")) {
+    // Comments are stripped first: the script explains this very hazard, and
+    // matching its own explanation would fail the build forever.
+    const executable = builder.split("\n").filter((line) => !/^\s*#/.test(line)).join("\n");
+    if (/CODE_SIGNING_ALLOWED\s*=\s*NO/.test(executable)) {
+      throw new Error("scripts/build-mac-app.sh disables code signing, but the console declares a keychain-access-group — the app would build and then refuse to launch.");
+    }
+    if (!builder.includes("-allowProvisioningUpdates")) {
+      throw new Error("scripts/build-mac-app.sh must pass -allowProvisioningUpdates so Xcode can create the development profile the keychain-access-group needs.");
+    }
+  }
+  // The macOS deployment of the credentials rule itself.
+  const settings = await read("apps/vet-desktop/Sources/TimiVetCore/SettingsStore.swift");
+  if (/bearerToken|sessionToken/i.test(settings)) {
+    throw new Error("apps/vet-desktop/Sources/TimiVetCore/SettingsStore.swift: credentials must stay in the Keychain, not the settings file.");
+  }
+}
+
 const csharpFiles = await collectFiles("apps/vet-windows", ".cs");
 for (const path of csharpFiles) {
   const problems = bracketProblems(await read(path));

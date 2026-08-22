@@ -10,3 +10,6 @@ PRODUCT_MODULE_NAME = TimiVetHost
 CODE_SIGN_STYLE = Automatic
 CODE_SIGN_ENTITLEMENTS = TimiVet.entitlements
 ENABLE_HARDENED_RUNTIME = YES
+
+# Optional per-developer settings — DEVELOPMENT_TEAM, mainly. Git-ignored.
+#include? "Local.xcconfig"
