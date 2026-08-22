@@ -11,6 +11,7 @@ public sealed class AlertService : IDisposable
     private readonly AppSettings _settings;
     public event EventHandler? ShowMainRequested;
     public event EventHandler? ShowMiniRequested;
+    public event EventHandler? OpenPeopleRequested;
     public event EventHandler? ExitRequested;
 
     public AlertService(AppSettings settings)
@@ -19,6 +20,7 @@ public sealed class AlertService : IDisposable
         var menu = new Forms.ContextMenuStrip();
         menu.Items.Add("Open Tími Vet", null, (_, _) => ShowMainRequested?.Invoke(this, EventArgs.Empty));
         menu.Items.Add("Open floating console", null, (_, _) => ShowMiniRequested?.Invoke(this, EventArgs.Empty));
+        menu.Items.Add("Manage people", null, (_, _) => OpenPeopleRequested?.Invoke(this, EventArgs.Empty));
         menu.Items.Add(new Forms.ToolStripSeparator());
         menu.Items.Add("Exit", null, (_, _) => ExitRequested?.Invoke(this, EventArgs.Empty));
         _tray = new Forms.NotifyIcon { Icon = SystemIcons.Information, Text = "Tími Vet", Visible = true, ContextMenuStrip = menu };

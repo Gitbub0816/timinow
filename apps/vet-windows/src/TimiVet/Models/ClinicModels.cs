@@ -133,10 +133,101 @@ public sealed class AppSettings
 {
     public string ApiBaseUrl { get; set; } = "";
     public string TenantId { get; set; } = "tenant_hearth";
-    public string BearerToken { get; set; } = "";
     public int PollSeconds { get; set; } = 6;
     public bool AlertsEnabled { get; set; } = true;
     public bool PlaySound { get; set; } = true;
     public bool MiniWindowTopmost { get; set; } = true;
     public bool StartWithWindows { get; set; }
+
+    // Floating console geometry, remembered across launches instead of hardcoded startup coordinates.
+    public double? MiniWindowLeft { get; set; }
+    public double? MiniWindowTop { get; set; }
+    public double? MiniWindowWidth { get; set; }
+    public double? MiniWindowHeight { get; set; }
+    public bool AutoShowMiniOnNewRequest { get; set; }
+}
+
+/// <summary>Envelope for GET /api/session on the Tími Worker.</summary>
+public sealed class SessionEnvelope
+{
+    public SessionDescriptor Session { get; set; } = new();
+}
+
+public sealed class SessionDescriptor
+{
+    public bool Authenticated { get; set; }
+    public SessionUser User { get; set; } = new();
+    public SessionOrganization? Organization { get; set; }
+    public SessionTenant? Tenant { get; set; }
+    public SessionLocation? Location { get; set; }
+    public bool PlatformAdmin { get; set; }
+    public SessionSurfaces Surfaces { get; set; } = new();
+    public List<string> RepairedMetadata { get; set; } = [];
+}
+
+public sealed class SessionUser
+{
+    public string Id { get; set; } = "";
+    public string? Email { get; set; }
+    public string? Name { get; set; }
+    public string? Role { get; set; }
+    public List<string> Permissions { get; set; } = [];
+}
+
+public sealed class SessionOrganization
+{
+    public string Id { get; set; } = "";
+    public string? Slug { get; set; }
+}
+
+public sealed class SessionTenant
+{
+    public string Id { get; set; } = "";
+    public string Name { get; set; } = "";
+    public string? Slug { get; set; }
+    public string? Status { get; set; }
+}
+
+public sealed class SessionLocation
+{
+    public string Id { get; set; } = "";
+    public string Name { get; set; } = "";
+    public string? Address { get; set; }
+    public string? Phone { get; set; }
+}
+
+public sealed class SessionSurfaces
+{
+    public bool Customer { get; set; }
+    public bool Clinic { get; set; }
+    public bool Admin { get; set; }
+}
+
+/// <summary>Response shape for GET /api/tenant/members.</summary>
+public sealed class TenantMembersResponse
+{
+    public List<TenantMember> Members { get; set; } = [];
+    public List<TenantInvitation> Invitations { get; set; } = [];
+}
+
+public sealed class TenantMember
+{
+    public string UserId { get; set; } = "";
+    public string? Email { get; set; }
+    public string? Name { get; set; }
+    public string Role { get; set; } = "org:member";
+    public DateTimeOffset? JoinedAt { get; set; }
+
+    [JsonIgnore] public bool IsAdmin => Role.EndsWith(":admin", StringComparison.OrdinalIgnoreCase) || Role.Equals("admin", StringComparison.OrdinalIgnoreCase);
+    [JsonIgnore] public string JoinedLabel => JoinedAt is null ? "" : JoinedAt.Value.LocalDateTime.ToString("MMM d, yyyy");
+}
+
+public sealed class TenantInvitation
+{
+    public string Id { get; set; } = "";
+    public string? Email { get; set; }
+    public string Role { get; set; } = "org:member";
+    public DateTimeOffset? CreatedAt { get; set; }
+
+    [JsonIgnore] public string CreatedLabel => CreatedAt is null ? "" : CreatedAt.Value.LocalDateTime.ToString("MMM d, yyyy");
 }

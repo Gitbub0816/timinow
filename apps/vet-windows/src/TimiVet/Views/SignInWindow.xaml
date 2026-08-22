@@ -1,0 +1,137 @@
+<Window x:Class="TimiVet.Views.SignInWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:TimiVet.Views"
+        Title="Sign in to Tími Vet" Width="480" SizeToContent="Height" MinHeight="360"
+        WindowStartupLocation="CenterScreen" ResizeMode="NoResize" Background="{StaticResource Canvas}">
+    <Window.Resources>
+        <BooleanToVisibilityConverter x:Key="B2V"/>
+        <local:InverseBooleanToVisibilityConverter x:Key="InverseB2V"/>
+        <local:StringEmptyToVisibilityConverter x:Key="StringToVisibility"/>
+        <local:PositiveIntToVisibilityConverter x:Key="CooldownVisibility"/>
+        <local:StrategyLabelConverter x:Key="StrategyLabel"/>
+        <local:NewPasswordLabelConverter x:Key="PasswordLabel"/>
+    </Window.Resources>
+    <Border Style="{StaticResource Card}" Margin="26">
+        <StackPanel>
+            <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+                <TextBlock Text="Tími" FontFamily="Georgia" FontSize="26" FontWeight="Bold" Foreground="{StaticResource Ink}"/>
+                <TextBlock Text=" VET" FontSize="12" FontWeight="Bold" Foreground="{StaticResource Coral}" VerticalAlignment="Bottom" Margin="4,0,0,5"/>
+            </StackPanel>
+            <TextBlock Text="VETERINARY OPERATIONS SIGN-IN" Style="{StaticResource Eyebrow}" Margin="0,0,0,18"/>
+
+            <Border Background="{StaticResource Coral}" CornerRadius="8" Padding="10,8" Margin="0,0,0,14" Visibility="{Binding ErrorText, Converter={StaticResource StringToVisibility}}">
+                <TextBlock Text="{Binding ErrorText}" Foreground="White" TextWrapping="Wrap" FontSize="12"/>
+            </Border>
+
+            <!-- Step 1: Worker URL -->
+            <StackPanel Visibility="{Binding IsWorkerUrlStep, Converter={StaticResource B2V}}">
+                <TextBlock Text="Clinic Worker address" FontWeight="SemiBold"/>
+                <TextBlock Text="The HTTPS address your practice was given for Tími NOW." Foreground="{StaticResource Muted}" FontSize="11" Margin="0,2,0,8" TextWrapping="Wrap"/>
+                <TextBox Text="{Binding Settings.ApiBaseUrl, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,14"/>
+                <Button Content="Continue" Command="{Binding ContinueWorkerUrlCommand}" Style="{StaticResource PrimaryButton}"/>
+            </StackPanel>
+
+            <!-- Step 2: Identifier -->
+            <StackPanel Visibility="{Binding IsIdentifierStep, Converter={StaticResource B2V}}">
+                <TextBlock Text="Email, username, or phone" FontWeight="SemiBold"/>
+                <TextBox Text="{Binding Identifier, UpdateSourceTrigger=PropertyChanged}" Margin="0,6,0,14"/>
+                <Button Content="Continue" Command="{Binding ContinueIdentifierCommand}" Style="{StaticResource PrimaryButton}"/>
+                <Separator Margin="0,18,0,10"/>
+                <TextBlock Text="OR CONTINUE WITH" Style="{StaticResource Eyebrow}" HorizontalAlignment="Center" Margin="0,0,0,10"/>
+                <Button Content="Continue with Google" Command="{Binding GoogleCommand}" Style="{StaticResource QuietButton}" Margin="0,0,0,8"/>
+                <Button Content="Continue with Apple" Command="{Binding AppleCommand}" Style="{StaticResource QuietButton}" Margin="0,0,0,8"/>
+                <TextBlock Text="Passkeys need a WebAuthn authenticator, which this desktop build does not host. Sign in with a passkey in the Tími web console instead." TextWrapping="Wrap" Foreground="{StaticResource Muted}" FontSize="12" Margin="0,4,0,0"/>
+            </StackPanel>
+
+            <!-- Step 3: Strategy picker -->
+            <StackPanel Visibility="{Binding IsStrategyStep, Converter={StaticResource B2V}}">
+                <TextBlock Text="How would you like to sign in?" FontWeight="SemiBold" Margin="0,0,0,10"/>
+                <ItemsControl ItemsSource="{Binding StrategyOptions}">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <Button Style="{StaticResource QuietButton}" HorizontalContentAlignment="Left" Margin="0,0,0,8"
+                                    Command="{Binding DataContext.ChooseStrategyCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                    CommandParameter="{Binding}">
+                                <StackPanel>
+                                    <TextBlock Text="{Binding Strategy, Converter={StaticResource StrategyLabel}}" FontWeight="SemiBold"/>
+                                    <TextBlock Text="{Binding SafeIdentifier}" FontSize="10" Foreground="{StaticResource Muted}"/>
+                                </StackPanel>
+                            </Button>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+                <Button Content="Use a different account" Command="{Binding BackToIdentifierCommand}" Style="{StaticResource QuietButton}" Margin="0,8,0,0" BorderThickness="0" Background="Transparent"/>
+            </StackPanel>
+
+            <!-- Step 4: Password -->
+            <StackPanel Visibility="{Binding IsPasswordStep, Converter={StaticResource B2V}}">
+                <TextBlock Text="{Binding AwaitingNewPassword, Converter={StaticResource PasswordLabel}}" FontWeight="SemiBold"/>
+                <PasswordBox x:Name="PasswordInput" PasswordChanged="PasswordBox_PasswordChanged" Margin="0,6,0,10"/>
+                <Button Content="Continue" Command="{Binding SubmitPasswordCommand}" Style="{StaticResource PrimaryButton}"/>
+                <Button Content="Forgot password?" Command="{Binding ForgotPasswordCommand}" Style="{StaticResource QuietButton}" Margin="0,8,0,0" BorderThickness="0" Background="Transparent"
+                        Visibility="{Binding AwaitingNewPassword, Converter={StaticResource InverseB2V}}"/>
+            </StackPanel>
+
+            <!-- Step 5: One-time code -->
+            <StackPanel Visibility="{Binding IsCodeStep, Converter={StaticResource B2V}}">
+                <TextBlock Text="Enter the 6-digit code" FontWeight="SemiBold"/>
+                <TextBlock Text="{Binding SafeIdentifier, StringFormat='Sent to {0}'}" Foreground="{StaticResource Muted}" FontSize="11" Margin="0,2,0,12"/>
+                <UniformGrid Columns="6" Margin="0,0,0,14">
+                    <TextBox x:Name="Otp0" MaxLength="1" HorizontalContentAlignment="Center" FontSize="20" Margin="3,0" PreviewTextInput="Otp_PreviewTextInput" TextChanged="Otp_TextChanged" PreviewKeyDown="Otp_PreviewKeyDown"/>
+                    <TextBox x:Name="Otp1" MaxLength="1" HorizontalContentAlignment="Center" FontSize="20" Margin="3,0" PreviewTextInput="Otp_PreviewTextInput" TextChanged="Otp_TextChanged" PreviewKeyDown="Otp_PreviewKeyDown"/>
+                    <TextBox x:Name="Otp2" MaxLength="1" HorizontalContentAlignment="Center" FontSize="20" Margin="3,0" PreviewTextInput="Otp_PreviewTextInput" TextChanged="Otp_TextChanged" PreviewKeyDown="Otp_PreviewKeyDown"/>
+                    <TextBox x:Name="Otp3" MaxLength="1" HorizontalContentAlignment="Center" FontSize="20" Margin="3,0" PreviewTextInput="Otp_PreviewTextInput" TextChanged="Otp_TextChanged" PreviewKeyDown="Otp_PreviewKeyDown"/>
+                    <TextBox x:Name="Otp4" MaxLength="1" HorizontalContentAlignment="Center" FontSize="20" Margin="3,0" PreviewTextInput="Otp_PreviewTextInput" TextChanged="Otp_TextChanged" PreviewKeyDown="Otp_PreviewKeyDown"/>
+                    <TextBox x:Name="Otp5" MaxLength="1" HorizontalContentAlignment="Center" FontSize="20" Margin="3,0" PreviewTextInput="Otp_PreviewTextInput" TextChanged="Otp_TextChanged" PreviewKeyDown="Otp_PreviewKeyDown"/>
+                </UniformGrid>
+                <Grid>
+                    <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                    <Button Content="Use a different account" Command="{Binding BackToIdentifierCommand}" Style="{StaticResource QuietButton}" BorderThickness="0" Background="Transparent" HorizontalAlignment="Left"/>
+                    <Button Grid.Column="1" Content="Resend code" Command="{Binding ResendCodeCommand}" Style="{StaticResource QuietButton}" BorderThickness="0" Background="Transparent"/>
+                </Grid>
+                <TextBlock Text="{Binding ResendSecondsRemaining, StringFormat='You can resend in {0}s'}" FontSize="10" Foreground="{StaticResource Muted}" HorizontalAlignment="Right"
+                           Visibility="{Binding ResendSecondsRemaining, Converter={StaticResource CooldownVisibility}}"/>
+            </StackPanel>
+
+            <!-- Step 6: Workspace picker -->
+            <StackPanel Visibility="{Binding IsWorkspaceStep, Converter={StaticResource B2V}}">
+                <TextBlock Text="Choose a workspace" FontWeight="SemiBold" Margin="0,0,0,10"/>
+                <ItemsControl ItemsSource="{Binding WorkspaceOptions}">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <Button Style="{StaticResource QuietButton}" HorizontalContentAlignment="Left" Margin="0,0,0,8"
+                                    Command="{Binding DataContext.ChooseWorkspaceCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                    CommandParameter="{Binding}">
+                                <StackPanel>
+                                    <TextBlock Text="{Binding Organization.Name}" FontWeight="SemiBold"/>
+                                    <TextBlock Text="{Binding Role}" FontSize="10" Foreground="{StaticResource Muted}"/>
+                                </StackPanel>
+                            </Button>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </StackPanel>
+
+            <!-- Step 7: Not a clinic workspace -->
+            <StackPanel Visibility="{Binding IsNotClinicStep, Converter={StaticResource B2V}}">
+                <TextBlock Text="This account is not part of a veterinary workspace" FontFamily="Georgia" FontSize="19" FontWeight="Bold" TextWrapping="Wrap"/>
+                <TextBlock TextWrapping="Wrap" Foreground="{StaticResource Muted}" FontSize="12" Margin="0,8,0,16"
+                           Text="Tími Vet only opens for veterinary team members. Ask your workspace administrator to add this account, or sign in with a different one. Creating a brand-new workspace is a Tími platform operation this app cannot perform."/>
+                <Button Content="Check again" Command="{Binding RetryWorkspaceCheckCommand}" Style="{StaticResource PrimaryButton}" Margin="0,0,0,8"/>
+                <Button Content="Use a different account" Command="{Binding SwitchAccountCommand}" Style="{StaticResource QuietButton}"/>
+            </StackPanel>
+
+            <ProgressBar IsIndeterminate="True" Height="3" Margin="0,18,0,0">
+                <ProgressBar.Style>
+                    <Style TargetType="ProgressBar">
+                        <Setter Property="Visibility" Value="Collapsed"/>
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsBusy}" Value="True"><Setter Property="Visibility" Value="Visible"/></DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </ProgressBar.Style>
+            </ProgressBar>
+        </StackPanel>
+    </Border>
+</Window>

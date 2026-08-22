@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Threading;
 using TimiVet.Models;
 using TimiVet.Services;
 
@@ -8,6 +9,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 {
     private readonly SettingsStore _settingsStore;
     private readonly ClinicApiClient _api;
+    private readonly ClerkAuthService _auth;
     private readonly CancellationTokenSource _lifetime = new();
     private readonly HashSet<string> _knownPending = [];
     private bool _initialized;
@@ -16,22 +18,27 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private string _statusMessage = "Connecting to Tími…";
     private string _clinicName = "Tími veterinary console";
     private string _clinicAddress = "";
-    private string _connectionMode = "INTERACTIVE DEMO";
+    private string _tenantName = "";
+    private string _userRole = "";
+    private string _connectionMode = "LIVE CLOUDFLARE CONNECTION";
     private int _pending;
     private int _activeArrivals;
     private int _completedToday;
     private int _declinedToday;
 
-    public MainViewModel(SettingsStore settingsStore)
+    public MainViewModel(SettingsStore settingsStore, AppSettings settings, ClinicApiClient api, ClerkAuthService auth)
     {
         _settingsStore = settingsStore;
-        Settings = settingsStore.Load();
-        _api = new ClinicApiClient(Settings);
+        Settings = settings;
+        _api = api;
+        _auth = auth;
         RefreshCommand = new AsyncCommand(() => RefreshAsync(false), () => !IsBusy);
         PublishCommand = new AsyncCommand(PublishAsync, () => !IsBusy);
         OfferCommand = new AsyncCommand(() => RespondAsync(false), () => SelectedRequest is not null && !IsBusy);
         DeclineCommand = new AsyncCommand(() => RespondAsync(true), () => SelectedRequest is not null && !IsBusy);
         SaveSettingsCommand = new AsyncCommand(SaveSettingsAsync, () => !IsBusy);
+        SignOutCommand = new AsyncCommand(SignOutAsync, () => !IsBusy);
+        OpenPeopleCommand = new RelayCommand(() => OpenPeopleRequested?.Invoke(this, EventArgs.Empty));
     }
 
     public AppSettings Settings { get; }
@@ -41,11 +48,15 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public IReadOnlyList<string> ResponseTypes { get; } = ["available_now", "available_at", "emergency_intake"];
 
     public event EventHandler<ClinicRequest>? NewRequestArrived;
+    public event EventHandler? OpenPeopleRequested;
+    public event EventHandler? SignedOut;
     public AsyncCommand RefreshCommand { get; }
     public AsyncCommand PublishCommand { get; }
     public AsyncCommand OfferCommand { get; }
     public AsyncCommand DeclineCommand { get; }
     public AsyncCommand SaveSettingsCommand { get; }
+    public AsyncCommand SignOutCommand { get; }
+    public RelayCommand OpenPeopleCommand { get; }
 
     public ClinicRequest? SelectedRequest
     {
@@ -56,6 +67,9 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public string StatusMessage { get => _statusMessage; private set => Set(ref _statusMessage, value); }
     public string ClinicName { get => _clinicName; private set => Set(ref _clinicName, value); }
     public string ClinicAddress { get => _clinicAddress; private set => Set(ref _clinicAddress, value); }
+    public string TenantName { get => _tenantName; private set => Set(ref _tenantName, value); }
+    public string UserRole { get => _userRole; private set => Set(ref _userRole, value); }
+    public bool IsAdmin => UserRole.EndsWith(":admin", StringComparison.OrdinalIgnoreCase) || UserRole.Equals("admin", StringComparison.OrdinalIgnoreCase);
     public string ConnectionMode { get => _connectionMode; private set => Set(ref _connectionMode, value); }
     public int Pending { get => _pending; private set => Set(ref _pending, value); }
     public int ActiveArrivals { get => _activeArrivals; private set => Set(ref _activeArrivals, value); }
@@ -86,6 +100,16 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public int OfferWaitMax { get => _offerWaitMax; set => Set(ref _offerWaitMax, value); }
     public string ClinicNote { get => _clinicNote; set => Set(ref _clinicNote, value); }
 
+    /// <summary>Applies the descriptor from GET /api/session so the left rail shows the real workspace, not the dashboard's echo.</summary>
+    public void ApplySession(SessionDescriptor session)
+    {
+        TenantName = session.Tenant?.Name ?? "";
+        ClinicName = session.Location?.Name ?? session.Tenant?.Name ?? "Tími veterinary console";
+        ClinicAddress = session.Location?.Address ?? "";
+        UserRole = session.User.Role ?? "";
+        Raise(nameof(IsAdmin));
+    }
+
     public async Task StartAsync()
     {
         await RefreshAsync(true);
@@ -99,8 +123,6 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         try
         {
             var dashboard = await _api.GetDashboardAsync(_lifetime.Token);
-            ClinicName = dashboard.Location.Name;
-            ClinicAddress = dashboard.Location.Address ?? "";
             ConnectionMode = _api.IsDemo ? "INTERACTIVE DEMO" : "LIVE CLOUDFLARE CONNECTION";
             Pending = dashboard.Metrics.Pending; ActiveArrivals = dashboard.Metrics.ActiveArrivals; CompletedToday = dashboard.Metrics.CompletedToday; DeclinedToday = dashboard.Metrics.DeclinedToday;
             ApplyAvailability(dashboard.Location.Availability);
@@ -169,12 +191,23 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         finally { IsBusy = false; }
     }
 
+    /// <summary>Clears the Clerk session (server-side and local DPAPI store) and asks the shell to exit,
+    /// since re-establishing a fresh sign-in inside a live console would require tearing down every
+    /// window that already carries the old tenant's data. Relaunching shows the sign-in flow again.</summary>
+    private async Task SignOutAsync()
+    {
+        IsBusy = true;
+        try { StatusMessage = "Signing out…"; await _auth.SignOutAsync(_lifetime.Token); }
+        catch (Exception ex) { StatusMessage = ex.Message; }
+        finally { IsBusy = false; SignedOut?.Invoke(this, EventArgs.Empty); }
+    }
+
     private void ApplyAvailability(ClinicAvailability value)
     {
         AvailabilityStatus = value.IntakeStatus; StableWaitMin = value.StableWaitMin ?? 15; StableWaitMax = value.StableWaitMax ?? 35; CapacityCount = value.CapacityCount ?? 0; AcceptsCritical = value.AcceptsCritical; PublicNote = value.Note ?? "";
         OfferWaitMin = StableWaitMin; OfferWaitMax = StableWaitMax;
     }
 
-    private void RaiseCommands() { RefreshCommand.RaiseCanExecuteChanged(); PublishCommand.RaiseCanExecuteChanged(); OfferCommand.RaiseCanExecuteChanged(); DeclineCommand.RaiseCanExecuteChanged(); SaveSettingsCommand.RaiseCanExecuteChanged(); }
+    private void RaiseCommands() { RefreshCommand.RaiseCanExecuteChanged(); PublishCommand.RaiseCanExecuteChanged(); OfferCommand.RaiseCanExecuteChanged(); DeclineCommand.RaiseCanExecuteChanged(); SaveSettingsCommand.RaiseCanExecuteChanged(); SignOutCommand.RaiseCanExecuteChanged(); }
     public void Dispose() { _lifetime.Cancel(); _lifetime.Dispose(); }
 }
