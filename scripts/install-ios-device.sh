@@ -238,7 +238,15 @@ pkill -P "$LAUNCH_PID" 2>/dev/null
 kill "$LAUNCH_PID" 2>/dev/null
 set -e -o pipefail
 
-if [ "$STILL_RUNNING" -eq 1 ] && ! grep -qiE "terminated|crash|Library not loaded|dyld|Fatal error" "$LAUNCH_LOG" 2>/dev/null; then
+# A locked phone refuses the launch and says so precisely. It is not a crash,
+# and dumping a crash-shaped block under it — with a hint about untrusted
+# certificates — buries the one sentence that matters.
+if grep -qi "could not be, unlocked\|BSErrorCodeDescription = Locked" "$LAUNCH_LOG" 2>/dev/null; then
+  echo "  installed, but not launched — the phone is locked"
+  dim  "  iOS will not start a freshly installed app while the device is locked."
+  dim  "  Unlock it and open Tími NOW from the home screen, or run this again"
+  dim  "  with the phone unlocked and it will launch by itself."
+elif [ "$STILL_RUNNING" -eq 1 ] && ! grep -qiE "terminated|crash|Library not loaded|dyld|Fatal error" "$LAUNCH_LOG" 2>/dev/null; then
   echo "  running — still up after ${CONSOLE_WAIT}s"
 else
   echo >&2
