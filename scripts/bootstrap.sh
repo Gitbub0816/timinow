@@ -177,6 +177,41 @@ bold "Read $FOUND non-empty values from $ENV_FILE"
 # non-empty one wins, but it is also exactly what a half-filled copy of
 # .env.example looks like, and the reader deserves to know which value is
 # actually in play before it turns up in production.
+# Two assignments of the same key with two different non-empty values is not a
+# stale placeholder — it is a coin toss over a production credential, and the
+# loser is invisible. A Clerk key set twice deployed the wrong instance and
+# took sign-in down on every surface while the file plainly showed the right
+# one further up. Refused rather than resolved.
+CONFLICTS="$(awk '
+  /^[[:space:]]*#/ { next }
+  {
+    idx = index($0, "=")
+    if (idx == 0) next
+    key = substr($0, 1, idx - 1)
+    val = substr($0, idx + 1)
+    sub(/^[[:space:]]*export[[:space:]]+/, "", key)
+    gsub(/[[:space:]]/, "", key)
+    sub(/^[[:space:]]+/, "", val); sub(/[[:space:]]+$/, "", val)
+    if (key == "" || val == "") next
+    if (key in value) { if (value[key] != val) conflict[key] = 1 }
+    else value[key] = val
+  }
+  END { for (k in conflict) printf "%s ", k }
+' "$ENV_FILE")"
+if [ -n "$CONFLICTS" ]; then
+  die "  Assigned twice, with different values, in $ENV_FILE:
+
+    $CONFLICTS
+
+  Whichever comes last would win and the other would vanish silently, so
+  nothing was deployed. Note that \"export KEY=value\" counts — a plain
+  search for \"^KEY=\" will not show you the second one. Find them all with:
+
+    grep -nE '^[[:space:]]*(export[[:space:]]+)?($(printf '%s' "$CONFLICTS" | tr -s ' ' '|' | sed 's/|$//'))=' $ENV_FILE
+
+  Delete the wrong one and run this again."
+fi
+
 DUPLICATES="$(awk '
   /^[[:space:]]*#/ { next }
   {
