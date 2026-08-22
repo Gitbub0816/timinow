@@ -877,7 +877,7 @@ function buildMiniDocument(doc) {
       <div class="mini-list" data-mini-list></div>
       ${state.miniKind === "popup" ? '<p class="mini-fallback-note">This browser lacks Document Picture-in-Picture, so this pop-up isn’t guaranteed to stay on top. Chrome or Edge keep it always on top.</p>' : ""}
       <div class="mini-footer">
-        <label><input type="checkbox" data-mini-autoopen> Always on top</label>
+        <label><input type="checkbox" data-mini-autoopen> Pop open on a new request</label>
         <button class="button button-primary" type="button" data-mini-open>Open decision workspace</button>
       </div>
     </div>`;
