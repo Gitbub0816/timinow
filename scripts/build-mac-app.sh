@@ -30,6 +30,15 @@ bold() { printf '\n\033[1m%s\033[0m\n' "$*"; }
 dim()  { printf '\033[2m%s\033[0m\n' "$*"; }
 die()  { printf '\033[31m%s\033[0m\n' "$*" >&2; exit 1; }
 
+# A silent terminal for ten minutes is indistinguishable from a hang, and the
+# first build genuinely takes that long: Skip transpiles its whole stack before
+# Xcode compiles anything. So the output is piped through a filter rather than
+# hidden in a log — the log is still written, for summarising a failure.
+#
+# Piped rather than followed with `tail -f`: in `a | b | c &` the shell reports
+# only c's pid, so killing it would leave tail running after the script exits.
+BUILD_FILTER='^(Skip |Compiling|Compile|Build|Ld |CodeSign|Signing|Touch|Copy|Prepare|Resolve|error:|.*: error:)'
+
 TEAM="${DEVELOPMENT_TEAM:-}"
 INSTALL=true
 while [ $# -gt 0 ]; do
@@ -80,9 +89,14 @@ bold "2. Xcode project"
 echo "  generated"
 
 bold "3. Build"
+dim "  The first build compiles the whole Skip stack — expect several minutes."
+dim "  Full output: /tmp/timi-mac-build.log"
+set +e +o pipefail
 # -allowProvisioningUpdates lets Xcode create the development profile for the
 # keychain-access-group on first run rather than failing with a bare
-# "requires a development certificate".
+# "requires a development certificate". It talks to Apple to do that, so if
+# this stalls at signing, the account it needs is not signed in: open Xcode ->
+# Settings -> Accounts, add your Apple ID, then run this again.
 ( cd "$APP_DIR" && xcodebuild \
     -workspace Project.xcworkspace \
     -scheme TimiVet \
@@ -93,11 +107,18 @@ bold "3. Build"
     -skipMacroValidation \
     -allowProvisioningUpdates \
     DEVELOPMENT_TEAM="$TEAM" \
-    build ) > /tmp/timi-mac-build.log 2>&1 || {
-      echo
-      grep -E "error:" /tmp/timi-mac-build.log | sort -u | head -20 >&2
-      die "  Build failed. Full log: /tmp/timi-mac-build.log"
-    }
+    build ) 2>&1 \
+  | tee /tmp/timi-mac-build.log \
+  | grep --line-buffered -E "$BUILD_FILTER" \
+  | awk '{ if (length($0) > 110) $0 = substr($0, 1, 107) "..."; print "  " $0; fflush() }'
+BUILD_STATUS=${PIPESTATUS[0]}
+set -e -o pipefail
+if [ "$BUILD_STATUS" -ne 0 ]; then
+  echo >&2
+  grep -E "error:" /tmp/timi-mac-build.log | sort -u | head -20 >&2
+  die "  Build failed after $(( SECONDS / 60 ))m. Full log: /tmp/timi-mac-build.log"
+fi
+echo "  finished in $(( SECONDS / 60 ))m $(( SECONDS % 60 ))s"
 
 BUILT="$APP_DIR/build/Build/Products/Release/TimiVet.app"
 [ -d "$BUILT" ] || die "  Build reported success but $BUILT is missing."
