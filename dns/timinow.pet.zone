@@ -1,0 +1,95 @@
+;; Tími NOW — DNS zone for timinow.pet
+;;
+;; Import: Cloudflare dashboard -> timinow.pet -> DNS -> Records -> Import and Export
+;;         -> Import DNS records -> upload this file.
+;;
+;; ─────────────────────────────────────────────────────────────────────────────
+;; READ THIS FIRST — Cloudflare imports every record as DNS-only (grey cloud).
+;;
+;; The six Worker records below MUST be switched to Proxied (orange cloud) after
+;; import or the Workers will not answer on those hostnames. The Clerk records
+;; below MUST stay DNS-only; proxying them breaks Clerk's Frontend API.
+;;
+;; A zone file cannot express proxy status, so this is a manual step either way.
+;; `./scripts/check-dns.sh` verifies the result.
+;; ─────────────────────────────────────────────────────────────────────────────
+
+$ORIGIN timinow.pet.
+$TTL 300
+
+;; ═══════════════════════════════════════════════════ Cloudflare Workers ══
+;;
+;; 100:: is the IPv6 discard prefix. These records exist only so Cloudflare has
+;; something to attach a Worker route to; no packet ever reaches that address.
+;; Traffic is served by the Worker at the edge.
+;;
+;;   PROXIED (orange cloud) — all six.
+
+@                       300  IN  AAAA   100::          ; -> timinow        (public site)
+www                     300  IN  AAAA   100::          ; -> timinow        (same Worker)
+app                     300  IN  AAAA   100::          ; -> timinow        (customer app)
+providers               300  IN  AAAA   100::          ; -> timinow-vet    (veterinary console)
+admin                   300  IN  AAAA   100::          ; -> timinow-admin  (platform operators)
+voice                   300  IN  AAAA   100::          ; -> timinow-voice  (Twilio webhooks)
+
+;; ═════════════════════════════════════════════════════════════ Clerk ══
+;;
+;; Authentication. Every target below is INSTANCE-SPECIFIC — replace
+;; <instance> with the value Clerk shows under Domains in your production
+;; instance. Clerk will not verify the domain until these resolve.
+;;
+;;   DNS-ONLY (grey cloud) — all five. Proxying these breaks sign-in.
+
+clerk                   300  IN  CNAME  frontend-api.clerk.services.
+accounts                300  IN  CNAME  accounts.clerk.services.
+
+;; The three below are what let one-time codes arrive from timinow.pet rather
+;; than from a Clerk address a veterinary practice will not recognise.
+;;
+;; They are COMMENTED OUT on purpose: their targets contain an instance id that
+;; only your Clerk dashboard knows, and importing them with a placeholder would
+;; create three broken records. Clerk shows the exact values under
+;; Domains -> DNS records. Uncomment, substitute, and import again — or just add
+;; those three by hand, which is usually quicker.
+;;
+;; clkmail              300  IN  CNAME  mail.<instance>.clerk.services.
+;; clk._domainkey       300  IN  CNAME  dkim1.<instance>.clerk.services.
+;; clk2._domainkey      300  IN  CNAME  dkim2.<instance>.clerk.services.
+
+;; ══════════════════════════════════════════════════════════ Email ══
+;;
+;; Nothing sends mail from the apex today — the app's own addresses are on
+;; clearkey.solutions, and Clerk sends from the clkmail subdomain above, which
+;; Clerk's own records authenticate.
+;;
+;; So the apex publishes a hard SPF fail. On a domain nobody sends from, that is
+;; free anti-spoofing: it stops someone forging billing@timinow.pet at a clinic.
+;; If you later add Google Workspace or another sender, replace this line — see
+;; dns/README.md.
+
+@                       300  IN  TXT    "v=spf1 -all"
+
+;; DMARC starts at p=none deliberately. Jumping straight to reject without ever
+;; reading a report is how legitimate mail silently disappears. Watch the
+;; reports for a fortnight, then tighten to quarantine and then reject.
+_dmarc                  300  IN  TXT    "v=DMARC1; p=none; rua=mailto:1morecruise@gmail.com; ruf=mailto:1morecruise@gmail.com; fo=1; adkim=r; aspf=r; pct=100"
+
+;; No inbound mail. Delete this and add MX records if you ever want a mailbox
+;; at timinow.pet; the null MX is what tells senders not to bother trying.
+@                       300  IN  MX     0 .
+
+;; ═══════════════════════════════════════════════ Certificate authority ══
+;;
+;; Only these CAs may issue for timinow.pet. Cloudflare Universal SSL uses
+;; Google Trust Services and Let's Encrypt; Clerk uses Let's Encrypt. The rest
+;; are here so a future vendor does not fail issuance mysteriously — remove any
+;; you are confident you will never use.
+
+@                       300  IN  CAA    0 issue "pki.goog"
+@                       300  IN  CAA    0 issue "letsencrypt.org"
+@                       300  IN  CAA    0 issue "digicert.com"
+@                       300  IN  CAA    0 issue "sectigo.com"
+@                       300  IN  CAA    0 issue "ssl.com"
+@                       300  IN  CAA    0 issuewild "pki.goog"
+@                       300  IN  CAA    0 issuewild "letsencrypt.org"
+@                       300  IN  CAA    0 iodef "mailto:1morecruise@gmail.com"
