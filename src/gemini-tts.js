@@ -12,10 +12,24 @@
 
 const DEFAULT_MODEL = "gemini-2.5-flash-preview-tts";
 const DEFAULT_VOICE = "Charon";
+const DEFAULT_STYLE = "Read this warmly and calmly, at an unhurried pace, as a real person calling a veterinary clinic. Do not sound cheerful or promotional.";
 const SYNTHESIS_HOST = "https://generativelanguage.googleapis.com";
 
 export function geminiVoice(env) {
   return String(env?.GEMINI_TTS_VOICE || "").trim() || DEFAULT_VOICE;
+}
+
+/**
+ * How the line should be read.
+ *
+ * This is the whole of what AI Studio calls customising a voice: the model
+ * takes direction in the prompt itself, so whatever was typed into the style
+ * box there can be pasted here verbatim and every line of every call gets it.
+ * There is no separate voice asset to reference — Iapetus read one way and
+ * Iapetus read another are the same voice and a different instruction.
+ */
+export function geminiStyle(env) {
+  return String(env?.GEMINI_TTS_STYLE || "").trim() || DEFAULT_STYLE;
 }
 
 export function geminiModel(env) {

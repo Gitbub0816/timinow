@@ -523,6 +523,7 @@ set_var VOICE_MAX_ATTEMPTS     "$VOICE"
 set_var VOICE_SAY_VOICE        "$VOICE"
 set_var GEMINI_TTS_VOICE       "$VOICE"
 set_var GEMINI_TTS_MODEL       "$VOICE"
+set_var GEMINI_TTS_STYLE       "$VOICE"
 set_var PLATFORM_ADMIN_EMAILS  "$ADMIN"
 set_var PLATFORM_ADMIN_USER_IDS "$ADMIN"
 # Shared by both ends of the immediate-dispatch path, so it goes to both.

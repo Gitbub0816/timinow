@@ -4,6 +4,7 @@ import {
   geminiModel,
   geminiVoice,
   pcmToWav,
+  geminiStyle,
   sampleRateFromMime,
   synthesizeSpeech
 } from "../src/gemini-tts.js";
@@ -63,11 +64,20 @@ await withFetch(async () => new Response(JSON.stringify({ candidates: [{ content
   assert(message.includes("no audio"), "a text-only answer is a failure, not silence");
 });
 
+// The style is the customisation. It has to reach the model, and the
+// configured one has to beat the default, or "I customised it" quietly means
+// nothing.
+assert(geminiStyle({}).includes("unhurried"), "there is a sensible default reading");
+assert(geminiStyle({ GEMINI_TTS_STYLE: "Speak like a night-shift nurse." }) === "Speak like a night-shift nurse.",
+  "a configured style replaces the default outright");
+assert(geminiStyle({ GEMINI_TTS_STYLE: "   " }).includes("unhurried"), "whitespace is not a style");
+
 await withFetch(async (url, init) => {
   const body = JSON.parse(init.body);
   assert(body.generationConfig.responseModalities.includes("AUDIO"), "audio is requested");
   assert(body.generationConfig.speechConfig.voiceConfig.prebuiltVoiceConfig.voiceName === "Kore", "the configured voice is sent");
-  assert(body.contents[0].parts[0].text.includes("calmly"), "the style direction is prepended to the line");
+  assert(body.contents[0].parts[0].text.startsWith("Read this calmly."), "the style is prepended, ahead of the line");
+  assert(body.contents[0].parts[0].text.includes("hello"), "and the line itself still gets said");
   assert(init.headers["x-goog-api-key"] === "k", "the key travels in the header, not the URL");
   return new Response(JSON.stringify({
     candidates: [{ content: { parts: [{ inlineData: { mimeType: "audio/L16;codec=pcm;rate=24000", data: "AAAAAA==" } }] } }]
@@ -96,4 +106,4 @@ await withFetch(async (url, init) => {
   assert(acceptedTwiml(script, { voice: "Polly.Joanna-Neural" }).includes("<Say"), "and fall back too");
 }
 
-console.log("Gemini TTS tests passed: WAV container, declared sample rate, base64 audio, configuration, Google's error text surviving, a text-only answer counting as failure, request shape, and <Play>/<Say> fallback including a partial one.");
+console.log("Gemini TTS tests passed: WAV container, declared sample rate, base64 audio, configuration, Google's error text surviving, a text-only answer counting as failure, request shape, style direction reaching the model, and <Play>/<Say> fallback including a partial one.");

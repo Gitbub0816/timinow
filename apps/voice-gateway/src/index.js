@@ -25,7 +25,7 @@ import {
   tenantIdForClerkOrg
 } from "../../../src/db.js";
 import { isPlatformAdmin } from "../../../src/tenancy.js";
-import { geminiConfigured, geminiModel, geminiVoice, synthesizeSpeech } from "../../../src/gemini-tts.js";
+import { geminiConfigured, geminiModel, geminiStyle, geminiVoice, synthesizeSpeech } from "../../../src/gemini-tts.js";
 import {
   acceptedTwiml,
   alreadyFilledTwiml,
@@ -53,11 +53,6 @@ const TEST_SCRIPT_INPUT = {
   urgency: "urgent"
 };
 
-/** How the line should be read. Gemini's TTS models take direction in the
- *  prompt itself, and a clinic answering the phone at 2am should not be read
- *  to brightly. */
-const CALL_STYLE = "Read this warmly and calmly, at an unhurried pace, as a real person calling a veterinary clinic. Do not sound cheerful or promotional.";
-
 /**
  * Audio for one line, cached on its own URL.
  *
@@ -70,7 +65,7 @@ async function cachedSpeech(request, env, text) {
   const cache = caches.default;
   const hit = await cache.match(request);
   if (hit) return hit;
-  const { wav } = await synthesizeSpeech(env, { text, style: CALL_STYLE });
+  const { wav } = await synthesizeSpeech(env, { text, style: geminiStyle(env) });
   const response = new Response(wav, {
     headers: {
       "content-type": "audio/wav",
@@ -778,8 +773,8 @@ async function handleApi(request, env) {
     try { body = await request.json(); } catch { body = {}; }
     const voice = String(body.voice || "").trim() || geminiVoice(env);
     try {
-      const result = await synthesizeSpeech(env, { text: "Tee-mee test.", voice, style: CALL_STYLE });
-      return json({ ok: true, voice: result.voice, model: result.model, wavBytes: result.wav.length });
+      const result = await synthesizeSpeech(env, { text: "Tee-mee test.", voice, style: geminiStyle(env) });
+      return json({ ok: true, voice: result.voice, model: result.model, wavBytes: result.wav.length, style: geminiStyle(env) });
     } catch (error) {
       return json({
         ok: false,
