@@ -73,41 +73,70 @@ struct ClinicMapView: View {
 /// this is only ever a lightweight, cancellable preview.
 #if canImport(MapboxNavigationCore)
 import MapboxNavigationCore
+// Waypoint, RouteOptions, and RoadClasses live in MapboxDirections, which
+// MapboxNavigationCore depends on but does not re-export.
+import MapboxDirections
 
+/// Fetches the route line and ETA shown on the tracker map, ahead of any
+/// decision to start guidance.
+///
+/// Verified against mapbox-navigation-ios v3.27.3: `MapboxRoutingProvider` has
+/// no public initializer, so a provider is obtained from
+/// `MapboxNavigationProvider.routingProvider()`. `calculateRoutes(options:)`
+/// returns `Task<NavigationRoutes, Error>`, not a completion handler, and
+/// `NavigationRoute.route` is non-optional.
 enum RoutePreviewFetcher {
-    static func fetch(from origin: GeoPoint, to destination: GeoPoint, preferences: NavigationPreferences) async -> (coordinates: [GeoPoint], summary: RouteSummary)? {
-        let originWaypoint = Waypoint(coordinate: CLLocationCoordinate2D(latitude: origin.latitude, longitude: origin.longitude))
-        let destinationWaypoint = Waypoint(coordinate: CLLocationCoordinate2D(latitude: destination.latitude, longitude: destination.longitude))
-        var options = NavigationRouteOptions(waypoints: [originWaypoint, destinationWaypoint])
-        options.profileIdentifier = .automobileAvoidingTraffic
+    static func fetch(
+        from origin: GeoPoint,
+        to destination: GeoPoint,
+        preferences: NavigationPreferences,
+        mapToken: String
+    ) async -> (coordinates: [GeoPoint], summary: RouteSummary)? {
+        guard !mapToken.isEmpty else { return nil }
+        let originWaypoint = Waypoint(
+            coordinate: CLLocationCoordinate2D(latitude: origin.latitude, longitude: origin.longitude)
+        )
+        let destinationWaypoint = Waypoint(
+            coordinate: CLLocationCoordinate2D(latitude: destination.latitude, longitude: destination.longitude)
+        )
+        let options = NavigationRouteOptions(
+            waypoints: [originWaypoint, destinationWaypoint],
+            profileIdentifier: .automobileAvoidingTraffic
+        )
         var avoid: RoadClasses = []
         if preferences.avoidTolls { avoid.insert(.toll) }
         if preferences.avoidHighways { avoid.insert(.motorway) }
         if preferences.avoidFerries { avoid.insert(.ferry) }
         options.roadClassesToAvoid = avoid
 
-        let provider = MapboxRoutingProvider()
-        return await withCheckedContinuation { continuation in
-            _ = provider.calculateRoutes(options: options) { result in
-                switch result {
-                case .success(let navigationRoutes):
-                    guard let route = navigationRoutes.mainRoute.route else {
-                        continuation.resume(returning: nil)
-                        return
-                    }
-                    let coordinates = (route.shape?.coordinates ?? []).map { GeoPoint(latitude: $0.latitude, longitude: $0.longitude) }
-                    let summary = RouteSummary(distanceMeters: route.distance, expectedTravelSeconds: route.expectedTravelTime)
-                    continuation.resume(returning: (coordinates, summary))
-                case .failure:
-                    continuation.resume(returning: nil)
-                }
-            }
+        // The preview needs no voice, so this provider is configured with
+        // credentials only.
+        let provider = MapboxNavigationProvider(
+            coreConfig: CoreConfig(credentials: NavigationCoreApiConfiguration(accessToken: mapToken))
+        )
+        do {
+            let navigationRoutes = try await provider.routingProvider().calculateRoutes(options: options).value
+            let route = navigationRoutes.mainRoute.route
+            let coordinates = (route.shape?.coordinates ?? [])
+                .map { GeoPoint(latitude: $0.latitude, longitude: $0.longitude) }
+            let summary = RouteSummary(
+                distanceMeters: route.distance,
+                expectedTravelSeconds: route.expectedTravelTime
+            )
+            return (coordinates, summary)
+        } catch {
+            return nil
         }
     }
 }
 #else
 enum RoutePreviewFetcher {
-    static func fetch(from origin: GeoPoint, to destination: GeoPoint, preferences: NavigationPreferences) async -> (coordinates: [GeoPoint], summary: RouteSummary)? { nil }
+    static func fetch(
+        from origin: GeoPoint,
+        to destination: GeoPoint,
+        preferences: NavigationPreferences,
+        mapToken: String
+    ) async -> (coordinates: [GeoPoint], summary: RouteSummary)? { nil }
 }
 #endif
 

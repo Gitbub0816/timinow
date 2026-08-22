@@ -116,17 +116,24 @@ public final class VoicePreviewer: NSObject, AVSpeechSynthesizerDelegate {
 
 // MARK: - Mapbox voice stack (cloud primary, on-device fallback)
 //
-// VERIFIED against a local clone of mapbox-navigation-ios
-// (Sources/MapboxNavigationCore/VoiceGuidance/SpeechSynthesizing.swift):
-// the full `SpeechSynthesizing` protocol shape below, `TTSConfig`, and
-// `MultiplexedSpeechSynthesizer(speechSynthesizers:)`'s signature are
-// accurate as of that read. `MapboxSpeechSynthesizer()`'s exact
-// initializer (whether it needs an explicit access token or reads one
-// from the active `CoreConfig`/`Credentials`) and `SpokenInstruction`'s
-// mutability were NOT independently re-verified here — confirm both
-// against the installed SDK version before shipping.
+// Verified against a local clone of mapbox-navigation-ios at v3.27.3:
+//
+//   - `SpeechSynthesizing` is @MainActor, and `speak` is synchronous and
+//     takes `during legProgress: RouteLegProgress`.
+//   - `TTSConfig.custom(speechSynthesizer:)` is how a custom synthesizer is
+//     installed, via `CoreConfig(ttsConfig:)`.
+//   - `MapboxSpeechSynthesizer`'s initializer is INTERNAL to the SDK, so the
+//     cloud voice cannot be constructed directly. The supported route is
+//     `MultiplexedSpeechSynthesizer(mapboxSpeechApiConfiguration:skuTokenProvider:
+//     customSpeechSynthesizers:)`, which builds the cloud synthesizer itself
+//     and appends `SystemSpeechSynthesizer()` as the fallback.
+//   - `SpokenInstruction` is constructed, not mutated, through its public
+//     `init(distanceAlongStep:text:ssmlText:)`.
+//   - `RouteStep.maneuverType` is a `String`-backed `ManeuverType` whose raw
+//     values are exactly the keys used in `instruction-phrases.json`.
 #if canImport(MapboxNavigationCore) && os(iOS) && !SKIP
 import MapboxNavigationCore
+import MapboxDirections
 import Combine
 
 /// Wraps Mapbox's standard "cloud voice primary, on-device fallback"
@@ -140,6 +147,9 @@ public final class TimiSpeechSynthesizer: SpeechSynthesizing {
     private let clinicName: String
     private let petName: String
     private let clinicKind: String?
+    /// The "look for the entrance" line is worth saying once, not on every
+    /// instruction inside the last 400 metres.
+    private var announcedApproach = false
 
     public var voiceInstructions: AnyPublisher<VoiceInstructionEvent, Never> { inner.voiceInstructions }
     public var muted: Bool {
@@ -160,16 +170,33 @@ public final class TimiSpeechSynthesizer: SpeechSynthesizing {
         set { inner.managesAudioSession = newValue }
     }
 
-    public init(preferences: NavigationPreferences, clinicName: String, petName: String, clinicKind: String?) {
+    /// `mapToken` is the public Mapbox token from `GET /api/config`; it is only
+    /// needed for the cloud voice, which is a billed Mapbox Speech request.
+    ///
+    /// `MapboxSpeechSynthesizer`'s own initializer is internal to the SDK, so
+    /// the cloud voice can only be assembled through
+    /// `MultiplexedSpeechSynthesizer`'s convenience initializer — that is the
+    /// supported way to get "cloud first, on-device fallback". Choosing an
+    /// on-device profile skips the cloud entirely, which also means no Mapbox
+    /// Speech charges and no network dependency for guidance.
+    public init(
+        preferences: NavigationPreferences,
+        mapToken: String,
+        clinicName: String,
+        petName: String,
+        clinicKind: String?
+    ) {
         self.clinicName = clinicName
         self.petName = petName
         self.clinicKind = clinicKind
-        var speakers: [any SpeechSynthesizing] = []
-        if preferences.voiceProfile == .mapboxCloud {
-            speakers.append(MapboxSpeechSynthesizer())
+        if preferences.voiceProfile == .mapboxCloud && !mapToken.isEmpty {
+            self.inner = MultiplexedSpeechSynthesizer(
+                mapboxSpeechApiConfiguration: ApiConfiguration(accessToken: mapToken),
+                skuTokenProvider: { nil }
+            )
+        } else {
+            self.inner = MultiplexedSpeechSynthesizer(speechSynthesizers: [SystemSpeechSynthesizer()])
         }
-        speakers.append(SystemSpeechSynthesizer())
-        self.inner = MultiplexedSpeechSynthesizer(speechSynthesizers: speakers)
     }
 
     public func prepareIncomingSpokenInstructions(_ instructions: [SpokenInstruction], locale: Locale?) {
@@ -186,34 +213,96 @@ public final class TimiSpeechSynthesizer: SpeechSynthesizing {
     public func stopSpeaking() { inner.stopSpeaking() }
     public func interruptSpeaking() { inner.interruptSpeaking() }
 
-    /// Text-based detection (rather than pattern-matching Mapbox's
-    /// `ManeuverType` enum, whose exact case names differ across SDK
-    /// versions) keeps this robust across Mapbox Navigation SDK point
-    /// releases: any instruction that already talks about arriving is
-    /// replaced with Tími's arrival announcement; anything within ~400 m of
-    /// the clinic — read from `legProgress.distanceRemaining`, which has
-    /// been stable API across Navigation SDK versions — gets Tími's
-    /// "approaching" line appended once.
+    /// Rewrite one spoken instruction into Tími's voice.
+    ///
+    /// The phrase table is keyed by Mapbox's own maneuver identifiers, which is
+    /// not a coincidence: `ManeuverType` is a `String`-backed enum whose raw
+    /// values are exactly `depart`, `turn`, `continue`, `new name`, `merge`,
+    /// `on ramp`, `off ramp`, `fork`, `roundabout`, and `arrive` — the same
+    /// keys the web client uses in `public/map.js`. Reading `rawValue` rather
+    /// than pattern-matching case names keeps this working across SDK
+    /// releases and lets one JSON file drive both clients.
+    ///
+    /// Both `text` and `ssmlText` are replaced. The cloud synthesizer speaks
+    /// `ssmlText` and the on-device one speaks `text`, so rewriting only one
+    /// would produce two voices saying two different things depending on
+    /// network conditions.
     private func rewritten(_ instruction: SpokenInstruction, legProgress: RouteLegProgress) -> SpokenInstruction {
-        var copy = instruction
-        let isArrival = instruction.text.localizedCaseInsensitiveContains("arrive")
-            || instruction.text.localizedCaseInsensitiveContains("destination")
-        if isArrival, let arrival = TimiInstructionRewriter.announcement("arrival", clinicName: clinicName, petName: petName) {
-            copy.text = arrival
-            copy.ssmlText = arrival
-            return copy
+        let step = legProgress.currentStep
+        let maneuver = step.maneuverType.rawValue
+
+        // Arrival is special: Tími replaces the whole line rather than
+        // rephrasing it, because the useful information is what to do at the
+        // front desk, not that the drive is over.
+        if maneuver == "arrive",
+           let arrival = TimiInstructionRewriter.announcement("arrival", clinicName: clinicName, petName: petName) {
+            return SpokenInstruction(
+                distanceAlongStep: instruction.distanceAlongStep,
+                text: arrival,
+                ssmlText: arrival
+            )
         }
-        if legProgress.distanceRemaining < 400, let approaching = TimiInstructionRewriter.announcement("approaching", clinicName: clinicName, petName: petName, kind: clinicKind ?? "clinic") {
-            copy.text = instruction.text + " " + approaching
-            copy.ssmlText = instruction.ssmlText + " " + approaching
+
+        var text = instruction.text
+        var ssml = instruction.ssmlText
+
+        if let phrased = TimiInstructionRewriter.phraseInstruction(
+            maneuverType: maneuver,
+            modifier: step.maneuverDirection?.rawValue ?? "",
+            road: step.names?.first ?? roadName(from: step),
+            clinicName: clinicName
+        ) {
+            text = phrased
+            ssml = phrased
         }
-        return copy
+
+        // Said once, on the last leg, so the driver knows what to look for
+        // before they need to look for it.
+        if legProgress.distanceRemaining < 400,
+           !announcedApproach,
+           let approaching = TimiInstructionRewriter.announcement(
+               "approaching",
+               clinicName: clinicName,
+               petName: petName,
+               kind: clinicKind ?? "clinic"
+           ) {
+            announcedApproach = true
+            text += " " + approaching
+            ssml += " " + approaching
+        }
+
+        return SpokenInstruction(distanceAlongStep: instruction.distanceAlongStep, text: text, ssmlText: ssml)
+    }
+
+    /// Fall back to the road name embedded in Mapbox's own phrasing when the
+    /// step carries no `names` array, which happens on unnamed service roads.
+    private func roadName(from step: RouteStep) -> String {
+        let instructions = step.instructions
+        if let range = instructions.range(of: "onto ", options: .caseInsensitive) {
+            return String(instructions[range.upperBound...])
+        }
+        if let range = instructions.range(of: " on ", options: .caseInsensitive) {
+            return String(instructions[range.upperBound...])
+        }
+        return "the road"
     }
 }
 
 enum TimiSpeechStack {
-    static func makeSynthesizer(preferences: NavigationPreferences, clinicName: String, petName: String, clinicKind: String?) -> TimiSpeechSynthesizer {
-        TimiSpeechSynthesizer(preferences: preferences, clinicName: clinicName, petName: petName, clinicKind: clinicKind)
+    static func makeSynthesizer(
+        preferences: NavigationPreferences,
+        mapToken: String,
+        clinicName: String,
+        petName: String,
+        clinicKind: String?
+    ) -> TimiSpeechSynthesizer {
+        TimiSpeechSynthesizer(
+            preferences: preferences,
+            mapToken: mapToken,
+            clinicName: clinicName,
+            petName: petName,
+            clinicKind: clinicKind
+        )
     }
 }
 #endif

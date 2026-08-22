@@ -39,14 +39,20 @@ if enableMapbox {
         .package(url: "https://github.com/mapbox/mapbox-maps-ios.git", from: "11.26.0"),
         .package(url: "https://github.com/mapbox/mapbox-navigation-ios.git", from: "3.27.0")
     ])
+    // MapboxDirections is declared explicitly: MapboxNavigationCore depends on
+    // it for Waypoint, RouteOptions, RoadClasses, RouteStep, and
+    // SpokenInstruction, but does not re-export it, so files that name those
+    // types need the product on the target as well as an import.
     timiNowUIDependencies.append(contentsOf: [
         .product(name: "MapboxMaps", package: "mapbox-maps-ios"),
         .product(name: "MapboxNavigationCore", package: "mapbox-navigation-ios"),
-        .product(name: "MapboxNavigationUIKit", package: "mapbox-navigation-ios")
+        .product(name: "MapboxNavigationUIKit", package: "mapbox-navigation-ios"),
+        .product(name: "MapboxDirections", package: "mapbox-navigation-ios")
     ])
     timiNowCarPlayDependencies.append(contentsOf: [
         .product(name: "MapboxNavigationCore", package: "mapbox-navigation-ios"),
-        .product(name: "MapboxNavigationUIKit", package: "mapbox-navigation-ios")
+        .product(name: "MapboxNavigationUIKit", package: "mapbox-navigation-ios"),
+        .product(name: "MapboxDirections", package: "mapbox-navigation-ios")
     ])
 }
 

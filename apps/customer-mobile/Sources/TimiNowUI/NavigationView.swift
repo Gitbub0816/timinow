@@ -6,25 +6,31 @@ import SkipFuseUI
 import SwiftUI
 #endif
 
-// NOTE ON VERIFICATION: written without a Mac or Xcode. The Mapbox-specific
-// pieces below carry two different confidence levels:
-//   - CONFIRMED against a local clone of mapbox-navigation-ios: the
-//     `SpeechSynthesizing` protocol shape and `TTSConfig`/`CoreConfig` TTS
-//     wiring (see VoiceController.swift), the day/night style subclassing
-//     via `mapStyleURL`, and `RouteOptions.roadClassesToAvoid` taking
-//     `.toll` / `.motorway` / `.ferry`.
-//   - NOT independently re-verified: the exact call chain from
-//     `MapboxNavigationProvider` to a routing provider and to a
-//     pre-wired `NavigationOptions` (`provider.mapboxNavigation...`,
-//     `provider.navigationOptions(styles:)`) and `NavigationRoutes`'s
-//     exact shape. Confirm both against the installed SDK version — a
-//     mismatch only affects this Mapbox build path (`canImport` guarded);
-//     the `#else` fallback below compiles independently and is what
-//     default CI and the Android/Skip build actually exercise.
+// Written without a Mac or Xcode, so every Mapbox symbol used below was read
+// out of a local clone of mapbox-navigation-ios at v3.27.3 rather than
+// remembered. Confirmed there:
+//
+//   - `TTSConfig`/`CoreConfig` is where a custom voice is installed, not
+//     `NavigationOptions` (see VoiceController.swift).
+//   - Day and night styles are subclasses overriding `mapStyleURL`.
+//   - `RouteOptions.roadClassesToAvoid` takes `.toll` / `.motorway` / `.ferry`.
+//   - `MapboxRoutingProvider` has no public initializer; a provider comes from
+//     `MapboxNavigationProvider.routingProvider()`.
+//   - `calculateRoutes(options:)` returns `Task<NavigationRoutes, Error>`, so
+//     it is awaited through `.value` rather than a completion handler.
+//   - `NavigationOptions` is assembled from `mapboxNavigation`,
+//     `routeVoiceController`, and `eventsManager()` on the provider.
+//   - `NavigationRoute.route` is non-optional.
+//
+// None of that is a substitute for compiling it. Everything here is
+// `canImport` guarded, so a mismatch affects only the Mapbox build path; the
+// `#else` fallback below compiles independently and is what default CI and the
+// Android/Skip build actually exercise.
 
 #if canImport(MapboxNavigationUIKit) && canImport(MapboxNavigationCore) && !SKIP && os(iOS)
 import MapboxNavigationCore
 import MapboxNavigationUIKit
+import MapboxDirections
 import CoreLocation
 import UIKit
 
@@ -112,51 +118,74 @@ final class NavigationHostController: UIViewController {
     }
 
     private func requestRouteAndPresent() async {
-        let originWaypoint = Waypoint(coordinate: CLLocationCoordinate2D(latitude: origin.latitude, longitude: origin.longitude))
+        let originWaypoint = Waypoint(
+            coordinate: CLLocationCoordinate2D(latitude: origin.latitude, longitude: origin.longitude)
+        )
         let destinationWaypoint = Waypoint(
             coordinate: CLLocationCoordinate2D(latitude: destination.latitude, longitude: destination.longitude),
             name: destination.name
         )
-        var options = NavigationRouteOptions(waypoints: [originWaypoint, destinationWaypoint])
-        options.profileIdentifier = .automobileAvoidingTraffic
+
+        // `automobileAvoidingTraffic` is the profile default; naming it keeps the
+        // intent explicit, because an emergency drive is exactly the case where
+        // live traffic should shape the ETA.
+        let options = NavigationRouteOptions(
+            waypoints: [originWaypoint, destinationWaypoint],
+            profileIdentifier: .automobileAvoidingTraffic
+        )
         var avoid: RoadClasses = []
         if preferences.avoidTolls { avoid.insert(.toll) }
         if preferences.avoidHighways { avoid.insert(.motorway) }
         if preferences.avoidFerries { avoid.insert(.ferry) }
         options.roadClassesToAvoid = avoid
 
-        let provider = MapboxRoutingProvider()
-        let outcome: Result<NavigationRoutes, Error> = await withCheckedContinuation { continuation in
-            _ = provider.calculateRoutes(options: options) { result in continuation.resume(returning: result) }
-        }
-
-        switch outcome {
-        case .success(let routes):
-            presentNavigation(routes: routes)
-        case .failure:
+        // One provider serves both the route request and the navigation UI, so
+        // the credentials and the custom voice configured on it apply to the
+        // live session too. `MapboxRoutingProvider` is not publicly
+        // constructible; `routingProvider()` is how a caller obtains one.
+        let navigationProvider = makeNavigationProvider()
+        do {
+            let routes = try await navigationProvider.routingProvider().calculateRoutes(options: options).value
+            presentNavigation(routes: routes, using: navigationProvider)
+        } catch {
             presentFallback()
         }
     }
 
-    private func presentNavigation(routes: NavigationRoutes) {
-        // TTS is wired through `CoreConfig.ttsConfig` (confirmed shape —
-        // see VoiceController.swift), not a per-instance parameter on
-        // `NavigationOptions`. `MapboxNavigationProvider.navigationOptions`
-        // is the best-effort accessor for a `NavigationOptions` that
-        // already carries that config through to the live session —
-        // confirm this exact call against the installed SDK.
+    /// Builds the provider that carries our credentials and our custom voice.
+    private func makeNavigationProvider() -> MapboxNavigationProvider {
         let speechSynthesizer = preferences.voiceEnabled
-            ? TimiSpeechStack.makeSynthesizer(preferences: preferences, clinicName: destination.name, petName: petName, clinicKind: destination.kind)
+            ? TimiSpeechStack.makeSynthesizer(
+                preferences: preferences,
+                mapToken: mapboxAccessToken,
+                clinicName: destination.name,
+                petName: petName,
+                clinicKind: destination.kind
+            )
             : nil
         let coreConfig = CoreConfig(
-            credentials: .init(navigation: .init(accessToken: mapboxAccessToken)),
+            credentials: NavigationCoreApiConfiguration(accessToken: mapboxAccessToken),
             locale: Locale.current,
             ttsConfig: speechSynthesizer.map { TTSConfig.custom(speechSynthesizer: $0) } ?? .localOnly
         )
-        let navigationProvider = MapboxNavigationProvider(coreConfig: coreConfig)
+        return MapboxNavigationProvider(coreConfig: coreConfig)
+    }
+
+    /// Voice is installed through `CoreConfig.ttsConfig`, not through
+    /// `NavigationOptions`. Verified against mapbox-navigation-ios v3.27.3:
+    /// `NavigationCoreApiConfiguration(accessToken:)` fills the navigation, map,
+    /// and speech configurations from one token, and `NavigationOptions` is
+    /// assembled from three members of the provider — `mapboxNavigation`,
+    /// `routeVoiceController`, and `eventsManager()`.
+    private func presentNavigation(routes: NavigationRoutes, using navigationProvider: MapboxNavigationProvider) {
         let dayStyle = TimiDayStyle()
         let nightStyle = TimiNightStyle()
-        let navigationOptions = navigationProvider.navigationOptions(styles: [dayStyle, nightStyle])
+        let navigationOptions = NavigationOptions(
+            mapboxNavigation: navigationProvider.mapboxNavigation,
+            voiceController: navigationProvider.routeVoiceController,
+            eventsManager: navigationProvider.eventsManager(),
+            styles: [dayStyle, nightStyle]
+        )
         let vc = NavigationViewController(navigationRoutes: routes, navigationOptions: navigationOptions)
         vc.delegate = self
         vc.modalPresentationStyle = .fullScreen

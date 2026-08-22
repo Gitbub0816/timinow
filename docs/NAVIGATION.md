@@ -120,18 +120,28 @@ required beyond re-bundling the resource (`TimiNowUI`'s
 if the resource is ever missing, so a bad edit degrades to the built-in
 copy rather than crashing.
 
-The actual rewrite applied while driving (`TimiSpeechSynthesizer.rewritten`
-in `VoiceController.swift`) currently does the two things called out
-explicitly: it replaces Mapbox's own "you have arrived" wording with the
-`arrival` announcement, and appends the `approaching` announcement once the
-route has under ~400 m left (`RouteLegProgress.distanceRemaining`, a stable
-property across Navigation SDK versions). The full per-maneuver
-`instructionPhrases` table is loaded and ready to use — wiring it to
-*replace* every turn (not just arrival/approach) needs
-`RouteLegProgress.currentStep`'s maneuver-type/modifier/road-name accessors
-confirmed against the installed SDK first; the exact property names were
-not independently verified here. See the `NOTE ON VERIFICATION` comments in
-`VoiceController.swift` and `NavigationView.swift`.
+The rewrite runs on every spoken instruction
+(`TimiSpeechSynthesizer.rewritten` in `VoiceController.swift`). The phrase
+table is keyed by Mapbox's own maneuver identifiers deliberately:
+`RouteStep.maneuverType` is a `String`-backed `ManeuverType` whose raw values
+are exactly `depart`, `turn`, `continue`, `new name`, `merge`, `on ramp`,
+`off ramp`, `fork`, `roundabout`, and `arrive` — the same keys the web client
+uses. Reading `rawValue` rather than pattern-matching case names keeps this
+working across SDK releases and lets one JSON file drive both clients.
+
+Three behaviours fall out of that:
+
+- Every ordinary maneuver is rephrased from `instructionPhrases`, with
+  `{modifier}` from `step.maneuverDirection`, `{road}` from `step.names` (or,
+  on unnamed service roads, parsed out of Mapbox's own phrasing).
+- Arrival replaces the line entirely with the `arrival` announcement, because
+  what matters on arrival is what to say at the front desk, not that the drive
+  is over.
+- The `approaching` line is appended once, inside the last 400 m.
+
+Both `text` and `ssmlText` are rewritten. The cloud voice speaks `ssmlText` and
+the on-device voice speaks `text`, so rewriting only one would produce two
+different sentences depending on network conditions.
 
 ## Adding or swapping voices
 

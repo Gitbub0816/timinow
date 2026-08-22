@@ -141,7 +141,12 @@ struct TrackerView: View {
         .task {
             guard let destination = navigationDestination else { return }
             let origin = GeoPoint(latitude: store.currentLatitude, longitude: store.currentLongitude)
-            let preview = await RoutePreviewFetcher.fetch(from: origin, to: GeoPoint(latitude: destination.latitude, longitude: destination.longitude), preferences: store.navigationPreferences)
+            let preview = await RoutePreviewFetcher.fetch(
+                from: origin,
+                to: GeoPoint(latitude: destination.latitude, longitude: destination.longitude),
+                preferences: store.navigationPreferences,
+                mapToken: store.mapToken ?? ""
+            )
             routePreview = preview?.coordinates ?? []
             if let summary = preview?.summary { store.updateNavigationProgress(step: store.currentNavigationStep, summary: summary) }
         }
