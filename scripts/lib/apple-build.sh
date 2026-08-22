@@ -122,7 +122,20 @@ summarise_failure() { # summarise_failure LOGFILE
     keep && /^[[:space:]]/ { next }
     /Error Domain/    { print; keep = 0; next }
     { keep = 0 }
-  ' "$1" | awk '!seen[$0]++' | head -40 >&2
+  ' "$1" | awk '!seen[$0]++' | head -40 | copy_and_show >&2
+}
+
+# Print, and put the same text on the clipboard. Pasting a failure back is the
+# whole feedback loop here, and selecting it out of a scrolled terminal is the
+# part that goes wrong — a truncated paste costs a round trip.
+copy_and_show() {
+  if command -v pbcopy >/dev/null 2>&1; then
+    tee /tmp/timi-last-failure.txt
+    pbcopy < /tmp/timi-last-failure.txt
+    printf '\033[2m  (copied to the clipboard — paste it as-is)\033[0m\n'
+  else
+    cat
+  fi
 }
 
 # The team id is the OU of the Apple Development certificate. The name in

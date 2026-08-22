@@ -790,17 +790,22 @@ for (const root of ["apps/customer-mobile/Sources", "apps/vet-desktop/Sources"])
 }
 
 // A dynamic library product has to be embedded in the bundle, or dyld cannot
-// find it at launch — the app builds, signs, validates, and then dies with
-// "Library not loaded: @rpath/...". The console's Xcode target has no embed
-// phase, so its product must be static. (The customer app is different: Xcode
-// embeds SwiftPM dynamic products into an iOS app itself, and Skip's Android
-// bridge needs them dynamic.)
-{
-  const manifest = await read("apps/vet-desktop/Package.swift");
-  const project = await read("apps/vet-desktop/Darwin/project.yml");
+// find it at launch — the app builds, signs, validates, installs, and then
+// dies immediately with "Library not loaded: @rpath/...".
+//
+// Every app, not just the console. This check used to read vet-desktop alone,
+// carrying a comment claiming the customer app was different because "Xcode
+// embeds SwiftPM dynamic products into an iOS app itself". It does not. The
+// customer app had the identical defect and crashed on launch the identical
+// way, and the guard written for that exact bug was scoped past it.
+for (const app of ["customer-mobile", "vet-desktop"]) {
+  const manifest = await read(`apps/${app}/Package.swift`);
+  const project = await read(`apps/${app}/Darwin/project.yml`);
   for (const product of manifest.matchAll(/\.library\(name:\s*"(\w+)",\s*type:\s*\.dynamic/g)) {
-    if (!/embed:\s*true/.test(project)) {
-      throw new Error(`apps/vet-desktop/Package.swift: ${product[1]} is a dynamic library, but apps/vet-desktop/Darwin/project.yml embeds nothing. dyld will not find it at launch — make it .static.`);
+    // An embed of some other target — the watch app, say — does not embed this.
+    const embedded = new RegExp(`product:\\s*${product[1]}[\\s\\S]{0,120}?embed:\\s*true`).test(project);
+    if (!embedded) {
+      throw new Error(`apps/${app}/Package.swift: ${product[1]} is a dynamic library that apps/${app}/Darwin/project.yml never embeds. dyld will not find it at launch — make it .static.`);
     }
   }
 }
