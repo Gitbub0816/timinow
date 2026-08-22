@@ -360,7 +360,7 @@ async function loadAudit() {
   const container = document.querySelector("[data-audit-list]");
   container.innerHTML = '<div class="loading-state"><span class="spinner" aria-hidden="true"></span><p>Loading audit log…</p></div>';
   try {
-    const { audit } = await apiFetch("/api/admin/audit?limit=100");
+    const { audit = [] } = await apiFetch("/api/admin/audit?limit=100");
     container.innerHTML = audit.length
       ? `<div class="panel"><div class="audit-list">${audit.map(renderPlatformAuditRow).join("")}</div></div>`
       : '<div class="empty-state"><p>No actions recorded yet.</p></div>';

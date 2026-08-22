@@ -3,6 +3,7 @@ options:
   bundleIdPrefix: solutions.clearkey
   deploymentTarget:
     iOS: "17.0"
+    watchOS: "10.0"
 packages:
   TimiNowPackage:
     path: ..
@@ -15,6 +16,15 @@ targets:
     dependencies:
       - package: TimiNowPackage
         product: TimiNowApp
+      # Apple-only CarPlay support (Sources/TimiNowCarPlay). Never a
+      # dependency of TimiNowUI/TimiNowApp, so this is the only place it is
+      # linked — see Package.swift.
+      - package: TimiNowPackage
+        product: TimiNowCarPlay
+      # Single-target watchOS companion app (../Watch). See
+      # docs/NAVIGATION.md for how it pairs over WatchConnectivity.
+      - target: TimiNowWatch
+        embed: true
     configFiles:
       Debug: TimiNow.xcconfig
       Release: TimiNow.xcconfig
@@ -24,14 +34,46 @@ targets:
         PRODUCT_NAME: TimiNow
         PRODUCT_MODULE_NAME: TimiNowHost
         CODE_SIGN_STYLE: Automatic
+        # Requires Apple's separate CarPlay entitlement approval before this
+        # will actually sign for a device build — see
+        # Darwin/TimiNow.entitlements and docs/NAVIGATION.md. Simulator
+        # builds with CODE_SIGNING_ALLOWED=NO (as in CI) are unaffected.
+        CODE_SIGN_ENTITLEMENTS: TimiNow.entitlements
         TARGETED_DEVICE_FAMILY: "1,2"
         SUPPORTS_MACCATALYST: NO
         SWIFT_VERSION: "5.9"
+  TimiNowWatch:
+    type: application
+    platform: watchOS
+    sources:
+      - ../Watch
+    settings:
+      base:
+        PRODUCT_NAME: TimiNowWatch
+        PRODUCT_BUNDLE_IDENTIFIER: solutions.clearkey.timinow.watchkitapp
+        GENERATE_INFOPLIST_FILE: YES
+        CODE_SIGN_STYLE: Automatic
+        TARGETED_DEVICE_FAMILY: "4"
+        SWIFT_VERSION: "5.9"
+        SDKROOT: watchos
+        INFOPLIST_KEY_WKApplication: YES
+        INFOPLIST_KEY_WKCompanionAppBundleIdentifier: solutions.clearkey.timinow
+        INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait
+        INFOPLIST_KEY_CFBundleDisplayName: "Tími"
 schemes:
   TimiNow:
     build:
       targets:
         TimiNow: all
+        TimiNowWatch: all
+    run:
+      config: Debug
+    archive:
+      config: Release
+  TimiNowWatch:
+    build:
+      targets:
+        TimiNowWatch: all
     run:
       config: Debug
     archive:

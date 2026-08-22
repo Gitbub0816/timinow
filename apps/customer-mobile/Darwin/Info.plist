@@ -8,5 +8,35 @@
     <key>NSUserNotificationsUsageDescription</key><string>Tími can notify you when a clinic sends an availability offer or updates your arrival.</string>
     <key>UILaunchScreen</key><dict><key>UIColorName</key><string>LaunchBackground</string></dict>
     <key>UISupportedInterfaceOrientations</key><array><string>UIInterfaceOrientationPortrait</string></array>
+    <!--
+      CarPlay scene registration. Requires the
+      com.apple.developer.carplay-driving-navigation entitlement
+      (Darwin/TimiNow.entitlements) — Apple grants this only after a
+      separate CarPlay entitlement application, not automatically with a
+      developer account. Until that approval lands, iOS never instantiates
+      a CPTemplateApplicationScene at all, so CarPlaySceneDelegate
+      (Sources/TimiNowCarPlay/CarPlaySceneDelegate.swift) is inert on any
+      build signed without the entitlement. See docs/NAVIGATION.md.
+    -->
+    <key>UIApplicationSceneManifest</key>
+    <dict>
+        <key>UIApplicationSupportsMultipleScenes</key><true/>
+        <key>UISceneConfigurations</key>
+        <dict>
+            <key>UIWindowSceneSessionRoleApplication</key>
+            <array>
+                <dict>
+                    <key>UISceneConfigurationName</key><string>Default Configuration</string>
+                </dict>
+            </array>
+            <key>CPTemplateApplicationSceneSessionRoleApplication</key>
+            <array>
+                <dict>
+                    <key>UISceneConfigurationName</key><string>CarPlay Configuration</string>
+                    <key>UISceneDelegateClassName</key><string>CarPlaySceneDelegate</string>
+                </dict>
+            </array>
+        </dict>
+    </dict>
 </dict>
 </plist>

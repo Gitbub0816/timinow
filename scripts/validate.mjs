@@ -5,6 +5,7 @@ const requiredFiles = [
   "public/styles.css",
   "public/app.js",
   "public/map.js",
+  "apps/customer-mobile/Sources/TimiNowUI/Resources/instruction-phrases.json",
   "public/manifest.webmanifest",
   "public/sw.js",
   "public/assets/brand/timinow-wordmark.png",
@@ -117,6 +118,35 @@ if (!customerMap.includes("mapbox-gl")) throw new Error("The customer map module
 if (!customerMap.includes("directions/v5/mapbox")) throw new Error("The customer map module must request driving directions");
 if (!app.includes("renderClinicMap")) throw new Error("The customer application must render the clinic map");
 if (!app.includes("startNavigation")) throw new Error("The customer application must offer turn-by-turn navigation");
+
+// The web client and the native client must speak the same words. The phrase
+// tables are the seam where driving instructions are customised, so drift
+// between them would mean two products with two voices.
+const nativePhrases = JSON.parse(await readFile("apps/customer-mobile/Sources/TimiNowUI/Resources/instruction-phrases.json", "utf8"));
+function tableFrom(source, name) {
+  const start = source.indexOf(`export const ${name} = {`);
+  if (start === -1) throw new Error(`public/map.js must export ${name}`);
+  const body = source.slice(source.indexOf("{", start), source.indexOf("\n};", start) + 2);
+  return Object.fromEntries(
+    [...body.matchAll(/^\s{2}"?([^":\n]+?)"?:\s*"((?:[^"\\]|\\.)*)",?$/gm)]
+      .map(([, key, value]) => [key, value.replace(/\\"/g, '"')])
+  );
+}
+for (const [webName, nativeName] of [["INSTRUCTION_PHRASES", "instructionPhrases"], ["TIMI_ANNOUNCEMENTS", "timiAnnouncements"]]) {
+  const web = tableFrom(customerMap, webName);
+  const native = nativePhrases[nativeName] || {};
+  const webKeys = Object.keys(web).sort().join(",");
+  const nativeKeys = Object.keys(native).sort().join(",");
+  if (!webKeys) throw new Error(`Could not read ${webName} out of public/map.js`);
+  if (webKeys !== nativeKeys) {
+    throw new Error(`Driving-instruction phrases differ between web and native (${webName}): web has [${webKeys}], native has [${nativeKeys}]`);
+  }
+  for (const key of Object.keys(web)) {
+    if (web[key] !== native[key]) {
+      throw new Error(`Driving-instruction wording differs for "${key}": web says "${web[key]}", native says "${native[key]}"`);
+    }
+  }
+}
 if (!app.includes("state.config?.signInRequired")) throw new Error("The client is not enforcing the runtime sign-in configuration");
 if (manifest.display !== "standalone") throw new Error("PWA manifest must use standalone display mode");
 if (!manifest.icons?.length) throw new Error("PWA manifest requires at least one icon");

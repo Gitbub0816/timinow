@@ -74,6 +74,43 @@ struct SettingsView: View {
         Form {
             Section("Connection") { TextField("https://your-worker.workers.dev", text: $store.apiBaseURLText); Button("Save API address") { store.saveAPIBaseURL() }; LabeledContent("Mode", value: store.isDemoMode ? "Interactive demo" : "Live Worker") }
             Section("Permissions") { Toggle("Offer notifications", isOn: $store.notificationsEnabled); Toggle("Use precise location", isOn: $store.locationEnabled) }
+            Section("Navigation") {
+                Toggle("Spoken turn-by-turn", isOn: $store.navigationPreferences.voiceEnabled)
+                Picker("Voice", selection: $store.navigationPreferences.voiceProfile) {
+                    ForEach(VoiceProfile.allCases, id: \.self) { Text($0.title).tag($0) }
+                }
+                #if os(iOS) && !SKIP
+                let deviceVoices = VoicePreviewer.availableVoices()
+                if !deviceVoices.isEmpty {
+                    Picker("Device voice", selection: Binding(
+                        get: { store.navigationPreferences.preferredVoiceIdentifier ?? "" },
+                        set: { store.navigationPreferences.preferredVoiceIdentifier = $0.isEmpty ? nil : $0 }
+                    )) {
+                        Text("System default").tag("")
+                        ForEach(deviceVoices, id: \.identifier) { voice in Text(voice.name).tag(voice.identifier) }
+                    }
+                }
+                #endif
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Speech rate")
+                    Slider(value: $store.navigationPreferences.speechRate, in: 0...1)
+                }
+                Picker("Distance units", selection: $store.navigationPreferences.distanceUnits) {
+                    ForEach(DistanceUnits.allCases, id: \.self) { Text($0.title).tag($0) }
+                }
+                Toggle("Avoid tolls", isOn: $store.navigationPreferences.avoidTolls)
+                Toggle("Avoid highways", isOn: $store.navigationPreferences.avoidHighways)
+                Toggle("Avoid ferries", isOn: $store.navigationPreferences.avoidFerries)
+                Toggle("Announce arrival at clinic", isOn: $store.navigationPreferences.announceArrivalAtClinic)
+                #if os(iOS) && !SKIP
+                Button("Preview voice") {
+                    VoicePreviewer.shared.preview(
+                        text: TimiInstructionRewriter.announcement("arrival", clinicName: "Hearth and Paw", petName: store.selectedPet.name) ?? "You've arrived.",
+                        preferences: store.navigationPreferences
+                    )
+                }
+                #endif
+            }
             Section("Legal and support") { NavigationLink("Terms, privacy, and veterinary safety") { LegalView() }; Link("Privacy requests", destination: URL(string: "mailto:privacy@clearkey.solutions")!); Link("Billing support", destination: URL(string: "mailto:billing@clearkey.solutions")!) }
             Section("Development") { Button("Replay guided onboarding") { store.resetOnboarding() }; Text("Authentication remains controlled by the Worker's exact SIGN_IN_REQUIRED flag. The app operates in fixture mode until a valid HTTPS Worker URL is saved.").font(.caption).foregroundStyle(TimiColor.muted) }
         }.navigationTitle("Settings")

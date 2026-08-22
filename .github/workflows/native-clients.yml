@@ -5,11 +5,13 @@ on:
     branches: [main]
     paths:
       - "apps/customer-mobile/**"
+      - "apps/customer-mobile/Watch/**"
       - "apps/vet-windows/**"
       - ".github/workflows/native-clients.yml"
   pull_request:
     paths:
       - "apps/customer-mobile/**"
+      - "apps/customer-mobile/Watch/**"
       - "apps/vet-windows/**"
       - ".github/workflows/native-clients.yml"
 
@@ -64,6 +66,44 @@ jobs:
           -scheme TimiNow
           -sdk iphonesimulator
           -destination 'generic/platform=iOS Simulator'
+          CODE_SIGNING_ALLOWED=NO
+          build
+
+  watch:
+    name: watchOS companion app build
+    runs-on: macos-15
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: apps/customer-mobile
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install Skip Fuse Android toolchain
+        uses: skiptools/actions/setup-skip@v1
+        with:
+          install-swift-android-sdk: "true"
+          run-doctor: "false"
+          verify-project: apps/customer-mobile
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Generate Xcode project
+        working-directory: apps/customer-mobile/Darwin
+        run: xcodegen generate
+      - name: Resolve Swift packages
+        run: SKIP_BRIDGE=1 swift package resolve
+      # The watchOS companion app (../Watch) is a plain Xcode target with no
+      # SwiftPM dependency of its own (see docs/NAVIGATION.md), so it builds
+      # standalone from the TimiNowWatch scheme. The TimiNow scheme's own
+      # "Compile iOS app" step above already exercises TimiNowCarPlay and
+      # the embedded TimiNowWatch target together, since both are wired
+      # into Darwin/project.yml's TimiNow app target.
+      - name: Compile watchOS companion app
+        run: >-
+          xcodebuild
+          -workspace Project.xcworkspace
+          -scheme TimiNowWatch
+          -sdk watchsimulator
+          -destination 'generic/platform=watchOS Simulator'
           CODE_SIGNING_ALLOWED=NO
           build
 

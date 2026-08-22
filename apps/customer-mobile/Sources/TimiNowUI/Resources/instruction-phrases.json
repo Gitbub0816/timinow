@@ -1,0 +1,20 @@
+{
+  "instructionPhrases": {
+    "depart": "Head {modifier} on {road}",
+    "arrive": "You've arrived at {clinic}",
+    "turn": "Turn {modifier} onto {road}",
+    "merge": "Merge {modifier} onto {road}",
+    "on ramp": "Take the ramp {modifier} onto {road}",
+    "off ramp": "Take the exit {modifier} toward {road}",
+    "fork": "Keep {modifier} at the fork",
+    "roundabout": "At the roundabout, take the exit onto {road}",
+    "continue": "Continue on {road}",
+    "new name": "Continue onto {road}"
+  },
+  "timiAnnouncements": {
+    "start": "Heading to {clinic}. The team is expecting {pet}.",
+    "halfway": "About {minutes} minutes to {clinic}.",
+    "approaching": "{clinic} is coming up. Look for the {kind} entrance.",
+    "arrival": "You've arrived at {clinic}. Tell the front desk you're the Tími arrival for {pet}."
+  }
+}
