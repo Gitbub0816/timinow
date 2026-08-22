@@ -1,5 +1,24 @@
-import { access, readFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { access, readdir, readFile } from "node:fs/promises";
+import { extname, join, resolve } from "node:path";
+
+/** Walk a directory tree collecting sources with the given extension. */
+async function collectFiles(root, extension) {
+  const found = [];
+  let entries;
+  try {
+    entries = await readdir(root, { withFileTypes: true });
+  } catch {
+    return found;
+  }
+  for (const entry of entries) {
+    if (["bin", "obj", ".build", ".swiftpm", "node_modules"].includes(entry.name)) continue;
+    const path = join(root, entry.name);
+    if (entry.isDirectory()) found.push(...(await collectFiles(path, extension)));
+    else if (extname(entry.name) === extension) found.push(path);
+  }
+  return found.sort();
+}
+
 
 const root = process.cwd();
 const required = [
@@ -78,4 +97,79 @@ for (const path of [
   if (/navigationBarHidden|navigationBarTitleDisplayMode|textInputAutocapitalization/.test(source)) throw new Error(`iOS-only view modifier breaks Swift package validation on macOS: ${path}`);
 }
 
-console.log(`Native client structure validated (${required.length} required files, ${expectations.length} behavioral contracts).`);
+/**
+ * No Swift or .NET toolchain runs here, so an unclosed brace in a native source
+ * would otherwise reach a developer's Mac before anyone noticed. Lex each file
+ * well enough to ignore strings and comments, then check that every bracket and
+ * every conditional-compilation block closes.
+ */
+function stripLiterals(text, { hashComments = false } = {}) {
+  const out = [];
+  let index = 0;
+  let inString = false;
+  let inMultiline = false;
+  let inLineComment = false;
+  let blockDepth = 0;
+  while (index < text.length) {
+    const character = text[index];
+    const next = text[index + 1] || "";
+    if (inLineComment) {
+      if (character === "\n") { inLineComment = false; out.push(character); }
+      index += 1; continue;
+    }
+    if (blockDepth) {
+      if (character === "*" && next === "/") { blockDepth -= 1; index += 2; continue; }
+      if (character === "/" && next === "*") { blockDepth += 1; index += 2; continue; }
+      if (character === "\n") out.push(character);
+      index += 1; continue;
+    }
+    if (inMultiline) {
+      if (text.startsWith('"""', index)) { inMultiline = false; index += 3; continue; }
+      if (character === "\n") out.push(character);
+      index += 1; continue;
+    }
+    if (inString) {
+      if (character === "\\") { index += 2; continue; }
+      if (character === '"') inString = false;
+      index += 1; continue;
+    }
+    if (text.startsWith('"""', index)) { inMultiline = true; index += 3; continue; }
+    if (character === '"') { inString = true; index += 1; continue; }
+    if (character === "/" && next === "/") { inLineComment = true; index += 2; continue; }
+    if (character === "/" && next === "*") { blockDepth = 1; index += 2; continue; }
+    if (hashComments && character === "#") { inLineComment = true; index += 1; continue; }
+    out.push(character); index += 1;
+  }
+  return out.join("");
+}
+
+function bracketProblems(source) {
+  const stripped = stripLiterals(source);
+  const problems = [];
+  for (const [open, close, label] of [["{", "}", "braces"], ["(", ")", "parentheses"], ["[", "]", "brackets"]]) {
+    const delta = stripped.split(open).length - stripped.split(close).length;
+    if (delta) problems.push(`${delta > 0 ? delta : -delta} unclosed ${label}`);
+  }
+  return problems;
+}
+
+const swiftFiles = (await Promise.all(
+  ["apps/customer-mobile", "apps/vet-desktop"].map(async (root) => collectFiles(root, ".swift"))
+)).flat();
+
+for (const path of swiftFiles) {
+  const source = await read(path);
+  const problems = bracketProblems(source);
+  const opens = (source.match(/^\s*#if\b/gm) || []).length;
+  const closes = (source.match(/^\s*#endif\b/gm) || []).length;
+  if (opens !== closes) problems.push(`${opens} #if versus ${closes} #endif`);
+  if (problems.length) throw new Error(`Unbalanced Swift source ${path}: ${problems.join(", ")}`);
+}
+
+const csharpFiles = await collectFiles("apps/vet-windows", ".cs");
+for (const path of csharpFiles) {
+  const problems = bracketProblems(await read(path));
+  if (problems.length) throw new Error(`Unbalanced C# source ${path}: ${problems.join(", ")}`);
+}
+
+console.log(`Native client structure validated (${required.length} required files, ${expectations.length} behavioral contracts, ${swiftFiles.length} Swift and ${csharpFiles.length} C# sources balanced).`);
