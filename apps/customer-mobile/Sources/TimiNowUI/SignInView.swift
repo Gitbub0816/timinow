@@ -103,9 +103,7 @@ struct SignInView: View {
                     .keyboardType(.emailAddress)
                     .autocorrectionDisabled()
                     .textInputAutocapitalization(.never)
-                    .padding(14)
-                    .background(.white, in: RoundedRectangle(cornerRadius: 15))
-                    .overlay(RoundedRectangle(cornerRadius: 15).stroke(TimiColor.ink.faded(0.18)))
+                    .timiField()
                 Button { Task { await auth.submitIdentifier() } } label: {
                     Label("Continue", systemImage: "arrow.right")
                 }
@@ -119,23 +117,17 @@ struct SignInView: View {
             VStack(alignment: .leading, spacing: 12) {
                 TextField("Your full name", text: $auth.signUpName)
                     .textContentType(.name)
-                    .padding(14)
-                    .background(.white, in: RoundedRectangle(cornerRadius: 15))
-                    .overlay(RoundedRectangle(cornerRadius: 15).stroke(TimiColor.ink.faded(0.18)))
+                    .timiField()
                 TextField("Email address", text: $auth.signUpEmail)
                     .textContentType(.emailAddress)
                     .keyboardType(.emailAddress)
                     .autocorrectionDisabled()
                     .textInputAutocapitalization(.never)
-                    .padding(14)
-                    .background(.white, in: RoundedRectangle(cornerRadius: 15))
-                    .overlay(RoundedRectangle(cornerRadius: 15).stroke(TimiColor.ink.faded(0.18)))
+                    .timiField()
                 TextField("Mobile number", text: $auth.signUpPhone)
                     .textContentType(.telephoneNumber)
                     .keyboardType(.phonePad)
-                    .padding(14)
-                    .background(.white, in: RoundedRectangle(cornerRadius: 15))
-                    .overlay(RoundedRectangle(cornerRadius: 15).stroke(TimiColor.ink.faded(0.18)))
+                    .timiField()
                 Button { Task { await auth.submitProfile() } } label: {
                     Label("Create my account", systemImage: "arrow.right")
                 }
@@ -158,9 +150,7 @@ struct SignInView: View {
             VStack(alignment: .leading, spacing: 12) {
                 SecureField("Password", text: $auth.passwordText)
                     .textContentType(.password)
-                    .padding(14)
-                    .background(.white, in: RoundedRectangle(cornerRadius: 15))
-                    .overlay(RoundedRectangle(cornerRadius: 15).stroke(TimiColor.ink.faded(0.18)))
+                    .timiField()
                 Button { Task { await auth.submitPassword() } } label: {
                     Label("Sign in", systemImage: "arrow.right")
                 }
@@ -173,9 +163,7 @@ struct SignInView: View {
                 TextField("6-digit code", text: $auth.codeText)
                     .textContentType(.oneTimeCode)
                     .keyboardType(.numberPad)
-                    .padding(14)
-                    .background(.white, in: RoundedRectangle(cornerRadius: 15))
-                    .overlay(RoundedRectangle(cornerRadius: 15).stroke(TimiColor.ink.faded(0.18)))
+                    .timiField()
                 Button { Task { await auth.submitCode() } } label: {
                     Label(auth.isCreatingAccount ? "Create my account" : "Sign in", systemImage: "arrow.right")
                 }

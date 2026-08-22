@@ -52,7 +52,7 @@ struct OfferSearchView: View {
             Text("Asking nearby clinics now.").font(.system(size: 40, weight: .bold, design: .serif)).multilineTextAlignment(.center)
             Text("You can choose as soon as an offer arrives. Tími stops after five responses or when the collection window closes.").font(.title3).foregroundStyle(TimiColor.muted).multilineTextAlignment(.center)
             HStack { MetricChip(title: "Contacted", value: "\(store.currentSearch?.progress?.contacted ?? 0)"); MetricChip(title: "Awaiting", value: "\(store.currentSearch?.progress?.awaiting ?? 0)", color: TimiColor.goldSoft) }
-            SafetyBanner(compact: true)
+            SafetyBanner(compact: true, store: store)
         }.padding(.top, 18)
     }
 

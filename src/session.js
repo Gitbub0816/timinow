@@ -15,7 +15,8 @@ import {
   mergeOrganizationPublicMetadata,
   mergeUserPublicMetadata,
   primaryEmail,
-  getUser
+  getUser,
+  listUserOrganizationMemberships
 } from "./clerk.js";
 import { getTenant, isPlatformAdmin, upsertTenantMember } from "./tenancy.js";
 
@@ -70,8 +71,45 @@ export async function backfillClerkMetadata(env, actor, { tenantId, tenantSlug, 
  * after sign-in. Side effect: repairs Clerk metadata and refreshes the
  * `tenant_members` mirror so tenant consoles show an accurate roster.
  */
+/**
+ * Adopt the caller's organization when their token does not name one.
+ *
+ * An operator who seats a clinic administrator creates a membership, not an
+ * active organization: Clerk only makes an organization active once the user
+ * selects it, so the first session token after they sign in carries no
+ * `org_id`. Every tenant lookup keyed on it then comes back empty, the repair
+ * below is skipped, no roster row is written, and the console shows an
+ * administrator an empty workspace — which looks exactly like never having
+ * been seated at all.
+ *
+ * Only when there is exactly one. Somebody who belongs to two clinics gets to
+ * choose; guessing would put them in the wrong one.
+ */
+async function adoptSoleOrganization(env, actor) {
+  if (!actor?.authenticated || actor.clerkOrgId || !actor.userId || !env.CLERK_SECRET_KEY) return actor;
+  let memberships;
+  try {
+    memberships = await listUserOrganizationMemberships(env, actor.userId);
+  } catch (error) {
+    console.warn(JSON.stringify({ event: "organization_adoption_failed", message: error.message }));
+    return actor;
+  }
+  if (memberships.length !== 1) return actor;
+  const membership = memberships[0];
+  const organization = membership.organization || {};
+  if (!organization.id) return actor;
+  return {
+    ...actor,
+    clerkOrgId: organization.id,
+    clerkOrgSlug: organization.slug || actor.clerkOrgSlug || null,
+    orgMetadata: organization.public_metadata || actor.orgMetadata || {},
+    role: String(actor.role || "").startsWith("org:") ? actor.role : (membership.role || actor.role || null)
+  };
+}
+
 export async function describeSession(env, actor, { repair = true } = {}) {
   if (!actor) return null;
+  if (repair) actor = await adoptSoleOrganization(env, actor);
   const tenantId = await resolveTenantId(env, actor);
   const tenant = tenantId ? await getTenant(env, tenantId) : null;
   const location = tenantId ? await getClinicLocation(env, tenantId) : null;

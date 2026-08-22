@@ -773,7 +773,10 @@ function wireStaticHandlers() {
 
     try {
       const result = await apiFetch("/api/admin/tenants", { method: "POST", body: JSON.stringify(payload) });
-      toast(`${payload.name} was created.`);
+      // Seated, invited, failed and never-attempted all used to produce the
+      // same green toast, so a workspace nobody could sign into looked exactly
+      // like one that worked.
+      toast(`${payload.name} was created. ${describeAdminResult(result.admin)}`);
       location.hash = `#tenants/${encodeURIComponent(result.tenant.id)}`;
     } catch (error) {
       if (Array.isArray(error.details) && error.details.length) {
@@ -792,6 +795,27 @@ function wireStaticHandlers() {
 }
 
 /* ----------------------------------------------------------------- boot --- */
+
+/**
+ * What actually happened to the first administrator. The Worker has always
+ * returned this; nothing read it.
+ */
+function describeAdminResult(admin) {
+  if (!admin) return "No administrator email was given, so nobody can sign into it yet — add one from the workspace page.";
+  if (admin.mode === "seated") {
+    return admin.accountCreated
+      ? `${admin.email} was created and seated as administrator. They sign in with an emailed code.`
+      : `${admin.email} was seated as administrator.`;
+  }
+  if (admin.mode === "invited") {
+    const why = admin.reason ? ` (${admin.reason})` : "";
+    return `${admin.email} was invited${why}. No account exists until they accept.`;
+  }
+  if (admin.mode === "failed") {
+    return `ADMINISTRATOR NOT SEATED — ${admin.error || "Clerk refused the request"}. Add one from the workspace page.`;
+  }
+  return "";
+}
 
 async function boot() {
   try {

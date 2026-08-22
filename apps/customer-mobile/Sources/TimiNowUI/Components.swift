@@ -159,13 +159,149 @@ struct MetricChip: View {
     var body: some View { VStack(alignment: .leading, spacing: 5) { Text(title.uppercased()).font(.system(size: 9, weight: .black)).foregroundStyle(TimiColor.muted); Text(value).font(.system(size: 17, weight: .black)).foregroundStyle(TimiColor.ink) }.frame(maxWidth: .infinity, alignment: .leading).padding(12).background(color, in: RoundedRectangle(cornerRadius: 14)) }
 }
 
+/// "Do not wait for an app response" — and then nothing to press.
+///
+/// The notice was right and useless: it told somebody whose animal may be
+/// dying to go to an emergency hospital, on a screen that knew where they
+/// were and which hospitals take emergencies, and made them find one
+/// themselves. Given a store it now offers the list.
+///
+/// Without one — the onboarding screen, which runs before location
+/// permission exists — it stays the notice it was.
 struct SafetyBanner: View {
     var compact = false
+    var store: AppStore?
+
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            Image(systemName: "cross.case.fill").foregroundStyle(.white).frame(width: 34, height: 34).background(TimiColor.coral, in: Circle())
-            VStack(alignment: .leading, spacing: 3) { Text("Possible emergency?").font(.headline); Text(compact ? "Do not wait for an app response." : "If your pet may be in immediate danger, leave for the nearest emergency-capable hospital while someone calls ahead.").font(.caption).foregroundStyle(TimiColor.muted) }
-        }.padding(14).background(TimiColor.coralSoft, in: RoundedRectangle(cornerRadius: 18)).overlay(RoundedRectangle(cornerRadius: 18).stroke(TimiColor.coral.faded(0.45)))
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: "cross.case.fill").foregroundStyle(.white).frame(width: 34, height: 34).background(TimiColor.coral, in: Circle())
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Possible emergency?").font(.headline)
+                    Text(message).font(.caption).foregroundStyle(TimiColor.muted)
+                }
+            }
+            if let store {
+                Button { Task { await store.findEmergencyCare() } } label: {
+                    HStack(spacing: 8) {
+                        if store.isFindingEmergency { ProgressView().tint(.white) }
+                        Text(store.isFindingEmergency ? "Finding emergency hospitals…" : "Find emergency care now")
+                        Image(systemName: "arrow.right")
+                    }
+                }
+                .buttonStyle(TimiPrimaryButtonStyle())
+                .disabled(store.isFindingEmergency)
+            }
+        }
+        .padding(14)
+        .background(TimiColor.coralSoft, in: RoundedRectangle(cornerRadius: 18))
+        .overlay(RoundedRectangle(cornerRadius: 18).stroke(TimiColor.coral.faded(0.45)))
+    }
+
+    private var message: String {
+        if store != nil {
+            return compact
+                ? "Don't wait for a clinic to answer — go straight to an emergency hospital."
+                : "If your pet may be in immediate danger, go straight to an emergency hospital and have someone call ahead."
+        }
+        return compact
+            ? "Do not wait for an app response."
+            : "If your pet may be in immediate danger, leave for the nearest emergency-capable hospital while someone calls ahead."
+    }
+}
+
+/// The answer to that button: the nearest emergency-capable hospitals, with a
+/// phone number and directions on each. No request is sent, no clinic is asked
+/// to accept, and nothing here waits for anybody — it is a list of places to
+/// drive to.
+struct EmergencyCareSheet: View {
+    @Bindable var store: AppStore
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    Text("Go now. Call from the car if you can — most emergency hospitals want to know an animal is on the way.")
+                        .font(.callout).foregroundStyle(TimiColor.muted)
+
+                    if store.isFindingEmergency {
+                        HStack(spacing: 10) { ProgressView(); Text("Finding the nearest emergency hospitals…").font(.callout).fontWeight(.semibold) }
+                            .frame(maxWidth: .infinity).padding(.vertical, 30)
+                    }
+
+                    if let error = store.emergencyError {
+                        Label(error, systemImage: "exclamationmark.triangle.fill")
+                            .font(.callout).foregroundStyle(TimiColor.coral)
+                            .padding(12).frame(maxWidth: .infinity, alignment: .leading)
+                            .background(TimiColor.coralSoft, in: RoundedRectangle(cornerRadius: 14))
+                    }
+
+                    ForEach(store.emergencyLocations) { clinic in
+                        EmergencyClinicRow(clinic: clinic)
+                    }
+
+                    Text("Tími does not diagnose or triage. This list is the emergency-capable hospitals nearest to you; it is not advice about whether to go.")
+                        .font(.caption).foregroundStyle(TimiColor.muted)
+                }.padding(20)
+            }
+            .background(TimiColor.canvas)
+            .navigationTitle("Emergency care")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Close") { store.showEmergencyList = false } }
+            }
+        }
+    }
+}
+
+struct EmergencyClinicRow: View {
+    var clinic: ClinicLocation
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(clinic.name).font(.title3).fontWeight(.black)
+            Text(subtitle).font(.caption).fontWeight(.bold).foregroundStyle(TimiColor.coral)
+            if let address = clinic.address, !address.isEmpty {
+                Text(address).font(.callout).foregroundStyle(TimiColor.muted)
+            }
+            HStack(spacing: 10) {
+                if let url = telephoneURL {
+                    Link(destination: url) { Label("Call", systemImage: "phone.fill") }
+                        .buttonStyle(TimiPrimaryButtonStyle())
+                }
+                if let url = directionsURL {
+                    Link(destination: url) { Label("Directions", systemImage: "map.fill") }
+                        .buttonStyle(TimiPrimaryButtonStyle(color: TimiColor.blue))
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .timiCard(Color.white)
+    }
+
+    private var subtitle: String {
+        var parts: [String] = []
+        if let miles = clinic.distanceMiles { parts.append(String(format: "%.1f mi away", miles)) }
+        // A clinic with the emergency capability but a different kind is still
+        // an answer; saying "Emergency hospital" of a general practice that
+        // happens to take emergencies would be overstating it.
+        parts.append(clinic.kind == "emergency" ? "Emergency hospital" : "Takes emergencies")
+        return parts.joined(separator: " · ")
+    }
+
+    private var telephoneURL: URL? {
+        guard let phone = clinic.phone else { return nil }
+        let digits = phone.filter { $0.isNumber || $0 == "+" }
+        return digits.isEmpty ? nil : URL(string: "tel:\(digits)")
+    }
+
+    private var directionsURL: URL? {
+        guard let latitude = clinic.latitude, let longitude = clinic.longitude else { return nil }
+        var components = URLComponents(string: "https://maps.apple.com/")
+        components?.queryItems = [
+            URLQueryItem(name: "daddr", value: "\(latitude),\(longitude)"),
+            URLQueryItem(name: "q", value: clinic.name)
+        ]
+        return components?.url
     }
 }
 

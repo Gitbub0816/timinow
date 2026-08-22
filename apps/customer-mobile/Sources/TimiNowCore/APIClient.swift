@@ -55,15 +55,35 @@ public final class TimiGateway: @unchecked Sendable {
     /// validation, which is the one that matters when a call fails.
     public var configuredAddress: String { baseURL?.absoluteString ?? "" }
 
-    public func locations(latitude: Double, longitude: Double, species: PetSpecies) async throws -> [ClinicLocation] {
+    /// `lat`, `lng`, `radius` — the names the Worker reads.
+    ///
+    /// This sent `latitude`, `longitude` and `radiusMiles`, none of which
+    /// `handleLocationSearch` looks for, so it received no coordinates at all:
+    /// no distance on any clinic, no radius filter, and the list sorted
+    /// alphabetically by name. The phone app has never once shown the nearest
+    /// hospital. The web client (public/app.js) has used the right names all
+    /// along.
+    public func locations(latitude: Double, longitude: Double, species: PetSpecies, care: String = "urgent", radiusMiles: Int = 50) async throws -> [ClinicLocation] {
         guard let baseURL else { return DemoData.clinics }
         var components = URLComponents(url: baseURL.appendingPathComponent("api/locations"), resolvingAgainstBaseURL: false)!
         components.queryItems = [
-            URLQueryItem(name: "latitude", value: String(latitude)), URLQueryItem(name: "longitude", value: String(longitude)),
-            URLQueryItem(name: "radiusMiles", value: "50"), URLQueryItem(name: "species", value: species.rawValue), URLQueryItem(name: "care", value: "urgent")
+            URLQueryItem(name: "lat", value: String(latitude)), URLQueryItem(name: "lng", value: String(longitude)),
+            URLQueryItem(name: "radius", value: String(radiusMiles)), URLQueryItem(name: "species", value: species.rawValue),
+            URLQueryItem(name: "care", value: care)
         ]
         let envelope: LocationsEnvelope = try await send(components.url!)
         return envelope.locations
+    }
+
+    /// Emergency-capable hospitals only, nearest first.
+    ///
+    /// `care=emergency` narrows the Worker's list to locations whose kind is
+    /// `emergency` or that carry the `emergency` capability — not the wider
+    /// urgent-or-general set an ordinary search returns. The radius is wider
+    /// than a normal search on purpose: when the answer is "drive now", the
+    /// nearest one that exists beats none at all.
+    public func emergencyLocations(latitude: Double, longitude: Double, species: PetSpecies) async throws -> [ClinicLocation] {
+        try await locations(latitude: latitude, longitude: longitude, species: species, care: "emergency", radiusMiles: 120)
     }
 
     public func startSearch(_ draft: CareDraft, locationIds: [String]) async throws -> CareSearch {

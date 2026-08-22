@@ -1136,6 +1136,73 @@ for (const path of [
   }
 }
 
+// Query strings drift the same way request bodies do, and just as silently.
+// The phone app asked /api/locations for `latitude`, `longitude` and
+// `radiusMiles`; handleLocationSearch reads `lat`, `lng` and `radius`. It got
+// a 200 every time, with no coordinates — so no distance on any clinic, no
+// radius filter, and the list sorted alphabetically by name. The app has never
+// once shown the nearest hospital, and nothing anywhere said so.
+{
+  const worker = await read("src/index.js");
+  const handler = worker.match(/async function handleLocationSearch[\s\S]*?\n\}/);
+  if (!handler) throw new Error("src/index.js no longer declares handleLocationSearch.");
+  const understood = new Set([...handler[0].matchAll(/searchParams\.get\("([^"]+)"\)/g)].map((hit) => hit[1]));
+  const client = await read("apps/customer-mobile/Sources/TimiNowCore/APIClient.swift");
+  const call = client.match(/public func locations\([\s\S]*?\n    \}/);
+  if (!call) throw new Error("apps/customer-mobile/Sources/TimiNowCore/APIClient.swift no longer declares locations(latitude:longitude:species:...).");
+  const sent = [...call[0].matchAll(/URLQueryItem\(name: "([^"]+)"/g)].map((hit) => hit[1]);
+  const ignored = sent.filter((name) => !understood.has(name));
+  if (ignored.length) {
+    throw new Error(`apps/customer-mobile/Sources/TimiNowCore/APIClient.swift sends /api/locations?${ignored.join("&")}, which handleLocationSearch never reads. The request succeeds and the parameters are dropped — no distances, no radius, alphabetical order.`);
+  }
+  for (const required of ["lat", "lng"]) {
+    if (!sent.includes(required)) {
+      throw new Error(`apps/customer-mobile/Sources/TimiNowCore/APIClient.swift does not send ${required} to /api/locations, so the Worker cannot sort clinics by distance.`);
+    }
+  }
+}
+
+// "Do not wait for an app response", and nothing to press. The notice told
+// somebody whose animal may be dying to get to an emergency hospital, on a
+// screen that knew where they were and which hospitals take emergencies.
+{
+  const components = await read("apps/customer-mobile/Sources/TimiNowUI/Components.swift");
+  if (!/Button \{ Task \{ await store\.findEmergencyCare\(\) \} \}/.test(components)) {
+    throw new Error("apps/customer-mobile/Sources/TimiNowUI/Components.swift: SafetyBanner no longer offers the emergency-care action, so the notice is advice with nothing to act on.");
+  }
+  const store = await read("apps/customer-mobile/Sources/TimiNowCore/AppStore.swift");
+  if (!/gateway\.emergencyLocations\(/.test(store)) {
+    throw new Error("apps/customer-mobile/Sources/TimiNowCore/AppStore.swift no longer asks for emergency-capable locations, so the button has nothing to show.");
+  }
+  const client = await read("apps/customer-mobile/Sources/TimiNowCore/APIClient.swift");
+  if (!/care: "emergency"/.test(client)) {
+    throw new Error("apps/customer-mobile/Sources/TimiNowCore/APIClient.swift asks for emergency care without care=emergency, so the list is every urgent and general practice rather than emergency hospitals.");
+  }
+  // The root mounts the sheet, not each banner: the button is on three
+  // screens and a list that disappears with the screen under it is worse
+  // than not offering one.
+  const root = await read("apps/customer-mobile/Sources/TimiNowUI/CustomerRootView.swift");
+  if (!/sheet\(isPresented: \$store\.showEmergencyList\)/.test(root)) {
+    throw new Error("apps/customer-mobile/Sources/TimiNowUI/CustomerRootView.swift does not present the emergency list, so the button loads results nothing shows.");
+  }
+}
+
+// Text entry in the app's own hand. `.roundedBorder` and a 1pt hairline at 18%
+// ink are the defaults a form gets when nobody styles it, and next to a coral
+// button with a 2pt border and a five-point drop they read as another app.
+for (const path of [
+  "apps/customer-mobile/Sources/TimiNowUI/SignInView.swift",
+  "apps/customer-mobile/Sources/TimiNowUI/IntakeFlowView.swift"
+]) {
+  const source = await read(path);
+  if (/textFieldStyle\(\.roundedBorder\)/.test(source)) {
+    throw new Error(`${path} uses .roundedBorder — the system's grey hairline — on a screen built from 2pt ink borders and hard offset shadows. Use .timiField().`);
+  }
+  if (/RoundedRectangle\(cornerRadius: 15\)\.stroke\(TimiColor\.ink\.faded\(0\.18\)\)/.test(source)) {
+    throw new Error(`${path} still draws a hairline field border by hand. Use .timiField() so every field matches.`);
+  }
+}
+
 const csharpFiles = await collectFiles("apps/vet-windows", ".cs");
 for (const path of csharpFiles) {
   const problems = bracketProblems(await read(path));

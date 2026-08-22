@@ -12,7 +12,7 @@ import {
   createOrganizationMembership,
   deleteOrganizationMembership,
   displayName,
-  findUserByEmail,
+  findOrCreateUserByEmail,
   listOrganizationInvitations,
   listOrganizationMemberships,
   primaryEmail,
@@ -101,7 +101,15 @@ export async function addMember(env, actor, tenantId, body) {
   if (!EMAIL_PATTERN.test(email)) return { status: 422, code: "INVALID_EMAIL", message: "Enter a valid work email address." };
   if (!role) return { status: 422, code: "INVALID_ROLE", message: "Choose either the administrator or member role." };
 
-  const existing = await findUserByEmail(env, email);
+  // Create the account rather than only inviting into one. An invitation is a
+  // pending record: no user, no membership, no roster row, and nothing anybody
+  // can see until it is accepted. Seating them means the workspace has a real
+  // administrator the moment it is set up, and their first sign-in — an email
+  // code, since the address is unverified until then — finishes the rest
+  // through describeSession's repair pass.
+  const { user: existing, created, reason } = await findOrCreateUserByEmail(env, email, {
+    publicMetadata: { tenantId }
+  });
   if (existing) {
     const membership = await createOrganizationMembership(env, actor.clerkOrgId, { userId: existing.id, role });
     await upsertTenantMember(env, {
@@ -121,8 +129,13 @@ export async function addMember(env, actor, tenantId, body) {
       target: existing.id,
       detail: { email, role }
     });
-    return { status: 201, body: { added: { clerkUserId: existing.id, email, role }, invited: null } };
+    return { status: 201, body: { added: { clerkUserId: existing.id, email, role, accountCreated: created }, invited: null } };
   }
+
+  // Clerk refused to create the account. An invitation still gets them in, so
+  // it is the fallback rather than the plan — and the reason travels with the
+  // response instead of only reaching a log.
+  console.warn(JSON.stringify({ event: "member_account_create_failed", tenantId, email, reason }));
 
   const invitation = await createOrganizationInvitation(env, actor.clerkOrgId, {
     email,
@@ -146,7 +159,7 @@ export async function addMember(env, actor, tenantId, body) {
     target: email,
     detail: { role, invitationId: invitation.id }
   });
-  return { status: 201, body: { added: null, invited: { id: invitation.id, email, role } } };
+  return { status: 201, body: { added: null, invited: { id: invitation.id, email, role, reason: reason || null } } };
 }
 
 export async function changeMemberRole(env, actor, tenantId, clerkUserId, body) {

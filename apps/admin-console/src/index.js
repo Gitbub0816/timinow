@@ -31,7 +31,7 @@ import {
   createOrganizationMembership,
   deleteOrganization,
   displayName,
-  findUserByEmail,
+  findOrCreateUserByEmail,
   mergeMembershipPublicMetadata,
   mergeOrganizationPublicMetadata,
   mergeUserPublicMetadata,
@@ -360,7 +360,13 @@ async function createTenant(request, env, actor) {
   let adminResult = null;
   if (adminEmail) {
     try {
-      const existing = await findUserByEmail(env, adminEmail);
+      // Create the account rather than only inviting into one. Until this
+      // did, "first administrator" meant a pending invitation: no Clerk user,
+      // no membership, and a tenant page reading "No active members" whether
+      // the invite was sent, still pending, or had failed.
+      const { user: existing, created, reason } = await findOrCreateUserByEmail(env, adminEmail, {
+        publicMetadata: { tenantId, tenantSlug: slug, locationId }
+      });
       if (existing) {
         const membership = await createOrganizationMembership(env, organization.id, { userId: existing.id, role: "org:admin" });
         await upsertTenantMember(env, {
@@ -374,8 +380,9 @@ async function createTenant(request, env, actor) {
         });
         await mergeMembershipPublicMetadata(env, organization.id, existing.id, { tenantId, tenantSlug: slug, locationId });
         await mergeUserPublicMetadata(env, existing.id, { tenantId, tenantSlug: slug, locationId, lastTenantId: tenantId });
-        adminResult = { mode: "seated", clerkUserId: existing.id, email: adminEmail };
+        adminResult = { mode: "seated", clerkUserId: existing.id, email: adminEmail, accountCreated: created };
       } else {
+        console.warn(JSON.stringify({ event: "tenant_admin_account_create_failed", tenantId, email: adminEmail, reason }));
         const invitation = await createOrganizationInvitation(env, organization.id, {
           email: adminEmail,
           role: "org:admin",
@@ -383,7 +390,7 @@ async function createTenant(request, env, actor) {
           publicMetadata: { tenantId, tenantSlug: slug, locationId }
         });
         await insertTenantInvitation(env, { tenantId, clerkInvitationId: invitation.id, email: adminEmail, role: "org:admin", invitedBy: actor.userId });
-        adminResult = { mode: "invited", email: adminEmail };
+        adminResult = { mode: "invited", email: adminEmail, reason: reason || null };
       }
     } catch (error) {
       console.warn(JSON.stringify({ event: "tenant_admin_seat_failed", tenantId, message: error.message }));

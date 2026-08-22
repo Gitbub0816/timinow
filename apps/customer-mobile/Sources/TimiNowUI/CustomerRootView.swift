@@ -24,7 +24,13 @@ public struct CustomerRootView: View {
             else { appContent.transition(.opacity) }
             if let error = store.errorMessage { ErrorToast(message: error) { store.errorMessage = nil }.padding(.top, 8).transition(.move(edge: .top).combined(with: .opacity)).zIndex(20) }
             if store.showCelebration { CelebrationOverlay().onAppear { Task { try? await Task.sleep(for: .seconds(1.15)); store.showCelebration = false } }.zIndex(30) }
-        }.animation(.easeInOut(duration: 0.25), value: store.errorMessage != nil)
+        }
+        .animation(.easeInOut(duration: 0.25), value: store.errorMessage != nil)
+        // Mounted at the root, not on each banner: the button appears on the
+        // home screen, the search screen and the intake form, and an emergency
+        // list that vanishes because the screen underneath it changed would be
+        // worse than not offering one.
+        .sheet(isPresented: $store.showEmergencyList) { EmergencyCareSheet(store: store) }
     }
 
     @ViewBuilder var appContent: some View {
@@ -53,7 +59,7 @@ struct HomeView: View {
                 CareLaunchPanel(petName: store.selectedPet.name).timiCard(TimiColor.paper)
                 Button { withAnimation(.spring(response: 0.42)) { store.beginCare() } } label: { Label("Find care for \(store.selectedPet.name)", systemImage: "arrow.right") }.buttonStyle(TimiPrimaryButtonStyle())
                 HStack(spacing: 12) { MetricChip(title: "One intake", value: "Up to 30 clinics"); MetricChip(title: "Your choice", value: "Up to 5 offers", color: TimiColor.goldSoft) }
-                SafetyBanner(compact: true)
+                SafetyBanner(compact: true, store: store)
                 VStack(alignment: .leading, spacing: 12) { Eyebrow(text: "HOW TÍMI WORKS"); processRow(1, "Describe what you observe", "Rules prevent vague requests before anything is shared."); processRow(2, "Clinics answer with live capacity", "Each response includes timing, wait, deposit, and offer hold."); processRow(3, "Choose the best fit", "Only your selected clinic is confirmed; every other offer is released.") }.timiCard(TimiColor.paper)
             }.padding(20).padding(.bottom, 20)
         }.background(TimiColor.canvas)

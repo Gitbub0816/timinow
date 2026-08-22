@@ -246,11 +246,51 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
             // lives about a minute, so a search started on a screen opened
             // five minutes ago would otherwise arrive expired.
             try? await auth.ensureFreshToken()
-            locations = try await gateway.locations(latitude: draft.latitude, longitude: draft.longitude, species: draft.pet.species)
+            // An emergency asks a narrower set of hospitals, the way the web
+            // client does. Sending every general practice a possible emergency
+            // wastes the ninety seconds the search has.
+            let care = (draft.urgency == .emergency || !draft.redFlags.isEmpty) ? "emergency" : "urgent"
+            locations = try await gateway.locations(latitude: draft.latitude, longitude: draft.longitude, species: draft.pet.species, care: care)
             currentSearch = try await gateway.startSearch(draft, locationIds: locations.prefix(30).map(\.id))
             route = .searching
         } catch { errorMessage = Self.describe(error) }
         isWorking = false
+    }
+
+    // MARK: - Emergency departments
+
+    /// The nearest emergency-capable hospitals, for the "go now" path.
+    ///
+    /// Deliberately separate from a care search: this asks nobody for
+    /// permission, waits for no clinic to answer, and does not create an
+    /// intake. It is a list of places to drive to.
+    public var emergencyLocations: [ClinicLocation] = []
+    public var isFindingEmergency = false
+    public var emergencyError: String?
+    public var showEmergencyList = false
+
+    /// Five, not thirty. This is a list somebody reads at arm's length while
+    /// picking up a carrier.
+    public static let emergencyResultLimit = 5
+
+    public func findEmergencyCare() async {
+        isFindingEmergency = true
+        emergencyError = nil
+        showEmergencyList = true
+        do {
+            try? await auth.ensureFreshToken()
+            let found = try await gateway.emergencyLocations(
+                latitude: currentLatitude, longitude: currentLongitude, species: selectedPet.species
+            )
+            emergencyLocations = Array(found.prefix(Self.emergencyResultLimit))
+            if emergencyLocations.isEmpty {
+                emergencyError = "No emergency hospital is listed within 120 miles. Call your regular veterinarian, who will have an after-hours number."
+            }
+        } catch {
+            emergencyLocations = []
+            emergencyError = Self.describe(error)
+        }
+        isFindingEmergency = false
     }
 
     public func refreshSearch() async {

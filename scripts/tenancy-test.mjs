@@ -161,10 +161,63 @@ assert(audit.length === 1, "Privileged actions must be recorded");
 assert(audit[0].actor_scope === "platform", "The audit trail must record the authority level used");
 assert(JSON.parse(audit[0].detail_json).name === "Hearth & Paw", "Audit detail must round-trip");
 
+/* ------------------------------------------- seating a new administrator --- */
+
+// Seating somebody who has never used Tími has to create the account, not just
+// invite them into one. An invitation is a pending record: no Clerk user, no
+// membership, no roster row, and a workspace page reading "No active members"
+// whether the invite is waiting, was never sent, or failed.
+{
+  const calls = [];
+  const realFetch = globalThis.fetch;
+  const clerk = { createUserFails: false };
+  globalThis.fetch = async (url, options = {}) => {
+    const path = new URL(String(url)).pathname.replace("/v1", "");
+    const method = options.method || "GET";
+    calls.push(`${method} ${path}`);
+    const reply = (body, status = 200) => new Response(JSON.stringify(body), { status });
+    if (method === "GET" && path === "/users") return reply({ data: [] });
+    if (method === "POST" && path === "/users") {
+      if (clerk.createUserFails) {
+        return reply({ errors: [{ message: "Phone number is required.", long_message: "Phone number is required." }] }, 422);
+      }
+      return reply({ id: "user_new", first_name: "Dana", last_name: "Reyes", primary_email_address_id: "idn_1", email_addresses: [{ id: "idn_1", email_address: "dana@clinic.example" }] });
+    }
+    if (method === "POST" && path.endsWith("/memberships")) return reply({ id: "orgmem_1" });
+    if (method === "POST" && path.endsWith("/invitations")) return reply({ id: "orginv_1" });
+    return reply({}, 404);
+  };
+
+  const { addMember } = await import("../src/tenant-admin.js");
+  const seatEnv = { ...env, CLERK_SECRET_KEY: "sk_test_stub" };
+  const seatActor = { userId: "user_operator", clerkOrgId: "org_hearth" };
+
+  const seated = await addMember(seatEnv, seatActor, "tenant_hearth", { email: "dana@clinic.example", role: "org:admin" });
+  assert(seated.status === 201, "Seating a new administrator must succeed");
+  assert(seated.body.added?.clerkUserId === "user_new", "A Clerk user must be created for an address Clerk has never seen");
+  assert(seated.body.added?.accountCreated === true, "The response must say the account was created, not merely seated");
+  assert(seated.body.invited === null, "Creating the account means there is nothing to invite");
+  assert(calls.includes("POST /users"), "The account must actually be created through Clerk");
+  const roster = await listTenantMembers(seatEnv, "tenant_hearth");
+  assert(roster.some((member) => member.clerkUserId === "user_new"), "A seated administrator must appear on the roster immediately");
+
+  // And when Clerk refuses — a required attribute this screen cannot supply —
+  // an invitation still gets somebody in, with the reason carried back rather
+  // than left in a log.
+  clerk.createUserFails = true;
+  const invited = await addMember(seatEnv, seatActor, "tenant_hearth", { email: "sam@clinic.example", role: "org:member" });
+  assert(invited.status === 201, "A refused account creation must still fall back to an invitation");
+  assert(invited.body.added === null, "Nobody is seated when the account could not be created");
+  assert(invited.body.invited?.id === "orginv_1", "The invitation must be created as the fallback");
+  assert(/Phone number is required/.test(invited.body.invited?.reason || ""), "Clerk's reason must reach the caller, not only the log");
+
+  globalThis.fetch = realFetch;
+}
+
 /* -------------------------------------------------------------- slugs --- */
 
 assert(slugify("Hearth & Paw Veterinary") === "hearth-paw-veterinary", "Slugs must be URL safe");
 assert(slugify("Café Vétérinaire") === "cafe-veterinaire", "Slugs must fold accents");
 assert(slugify("   ") === "tenant", "An empty name must still produce a usable slug");
 
-console.log("Tenancy tests passed: platform operator gating, tenant administrator guards, member mirroring, auditing, and slugs.");
+console.log("Tenancy tests passed: platform operator gating, tenant administrator guards, member mirroring, administrator seating (account creation and invitation fallback), auditing, and slugs.");
