@@ -206,7 +206,10 @@ database.exec(await readFile("migrations/0003_multi_offer_search.sql", "utf8"));
 database.exec(await readFile("migrations/0004_tenancy_admin.sql", "utf8"));
 database.exec(await readFile("migrations/0005_voice_calls.sql", "utf8"));
 
-const TWILIO_AUTH_TOKEN = "test_auth_token_abc123";
+// Shaped like the real thing — 32 hex characters — because placeCall now
+// checks that shape before it calls Twilio, and a fixture that could never be
+// a real credential would exercise the rejection path rather than the drain.
+const TWILIO_AUTH_TOKEN = "0123456789abcdef0123456789abcdef";
 const env = {
   ASSETS: { fetch: async () => new Response("asset") },
   DB: new D1Mock(database),
@@ -214,7 +217,7 @@ const env = {
   DEMO_MODE: "false",
   SURFACE: "voice",
   MAPBOX_STYLE_URL: "mapbox://styles/example/example",
-  TWILIO_ACCOUNT_SID: "AC_test_sid",
+  TWILIO_ACCOUNT_SID: "AC00000000000000000000000000000001",
   TWILIO_AUTH_TOKEN,
   TWILIO_FROM_NUMBER: "+15005550006",
   VOICE_MAX_ATTEMPTS: "2",
