@@ -306,7 +306,6 @@ set_var CLERK_ISSUER           "$CUSTOMER" "$VET" "$ADMIN"
 set_var CLERK_JWKS_URL         "$CUSTOMER" "$VET" "$ADMIN"
 set_var CLERK_TOKEN_TEMPLATE   "$CUSTOMER" "$VET" "$ADMIN"
 set_var AUTHORIZED_PARTIES     "$CUSTOMER" "$VET" "$ADMIN"
-set_var MAPBOX_PUBLIC_TOKEN    "$CUSTOMER" "$VET" "$ADMIN"
 set_var MAPBOX_STYLE_URL       "$CUSTOMER" "$VET" "$ADMIN" "$VOICE"
 set_var MAPBOX_NAVIGATION_STYLE_URL "$CUSTOMER" "$VET" "$ADMIN"
 set_var STRIPE_PUBLISHABLE_KEY "$CUSTOMER"
@@ -414,6 +413,11 @@ put_secret() { # put_secret KEY CONFIG...
 
 bold "5. Worker secrets"
 put_secret CLERK_SECRET_KEY      "$CUSTOMER" "$VET" "$ADMIN" "$VOICE"
+# Not a secret in the security sense — it is served to every browser by
+# /api/config — but GitHub's scanner flags any Mapbox token, so committing it
+# would block every future push with a false positive. Delivered as a secret so
+# it never enters version control at all. Worker code reads it identically.
+put_secret MAPBOX_PUBLIC_TOKEN   "$CUSTOMER" "$VET" "$ADMIN"
 put_secret TWILIO_ACCOUNT_SID    "$VOICE"
 put_secret TWILIO_AUTH_TOKEN     "$VOICE"
 put_secret STRIPE_SECRET_KEY     "$CUSTOMER"
@@ -491,7 +495,12 @@ fi
 echo
 
 bold "Done."
-echo "Public values changed in the wrangler configs — review and commit:"
+echo "Public values changed in the wrangler configs. They are deployed already —"
+echo "committing them is optional, and only worth it for values you want other"
+echo "machines to inherit (hostnames, style URLs, admin emails):"
 echo "    git diff --stat"
 echo "    git add wrangler.jsonc wrangler.vet.jsonc wrangler.admin.jsonc wrangler.voice.jsonc"
 echo "    git commit -m 'Configure production keys' && git push"
+echo
+echo "Never 'git add -A' after this runs: it sweeps up every config at once, and"
+echo "one rejected file blocks the whole push."
