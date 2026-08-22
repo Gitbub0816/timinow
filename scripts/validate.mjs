@@ -43,6 +43,8 @@ const requiredFiles = [
   "scripts/voice-test.mjs",
   ".env.example",
   "docs/PRODUCTION-SETUP.md",
+  "scripts/bootstrap.sh",
+  ".github/workflows/deploy.yml",
   "apps/vet-web/public/index.html",
   "apps/vet-web/public/app.js",
   "apps/vet-web/src/index.js",

@@ -1,0 +1,220 @@
+#!/usr/bin/env bash
+#
+# One-command production bootstrap.
+#
+#   ./scripts/bootstrap.sh ~/Downloads/env.example
+#   ./scripts/bootstrap.sh ~/Downloads/env.example --dry-run
+#
+# Reads a filled-in env file and puts every value where it actually belongs:
+#
+#   public values  -> the vars block of the wrangler config that needs them
+#   secrets        -> `wrangler secret put`, per Worker, never written to disk
+#   build secrets  -> `gh secret set`, for the repository
+#
+# Then migrates the production database, deploys all four Workers, and checks
+# that each one answers.
+#
+# Safe to re-run. Values left blank in the env file are skipped, not cleared.
+
+set -euo pipefail
+
+ENV_FILE="${1:-}"
+DRY_RUN="${2:-}"
+[ "${1:-}" = "--dry-run" ] && { ENV_FILE=""; DRY_RUN="--dry-run"; }
+
+if [ -z "$ENV_FILE" ] || [ ! -f "$ENV_FILE" ]; then
+  echo "usage: $0 <path-to-env-file> [--dry-run]" >&2
+  echo "example: $0 ~/Downloads/env.example" >&2
+  exit 1
+fi
+
+DRY=false
+[ "$DRY_RUN" = "--dry-run" ] && DRY=true
+
+cd "$(dirname "$0")/.."
+
+bold() { printf '\033[1m%s\033[0m\n' "$*"; }
+dim()  { printf '\033[2m%s\033[0m\n' "$*"; }
+warn() { printf '\033[33m%s\033[0m\n' "$*"; }
+die()  { printf '\033[31m%s\033[0m\n' "$*" >&2; exit 1; }
+run()  { if $DRY; then dim "    would run: $*"; else "$@"; fi; }
+
+# ---------------------------------------------------------------- prereqs ---
+
+command -v node >/dev/null || die "node is required (brew install node)"
+command -v npx  >/dev/null || die "npx is required"
+[ -d node_modules ] || die "run 'npm install' first"
+
+if ! $DRY; then
+  npx wrangler whoami >/dev/null 2>&1 \
+    || die "not signed in to Cloudflare — run: npx wrangler login"
+fi
+
+# ------------------------------------------------------------ read the env ---
+# Values are held in shell variables only; nothing is echoed and nothing is
+# written back to disk.
+
+declare -A ENVVARS
+while IFS= read -r line || [ -n "$line" ]; do
+  case "$line" in ''|'#'*) continue ;; esac
+  key="${line%%=*}"
+  value="${line#*=}"
+  key="$(printf '%s' "$key" | tr -d '[:space:]')"
+  # strip one layer of surrounding quotes and any trailing whitespace
+  value="$(printf '%s' "$value" | sed -e 's/[[:space:]]*$//' -e 's/^"\(.*\)"$/\1/' -e "s/^'\(.*\)'$/\1/")"
+  case "$key" in ''|*[!A-Za-z0-9_]*) continue ;; esac
+  [ -n "$value" ] && ENVVARS["$key"]="$value"
+done < "$ENV_FILE"
+
+bold "Read ${#ENVVARS[@]} non-empty values from $ENV_FILE"
+echo
+
+have() { [ -n "${ENVVARS[$1]:-}" ]; }
+
+# ------------------------------------------------- public vars -> configs ---
+# These are served to browsers by /api/config, so they are configuration rather
+# than secrets and belong in version control with the routes they go with.
+
+CUSTOMER=wrangler.jsonc
+VET=wrangler.vet.jsonc
+ADMIN=wrangler.admin.jsonc
+VOICE=wrangler.voice.jsonc
+
+set_var() { # set_var KEY CONFIG...
+  local key="$1"; shift
+  have "$key" || { dim "  skip  $key (blank in env file)"; return 0; }
+  local value="${ENVVARS[$key]}"
+  for config in "$@"; do
+    if $DRY; then
+      if grep -q "\"$key\"[[:space:]]*:" "$config"; then
+        dim "    would set $key in $config"
+      else
+        die "  $key has no slot in $config — add it to that file's vars block first"
+      fi
+    else
+      KEY="$key" VALUE="$value" CONFIG="$config" node -e '
+        const fs = require("fs");
+        const { KEY, VALUE, CONFIG } = process.env;
+        const text = fs.readFileSync(CONFIG, "utf8");
+        const pattern = new RegExp(`("${KEY}"\\s*:\\s*)"[^"]*"`);
+        if (!pattern.test(text)) {
+          console.error(`    ${KEY} has no slot in ${CONFIG} — add it to that vars block first`);
+          process.exit(1);
+        }
+        // A replacement *function*, not a string. A $1 or $& appearing inside a
+        // Clerk key or Mapbox token would otherwise be read as a backreference
+        // and silently corrupt the file.
+        const quoted = JSON.stringify(VALUE);
+        const updated = text.replace(pattern, (_match, prefix) => prefix + quoted);
+        // Refuse to leave a config we just broke.
+        JSON.parse(updated.replace(/^\s*\/\/.*$/gm, ""));
+        fs.writeFileSync(CONFIG, updated);
+      '
+    fi
+  done
+  echo "  set   $key -> $*"
+}
+
+bold "1. Public configuration"
+# The voice Worker is deliberately absent from these two: it serves no browser
+# UI, so it needs neither a Clerk publishable key nor a map token.
+set_var CLERK_PUBLISHABLE_KEY  "$CUSTOMER" "$VET" "$ADMIN"
+set_var MAPBOX_PUBLIC_TOKEN    "$CUSTOMER" "$VET" "$ADMIN"
+set_var STRIPE_PUBLISHABLE_KEY "$CUSTOMER"
+set_var TWILIO_FROM_NUMBER     "$VOICE"
+set_var PLATFORM_ADMIN_EMAILS  "$ADMIN"
+set_var PLATFORM_ADMIN_USER_IDS "$ADMIN"
+echo
+
+# ------------------------------------------------ secrets -> each Worker ---
+# Piped on stdin so no secret ever appears in argv or shell history.
+
+put_secret() { # put_secret KEY CONFIG...
+  local key="$1"; shift
+  have "$key" || { dim "  skip  $key (blank in env file)"; return 0; }
+  for config in "$@"; do
+    if $DRY; then
+      dim "    would run: wrangler secret put $key --config $config"
+    else
+      printf '%s' "${ENVVARS[$key]}" | npx wrangler secret put "$key" --config "$config" >/dev/null \
+        || die "failed to set $key on $config"
+    fi
+    echo "  set   $key -> $config"
+  done
+}
+
+bold "2. Worker secrets"
+put_secret CLERK_SECRET_KEY     "$CUSTOMER" "$VET" "$ADMIN" "$VOICE"
+put_secret TWILIO_ACCOUNT_SID   "$VOICE"
+put_secret TWILIO_AUTH_TOKEN    "$VOICE"
+put_secret STRIPE_SECRET_KEY    "$CUSTOMER"
+put_secret STRIPE_WEBHOOK_SECRET "$CUSTOMER"
+echo
+
+# ------------------------------------------------- repository secrets ------
+# Only what a workflow actually consumes. Setting a secret nothing reads is
+# noise that looks like configuration.
+
+bold "3. GitHub repository secrets"
+if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
+  gh_secret() {
+    local key="$1"
+    have "$key" || { dim "  skip  $key (blank in env file)"; return 0; }
+    if $DRY; then
+      dim "    would run: gh secret set $key"
+    else
+      printf '%s' "${ENVVARS[$key]}" | gh secret set "$key" >/dev/null || die "failed to set $key"
+    fi
+    echo "  set   $key -> repository"
+  }
+  # Consumed by .github/workflows/deploy.yml (manual dispatch).
+  gh_secret CLOUDFLARE_API_TOKEN
+  gh_secret CLOUDFLARE_ACCOUNT_ID
+  # Consumed by the iOS job only when it builds with TIMI_MAPBOX=1.
+  gh_secret MAPBOX_DOWNLOADS_TOKEN
+else
+  warn "  gh not installed or not signed in — skipping repository secrets."
+  warn "  brew install gh && gh auth login, then re-run."
+fi
+echo
+
+# ---------------------------------------------------------- verify + ship ---
+
+bold "4. Configuration check"
+run npm run check
+echo
+
+bold "5. Production database"
+if $DRY; then
+  dim "    would run: npm run db:migrate:remote"
+else
+  npm run db:migrate:remote
+fi
+echo
+
+bold "6. Deploy"
+if $DRY; then
+  dim "    would run: npm run deploy:all"
+else
+  read -r -p "Deploy all four Workers to production? [y/N] " reply
+  case "$reply" in
+    [yY]*) npm run deploy:all ;;
+    *) warn "  Skipped. Run 'npm run deploy:all' when ready."; exit 0 ;;
+  esac
+fi
+echo
+
+bold "7. Health"
+if ! $DRY; then
+  for host in timinow.pet providers.timinow.pet admin.timinow.pet voice.timinow.pet; do
+    printf '  %-24s ' "$host"
+    curl -fsS --max-time 10 "https://$host/api/health" 2>/dev/null || printf 'no response'
+    echo
+  done
+fi
+echo
+
+bold "Done."
+echo "Public values changed in the wrangler configs — review and commit:"
+echo "    git diff --stat"
+echo "    git add wrangler.*.jsonc && git commit -m 'Configure production keys' && git push"

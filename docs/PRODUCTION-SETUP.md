@@ -278,37 +278,74 @@ Stripe when that handler lands, not before.
 
 ---
 
-## 7. Deploy order
-
-DNS and Clerk first; the Workers will not answer on a hostname whose zone is not
-active, and sign-in fails until the Clerk records resolve.
+## 7. Deploy
 
 ```bash
-# 1. Migrate the production database (once)
-npm run db:migrate:remote
+git clone https://github.com/Gitbub0816/timinow.git
+cd timinow
+git checkout claude/multi-platform-clerk-d1-mapbox-atewxd
+npm install
 
-# 2. Confirm every config still agrees with itself
-npm run check
+npx wrangler login          # opens a browser
+gh auth login               # optional, for repository secrets
 
-# 3. Deploy all four Workers
-npm run deploy:all
+./scripts/bootstrap.sh ~/Downloads/env.example --dry-run
+./scripts/bootstrap.sh ~/Downloads/env.example
 ```
 
-Then, in order:
+The script reads the env file once and routes each value to where it actually
+belongs — public configuration into the wrangler configs, secrets straight to
+`wrangler secret put` over stdin so nothing lands in shell history, and the two
+build credentials to GitHub. Then it validates, migrates, asks before deploying,
+and checks that all four hostnames answer.
+
+Blank values are skipped rather than cleared, so it is safe to run again as you
+fill more in.
+
+Afterwards the public values are uncommitted changes in the wrangler configs:
 
 ```bash
-curl -s https://timinow.pet/api/health
-curl -s https://providers.timinow.pet/api/health
-curl -s https://admin.timinow.pet/api/health
-curl -s https://voice.timinow.pet/api/health
+git diff --stat
+git add wrangler.*.jsonc
+git commit -m "Configure production keys"
+git push
 ```
 
-Open `https://admin.timinow.pet`, sign in, and create your first tenant. If you
-are not yet a platform operator the screen shows your Clerk user id — paste it
-into `PLATFORM_ADMIN_USER_IDS` in `wrangler.admin.jsonc` and redeploy that one
-Worker.
+DNS and Clerk must be in place first — a Worker will not answer on a hostname
+whose zone is not active, and sign-in fails until Clerk's records resolve.
 
----
+### Which secret goes where
+
+| Value | Destination |
+| --- | --- |
+| `CLERK_SECRET_KEY` | Worker secret, all four |
+| `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN` | Worker secret, voice only |
+| `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` | Worker secret, customer only |
+| `CLERK_PUBLISHABLE_KEY`, `MAPBOX_PUBLIC_TOKEN` | wrangler config — customer, vet, admin |
+| `TWILIO_FROM_NUMBER` | wrangler config — voice |
+| `PLATFORM_ADMIN_EMAILS`, `PLATFORM_ADMIN_USER_IDS` | wrangler config — admin |
+| `STRIPE_PUBLISHABLE_KEY` | wrangler config — customer |
+| `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` | GitHub repository secret |
+| `MAPBOX_DOWNLOADS_TOKEN` | GitHub repository secret, and `~/.netrc` locally |
+
+The voice Worker gets no Clerk publishable key and no map token: it serves no
+browser UI, so neither would ever be read.
+
+`.env` itself is never deployed. Cloudflare Workers do not read it; it is a
+reference copy, and the source for `.dev.vars` when running locally.
+
+### Afterwards
+
+Open `https://admin.timinow.pet` and create your first tenant. If you are not
+yet a platform operator the screen shows your Clerk user id — put it in
+`PLATFORM_ADMIN_USER_IDS` and redeploy that one Worker:
+
+```bash
+npm run deploy:admin
+```
+
+Later deploys can go through the Actions tab: **Deploy** → *Run workflow*, which
+is manual-dispatch only. Nothing deploys on a push.
 
 ## 8. Every value, in one place
 
