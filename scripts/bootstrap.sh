@@ -341,19 +341,24 @@ if [ -n "$TEST_CALL" ]; then
   ORIGIN="${ORIGIN%/}"
   TOKEN="$(env_value VOICE_DRAIN_TOKEN)"
   SOURCE="$ENV_FILE"
+  # What was actually deployed. This flag exits before step 0, so a value added
+  # to the env file since the last full run is still sitting on this machine —
+  # and the Worker then answers about a token it has never been given, which
+  # reads as though the env file were wrong.
+  DEPLOYED="$(CONFIG="$VOICE" node -e '
+    const fs = require("fs");
+    const text = fs.readFileSync(process.env.CONFIG, "utf8").replace(/^\s*\/\/.*$/gm, "");
+    process.stdout.write((JSON.parse(text).vars || {}).VOICE_DRAIN_TOKEN || "");
+  ' 2>/dev/null || true)"
   # Falling back to the wrangler config, because that is what was deployed and
   # therefore what the Worker is actually checking against. A blank value in the
   # env file leaves whatever the config held — set_var skips blanks by design,
   # so "keep the current value" is a legitimate answer — and the two can drift.
   # Testing against the env file alone reports a token missing while the Worker
   # is happily holding one.
-  if [ -z "$TOKEN" ]; then
-    TOKEN="$(CONFIG="$VOICE" node -e '
-      const fs = require("fs");
-      const text = fs.readFileSync(process.env.CONFIG, "utf8").replace(/^\s*\/\/.*$/gm, "");
-      process.stdout.write((JSON.parse(text).vars || {}).VOICE_DRAIN_TOKEN || "");
-    ' 2>/dev/null || true)"
-    [ -n "$TOKEN" ] && SOURCE="$VOICE (blank in the env file)"
+  if [ -z "$TOKEN" ] && [ -n "$DEPLOYED" ]; then
+    TOKEN="$DEPLOYED"
+    SOURCE="$VOICE (blank in the env file)"
   fi
   bold "Test call"
   echo "  to      $TEST_CALL"
@@ -366,6 +371,17 @@ if [ -n "$TEST_CALL" ]; then
     $0 $ENV_FILE"
   fi
   dim "  token   ${TOKEN%${TOKEN#??}}… ${#TOKEN} characters, from $SOURCE"
+  if [ "$TOKEN" != "$DEPLOYED" ]; then
+    echo
+    die "  That token is in $ENV_FILE but has not been deployed — $VOICE
+  still holds $([ -n "$DEPLOYED" ] && echo "a different one" || echo "none at all"), and the Worker checks against what it was
+  given. This flag stops before the deploy step on purpose.
+
+  Deploy first, then call:
+
+    $0 $ENV_FILE
+    $0 $ENV_FILE --test-call $TEST_CALL"
+  fi
   echo
   curl -sS -X POST "$ORIGIN/api/voice/test-call" \
     -H "x-timi-drain-token: $TOKEN" \
