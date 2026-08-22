@@ -45,6 +45,13 @@ targets:
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         INFOPLIST_FILE: Info.plist
         PRODUCT_NAME: TimiNow
+        # Spelled out, not derived. bundleIdPrefix + target name would give
+        # solutions.clearkey.TimiNow, and three other places already say
+        # solutions.clearkey.timinow: the launch in the build scripts, the
+        # watch app's WKCompanionAppBundleIdentifier below, and the CarPlay
+        # entitlement request. A capital T there means the app installs and
+        # then cannot be launched by id, and the watch never pairs.
+        PRODUCT_BUNDLE_IDENTIFIER: solutions.clearkey.timinow
         PRODUCT_MODULE_NAME: TimiNowHost
         CODE_SIGN_STYLE: Automatic
         # CODE_SIGN_ENTITLEMENTS is deliberately NOT set here. It lives in

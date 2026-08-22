@@ -712,6 +712,53 @@ for (const path of await collectFiles("apps/customer-mobile/Sources", ".swift"))
   }
 }
 
+// With GENERATE_INFOPLIST_FILE off, the Info.plist is used exactly as written
+// and nothing injects the identity keys. Missing CFBundleIdentifier, the build
+// succeeds, produces a .app, and the install is refused with "not a valid
+// bundle … Failed to get the identifier for the app to be installed" — a
+// message that reads like a signing or Developer Mode problem and is neither.
+for (const app of ["customer-mobile", "vet-desktop"]) {
+  const xcconfigs = {
+    "customer-mobile": "apps/customer-mobile/Darwin/TimiNow.xcconfig",
+    "vet-desktop": "apps/vet-desktop/Darwin/TimiVet.xcconfig"
+  };
+  const xcconfig = await read(xcconfigs[app]);
+  if (!/GENERATE_INFOPLIST_FILE\s*=\s*NO/.test(xcconfig)) continue;
+  const path = `apps/${app}/Darwin/Info.plist`;
+  const info = await read(path);
+  for (const key of ["CFBundleIdentifier", "CFBundleExecutable", "CFBundlePackageType", "CFBundleName"]) {
+    if (!info.includes(`<key>${key}</key>`)) {
+      throw new Error(`${path} has no ${key}, and ${xcconfigs[app]} sets GENERATE_INFOPLIST_FILE = NO, so nothing supplies it. The app builds and then will not install.`);
+    }
+  }
+}
+
+// One bundle identifier, named in five places: the Xcode target, the launch in
+// each of the three build scripts, and the watch app's companion key. xcodegen
+// would otherwise derive it from bundleIdPrefix and the target name — giving a
+// capital T — and the app then installs and cannot be launched by id, with the
+// watch silently never pairing.
+{
+  const project = await read("apps/customer-mobile/Darwin/project.yml");
+  const declared = project.match(/^\s*PRODUCT_BUNDLE_IDENTIFIER:\s*(\S+)\s*$/m);
+  if (!declared) {
+    throw new Error("apps/customer-mobile/Darwin/project.yml does not set PRODUCT_BUNDLE_IDENTIFIER for the app target, so xcodegen derives it from the target name and it stops matching everything else that names it.");
+  }
+  const bundleId = declared[1];
+  for (const script of ["scripts/build-ios-app.sh", "scripts/install-ios-device.sh", "scripts/upload-testflight.sh"]) {
+    const text = await read(script);
+    const used = text.match(/^BUNDLE_ID="([^"]+)"/m);
+    if (!used) throw new Error(`${script} no longer defines BUNDLE_ID.`);
+    if (used[1] !== bundleId) {
+      throw new Error(`${script} launches ${used[1]} but the app is built as ${bundleId}. It would install and then fail to start.`);
+    }
+  }
+  const companion = project.match(/INFOPLIST_KEY_WKCompanionAppBundleIdentifier:\s*(\S+)/);
+  if (companion && companion[1] !== bundleId) {
+    throw new Error(`apps/customer-mobile/Darwin/project.yml: the watch app names ${companion[1]} as its companion, but the phone app is ${bundleId}. The watch would never pair.`);
+  }
+}
+
 // `#if canImport(M)` asks whether M is available. It does not import it. A
 // file that guards on canImport and then names a type from M, without an
 // `import M` anywhere, compiles fine while M is absent and fails the moment it
