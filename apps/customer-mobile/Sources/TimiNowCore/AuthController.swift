@@ -65,6 +65,14 @@ public struct AuthFactorOption: Identifiable, Hashable, Sendable {
     private var activeSessionId: String?
     private var workerToken: String?
     private var workerTokenExpiresAt: Date?
+    /// Clerk's native client JWT, handed back in the `Authorization` response
+    /// header and replayed in the request header — the native equivalent of
+    /// the `__client` cookie a browser would carry.
+    private var clerkDeviceToken: String?
+    /// Native Frontend API mode (`_is_native=true`). Flipped off for the rest
+    /// of the launch if the instance answers `native_api_disabled`, so an
+    /// instance without the toggle still signs in the old cookie way.
+    private var clerkNativeMode = true
 
     private static let clerkDecoder: JSONDecoder = {
         let decoder = JSONDecoder()
@@ -100,7 +108,16 @@ public struct AuthFactorOption: Identifiable, Hashable, Sendable {
             stage = .identifier
             return
         }
-        restoreCookie(stored.clientCookie, host: host)
+        if let token = stored.clerkDeviceToken, !token.isEmpty {
+            clerkDeviceToken = token
+        } else if let cookie = stored.clientCookie, !cookie.isEmpty {
+            // Saved before native mode existed. Resume it the way it was
+            // written — a native `/v1/client` with no device token would be
+            // handed a brand-new empty client and sign this person out for no
+            // reason. `signOutLocally()` puts native mode back.
+            clerkNativeMode = false
+            restoreCookie(cookie, host: host)
+        }
         activeSessionId = stored.activeSessionId
         workerToken = stored.workerToken
         workerTokenExpiresAt = stored.workerTokenExpiresAt
@@ -122,7 +139,7 @@ public struct AuthFactorOption: Identifiable, Hashable, Sendable {
     // MARK: - Email or phone
 
     public func submitIdentifier() async {
-        let identifier = identifierText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let identifier = Self.normalizeIdentifier(identifierText)
         guard !identifier.isEmpty else { errorMessage = "Enter your email or mobile number."; return }
         guard frontendAPIHost != nil else {
             errorMessage = "Tími could not reach the sign-in service. Check your connection and try again."
@@ -176,6 +193,15 @@ public struct AuthFactorOption: Identifiable, Hashable, Sendable {
                 errorMessage = "Tími could not create that account."
                 return
             }
+            // `missing_fields` is what the instance still requires and this
+            // screen cannot supply — distinct from `unverified_fields`, which
+            // is just the code we are about to send. Sending a code that leads
+            // to a dead end is worse than saying so now: the code arrives, it
+            // is accepted, and the account still does not exist.
+            if let blocker = Self.signUpBlocker(signUp.missingFields ?? []) {
+                errorMessage = blocker
+                return
+            }
             let strategy = isEmail ? "email_code" : "phone_code"
             _ = try await clerkRequest(
                 path: "/v1/client/sign_ups/\(signUpId)/prepare_verification", method: "POST",
@@ -184,7 +210,13 @@ public struct AuthFactorOption: Identifiable, Hashable, Sendable {
             selectedFactor = AuthFactorOption(strategy: strategy, label: isEmail ? "Email code" : "Text message code")
             stage = .code
         } catch let error as TimiAPIError {
-            errorMessage = error.message
+            // Clerk's own wording for this one is "Authentication unsuccessful
+            // due to failed security validations. Please refresh the page" —
+            // advice for a browser, on a screen that has no page to refresh,
+            // and it names nothing anyone can act on.
+            errorMessage = Self.looksLikeCaptchaRequired(error)
+                ? "Tími could not create the account. Clerk's bot protection is asking for a CAPTCHA this app cannot show — enable the Native API for this instance in the Clerk dashboard."
+                : error.message
         } catch {
             errorMessage = "Tími could not create an account for that address."
         }
@@ -284,10 +316,29 @@ public struct AuthFactorOption: Identifiable, Hashable, Sendable {
     private func completeSignUpIfNeeded(_ signUp: ClerkWireSignUp) async throws {
         pendingSignUpId = signUp.id
         guard signUp.status == "complete", let sessionId = signUp.createdSessionId else {
-            errorMessage = "That account needs another step before it can be used."
+            // "Another step" named nothing, and Clerk has already said exactly
+            // which one.
+            errorMessage = Self.signUpBlocker(signUp.missingFields ?? [])
+                ?? "That account needs another step before it can be used."
             return
         }
         try await finish(sessionId: sessionId)
+    }
+
+    /// Turns Clerk's `missing_fields` into something a person can act on, or
+    /// nil when nothing is in the way.
+    private static func signUpBlocker(_ missing: [String]) -> String? {
+        if missing.isEmpty { return nil }
+        if missing.contains("password") {
+            return "This Clerk instance requires a password to create an account, and Tími signs people in with a code instead. Make password optional under Configure → Email, phone, username."
+        }
+        if missing.contains("phone_number") {
+            return "Tími needs a mobile number to create your account. Go back and enter your phone number instead of an email address."
+        }
+        if missing.contains("email_address") {
+            return "Tími needs an email address to create your account. Go back and enter your email instead of a phone number."
+        }
+        return "Clerk needs \(missing.joined(separator: ", ")) before this account can be created, and Tími does not ask for that."
     }
 
     private func finish(sessionId: String) async throws {
@@ -317,6 +368,10 @@ public struct AuthFactorOption: Identifiable, Hashable, Sendable {
 
     private func signOutLocally() {
         activeSessionId = nil; workerToken = nil; workerTokenExpiresAt = nil
+        clerkDeviceToken = nil
+        // Back to native for the next attempt, so a session resumed the old
+        // cookie way does not leave sign-up stuck behind the CAPTCHA.
+        clerkNativeMode = true
         pendingSignInId = nil; pendingSignUpId = nil; pendingFactors = []
         keychain.clear()
         gateway.bearerToken = nil
@@ -374,16 +429,45 @@ public struct AuthFactorOption: Identifiable, Hashable, Sendable {
         return try Self.clerkDecoder.decode(ClerkWireToken.self, from: data)
     }
 
-    /// One request against Clerk's Frontend API. Every call carries
-    /// `_clerk_js_version=5` (matching the headless `@clerk/clerk-js@5` the web
-    /// surfaces load) and unwraps FAPI's `{ "response": ... }` envelope.
+    /// One request against Clerk's Frontend API, in native mode.
+    ///
+    /// Native mode is what Clerk's own iOS SDK does: `_is_native=true` on every
+    /// URL, the client JWT carried in the `Authorization` header instead of a
+    /// `__client` cookie — and, the reason this app needs it, no bot
+    /// protection. A browser clears Clerk's sign-up CAPTCHA by rendering a
+    /// Turnstile widget; an app has no widget to render, so a web-mode
+    /// `/v1/client/sign_ups` is rejected with `captcha_missing_token` and a
+    /// pet owner without an account can never create one.
+    ///
+    /// If the instance has not enabled the Native API this falls back to the
+    /// cookie path once and stays there — sign-in keeps working, only sign-up
+    /// hits the CAPTCHA it hit before.
     private func clerkRequest(path: String, method: String = "GET", form: [(String, String?)]? = nil) async throws -> Data {
+        do {
+            return try await performClerkRequest(path: path, method: method, form: form)
+        } catch let error as TimiAPIError {
+            guard clerkNativeMode, Self.looksLikeNativeAPIDisabled(error) else { throw error }
+            // Clerk rejects the request outright, before touching any state, so
+            // replaying it web-style cannot double up a sign-in or a code.
+            clerkNativeMode = false
+            clerkDeviceToken = nil
+            return try await performClerkRequest(path: path, method: method, form: form)
+        }
+    }
+
+    private func performClerkRequest(path: String, method: String, form: [(String, String?)]?) async throws -> Data {
         guard let host = frontendAPIHost else { throw TimiAPIError.invalidConfiguration("") }
         guard var components = URLComponents(string: "https://\(host)\(path)") else {
             throw TimiAPIError.invalidResponse(path: path)
         }
         var query = components.queryItems ?? []
-        query.append(URLQueryItem(name: "_clerk_js_version", value: "5"))
+        if clerkNativeMode {
+            query.append(URLQueryItem(name: "_is_native", value: "true"))
+        } else {
+            // `_clerk_js_version=5` matches the headless `@clerk/clerk-js@5`
+            // the web surfaces load.
+            query.append(URLQueryItem(name: "_clerk_js_version", value: "5"))
+        }
         components.queryItems = query
         guard let url = components.url else { throw TimiAPIError.invalidResponse(path: path) }
 
@@ -391,7 +475,13 @@ public struct AuthFactorOption: Identifiable, Hashable, Sendable {
         request.httpMethod = method
         request.timeoutInterval = 20
         request.setValue("application/json", forHTTPHeaderField: "Accept")
-        request.httpShouldHandleCookies = true
+        // Clerk refuses a request carrying both `Origin` and `Authorization`,
+        // and treats the cookie jar as the browser path. Native mode is one or
+        // the other, never a mix.
+        request.httpShouldHandleCookies = !clerkNativeMode
+        if clerkNativeMode, let token = clerkDeviceToken, !token.isEmpty {
+            request.setValue(token, forHTTPHeaderField: "Authorization")
+        }
         if let form {
             request.httpBody = Self.encodeForm(form)
             request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
@@ -405,10 +495,53 @@ public struct AuthFactorOption: Identifiable, Hashable, Sendable {
             throw TimiAPIError.transport(reason: error.localizedDescription, path: "https://\(host)\(path)")
         }
         guard let http = response as? HTTPURLResponse else { throw TimiAPIError.invalidResponse(path: path) }
+        // Before the status check, not after: Clerk issues the client JWT on
+        // failure responses too, and the sign-up flow reaches `/sign_ups` only
+        // by way of the 422 that `/sign_ins` returns for an unknown address. A
+        // token absorbed only from 2xx would leave that request unauthenticated.
+        if clerkNativeMode { absorbDeviceToken(http) }
         guard (200..<300).contains(http.statusCode) else {
             throw TimiAPIError.server(status: http.statusCode, code: Self.extractClerkCode(data), message: Self.extractClerkError(data), path: path)
         }
         return Self.unwrapResponse(data)
+    }
+
+    /// An absent header means "unchanged"; an empty one, or a bare `Bearer`,
+    /// means Clerk dropped the client and we must too.
+    private func absorbDeviceToken(_ response: HTTPURLResponse) {
+        guard let header = response.value(forHTTPHeaderField: "Authorization") else { return }
+        let trimmed = header.trimmingCharacters(in: .whitespacesAndNewlines)
+        clerkDeviceToken = (trimmed.isEmpty || trimmed.lowercased() == "bearer") ? nil : trimmed
+    }
+
+    /// Clerk wants a phone number in E.164. Typed the way anybody says it —
+    /// "4152123721", "(415) 212-3721" — it is rejected as not a valid phone
+    /// number, and the message describes a format rather than the fix. Email
+    /// addresses and numbers already written with a country code pass through.
+    private static func normalizeIdentifier(_ raw: String) -> String {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.contains("@") { return trimmed }
+        let punctuation = "+()-. "
+        guard trimmed.allSatisfy({ $0.isNumber || punctuation.contains($0) }) else { return trimmed }
+        let digits = trimmed.filter { $0.isNumber }
+        if digits.isEmpty { return trimmed }
+        if trimmed.hasPrefix("+") { return "+" + digits }
+        if digits.count == 10 { return "+1" + digits }
+        if digits.count == 11 && digits.hasPrefix("1") { return "+" + digits }
+        return trimmed
+    }
+
+    private static func looksLikeCaptchaRequired(_ error: TimiAPIError) -> Bool {
+        if case .server(_, let code, _, _) = error, let code { return code.contains("captcha") }
+        return false
+    }
+
+    private static func looksLikeNativeAPIDisabled(_ error: TimiAPIError) -> Bool {
+        if case .server(_, let code, let message, _) = error {
+            if let code, code.contains("native_api_disabled") { return true }
+            return message.lowercased().contains("native api is disabled")
+        }
+        return false
     }
 
     /// Clerk reports an unrecognised identifier as a 422 whose code is
@@ -510,7 +643,12 @@ public struct AuthFactorOption: Identifiable, Hashable, Sendable {
     /// item.
     private struct StoredAuthCredential: Codable {
         var frontendAPIHost: String
-        var clientCookie: String
+        /// Web-mode credential. Optional because a native sign-in never
+        /// produces one, and because blobs written before native mode existed
+        /// carry nothing else.
+        var clientCookie: String?
+        /// Native-mode credential — Clerk's client JWT.
+        var clerkDeviceToken: String?
         var activeSessionId: String?
         var workerToken: String?
         var workerTokenExpiresAt: Date?
@@ -522,9 +660,14 @@ public struct AuthFactorOption: Identifiable, Hashable, Sendable {
     }
 
     private func saveCredential() {
-        guard let host = frontendAPIHost, let cookie = extractClientCookie(host: host) else { return }
+        guard let host = frontendAPIHost else { return }
+        let cookie = clerkNativeMode ? nil : extractClientCookie(host: host)
+        // Nothing to resume from is worse than no Keychain item at all: it
+        // would restore a host and a session id that no credential can renew.
+        guard cookie != nil || clerkDeviceToken != nil else { return }
         let credential = StoredAuthCredential(
-            frontendAPIHost: host, clientCookie: cookie, activeSessionId: activeSessionId,
+            frontendAPIHost: host, clientCookie: cookie, clerkDeviceToken: clerkDeviceToken,
+            activeSessionId: activeSessionId,
             workerToken: workerToken, workerTokenExpiresAt: workerTokenExpiresAt
         )
         guard let data = try? JSONEncoder().encode(credential), let text = String(data: data, encoding: .utf8) else { return }
@@ -564,6 +707,9 @@ private struct ClerkWireSignUp: Decodable {
     var id: String?
     var status: String?
     var createdSessionId: String?
+    /// What the instance still requires. Not the same as `unverifiedFields`,
+    /// which is only the code about to be sent.
+    var missingFields: [String]?
 }
 
 private struct ClerkWireSession: Decodable {

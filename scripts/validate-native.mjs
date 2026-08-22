@@ -905,6 +905,75 @@ for (const root of ["apps/customer-mobile/Sources", "apps/customer-mobile/Watch"
   }
 }
 
+// A stored-property default is dead the moment an explicit initializer assigns
+// the same parameter over it. AppSettings declared
+// `apiBaseUrl = TimiVetEnvironment.defaultAPIBaseURL` and then took
+// `apiBaseUrl: String = ""` in its init, so `AppSettings()` — every first
+// launch — produced a blank address. The console then reported "Could not read
+// no Worker address/api/config", which reads as a Clerk or a DNS fault and is
+// neither, with the correct default sitting two lines above in the same file.
+{
+  const path = "apps/vet-desktop/Sources/TimiVetCore/ClinicModels.swift";
+  const source = await read(path);
+  const body = source.match(/public struct AppSettings[^{]*\{([\s\S]*?)\n\}/);
+  if (!body) throw new Error(`${path} no longer declares AppSettings.`);
+  const stored = new Map();
+  for (const match of body[1].matchAll(/^\s*public var (\w+):\s*[^=\n]+=\s*(.+?)\s*$/gm)) {
+    stored.set(match[1], match[2]);
+  }
+  const init = body[1].match(/public init\(([\s\S]*?)\)\s*\{/);
+  if (!init) throw new Error(`${path}: AppSettings no longer declares an explicit init.`);
+  for (const match of init[1].matchAll(/(\w+):\s*[^=,]+=\s*("(?:[^"\\]|\\.)*"|[^,)]+?)\s*(?:,|$)/g)) {
+    const declared = stored.get(match[1]);
+    if (declared === undefined) continue;
+    if (declared !== match[2].trim()) {
+      throw new Error(`${path}: AppSettings.${match[1]} defaults to ${declared} as a property but to ${match[2].trim()} in init. The init wins, so the property default never applies — make them the same or drop one.`);
+    }
+  }
+}
+
+// Both Apple clients talk to Clerk's Frontend API as native clients
+// (`_is_native=true`, client JWT in the Authorization header) rather than as
+// browsers. It is not a preference: Clerk guards `/v1/client/sign_ups` with a
+// Turnstile CAPTCHA that only a web page can render, so a web-mode sign-up is
+// answered with `captcha_missing_token` and nobody without an account can ever
+// make one. Each seam below is a way to have the query parameter and still not
+// be a native client.
+for (const path of [
+  "apps/customer-mobile/Sources/TimiNowCore/AuthController.swift",
+  "apps/vet-desktop/Sources/TimiVetCore/AuthController.swift"
+]) {
+  const source = await read(path);
+  const seams = [
+    [/URLQueryItem\(name: "_is_native", value: "true"\)/, 'never sends _is_native=true, so Clerk treats it as a browser and sign-up is rejected with captcha_missing_token.'],
+    [/request\.setValue\(token, forHTTPHeaderField: "Authorization"\)/, 'never puts the Clerk device token in the Authorization header, so every native request arrives as a brand-new anonymous client.'],
+    [/request\.httpShouldHandleCookies = !clerkNativeMode/, 'leaves the cookie jar on in native mode. Clerk refuses a request carrying both Origin and Authorization.'],
+    [/if clerkNativeMode \{ absorbDeviceToken\(http\) \}\n\s*guard \(200\.\.<300\)/, 'absorbs the device token after the status check rather than before it. Clerk issues the client JWT on failure responses too, and the sign-up flow is reached only through the 422 that /sign_ins returns for an unknown address — the following request would go out unauthenticated.'],
+    [/var clerkDeviceToken: String\?/, 'does not persist the device token, so the session cannot be resumed and sign-in greets the user at every launch.'],
+    [/native_api_disabled/, 'does not recognise native_api_disabled, so an instance without the Native API toggle cannot fall back to the cookie path and sign-in breaks entirely.']
+  ];
+  for (const [pattern, complaint] of seams) {
+    if (!pattern.test(source)) throw new Error(`${path} ${complaint}`);
+  }
+}
+
+// Clerk reports two different things about an incomplete sign-up:
+// `unverified_fields`, which is just the code about to be sent, and
+// `missing_fields`, which is what the instance requires and this app never
+// asks for. Reading only the status leads a new customer through a code that
+// is accepted and then leaves them with no account and "another step" as the
+// explanation.
+{
+  const path = "apps/customer-mobile/Sources/TimiNowCore/AuthController.swift";
+  const source = await read(path);
+  if (!/var missingFields: \[String\]\?/.test(source)) {
+    throw new Error(`${path}: ClerkWireSignUp does not decode missing_fields, so nothing can tell a new customer what the sign-up still needs.`);
+  }
+  if (!/signUpBlocker\(signUp\.missingFields \?\? \[\]\)/.test(source)) {
+    throw new Error(`${path}: the sign-up path does not check missing_fields before sending a verification code. On an instance that requires a password, the code arrives, is accepted, and the account still does not exist.`);
+  }
+}
+
 const csharpFiles = await collectFiles("apps/vet-windows", ".cs");
 for (const path of csharpFiles) {
   const problems = bracketProblems(await read(path));

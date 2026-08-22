@@ -197,7 +197,13 @@ public struct AppSettings: Codable, Sendable {
     public var miniWindowWidth: Double?
     public var miniWindowHeight: Double?
 
-    public init(apiBaseUrl: String = "", tenantId: String = "tenant_hearth", pollSeconds: Int = 6, alertsEnabled: Bool = true, playSound: Bool = true, miniWindowTopmost: Bool = true, stayAboveEverything: Bool = false, startAtLogin: Bool = false, autoShowMiniOnNewRequest: Bool = false, miniWindowLeft: Double? = nil, miniWindowTop: Double? = nil, miniWindowWidth: Double? = nil, miniWindowHeight: Double? = nil) {
+    // `apiBaseUrl` defaults to the same address as the stored property above,
+    // and not to "". A property default is dead the moment an explicit
+    // initializer assigns the parameter over it, so `AppSettings()` handed back
+    // a blank address no matter what the property said — which is how a fresh
+    // install reported "Could not read no Worker address/api/config" while the
+    // default sat right there in the source.
+    public init(apiBaseUrl: String = TimiVetEnvironment.defaultAPIBaseURL, tenantId: String = "tenant_hearth", pollSeconds: Int = 6, alertsEnabled: Bool = true, playSound: Bool = true, miniWindowTopmost: Bool = true, stayAboveEverything: Bool = false, startAtLogin: Bool = false, autoShowMiniOnNewRequest: Bool = false, miniWindowLeft: Double? = nil, miniWindowTop: Double? = nil, miniWindowWidth: Double? = nil, miniWindowHeight: Double? = nil) {
         self.apiBaseUrl = apiBaseUrl; self.tenantId = tenantId; self.pollSeconds = pollSeconds; self.alertsEnabled = alertsEnabled
         self.playSound = playSound; self.miniWindowTopmost = miniWindowTopmost; self.stayAboveEverything = stayAboveEverything
         self.startAtLogin = startAtLogin; self.autoShowMiniOnNewRequest = autoShowMiniOnNewRequest
