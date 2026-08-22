@@ -701,3 +701,8 @@ echo "    git commit -m 'Configure production keys' && git push"
 echo
 echo "Never 'git add -A' after this runs: it sweeps up every config at once, and"
 echo "one rejected file blocks the whole push."
+echo
+echo "And do not 'git pull' by hand before running this again. Step 1 above"
+echo "rewrites those four configs every time, so a plain pull stops on \"local"
+echo "changes would be overwritten\". Step 0 already pulls, and discards exactly"
+echo "those four files first because it is about to overwrite them anyway."
