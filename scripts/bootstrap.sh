@@ -192,7 +192,7 @@ set_var() { # set_var KEY CONFIG...
       '
     fi
   done
-  echo "  set   $key -> $*"
+  $DRY || echo "  set   $key -> $*"
 }
 
 bold "1. Public configuration"
@@ -229,7 +229,25 @@ if $SECRETS_ONLY; then
 else
 
 bold "2. Configuration check"
-run npm run check
+if $DRY; then
+  dim "    would run: npm run check"
+else
+  if ! npm run check; then
+    echo >&2
+    die "  The configuration does not agree with itself, so nothing was deployed
+  and no secrets were set. The error above names the specific disagreement.
+
+  A common cause is a half-resolved merge in the wrangler configs. To take the
+  committed versions and start again:
+
+    git checkout HEAD -- wrangler.jsonc wrangler.vet.jsonc wrangler.admin.jsonc wrangler.voice.jsonc
+    ./scripts/bootstrap.sh $ENV_FILE
+
+  If the Workers are already deployed and you only need their secrets:
+
+    ./scripts/bootstrap.sh $ENV_FILE --secrets-only"
+  fi
+fi
 echo
 
 bold "3. Production database"
