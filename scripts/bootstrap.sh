@@ -16,6 +16,13 @@
 #
 # Safe to re-run. Values left blank in the env file are skipped, not cleared.
 
+# macOS ships bash 3.2, so nothing here may use bash 4 features — no
+# associative arrays, no mapfile. Verified against that constraint.
+if [ -z "${BASH_VERSION:-}" ]; then
+  echo "This script needs bash. Run it as: bash scripts/bootstrap.sh <env-file>" >&2
+  exit 1
+fi
+
 set -euo pipefail
 
 ENV_FILE="${1:-}"
@@ -54,22 +61,47 @@ fi
 # Values are held in shell variables only; nothing is echoed and nothing is
 # written back to disk.
 
-declare -A ENVVARS
-while IFS= read -r line || [ -n "$line" ]; do
-  case "$line" in ''|'#'*) continue ;; esac
-  key="${line%%=*}"
-  value="${line#*=}"
-  key="$(printf '%s' "$key" | tr -d '[:space:]')"
-  # strip one layer of surrounding quotes and any trailing whitespace
-  value="$(printf '%s' "$value" | sed -e 's/[[:space:]]*$//' -e 's/^"\(.*\)"$/\1/' -e "s/^'\(.*\)'$/\1/")"
-  case "$key" in ''|*[!A-Za-z0-9_]*) continue ;; esac
-  [ -n "$value" ] && ENVVARS["$key"]="$value"
-done < "$ENV_FILE"
+# macOS still ships bash 3.2, which has no associative arrays, so values are
+# read from the file on demand rather than held in a map. There are about twenty
+# lookups; the cost is irrelevant and the script runs everywhere.
 
-bold "Read ${#ENVVARS[@]} non-empty values from $ENV_FILE"
+env_value() {
+  awk -v want="$1" '
+    /^[[:space:]]*#/ { next }
+    {
+      idx = index($0, "=")
+      if (idx == 0) next
+      key = substr($0, 1, idx - 1)
+      val = substr($0, idx + 1)
+      gsub(/[[:space:]]/, "", key)
+      if (key != want) next
+      sub(/[[:space:]]+$/, "", val)
+      sub(/^[[:space:]]+/, "", val)
+      if (val ~ /^".*"$/) val = substr(val, 2, length(val) - 2)
+      else if (val ~ /^\047.*\047$/) val = substr(val, 2, length(val) - 2)
+      print val
+      exit
+    }
+  ' "$ENV_FILE"
+}
+
+have() { [ -n "$(env_value "$1")" ]; }
+
+FOUND=$(awk '
+  /^[[:space:]]*#/ { next }
+  {
+    idx = index($0, "=")
+    if (idx == 0) next
+    val = substr($0, idx + 1)
+    gsub(/[[:space:]]/, "", val)
+    if (val != "") n++
+  }
+  END { print n + 0 }
+' "$ENV_FILE")
+
+bold "Read $FOUND non-empty values from $ENV_FILE"
 echo
 
-have() { [ -n "${ENVVARS[$1]:-}" ]; }
 
 # ------------------------------------------------- public vars -> configs ---
 # These are served to browsers by /api/config, so they are configuration rather
@@ -82,8 +114,9 @@ VOICE=wrangler.voice.jsonc
 
 set_var() { # set_var KEY CONFIG...
   local key="$1"; shift
-  have "$key" || { dim "  skip  $key (blank in env file)"; return 0; }
-  local value="${ENVVARS[$key]}"
+  local value
+  value="$(env_value "$key")"
+  [ -n "$value" ] || { dim "  skip  $key (blank in env file)"; return 0; }
   for config in "$@"; do
     if $DRY; then
       if grep -q "\"$key\"[[:space:]]*:" "$config"; then
@@ -131,12 +164,14 @@ echo
 
 put_secret() { # put_secret KEY CONFIG...
   local key="$1"; shift
-  have "$key" || { dim "  skip  $key (blank in env file)"; return 0; }
+  local value
+  value="$(env_value "$key")"
+  [ -n "$value" ] || { dim "  skip  $key (blank in env file)"; return 0; }
   for config in "$@"; do
     if $DRY; then
       dim "    would run: wrangler secret put $key --config $config"
     else
-      printf '%s' "${ENVVARS[$key]}" | npx wrangler secret put "$key" --config "$config" >/dev/null \
+      printf '%s' "$value" | npx wrangler secret put "$key" --config "$config" >/dev/null \
         || die "failed to set $key on $config"
     fi
     echo "  set   $key -> $config"
@@ -159,11 +194,13 @@ bold "3. GitHub repository secrets"
 if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
   gh_secret() {
     local key="$1"
-    have "$key" || { dim "  skip  $key (blank in env file)"; return 0; }
+    local value
+    value="$(env_value "$key")"
+    [ -n "$value" ] || { dim "  skip  $key (blank in env file)"; return 0; }
     if $DRY; then
       dim "    would run: gh secret set $key"
     else
-      printf '%s' "${ENVVARS[$key]}" | gh secret set "$key" >/dev/null || die "failed to set $key"
+      printf '%s' "$value" | gh secret set "$key" >/dev/null || die "failed to set $key"
     fi
     echo "  set   $key -> repository"
   }

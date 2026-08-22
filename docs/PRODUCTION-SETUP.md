@@ -285,13 +285,18 @@ git clone https://github.com/Gitbub0816/timinow.git
 cd timinow
 git checkout claude/multi-platform-clerk-d1-mapbox-atewxd
 npm install
-
-npx wrangler login          # opens a browser
-gh auth login               # optional, for repository secrets
-
+npx wrangler login
+gh auth login
 ./scripts/bootstrap.sh ~/Downloads/env.example --dry-run
 ./scripts/bootstrap.sh ~/Downloads/env.example
 ```
+
+`wrangler login` opens a browser. `gh auth login` is only needed for the two
+repository secrets; skip it and the script says so and carries on.
+
+Paste these without trailing `# comments`. zsh — the default macOS shell — does
+not treat `#` as a comment interactively unless `interactive_comments` is set,
+so a commented command line is passed through as arguments and fails.
 
 The script reads the env file once and routes each value to where it actually
 belongs — public configuration into the wrangler configs, secrets straight to
