@@ -45,7 +45,7 @@ struct PulsingBeacon: View {
     var body: some View {
         ZStack {
             ForEach(0..<3, id: \.self) { index in
-                Circle().stroke(TimiColor.blue.opacity(0.26 - Double(index) * 0.06), lineWidth: 2)
+                Circle().stroke(TimiColor.blue.faded(0.26 - Double(index) * 0.06), lineWidth: 2)
                     .frame(width: CGFloat(104 + index * 44), height: CGFloat(104 + index * 44))
                     .scaleEffect(pulse ? 1.12 : 0.86).opacity(pulse ? 0.18 : 0.9)
                     .animation(.easeOut(duration: 1.8).repeatForever(autoreverses: false).delay(Double(index) * 0.22), value: pulse)
@@ -60,7 +60,7 @@ struct ProgressPills: View {
     var current: Int
     var total: Int
     var body: some View {
-        HStack(spacing: 7) { ForEach(0..<total, id: \.self) { i in Capsule().fill(i <= current ? TimiColor.coral : TimiColor.ink.opacity(0.12)).frame(width: i == current ? 30 : 8, height: 8).animation(.spring(response: 0.35), value: current) } }
+        HStack(spacing: 7) { ForEach(0..<total, id: \.self) { i in Capsule().fill(i <= current ? TimiColor.coral : TimiColor.ink.faded(0.12)).frame(width: i == current ? 30 : 8, height: 8).animation(.spring(response: 0.35), value: current) } }
     }
 }
 
@@ -75,7 +75,7 @@ struct SafetyBanner: View {
         HStack(alignment: .top, spacing: 12) {
             Image(systemName: "cross.case.fill").foregroundStyle(.white).frame(width: 34, height: 34).background(TimiColor.coral, in: Circle())
             VStack(alignment: .leading, spacing: 3) { Text("Possible emergency?").font(.headline); Text(compact ? "Do not wait for an app response." : "If your pet may be in immediate danger, leave for the nearest emergency-capable hospital while someone calls ahead.").font(.caption).foregroundStyle(TimiColor.muted) }
-        }.padding(14).background(TimiColor.coralSoft, in: RoundedRectangle(cornerRadius: 18)).overlay(RoundedRectangle(cornerRadius: 18).stroke(TimiColor.coral.opacity(0.45)))
+        }.padding(14).background(TimiColor.coralSoft, in: RoundedRectangle(cornerRadius: 18)).overlay(RoundedRectangle(cornerRadius: 18).stroke(TimiColor.coral.faded(0.45)))
     }
 }
 

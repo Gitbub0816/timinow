@@ -46,7 +46,7 @@ struct HomeView: View {
                 VStack(alignment: .leading, spacing: 8) { Eyebrow(text: store.isDemoMode ? "INTERACTIVE DEMO" : "LIVE NETWORK", color: TimiColor.blue); Text("Who can see\n\(store.selectedPet.name) now?").font(.system(size: 45, weight: .bold, design: .serif)).foregroundStyle(TimiColor.ink); Text("Tell us what's happening once. Compare current responses before you leave home.").font(.title3).foregroundStyle(TimiColor.muted) }
                 ZStack {
                     RoundedRectangle(cornerRadius: 28).fill(TimiColor.blueSoft).frame(height: 220).overlay(RoundedRectangle(cornerRadius: 28).stroke(TimiColor.ink, lineWidth: 2)).shadow(color: TimiColor.ink, radius: 0, x: 6, y: 7)
-                    Circle().stroke(TimiColor.blue.opacity(0.18), lineWidth: 2).frame(width: 160).scaleEffect(breathe ? 1.12 : 0.75).opacity(breathe ? 0.15 : 1).animation(.easeOut(duration: 1.9).repeatForever(autoreverses: false), value: breathe)
+                    breathingRing
                     HStack(spacing: 2) { CareCompanionArtwork(compact: true).frame(maxWidth: 178); VStack(alignment: .leading, spacing: 7) { Text("Live intake\nnear you").font(.title3).fontWeight(.black); Text("Source and freshness shown on every response").font(.caption).foregroundStyle(TimiColor.muted) }.frame(maxWidth: 140, alignment: .leading) }.padding(.horizontal, 12)
                 }.onAppear { breathe = true }
                 Button { withAnimation(.spring(response: 0.42)) { store.beginCare() } } label: { Label("Find care for \(store.selectedPet.name)", systemImage: "arrow.right") }.buttonStyle(TimiPrimaryButtonStyle())
@@ -55,6 +55,23 @@ struct HomeView: View {
                 VStack(alignment: .leading, spacing: 12) { Eyebrow(text: "HOW TÍMI WORKS"); processRow(1, "Describe what you observe", "Rules prevent vague requests before anything is shared."); processRow(2, "Clinics answer with live capacity", "Each response includes timing, wait, deposit, and offer hold."); processRow(3, "Choose the best fit", "Only your selected clinic is confirmed; every other offer is released.") }.timiCard(TimiColor.paper)
             }.padding(20).padding(.bottom, 20)
         }.background(TimiColor.canvas)
+    }
+
+    /// Extracted, and every literal given a type.
+    ///
+    /// Inline this was one expression carrying two ternaries of untyped
+    /// literals, a shape style, and an animation — enough work that the type
+    /// checker gave up inside it and reported the failure against `opacity`.
+    /// Split out and annotated, each piece is solved on its own.
+    private var breathingRing: some View {
+        let scale: CGFloat = breathe ? 1.12 : 0.75
+        let fade: Double = breathe ? 0.15 : 1
+        return Circle()
+            .stroke(TimiColor.blue.faded(0.18), lineWidth: 2)
+            .frame(width: 160)
+            .scaleEffect(scale)
+            .opacity(fade)
+            .animation(.easeOut(duration: 1.9).repeatForever(autoreverses: false), value: breathe)
     }
 
     func processRow(_ number: Int, _ title: String, _ detail: String) -> some View {

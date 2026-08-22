@@ -33,6 +33,10 @@ BUILD_FILTER='^(Skip |Compiling|Compile|Build|Ld |Link|CodeSign|Signing|Touch|Co
 #
 # Piped rather than followed with `tail -f`: in `a | b | c &` the shell reports
 # only c's pid, so killing it would leave tail running after the script exits.
+# stderr goes to /dev/null, and only stderr: the loop reports on stdout. The
+# subshell spends its life blocked in `sleep`, so stopping it makes the shell
+# announce "Terminated: 15 sleep 30" — which then lands in the middle of a
+# build failure looking like one more thing that went wrong.
 start_heartbeat() { # start_heartbeat LOGFILE
   ( log="$1"
     elapsed=0
@@ -58,7 +62,7 @@ start_heartbeat() { # start_heartbeat LOGFILE
       else
         printf '\033[2m  … still building (%dm%02ds)\033[0m\n' "$(( elapsed / 60 ))" "$(( elapsed % 60 ))"
       fi
-    done ) &
+    done ) 2>/dev/null &
   HEARTBEAT_PID=$!
 }
 

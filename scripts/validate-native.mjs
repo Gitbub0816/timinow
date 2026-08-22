@@ -668,6 +668,26 @@ for (const path of await collectFiles("apps/customer-mobile/Sources/TimiNowUI", 
   }
 }
 
+// `Color` has three reachable `opacity(_:)` members — its own, `View`'s, and
+// `ShapeStyle`'s. Handed to a parameter that takes any ShapeStyle (stroke,
+// fill, background), more than one fits, and the compiler reports "ambiguous
+// use of 'opacity'". It only bites once the overload set is crowded, so it
+// appears on the Mapbox build and not the fallback, in files with no Mapbox in
+// them — which makes it look like anything but what it is. Color.faded(_:)
+// returns a concrete Color and ends the argument.
+//
+// Scoped to the customer app: it is the one that carries Mapbox. The console
+// has the same shape and no crowded overload set, so it is left alone rather
+// than churned.
+for (const path of await collectFiles("apps/customer-mobile/Sources", ".swift")) {
+  const source = await read(path);
+  const ambiguous = source.match(/\.(stroke|fill|background)\([^)\n]*?\.opacity\(/);
+  if (ambiguous) {
+    const line = source.slice(0, ambiguous.index).split("\n").length;
+    throw new Error(`${path}:${line}: passes a Color's .opacity(...) to .${ambiguous[1]}(...), which takes any ShapeStyle. Use .faded(...) instead — it returns a concrete Color, so the call is not ambiguous.`);
+  }
+}
+
 // `#if canImport(M)` asks whether M is available. It does not import it. A
 // file that guards on canImport and then names a type from M, without an
 // `import M` anywhere, compiles fine while M is absent and fails the moment it
