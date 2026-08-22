@@ -1,8 +1,11 @@
 node_modules/
 .wrangler/
 .dev.vars
-.env
-.env.local
+# Every env file except the committed template. `.env` and `.env.local` alone
+# left .env.production — a real one, holding a Clerk secret key, a Twilio auth
+# token and a Gemini key — tracked and one `git add -A` from being published.
+.env*
+!.env.example
 wrangler.d1.jsonc
 wrangler.local.jsonc
 dist/
