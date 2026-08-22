@@ -17,7 +17,7 @@ cd ..
 open Project.xcworkspace
 ```
 
-Select the **TimiVet** scheme and run. `Darwin/TimiVet.xcconfig` reads `Skip.env` for the bundle identifier and version, and `Darwin/TimiVet.entitlements` sandboxes the app with outgoing network access and a Keychain access group.
+Select the **TimiVet** scheme and run. `Darwin/TimiVet.xcconfig` reads `Skip.env` for the bundle identifier and version, and `Darwin/TimiVet.entitlements` sandboxes the app with outgoing network access. It declares no keychain access group: an explicit group only matters for sharing items between signed products, and it forces a provisioning profile that macOS enforces by killing the app at launch. Credentials still go to the Keychain, in the group the app gets by default.
 
 You can also build and test the Swift package directly, without Xcode:
 

@@ -139,7 +139,6 @@ start_heartbeat /tmp/timi-ios-build.log
 ( cd "$APP_DIR" && xcodebuild \
     -workspace Project.xcworkspace \
     -scheme TimiNow \
-    -sdk iphonesimulator \
     -destination "platform=iOS Simulator,name=$DEVICE" \
     -derivedDataPath build \
     -skipPackagePluginValidation \

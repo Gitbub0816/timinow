@@ -64,8 +64,12 @@ schemes:
   TimiNow:
     build:
       targets:
+        # TimiNowWatch is not listed: the TimiNow target already depends on it
+        # with embed: true, so Xcode builds it for watchOS as part of this
+        # scheme. Naming it here as well made it a top-level target of an iOS
+        # build, and its sources then compiled against the iOS SDK — "no such
+        # module 'WatchKit'".
         TimiNow: all
-        TimiNowWatch: all
     run:
       config: Debug
     archive:

@@ -443,7 +443,15 @@ for (const [manifestPath, projectPath] of [
 {
   const entitlements = await read("apps/vet-desktop/Darwin/TimiVet.entitlements");
   const builder = await read("scripts/build-mac-app.sh");
-  if (entitlements.includes("keychain-access-groups")) {
+  const keychain = await read("apps/vet-desktop/Sources/TimiVetCore/KeychainStore.swift");
+  // An explicit keychain group forces a provisioning profile listing that App
+  // ID; without one macOS kills the process at exec. Only declare it if the
+  // code actually sets kSecAttrAccessGroup — otherwise it costs a profile and
+  // buys nothing.
+  if (/^\s*<key>keychain-access-groups<\/key>/m.test(entitlements) && !keychain.includes("kSecAttrAccessGroup")) {
+    throw new Error("apps/vet-desktop/Darwin/TimiVet.entitlements declares keychain-access-groups, but KeychainStore never sets kSecAttrAccessGroup. The entitlement only forces a provisioning profile requirement — macOS SIGKILLs the app without one.");
+  }
+  if (/^\s*<key>keychain-access-groups<\/key>/m.test(entitlements)) {
     // Comments are stripped first: the script explains this very hazard, and
     // matching its own explanation would fail the build forever.
     const executable = builder.split("\n").filter((line) => !/^\s*#/.test(line)).join("\n");
@@ -499,6 +507,20 @@ for (const path of [
       throw new Error(`${path}:${index + 1}: "#${directive[1]}" is not an xcconfig directive. Comments here start with // — a leading # fails the build with "unsupported preprocessor directive".`);
     }
   });
+}
+
+// -sdk pins one SDK across every target a scheme builds. The customer app
+// embeds a watchOS target, whose sources import WatchKit, so forcing
+// iphonesimulator on the whole scheme fails with "no such module 'WatchKit'".
+// -destination alone lets each target use the SDK it belongs to.
+{
+  const workflow = await read(".github/workflows/native-clients.yml");
+  const script = await read("scripts/build-ios-app.sh");
+  for (const [label, text] of [[".github/workflows/native-clients.yml", workflow], ["scripts/build-ios-app.sh", script]]) {
+    if (/^\s*-sdk\s/m.test(text)) {
+      throw new Error(`${label}: passes -sdk to xcodebuild. That pins one SDK across every target in the scheme, and the embedded watchOS target then compiles against the iOS SDK — use -destination alone.`);
+    }
+  }
 }
 
 const csharpFiles = await collectFiles("apps/vet-windows", ".cs");

@@ -89,7 +89,6 @@ jobs:
           xcodebuild
           -workspace Project.xcworkspace
           -scheme TimiNow
-          -sdk iphonesimulator
           -destination 'generic/platform=iOS Simulator'
           CODE_SIGNING_ALLOWED=NO
           -skipPackagePluginValidation
@@ -129,7 +128,6 @@ jobs:
           xcodebuild
           -workspace Project.xcworkspace
           -scheme TimiNowWatch
-          -sdk watchsimulator
           -destination 'generic/platform=watchOS Simulator'
           CODE_SIGNING_ALLOWED=NO
           -skipPackagePluginValidation

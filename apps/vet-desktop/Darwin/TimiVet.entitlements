@@ -6,9 +6,15 @@
     <key>com.apple.security.network.client</key><true/>
     <key>com.apple.security.network.server</key><false/>
     <key>com.apple.security.files.user-selected.read-only</key><true/>
-    <key>keychain-access-groups</key>
-    <array>
-        <string>$(AppIdentifierPrefix)solutions.clearkey.timivet</string>
-    </array>
+    <!--
+      No keychain-access-groups. An explicit group only matters when two
+      signed products share keychain items — an app and its extension, say —
+      and TimiVetCore's KeychainStore never sets kSecAttrAccessGroup, so it
+      always used the app's own default group. Declaring the entitlement
+      anyway required a provisioning profile listing that App ID, and without
+      one macOS killed the process at exec (SIGKILL, surfaced as "Launch
+      failed ... Unknown error: 163"). Credentials still live in the Keychain;
+      they just live in the group the app gets for free.
+    -->
 </dict>
 </plist>
