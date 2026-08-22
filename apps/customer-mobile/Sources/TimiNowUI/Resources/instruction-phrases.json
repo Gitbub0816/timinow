@@ -1,20 +1,64 @@
 {
   "instructionPhrases": {
-    "depart": "Head {modifier} on {road}",
-    "arrive": "You've arrived at {clinic}",
-    "turn": "Turn {modifier} onto {road}",
-    "merge": "Merge {modifier} onto {road}",
-    "on ramp": "Take the ramp {modifier} onto {road}",
-    "off ramp": "Take the exit {modifier} toward {road}",
-    "fork": "Keep {modifier} at the fork",
-    "roundabout": "At the roundabout, take the exit onto {road}",
-    "continue": "Continue on {road}",
-    "new name": "Continue onto {road}"
+    "depart": "Off we go — head {side} on {road}",
+    "arrive": "That's {clinic}, right there",
+    "turn": "Take the {modifier} onto {road}",
+    "merge": "Merge {side} onto {road}",
+    "on ramp": "Hop on the ramp on the {side} toward {road}",
+    "off ramp": "Take the exit on the {side} toward {road}",
+    "fork": "Keep {side} at the fork",
+    "roundabout": "Round the roundabout, then out onto {road}",
+    "continue": "Stay on {road}",
+    "new name": "Same road, new name — it's {road} now"
+  },
+  "instructionOverrides": {
+    "turn:uturn": "Turn around when it's safe to",
+    "turn:straight": "Keep straight onto {road}",
+    "continue:uturn": "Turn around when it's safe to",
+    "fork:straight": "Keep straight at the fork",
+    "depart:uturn": "Start out by turning around when it's safe",
+    "merge:straight": "Merge onto {road}",
+    "on ramp:straight": "Hop on the ramp toward {road}",
+    "off ramp:straight": "Take the exit toward {road}"
+  },
+  "modifierWords": {
+    "left": "left",
+    "right": "right",
+    "slight left": "slight left",
+    "slight right": "slight right",
+    "sharp left": "sharp left",
+    "sharp right": "sharp right",
+    "straight": "straight ahead",
+    "uturn": "U-turn"
+  },
+  "sideWords": {
+    "left": "left",
+    "right": "right",
+    "slight left": "left",
+    "slight right": "right",
+    "sharp left": "left",
+    "sharp right": "right",
+    "straight": "straight",
+    "uturn": "left"
   },
   "timiAnnouncements": {
-    "start": "Heading to {clinic}. The team is expecting {pet}.",
-    "halfway": "About {minutes} minutes to {clinic}.",
-    "approaching": "{clinic} is coming up. Look for the {kind} entrance.",
-    "arrival": "You've arrived at {clinic}. Tell the front desk you're the Tími arrival for {pet}."
+    "calm": {
+      "start": "Off we go. {clinic} is expecting {pet}, so the hard part is already behind you.",
+      "halfway": "About {minutes} minutes out — and {pet} is in good paws from here.",
+      "approaching": "{clinic} is just ahead. Look for the {kind} entrance.",
+      "arrival": "You made it. Tell the front desk you're the Tími arrival for {pet}. Nicely done — that was a fetching bit of driving."
+    },
+    "urgent": {
+      "start": "On our way to {clinic}. They know {pet} is coming.",
+      "halfway": "About {minutes} minutes to {clinic}. You're doing great.",
+      "approaching": "{clinic} is just ahead. Look for the {kind} entrance.",
+      "arrival": "You've arrived. Tell the front desk you're the Tími arrival for {pet}."
+    },
+    "emergency": {
+      "start": "Heading to {clinic} now. They are expecting {pet}. Drive safely.",
+      "halfway": "{minutes} minutes to {clinic}.",
+      "approaching": "{clinic} is ahead. Go to the {kind} entrance.",
+      "arrival": "You've arrived. Go straight in and say {pet} is the Tími emergency arrival."
+    }
   }
 }

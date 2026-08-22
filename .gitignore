@@ -1,6 +1,8 @@
 node_modules/
 .wrangler/
 .dev.vars
+.env
+.env.local
 wrangler.d1.jsonc
 wrangler.local.jsonc
 dist/

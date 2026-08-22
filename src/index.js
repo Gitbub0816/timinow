@@ -169,6 +169,39 @@ function humanizeOnset(value) {
   return ({ within_hour: "Started within the last hour", today: "Started today", one_to_three_days: "Started 1–3 days ago", more_than_three_days: "Started more than 3 days ago", unknown: "Onset unknown" })[value] || "Onset not reported";
 }
 
+/**
+ * A single spoken clause describing the patient, for the automated clinic call.
+ *
+ * Deliberately short and free of slashes and abbreviations: this text is read
+ * aloud down a phone line, often in a noisy treatment area, and a listener gets
+ * one pass at it. Anything a receptionist cannot act on is left out.
+ */
+function spokenConcern(species, symptoms, startedWhen) {
+  const spoken = {
+    vomiting_or_diarrhea: "vomiting or diarrhea",
+    breathing_or_coughing: "breathing trouble or coughing",
+    pain_or_limping: "pain or limping",
+    not_eating_or_drinking: "not eating or drinking",
+    urination_or_stool: "urination or stool changes",
+    injury_or_bleeding: "an injury or bleeding",
+    energy_or_behavior: "a change in energy or behavior",
+    eye_ear_or_skin: "an eye, ear, or skin problem",
+    other_observable: "another observable change"
+  };
+  const onset = {
+    within_hour: "starting within the last hour",
+    today: "starting today",
+    one_to_three_days: "over the last few days",
+    more_than_three_days: "for more than three days",
+    unknown: ""
+  }[startedWhen] || "";
+  const described = symptoms.map((value) => spoken[value]).filter(Boolean);
+  const list = described.length > 1
+    ? `${described.slice(0, -1).join(", ")} and ${described[described.length - 1]}`
+    : described[0] || "an urgent concern";
+  return [`a ${species} with ${list}`, onset].filter(Boolean).join(", ");
+}
+
 function humanizeSymptom(value) {
   return ({ vomiting_or_diarrhea: "vomiting/diarrhea", breathing_or_coughing: "breathing/coughing", pain_or_limping: "pain/limping", not_eating_or_drinking: "not eating/drinking", urination_or_stool: "urination/stool", injury_or_bleeding: "injury/bleeding", energy_or_behavior: "energy/behavior", eye_ear_or_skin: "eye/ear/skin", other_observable: "other observable change" })[value] || value;
 }
@@ -436,7 +469,37 @@ async function createCareSearch(request, env, actor) {
         INSERT INTO notification_outbox (
           id, tenant_id, channel, template_key, payload_json, available_at
         ) VALUES (?, ?, 'dashboard', 'new_care_search', ?, ?)
-      `).bind(newId("notification"), location.tenantId, JSON.stringify({ searchId, targetId, petName: cleanString(validated.pet.name, 80), urgency: validated.urgency }), now)
+      `).bind(newId("notification"), location.tenantId, JSON.stringify({ searchId, targetId, petName: cleanString(validated.pet.name, 80), urgency: validated.urgency }), now),
+      /**
+       * A parallel voice request. The console notification reaches whoever is
+       * already looking at a screen; the phone call reaches a clinic that is
+       * mid-appointment with nobody at the desk, which is most of them. The
+       * voice gateway Worker drains this queue and honors each tenant's own
+       * calling preferences — a tenant that has not opted in is skipped there,
+       * not here, so the audit trail still records that Tími tried.
+       */
+      env.DB.prepare(`
+        INSERT INTO notification_outbox (
+          id, tenant_id, channel, recipient, template_key, payload_json, available_at
+        ) VALUES (?, ?, 'voice', ?, 'care_search_call', ?, ?)
+      `).bind(
+        newId("notification"),
+        location.tenantId,
+        location.phone,
+        JSON.stringify({
+          searchId,
+          targetId,
+          locationId: location.id,
+          locationName: location.name,
+          petName: cleanString(validated.pet.name, 80),
+          species: validated.species,
+          urgency: validated.urgency,
+          spokenConcern: spokenConcern(validated.species, validated.symptoms, validated.startedWhen),
+          travelMinutes,
+          expiresAt: searchExpiresAt
+        }),
+        now
+      )
     );
   });
   await env.DB.batch(statements);

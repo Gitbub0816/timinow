@@ -9,7 +9,8 @@ import {
   mapAvailable,
   phraseInstruction,
   renderClinicMap,
-  TIMI_ANNOUNCEMENTS
+  announcement,
+  toneFor
 } from "./map.js";
 
 const $ = (selector, root = document) => root.querySelector(selector);
@@ -1819,6 +1820,15 @@ function routeBounds(route) {
   );
 }
 
+/**
+ * Which speaking register the current trip is in. Derived from the intake's
+ * urgency rather than a setting, so a driver never has to think about it: the
+ * playful lines simply do not exist on an emergency run.
+ */
+function navigationTone() {
+  return toneFor(state.currentIntake?.urgency || state.intakeDraft?.urgency || "same_day");
+}
+
 function persistNavigationPreferences() {
   writeStorage(STORAGE_KEYS.navigation, state.navigationPreferences);
 }
@@ -1844,14 +1854,15 @@ function startNavigation() {
   state.voiceGuide = new VoiceGuide({
     enabled: state.navigationPreferences.voiceEnabled,
     rate: state.navigationPreferences.rate,
-    voiceURI: state.navigationPreferences.voiceURI
+    voiceURI: state.navigationPreferences.voiceURI,
+    tone: navigationTone()
   });
   populateVoicePicker();
   renderNavigationSteps(route);
 
   const pet = state.currentIntake?.pet?.name || "your pet";
   state.voiceGuide.say(
-    TIMI_ANNOUNCEMENTS.start.replace("{clinic}", route.clinic.name).replace("{pet}", pet),
+    announcement("start", { tone: navigationTone(), clinic: route.clinic.name, pet }),
     { force: true }
   );
 
@@ -1922,15 +1933,20 @@ function advanceNavigation(coordinates) {
 
   const toClinic = haversineMeters(coordinates.latitude, coordinates.longitude, route.clinic.latitude, route.clinic.longitude);
   if (toClinic < 900) {
-    state.voiceGuide?.say(
-      TIMI_ANNOUNCEMENTS.approaching.replace("{clinic}", clinic).replace("{kind}", route.clinic.kind || "main")
-    );
+    state.voiceGuide?.say(announcement("approaching", {
+      tone: navigationTone(),
+      clinic,
+      pet: state.currentIntake?.pet?.name,
+      kind: humanize(route.clinic.kind || "main")
+    }));
   }
   if (toClinic < 120) {
     state.voiceGuide?.say(
-      TIMI_ANNOUNCEMENTS.arrival
-        .replace("{clinic}", clinic)
-        .replace("{pet}", state.currentIntake?.pet?.name || "your pet"),
+      announcement("arrival", {
+        tone: navigationTone(),
+        clinic,
+        pet: state.currentIntake?.pet?.name
+      }),
       { force: true }
     );
     endNavigation();

@@ -256,57 +256,190 @@ export function clearRoute(map, { sourceId = "timi-route" } = {}) {
 /* ------------------------------------------------------------ guidance --- */
 
 /**
- * Driving-instruction phrasing. Kept as data so wording can be changed without
- * touching the guidance engine, and so the same table can be mirrored into the
- * native clients.
+ * Driving-instruction phrasing.
+ *
+ * Kept as data so the wording can change without touching the guidance engine,
+ * and so the native clients can mirror the same table byte for byte —
+ * `scripts/validate.mjs` fails the build if web and iOS ever drift.
+ *
+ * Two rules govern the tone, and they are structural rather than stylistic:
+ *
+ * 1. **Maneuvers are never funny.** A driver gets one pass at "turn left onto
+ *    Foothill" while their pet is in the back seat. These read naturally, the
+ *    way a person would say them, and nothing more.
+ * 2. **Personality scales inversely with urgency.** Tími's own announcements
+ *    come in three registers. A pun that is warm on the way to a limp check-up
+ *    is grotesque on the way to a collapse, so the emergency register has none.
  */
 export const INSTRUCTION_PHRASES = {
-  depart: "Head {modifier} on {road}",
-  arrive: "You've arrived at {clinic}",
-  turn: "Turn {modifier} onto {road}",
-  merge: "Merge {modifier} onto {road}",
-  "on ramp": "Take the ramp {modifier} onto {road}",
-  "off ramp": "Take the exit {modifier} toward {road}",
-  fork: "Keep {modifier} at the fork",
-  roundabout: "At the roundabout, take the exit onto {road}",
-  continue: "Continue on {road}",
-  "new name": "Continue onto {road}"
+  depart: "Off we go — head {side} on {road}",
+  arrive: "That's {clinic}, right there",
+  turn: "Take the {modifier} onto {road}",
+  merge: "Merge {side} onto {road}",
+  "on ramp": "Hop on the ramp on the {side} toward {road}",
+  "off ramp": "Take the exit on the {side} toward {road}",
+  fork: "Keep {side} at the fork",
+  roundabout: "Round the roundabout, then out onto {road}",
+  continue: "Stay on {road}",
+  "new name": "Same road, new name — it's {road} now"
 };
 
-/** Sentences Tími adds that Mapbox would never say. */
+/**
+ * Pairings the generic template cannot say naturally. "Take the U-turn onto
+ * Foothill" is not English, and a ramp does not need to know the difference
+ * between a right and a slight right.
+ */
+export const INSTRUCTION_OVERRIDES = {
+  "turn:uturn": "Turn around when it's safe to",
+  "turn:straight": "Keep straight onto {road}",
+  "continue:uturn": "Turn around when it's safe to",
+  "fork:straight": "Keep straight at the fork",
+  "depart:uturn": "Start out by turning around when it's safe",
+  "merge:straight": "Merge onto {road}",
+  "on ramp:straight": "Hop on the ramp toward {road}",
+  "off ramp:straight": "Take the exit toward {road}"
+};
+
+/** Mapbox's raw direction values, said the way a person says them. */
+export const MODIFIER_WORDS = {
+  left: "left",
+  right: "right",
+  "slight left": "slight left",
+  "slight right": "slight right",
+  "sharp left": "sharp left",
+  "sharp right": "sharp right",
+  straight: "straight ahead",
+  uturn: "U-turn"
+};
+
+/**
+ * The same directions reduced to a side. Ramps, merges, and forks only need to
+ * know which way to lean; "take the exit on the slight right" is noise.
+ */
+export const SIDE_WORDS = {
+  left: "left",
+  right: "right",
+  "slight left": "left",
+  "slight right": "right",
+  "sharp left": "left",
+  "sharp right": "right",
+  straight: "straight",
+  uturn: "left"
+};
+
+/**
+ * Lines Tími adds that a navigation SDK would never say, in three registers.
+ *
+ * `calm`      — stable, same-day concerns. Warm, and allowed one light pun.
+ * `urgent`    — time-sensitive but stable. Warm, focused, no wordplay.
+ * `emergency` — red flags present. Clear and nothing else. Do not add
+ *               personality to this register; someone hearing it is frightened.
+ */
 export const TIMI_ANNOUNCEMENTS = {
-  start: "Heading to {clinic}. The team is expecting {pet}.",
-  halfway: "About {minutes} minutes to {clinic}.",
-  approaching: "{clinic} is coming up. Look for the {kind} entrance.",
-  arrival: "You've arrived at {clinic}. Tell the front desk you're the Tími arrival for {pet}."
+  calm: {
+    start: "Off we go. {clinic} is expecting {pet}, so the hard part is already behind you.",
+    halfway: "About {minutes} minutes out — and {pet} is in good paws from here.",
+    approaching: "{clinic} is just ahead. Look for the {kind} entrance.",
+    arrival: "You made it. Tell the front desk you're the Tími arrival for {pet}. Nicely done — that was a fetching bit of driving."
+  },
+  urgent: {
+    start: "On our way to {clinic}. They know {pet} is coming.",
+    halfway: "About {minutes} minutes to {clinic}. You're doing great.",
+    approaching: "{clinic} is just ahead. Look for the {kind} entrance.",
+    arrival: "You've arrived. Tell the front desk you're the Tími arrival for {pet}."
+  },
+  emergency: {
+    start: "Heading to {clinic} now. They are expecting {pet}. Drive safely.",
+    halfway: "{minutes} minutes to {clinic}.",
+    approaching: "{clinic} is ahead. Go to the {kind} entrance.",
+    arrival: "You've arrived. Go straight in and say {pet} is the Tími emergency arrival."
+  }
 };
 
+/** Map a care urgency onto a speaking register. */
+export function toneFor(urgency) {
+  if (urgency === "emergency") return "emergency";
+  if (urgency === "urgent") return "urgent";
+  return "calm";
+}
+
+/**
+ * Fill `{token}` placeholders.
+ *
+ * Returns null when any placeholder cannot be resolved. A half-filled
+ * instruction is worse than no instruction at all — the caller falls back to
+ * the navigation SDK's own wording, which is always complete even when it is
+ * less warm.
+ */
 function fill(template, values) {
-  return String(template || "").replace(/\{(\w+)\}/g, (match, key) => (values[key] ?? "").toString().trim() || match);
+  let complete = true;
+  const filled = String(template || "").replace(/\{(\w+)\}/g, (match, key) => {
+    const value = (values[key] ?? "").toString().trim();
+    if (!value) { complete = false; return ""; }
+    return value;
+  });
+  return complete ? filled.replace(/\s{2,}/g, " ").trim() : null;
 }
 
 /**
  * Rewrite a Mapbox instruction into Tími's voice. Falls back to Mapbox's own
- * wording whenever the maneuver has no entry in the phrase table.
+ * wording whenever the maneuver has no entry in the phrase table, so an SDK
+ * update that adds a maneuver degrades to correct-but-plain rather than silent.
  */
 export function phraseInstruction(step, context = {}) {
-  const template = INSTRUCTION_PHRASES[step.type];
+  const modifierKey = String(step.modifier || "").toLowerCase();
+  const template = INSTRUCTION_OVERRIDES[`${step.type}:${modifierKey}`] || INSTRUCTION_PHRASES[step.type];
   if (!template) return step.instruction;
   const phrased = fill(template, {
-    modifier: step.modifier || "",
-    road: context.road || step.instruction.replace(/^.*?\bonto\s+/i, "") || "the road",
+    modifier: MODIFIER_WORDS[modifierKey] || modifierKey,
+    side: SIDE_WORDS[modifierKey] || "",
+    road: context.road || step.instruction.replace(/^.*?\bonto\s+/i, "") || "",
     clinic: context.clinic || "the hospital"
   });
-  return phrased.replace(/\s{2,}/g, " ").trim();
+  return phrased || step.instruction;
+}
+
+/** One of Tími's own announcements, in the register the urgency calls for. */
+export function announcement(key, { tone = "calm", clinic, pet, minutes, kind } = {}) {
+  const register = TIMI_ANNOUNCEMENTS[tone] || TIMI_ANNOUNCEMENTS.calm;
+  const template = register[key];
+  if (!template) return null;
+  return fill(template, {
+    clinic: clinic || "the hospital",
+    pet: pet || "your pet",
+    minutes: minutes === undefined || minutes === null ? "" : String(minutes),
+    kind: kind || "main"
+  });
+  // A null here means a placeholder went unfilled — for example `halfway`
+  // without a minutes estimate. The caller simply says nothing, which is the
+  // right behaviour for an optional flourish.
+}
+
+/**
+ * Wrap a line in SSML so a cloud voice breathes instead of sprinting.
+ *
+ * Navigation text-to-speech defaults are tuned for terse maneuvers; Tími's
+ * announcements are whole sentences, and read at the default rate they land as
+ * one anxious run-on. A short pause at each sentence boundary and a slightly
+ * relaxed rate is most of what makes a synthetic voice sound human.
+ */
+export function ssmlFor(text, { tone = "calm" } = {}) {
+  const rate = tone === "emergency" ? "100%" : tone === "urgent" ? "97%" : "94%";
+  const escaped = String(text || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+  const paced = escaped.replace(/([.!?])\s+/g, '$1<break time="320ms"/> ');
+  return `<speak><prosody rate="${rate}">${paced}</prosody></speak>`;
 }
 
 /**
  * Browser voice guidance. Uses the Web Speech API, which is the web equivalent
- * of the native voice controller — same phrase tables, same preferences.
+ * of the native voice controller — same phrase tables, same registers.
  */
 export class VoiceGuide {
   constructor(preferences = {}) {
-    this.preferences = { enabled: true, rate: 1, pitch: 1, voiceURI: null, ...preferences };
+    this.preferences = { enabled: true, rate: 1, pitch: 1, voiceURI: null, tone: "calm", ...preferences };
     this.spoken = new Set();
   }
 
@@ -314,12 +447,44 @@ export class VoiceGuide {
     return typeof globalThis.speechSynthesis !== "undefined";
   }
 
-  /** Voices the user can choose between, for a settings picker. */
+  /**
+   * Voices the user can choose between, best first.
+   *
+   * Browsers expose a long, unordered list in which the most natural voices are
+   * rarely at the top. Ranking them means the default a driver hears is the
+   * best one their device has, without anyone opening a settings screen.
+   */
   static voices(language = "en") {
     if (!VoiceGuide.supported()) return [];
     return speechSynthesis.getVoices()
       .filter((voice) => voice.lang.toLowerCase().startsWith(language.toLowerCase()))
-      .map((voice) => ({ name: voice.name, voiceURI: voice.voiceURI, lang: voice.lang, local: voice.localService }));
+      .map((voice) => ({
+        name: voice.name,
+        voiceURI: voice.voiceURI,
+        lang: voice.lang,
+        local: voice.localService,
+        quality: VoiceGuide.rank(voice)
+      }))
+      .sort((a, b) => b.quality - a.quality || a.name.localeCompare(b.name));
+  }
+
+  /** Higher is more natural. Names are the only quality signal the API gives. */
+  static rank(voice) {
+    const name = `${voice.name} ${voice.voiceURI}`.toLowerCase();
+    let score = 0;
+    if (/natural|neural/.test(name)) score += 6;
+    if (/premium|enhanced/.test(name)) score += 5;
+    if (/google|siri/.test(name)) score += 3;
+    if (/multilingual/.test(name)) score += 1;
+    // Network voices are usually the higher-fidelity ones.
+    if (!voice.localService) score += 2;
+    if (/compact|espeak|novelty/.test(name)) score -= 6;
+    return score;
+  }
+
+  /** The best available voice, used until the driver picks one themselves. */
+  static bestVoice(language = "en") {
+    return VoiceGuide.voices(language)[0] || null;
   }
 
   say(text, { force = false } = {}) {
@@ -327,9 +492,17 @@ export class VoiceGuide {
     if (!force && this.spoken.has(text)) return;
     this.spoken.add(text);
     const utterance = new SpeechSynthesisUtterance(text);
-    utterance.rate = this.preferences.rate;
+    // A shade under conversational, so a whole sentence lands as speech rather
+    // than an announcement. The emergency register keeps full pace.
+    const toneRate = this.preferences.tone === "emergency" ? 1 : 0.95;
+    utterance.rate = this.preferences.rate * toneRate;
     utterance.pitch = this.preferences.pitch;
-    const voice = speechSynthesis.getVoices().find((candidate) => candidate.voiceURI === this.preferences.voiceURI);
+    const chosen = this.preferences.voiceURI
+      ? speechSynthesis.getVoices().find((candidate) => candidate.voiceURI === this.preferences.voiceURI)
+      : null;
+    const fallback = chosen ? null : VoiceGuide.bestVoice((navigator.language || "en").slice(0, 2));
+    const voice = chosen
+      || (fallback && speechSynthesis.getVoices().find((candidate) => candidate.voiceURI === fallback.voiceURI));
     if (voice) utterance.voice = voice;
     speechSynthesis.speak(utterance);
   }

@@ -19,39 +19,99 @@ public enum TimiInstructionRewriter {
         return table
     }
 
-    /// Fills `{key}` placeholders from `values`. A missing or blank value
-    /// leaves the placeholder token untouched — matching `map.js`'s `fill()`
-    /// behavior exactly, so an unmapped maneuver never renders a half-empty
-    /// sentence.
-    static func fill(_ template: String, values: [String: String]) -> String {
-        var result = template
-        for (key, value) in values {
-            let token = "{\(key)}"
-            guard result.contains(token) else { continue }
-            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmed.isEmpty { result = result.replacingOccurrences(of: token, with: trimmed) }
+    /// Fill `{key}` placeholders.
+    ///
+    /// Returns nil when any placeholder cannot be resolved — matching
+    /// `map.js`'s `fill()` exactly. A half-filled instruction is worse than
+    /// none: the caller falls back to the navigation SDK's own wording, which
+    /// is always complete even when it is less warm.
+    static func fill(_ template: String, values: [String: String]) -> String? {
+        var result = ""
+        var complete = true
+        var remainder = Substring(template)
+
+        while let open = remainder.firstIndex(of: "{") {
+            guard let close = remainder[open...].firstIndex(of: "}") else { break }
+            result += remainder[remainder.startIndex..<open]
+            let key = String(remainder[remainder.index(after: open)..<close])
+            let value = (values[key] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            if value.isEmpty { complete = false } else { result += value }
+            remainder = remainder[remainder.index(after: close)...]
         }
-        return result
+        result += remainder
+
+        guard complete else { return nil }
+        while result.contains("  ") { result = result.replacingOccurrences(of: "  ", with: " ") }
+        return result.trimmingCharacters(in: .whitespaces)
     }
 
-    /// Rewrites one turn-by-turn instruction from Mapbox's maneuver `type`
-    /// (`depart`, `turn`, `arrive`, ...). Returns `nil` — keep Mapbox's own
-    /// wording — when the maneuver has no entry in the table, exactly like
-    /// `map.js`'s `phraseInstruction`.
-    public static func phraseInstruction(maneuverType: String, modifier: String, road: String, clinicName: String, table: InstructionPhraseTable = cachedTable) -> String? {
-        guard let template = table.instructionPhrases[maneuverType] else { return nil }
-        let filled = fill(template, values: ["modifier": modifier, "road": road, "clinic": clinicName])
-        return filled.replacingOccurrences(of: "  ", with: " ").trimmingCharacters(in: .whitespaces)
+    /// Rewrite one turn-by-turn instruction from Mapbox's maneuver `type`
+    /// (`depart`, `turn`, `arrive`, ...) and direction. Returns nil — keep
+    /// Mapbox's own wording — when the table cannot produce a whole sentence.
+    public static func phraseInstruction(
+        maneuverType: String,
+        modifier: String,
+        road: String,
+        clinicName: String,
+        table: InstructionPhraseTable = cachedTable
+    ) -> String? {
+        let key = modifier.lowercased()
+        let template = table.instructionOverrides["\(maneuverType):\(key)"]
+            ?? table.instructionPhrases[maneuverType]
+        guard let template else { return nil }
+        return fill(template, values: [
+            "modifier": table.modifierWords[key] ?? key,
+            "side": table.sideWords[key] ?? "",
+            "road": road,
+            "clinic": clinicName
+        ])
     }
 
-    /// One of Tími's own announcements (`start` / `halfway` / `approaching`
-    /// / `arrival`) that Mapbox would never say on its own.
-    public static func announcement(_ key: String, clinicName: String, petName: String, minutes: Int? = nil, kind: String? = nil, table: InstructionPhraseTable = cachedTable) -> String? {
-        guard let template = table.timiAnnouncements[key] else { return nil }
+    /// One of Tími's own announcements (`start` / `halfway` / `approaching` /
+    /// `arrival`), in the register the trip's urgency calls for.
+    public static func announcement(
+        _ key: String,
+        tone: NavigationTone,
+        clinicName: String,
+        petName: String,
+        minutes: Int? = nil,
+        kind: String? = nil,
+        table: InstructionPhraseTable = cachedTable
+    ) -> String? {
+        let register = table.timiAnnouncements[tone.rawValue]
+            ?? table.timiAnnouncements[NavigationTone.calm.rawValue]
+        guard let template = register?[key] else { return nil }
         var values = ["clinic": clinicName, "pet": petName]
         if let minutes { values["minutes"] = String(minutes) }
         if let kind { values["kind"] = kind }
         return fill(template, values: values)
+    }
+
+    /// Wrap a line in SSML so a cloud voice breathes instead of sprinting.
+    ///
+    /// Navigation text-to-speech defaults are tuned for terse maneuvers; Tími's
+    /// announcements are whole sentences, and at the default rate they land as
+    /// one anxious run-on. A short pause at each sentence boundary and a
+    /// slightly relaxed rate is most of what makes a synthetic voice sound
+    /// human. The emergency register keeps full pace.
+    public static func ssml(for text: String, tone: NavigationTone) -> String {
+        let rate: String
+        switch tone {
+        case .emergency: rate = "100%"
+        case .urgent: rate = "97%"
+        case .calm: rate = "94%"
+        }
+        var escaped = text
+            .replacingOccurrences(of: "&", with: "&amp;")
+            .replacingOccurrences(of: "<", with: "&lt;")
+            .replacingOccurrences(of: ">", with: "&gt;")
+        for terminator in [". ", "! ", "? "] {
+            escaped = escaped.replacingOccurrences(
+                of: terminator,
+                with: "\(terminator.prefix(1))<break time=\"320ms\"/> "
+            )
+        }
+        return "<speak><prosody rate=\"\(rate)\">\(escaped)</prosody></speak>"
     }
 }
 
@@ -89,6 +149,31 @@ public final class VoicePreviewer: NSObject, AVSpeechSynthesizerDelegate {
         }
     }
 
+    /// A picker label that names the quality tier, because "Samantha" and
+    /// "Samantha" are otherwise indistinguishable in a list even though one is
+    /// a compact voice and the other is a 200 MB premium download.
+    public static func label(for voice: AVSpeechSynthesisVoice) -> String {
+        switch voice.quality {
+        case .premium: return "\(voice.name) — Premium"
+        case .enhanced: return "\(voice.name) — Enhanced"
+        default: return voice.name
+        }
+    }
+
+    /// The best voice the device has for this language.
+    ///
+    /// `AVSpeechSynthesisVoice(language:)` returns the *default* voice, which is
+    /// the compact one on most devices — the flat, clipped voice people
+    /// recognise as "robotic". Picking the highest-quality installed voice
+    /// instead is the single biggest difference between guidance that sounds
+    /// synthetic and guidance that sounds like a person, and it costs nothing.
+    public static func bestVoice(
+        languagePrefix: String = Locale.current.language.languageCode?.identifier ?? "en"
+    ) -> AVSpeechSynthesisVoice? {
+        availableVoices(languagePrefix: languagePrefix).first
+            ?? AVSpeechSynthesisVoice(language: Locale.current.identifier)
+    }
+
     /// iOS 17+ Personal Voice must be explicitly authorized before it shows
     /// up in `speechVoices()`.
     public static func requestPersonalVoiceAuthorization() async -> Bool {
@@ -104,7 +189,7 @@ public final class VoicePreviewer: NSObject, AVSpeechSynthesizerDelegate {
         if let identifier = preferences.preferredVoiceIdentifier, let voice = AVSpeechSynthesisVoice(identifier: identifier) {
             utterance.voice = voice
         } else {
-            utterance.voice = AVSpeechSynthesisVoice(language: Locale.current.identifier)
+            utterance.voice = Self.bestVoice()
         }
         utterance.rate = Float(preferences.speechRate)
         utterance.pitchMultiplier = Float(preferences.speechPitch)
@@ -147,6 +232,9 @@ public final class TimiSpeechSynthesizer: SpeechSynthesizing {
     private let clinicName: String
     private let petName: String
     private let clinicKind: String?
+    /// Which register this trip speaks in — set from the care urgency, so an
+    /// emergency run never hears a joke.
+    private let tone: NavigationTone
     /// The "look for the entrance" line is worth saying once, not on every
     /// instruction inside the last 400 metres.
     private var announcedApproach = false
@@ -184,11 +272,13 @@ public final class TimiSpeechSynthesizer: SpeechSynthesizing {
         mapToken: String,
         clinicName: String,
         petName: String,
-        clinicKind: String?
+        clinicKind: String?,
+        tone: NavigationTone
     ) {
         self.clinicName = clinicName
         self.petName = petName
         self.clinicKind = clinicKind
+        self.tone = tone
         if preferences.voiceProfile == .mapboxCloud && !mapToken.isEmpty {
             self.inner = MultiplexedSpeechSynthesizer(
                 mapboxSpeechApiConfiguration: ApiConfiguration(accessToken: mapToken),
@@ -235,16 +325,20 @@ public final class TimiSpeechSynthesizer: SpeechSynthesizing {
         // rephrasing it, because the useful information is what to do at the
         // front desk, not that the drive is over.
         if maneuver == "arrive",
-           let arrival = TimiInstructionRewriter.announcement("arrival", clinicName: clinicName, petName: petName) {
+           let arrival = TimiInstructionRewriter.announcement(
+               "arrival",
+               tone: tone,
+               clinicName: clinicName,
+               petName: petName
+           ) {
             return SpokenInstruction(
                 distanceAlongStep: instruction.distanceAlongStep,
                 text: arrival,
-                ssmlText: arrival
+                ssmlText: TimiInstructionRewriter.ssml(for: arrival, tone: tone)
             )
         }
 
         var text = instruction.text
-        var ssml = instruction.ssmlText
 
         if let phrased = TimiInstructionRewriter.phraseInstruction(
             maneuverType: maneuver,
@@ -253,7 +347,6 @@ public final class TimiSpeechSynthesizer: SpeechSynthesizing {
             clinicName: clinicName
         ) {
             text = phrased
-            ssml = phrased
         }
 
         // Said once, on the last leg, so the driver knows what to look for
@@ -262,16 +355,23 @@ public final class TimiSpeechSynthesizer: SpeechSynthesizing {
            !announcedApproach,
            let approaching = TimiInstructionRewriter.announcement(
                "approaching",
+               tone: tone,
                clinicName: clinicName,
                petName: petName,
                kind: clinicKind ?? "clinic"
            ) {
             announcedApproach = true
             text += " " + approaching
-            ssml += " " + approaching
         }
 
-        return SpokenInstruction(distanceAlongStep: instruction.distanceAlongStep, text: text, ssmlText: ssml)
+        // The SSML is generated from the finished sentence rather than patched
+        // alongside it, so the cloud voice and the on-device voice can never
+        // end up saying two different things.
+        return SpokenInstruction(
+            distanceAlongStep: instruction.distanceAlongStep,
+            text: text,
+            ssmlText: TimiInstructionRewriter.ssml(for: text, tone: tone)
+        )
     }
 
     /// Fall back to the road name embedded in Mapbox's own phrasing when the
@@ -294,14 +394,16 @@ enum TimiSpeechStack {
         mapToken: String,
         clinicName: String,
         petName: String,
-        clinicKind: String?
+        clinicKind: String?,
+        tone: NavigationTone
     ) -> TimiSpeechSynthesizer {
         TimiSpeechSynthesizer(
             preferences: preferences,
             mapToken: mapToken,
             clinicName: clinicName,
             petName: petName,
-            clinicKind: clinicKind
+            clinicKind: clinicKind,
+            tone: tone
         )
     }
 }

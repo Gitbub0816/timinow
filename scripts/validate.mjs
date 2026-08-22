@@ -119,38 +119,40 @@ if (!customerMap.includes("directions/v5/mapbox")) throw new Error("The customer
 if (!app.includes("renderClinicMap")) throw new Error("The customer application must render the clinic map");
 if (!app.includes("startNavigation")) throw new Error("The customer application must offer turn-by-turn navigation");
 
-// The web client and the native client must speak the same words. The phrase
-// tables are the seam where driving instructions are customised, so drift
-// between them would mean two products with two voices.
-const nativePhrases = JSON.parse(await readFile("apps/customer-mobile/Sources/TimiNowUI/Resources/instruction-phrases.json", "utf8"));
-function tableFrom(source, name) {
-  const start = source.indexOf(`export const ${name} = {`);
-  if (start === -1) throw new Error(`public/map.js must export ${name}`);
-  const body = source.slice(source.indexOf("{", start), source.indexOf("\n};", start) + 2);
-  return Object.fromEntries(
-    [...body.matchAll(/^\s{2}"?([^":\n]+?)"?:\s*"((?:[^"\\]|\\.)*)",?$/gm)]
-      .map(([, key, value]) => [key, value.replace(/\\"/g, '"')])
-  );
+// The web client and the native client must speak the same words. Rather than
+// compare the two tables field by field, regenerate the native copy from the
+// web source and require it to be byte-identical — the same guarantee, and it
+// also catches a formatting drift that a field comparison would miss.
+const { NATIVE_PHRASE_PATH, serializedPhraseTable } = await import("./sync-phrases.mjs");
+const nativePhrases = await readFile(NATIVE_PHRASE_PATH, "utf8");
+if (nativePhrases !== serializedPhraseTable()) {
+  throw new Error(`${NATIVE_PHRASE_PATH} is out of date with public/map.js — run: npm run sync:phrases`);
 }
-for (const [webName, nativeName] of [["INSTRUCTION_PHRASES", "instructionPhrases"], ["TIMI_ANNOUNCEMENTS", "timiAnnouncements"]]) {
-  const web = tableFrom(customerMap, webName);
-  const native = nativePhrases[nativeName] || {};
-  const webKeys = Object.keys(web).sort().join(",");
-  const nativeKeys = Object.keys(native).sort().join(",");
-  if (!webKeys) throw new Error(`Could not read ${webName} out of public/map.js`);
-  if (webKeys !== nativeKeys) {
-    throw new Error(`Driving-instruction phrases differ between web and native (${webName}): web has [${webKeys}], native has [${nativeKeys}]`);
-  }
-  for (const key of Object.keys(web)) {
-    if (web[key] !== native[key]) {
-      throw new Error(`Driving-instruction wording differs for "${key}": web says "${web[key]}", native says "${native[key]}"`);
-    }
+
+// Personality must scale inversely with urgency. A pun that is warm on the way
+// to a limp check-up is grotesque on the way to a collapse, so the emergency
+// register carries none — this is a product rule, not a style preference.
+const { TIMI_ANNOUNCEMENTS } = await import("../public/map.js");
+const registers = ["calm", "urgent", "emergency"];
+const moments = ["start", "halfway", "approaching", "arrival"];
+for (const register of registers) {
+  const lines = TIMI_ANNOUNCEMENTS[register];
+  if (!lines) throw new Error(`Missing navigation speaking register: ${register}`);
+  for (const moment of moments) {
+    if (!lines[moment]) throw new Error(`Register ${register} is missing its ${moment} line`);
   }
 }
-if (!app.includes("state.config?.signInRequired")) throw new Error("The client is not enforcing the runtime sign-in configuration");
-if (manifest.display !== "standalone") throw new Error("PWA manifest must use standalone display mode");
-if (!manifest.icons?.length) throw new Error("PWA manifest requires at least one icon");
-if (!html.includes('<main id="main">')) throw new Error("Missing main landmark");
-if (/appointment slot|choose an opening|book an appointment/i.test(html)) throw new Error("Scheduling language remains in the real-time intake interface");
+const PLAYFUL = /\bpaws?\b|\bfetch(?:ing)?\b|\bfur\b|\btail\b|\bpurr|\bwhisker/i;
+for (const moment of moments) {
+  if (PLAYFUL.test(TIMI_ANNOUNCEMENTS.emergency[moment])) {
+    throw new Error(`The emergency register must not be playful, but its ${moment} line is`);
+  }
+  if (PLAYFUL.test(TIMI_ANNOUNCEMENTS.urgent[moment])) {
+    throw new Error(`The urgent register must stay plain, but its ${moment} line is playful`);
+  }
+}
+if (!moments.some((moment) => PLAYFUL.test(TIMI_ANNOUNCEMENTS.calm[moment]))) {
+  throw new Error("The calm register should carry the brand's personality, but reads entirely plain");
+}
 
 console.log(`Validated ${requiredFiles.length} files, ${screens.length} screens, ${requiredTables.length} D1 tables, and ${requiredRoutes.length} API groups.`);

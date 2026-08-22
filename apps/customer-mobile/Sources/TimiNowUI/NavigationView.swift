@@ -70,6 +70,8 @@ struct TurnByTurnNavigationView: UIViewControllerRepresentable {
     var preferences: NavigationPreferences
     var navigationStyleURL: String
     var petName: String
+    /// Which register to speak in, carried down from the intake's urgency.
+    var tone: NavigationTone
     var mapboxAccessToken: String?
     var onProgress: (NavigationStepModel, RouteSummary) -> Void
     var onArrival: () -> Void
@@ -78,7 +80,8 @@ struct TurnByTurnNavigationView: UIViewControllerRepresentable {
     func makeUIViewController(context: Context) -> UIViewController {
         TimiNowUIStyleSource.current = navigationStyleURL
         return NavigationHostController(
-            destination: destination, origin: origin, preferences: preferences, petName: petName, mapboxAccessToken: mapboxAccessToken,
+            destination: destination, origin: origin, preferences: preferences, petName: petName, tone: tone,
+            mapboxAccessToken: mapboxAccessToken,
             onProgress: onProgress, onArrival: onArrival, onEnd: onEnd
         )
     }
@@ -91,17 +94,19 @@ final class NavigationHostController: UIViewController {
     private let origin: GeoPoint
     private let preferences: NavigationPreferences
     private let petName: String
+    private let tone: NavigationTone
     private let mapboxAccessToken: String?
     private let onProgress: (NavigationStepModel, RouteSummary) -> Void
     private let onArrival: () -> Void
     private let onEnd: () -> Void
     private var navigationViewController: NavigationViewController?
 
-    init(destination: NavigationDestination, origin: GeoPoint, preferences: NavigationPreferences, petName: String, mapboxAccessToken: String?, onProgress: @escaping (NavigationStepModel, RouteSummary) -> Void, onArrival: @escaping () -> Void, onEnd: @escaping () -> Void) {
+    init(destination: NavigationDestination, origin: GeoPoint, preferences: NavigationPreferences, petName: String, tone: NavigationTone, mapboxAccessToken: String?, onProgress: @escaping (NavigationStepModel, RouteSummary) -> Void, onArrival: @escaping () -> Void, onEnd: @escaping () -> Void) {
         self.destination = destination
         self.origin = origin
         self.preferences = preferences
         self.petName = petName
+        self.tone = tone
         self.mapboxAccessToken = mapboxAccessToken
         self.onProgress = onProgress
         self.onArrival = onArrival
@@ -160,7 +165,8 @@ final class NavigationHostController: UIViewController {
                 mapToken: mapboxAccessToken,
                 clinicName: destination.name,
                 petName: petName,
-                clinicKind: destination.kind
+                clinicKind: destination.kind,
+                tone: tone
             )
             : nil
         let coreConfig = CoreConfig(
@@ -243,6 +249,7 @@ struct TurnByTurnNavigationView: View {
     var preferences: NavigationPreferences
     var navigationStyleURL: String
     var petName: String
+    var tone: NavigationTone
     var mapboxAccessToken: String?
     var onProgress: (NavigationStepModel, RouteSummary) -> Void
     var onArrival: () -> Void
@@ -292,6 +299,7 @@ struct NavigationScreen: View {
                 preferences: store.navigationPreferences,
                 navigationStyleURL: store.navigationStyleURL,
                 petName: store.selectedPet.name,
+                tone: NavigationTone.forUrgency(store.draft.urgency),
                 mapboxAccessToken: store.mapToken,
                 onProgress: { step, summary in store.updateNavigationProgress(step: step, summary: summary) },
                 onArrival: {

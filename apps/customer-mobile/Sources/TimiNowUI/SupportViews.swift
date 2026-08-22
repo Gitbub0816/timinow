@@ -86,8 +86,12 @@ struct SettingsView: View {
                         get: { store.navigationPreferences.preferredVoiceIdentifier ?? "" },
                         set: { store.navigationPreferences.preferredVoiceIdentifier = $0.isEmpty ? nil : $0 }
                     )) {
-                        Text("System default").tag("")
-                        ForEach(deviceVoices, id: \.identifier) { voice in Text(voice.name).tag(voice.identifier) }
+                        // The unset default is the best installed voice, not
+                        // the system's compact one — see VoicePreviewer.bestVoice.
+                        Text("Best available").tag("")
+                        ForEach(deviceVoices, id: \.identifier) { voice in
+                            Text(VoicePreviewer.label(for: voice)).tag(voice.identifier)
+                        }
                     }
                 }
                 #endif
@@ -105,7 +109,15 @@ struct SettingsView: View {
                 #if os(iOS) && !SKIP
                 Button("Preview voice") {
                     VoicePreviewer.shared.preview(
-                        text: TimiInstructionRewriter.announcement("arrival", clinicName: "Hearth and Paw", petName: store.selectedPet.name) ?? "You've arrived.",
+                        // Previewed in the calm register: this is a settings
+                        // screen, not a drive, and it is the register whose
+                        // wording anyone customising the voice will care about.
+                        text: TimiInstructionRewriter.announcement(
+                            "arrival",
+                            tone: .calm,
+                            clinicName: "Hearth and Paw",
+                            petName: store.selectedPet.name
+                        ) ?? "You've arrived.",
                         preferences: store.navigationPreferences
                     )
                 }

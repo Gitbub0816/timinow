@@ -75,6 +75,23 @@ public struct NavigationStepModel: Identifiable, Codable, Hashable, Sendable {
     }
 }
 
+/// Which register Tími speaks in. Derived from the care urgency rather than a
+/// preference: a driver on an emergency run should never have to have turned
+/// something off to avoid a joke.
+public enum NavigationTone: String, Codable, CaseIterable, Sendable {
+    case calm
+    case urgent
+    case emergency
+
+    public static func forUrgency(_ urgency: CareUrgency) -> NavigationTone {
+        switch urgency {
+        case .emergency: return .emergency
+        case .urgent: return .urgent
+        case .sameDay: return .calm
+        }
+    }
+}
+
 public enum VoiceProfile: String, Codable, CaseIterable, Sendable {
     case mapboxCloud = "mapbox_cloud"
     case systemDefault = "system_default"
@@ -136,50 +153,113 @@ public struct NavigationPreferences: Codable, Hashable, Sendable {
     public static let `default` = NavigationPreferences()
 }
 
-/// The data-driven phrase table that turns Mapbox's generic instructions
-/// into Tími's voice. Mirrors the shape and wording of the web client's
-/// table in `public/map.js` (`INSTRUCTION_PHRASES` / `TIMI_ANNOUNCEMENTS`)
-/// exactly, so the web and native clients speak identically. Loaded from a
-/// bundled JSON resource (see `TimiInstructionRewriter` in
-/// TimiNowUI/VoiceController.swift) so wording can change without touching
-/// Swift source.
+/// The data-driven phrase table that turns Mapbox's generic instructions into
+/// Tími's voice.
 ///
-/// - `instructionPhrases` is keyed by Mapbox's maneuver `type` (`depart`,
-///   `arrive`, `turn`, `merge`, `"on ramp"`, `"off ramp"`, `fork`,
-///   `roundabout`, `continue`, `"new name"`) with `{modifier}` / `{road}` /
-///   `{clinic}` placeholders.
-/// - `timiAnnouncements` is keyed by `start` / `halfway` / `approaching` /
-///   `arrival` with `{clinic}` / `{pet}` / `{minutes}` / `{kind}`
-///   placeholders — sentences Tími adds that Mapbox would never say.
+/// Generated from the web client's table in `public/map.js` by
+/// `npm run sync:phrases`, so the two clients speak identically; the Swift
+/// literal below is a fallback for a missing bundle resource, and
+/// `scripts/validate.mjs` fails the build if either copy drifts. Wording can
+/// therefore change by editing one JavaScript file and re-running one command,
+/// with no Swift edit at all.
+///
+/// Two rules govern the tone, and they are structural rather than stylistic:
+/// maneuvers are never funny, because a driver gets one pass at them; and
+/// personality scales inversely with urgency, so the `emergency` register
+/// carries none.
 public struct InstructionPhraseTable: Codable, Hashable, Sendable {
+    /// Keyed by Mapbox's maneuver identifier (`turn`, `depart`, `arrive`, ...).
     public var instructionPhrases: [String: String]
-    public var timiAnnouncements: [String: String]
+    /// Keyed `"maneuver:modifier"`, for pairings the generic template cannot
+    /// say naturally — "Take the U-turn onto Foothill" is not English.
+    public var instructionOverrides: [String: String]
+    /// Mapbox's raw direction values, said the way a person says them.
+    public var modifierWords: [String: String]
+    /// The same directions reduced to a side, for ramps, merges, and forks.
+    public var sideWords: [String: String]
+    /// Tími's own lines, keyed by register (`calm`, `urgent`, `emergency`)
+    /// then by moment (`start`, `halfway`, `approaching`, `arrival`).
+    public var timiAnnouncements: [String: [String: String]]
 
-    public init(instructionPhrases: [String: String], timiAnnouncements: [String: String]) {
+    public init(
+        instructionPhrases: [String: String],
+        instructionOverrides: [String: String],
+        modifierWords: [String: String],
+        sideWords: [String: String],
+        timiAnnouncements: [String: [String: String]]
+    ) {
         self.instructionPhrases = instructionPhrases
+        self.instructionOverrides = instructionOverrides
+        self.modifierWords = modifierWords
+        self.sideWords = sideWords
         self.timiAnnouncements = timiAnnouncements
     }
 
-    /// Matches `public/map.js` word for word so the web and native clients
-    /// never drift, even if the bundled JSON resource fails to load.
+    /// Generated from `public/map.js` by `npm run sync:phrases`, so the web and
+    /// native clients speak identically even if the bundled resource fails to
+    /// load. `scripts/validate.mjs` fails the build if this drifts.
     public static let fallback = InstructionPhraseTable(
         instructionPhrases: [
-            "depart": "Head {modifier} on {road}",
-            "arrive": "You've arrived at {clinic}",
-            "turn": "Turn {modifier} onto {road}",
-            "merge": "Merge {modifier} onto {road}",
-            "on ramp": "Take the ramp {modifier} onto {road}",
-            "off ramp": "Take the exit {modifier} toward {road}",
-            "fork": "Keep {modifier} at the fork",
-            "roundabout": "At the roundabout, take the exit onto {road}",
-            "continue": "Continue on {road}",
-            "new name": "Continue onto {road}"
+            "depart": "Off we go — head {side} on {road}",
+            "arrive": "That's {clinic}, right there",
+            "turn": "Take the {modifier} onto {road}",
+            "merge": "Merge {side} onto {road}",
+            "on ramp": "Hop on the ramp on the {side} toward {road}",
+            "off ramp": "Take the exit on the {side} toward {road}",
+            "fork": "Keep {side} at the fork",
+            "roundabout": "Round the roundabout, then out onto {road}",
+            "continue": "Stay on {road}",
+            "new name": "Same road, new name — it's {road} now"
+        ],
+        instructionOverrides: [
+            "turn:uturn": "Turn around when it's safe to",
+            "turn:straight": "Keep straight onto {road}",
+            "continue:uturn": "Turn around when it's safe to",
+            "fork:straight": "Keep straight at the fork",
+            "depart:uturn": "Start out by turning around when it's safe",
+            "merge:straight": "Merge onto {road}",
+            "on ramp:straight": "Hop on the ramp toward {road}",
+            "off ramp:straight": "Take the exit toward {road}"
+        ],
+        modifierWords: [
+            "left": "left",
+            "right": "right",
+            "slight left": "slight left",
+            "slight right": "slight right",
+            "sharp left": "sharp left",
+            "sharp right": "sharp right",
+            "straight": "straight ahead",
+            "uturn": "U-turn"
+        ],
+        sideWords: [
+            "left": "left",
+            "right": "right",
+            "slight left": "left",
+            "slight right": "right",
+            "sharp left": "left",
+            "sharp right": "right",
+            "straight": "straight",
+            "uturn": "left"
         ],
         timiAnnouncements: [
-            "start": "Heading to {clinic}. The team is expecting {pet}.",
-            "halfway": "About {minutes} minutes to {clinic}.",
-            "approaching": "{clinic} is coming up. Look for the {kind} entrance.",
-            "arrival": "You've arrived at {clinic}. Tell the front desk you're the Tími arrival for {pet}."
+            "calm": [
+                "start": "Off we go. {clinic} is expecting {pet}, so the hard part is already behind you.",
+                "halfway": "About {minutes} minutes out — and {pet} is in good paws from here.",
+                "approaching": "{clinic} is just ahead. Look for the {kind} entrance.",
+                "arrival": "You made it. Tell the front desk you're the Tími arrival for {pet}. Nicely done — that was a fetching bit of driving."
+            ],
+            "urgent": [
+                "start": "On our way to {clinic}. They know {pet} is coming.",
+                "halfway": "About {minutes} minutes to {clinic}. You're doing great.",
+                "approaching": "{clinic} is just ahead. Look for the {kind} entrance.",
+                "arrival": "You've arrived. Tell the front desk you're the Tími arrival for {pet}."
+            ],
+            "emergency": [
+                "start": "Heading to {clinic} now. They are expecting {pet}. Drive safely.",
+                "halfway": "{minutes} minutes to {clinic}.",
+                "approaching": "{clinic} is ahead. Go to the {kind} entrance.",
+                "arrival": "You've arrived. Go straight in and say {pet} is the Tími emergency arrival."
+            ]
         ]
     )
 }
