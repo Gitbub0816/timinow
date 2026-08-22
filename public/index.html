@@ -72,7 +72,7 @@
     </section>
 
     <section class="screen app-screen" data-screen="find" aria-labelledby="find-title">
-      <header class="app-header"><a class="brand compact" href="#home"><img src="/assets/brand/timinow-wordmark.png" alt="Tími NOW"></a><div class="step-status"><span data-intake-step-label>1 of 2</span><i><b data-intake-progress></b></i></div><button class="icon-button" type="button" data-route="home" aria-label="Close">×</button></header>
+      <header class="app-header"><a class="brand compact" href="#home"><img src="/assets/brand/timinow-wordmark.png" alt="Tími NOW"></a><div class="step-status"><span data-intake-step-label>1 of 2</span><i><b data-intake-progress></b></i></div><div class="header-end"><button class="icon-button" type="button" data-route="home" aria-label="Close">×</button><div class="account-menu" data-account-menu hidden></div></div></header>
       <div class="intake-shell">
         <form data-intake-form novalidate>
           <section class="intake-step is-active" data-intake-step="1">
@@ -105,7 +105,7 @@
     </section>
 
     <section class="screen results-screen" data-screen="results" aria-labelledby="results-title">
-      <header class="app-header"><button class="icon-button" type="button" data-route="find" aria-label="Back">←</button><a class="brand compact" href="#home"><img src="/assets/brand/timinow-wordmark.png" alt="Tími NOW"></a><button class="profile-pill" type="button" data-route="pets">Otis</button></header>
+      <header class="app-header"><button class="icon-button" type="button" data-route="find" aria-label="Back">←</button><a class="brand compact" href="#home"><img src="/assets/brand/timinow-wordmark.png" alt="Tími NOW"></a><div class="header-end"><button class="profile-pill" type="button" data-route="pets">Otis</button><div class="account-menu" data-account-menu hidden></div></div></header>
       <div class="results-shell">
         <div class="results-heading"><div><p class="eyebrow"><span class="pulse-dot"></span> LIVE INTAKE CAPACITY</p><h1 id="results-title">Who can help <em>right now.</em></h1><p data-results-context>Searching near Hayward for Otis.</p></div><div class="results-tools"><label>Sort<select data-sort-results><option value="recommended">Recommended</option><option value="distance">Closest</option><option value="wait">Shortest stable wait</option><option value="freshness">Most recently verified</option></select></label><button class="button button-quiet" type="button" data-refresh-results>Refresh</button></div></div>
         <div class="result-legend"><span><i class="signal available"></i> Available</span><span><i class="signal limited"></i> Limited</span><span><i class="signal unverified"></i> Unverified</span><strong>Critical patients are triaged by the hospital regardless of this order.</strong></div>
@@ -114,7 +114,7 @@
     </section>
 
     <section class="screen tracker-screen" data-screen="tracker" aria-labelledby="tracker-title">
-      <header class="app-header"><a class="brand compact" href="#home"><img src="/assets/brand/timinow-wordmark.png" alt="Tími NOW"></a><span class="secure-label">Secure intake link</span><button class="icon-button" type="button" data-route="results" aria-label="Close">×</button></header>
+      <header class="app-header"><a class="brand compact" href="#home"><img src="/assets/brand/timinow-wordmark.png" alt="Tími NOW"></a><span class="secure-label">Secure intake link</span><div class="header-end"><button class="icon-button" type="button" data-route="results" aria-label="Close">×</button><div class="account-menu" data-account-menu hidden></div></div></header>
       <div class="tracker-shell">
         <div class="tracker-status-art" data-tracker-art><span class="radar-ring"></span><b>⌁</b></div>
         <p class="eyebrow coral" data-tracker-eyebrow>REQUEST SENT</p>
@@ -129,14 +129,19 @@
     </section>
 
     <section class="screen profile-screen" data-screen="pets" aria-labelledby="pets-title">
-      <header class="app-header"><button class="icon-button" type="button" data-route="results" aria-label="Back">←</button><span>Pet profile</span><button class="text-button" type="button" data-toast-message="Profile editing will be available when accounts are enabled.">Edit</button></header>
+      <header class="app-header"><button class="icon-button" type="button" data-route="results" aria-label="Back">←</button><span>Pet profile</span><div class="header-end"><button class="text-button" type="button" data-toast-message="Profile editing will be available when accounts are enabled.">Edit</button><div class="account-menu" data-account-menu hidden></div></div></header>
       <div class="profile-shell"><div class="pet-portrait">🐶<span>✦</span></div><p class="eyebrow coral">READY TO SHARE</p><h1 id="pets-title">Otis</h1><p>Golden retriever · Dog · 72 lb</p><div class="profile-grid"><article><small>MEDICATION</small><strong>Apoquel · 16 mg daily</strong></article><article><small>ALLERGY</small><strong>Chicken protein</strong></article><article><small>VACCINES</small><strong>Current through May 2027</strong></article><article><small>RECORDS</small><strong>4 documents ready</strong></article></div><p class="privacy-note">Records are not sent until you explicitly include them with an accepted intake.</p></div>
     </section>
 
     <section class="screen clinic-screen" data-screen="clinic" aria-labelledby="clinic-title">
-      <aside class="clinic-sidebar"><a class="brand inverse-brand" href="#home"><img src="/assets/brand/timinow-wordmark.png" alt="Tími NOW"></a><p>CLINIC CONSOLE</p><nav><a class="active" href="#clinic">Live intake</a><a href="#clinic" data-toast-message="History is included in the activity feed below.">History</a><a href="#clinic" data-toast-message="Policy controls are shown in the settlement panel.">Policies</a><a href="#legal?section=clinics">Clinic terms</a><a href="#home">Public site</a></nav><div id="clerk-org-switcher" hidden></div><div class="clinic-identity"><span>HP</span><div><strong data-clinic-name>Hearth & Paw</strong><small>Demo tenant</small></div></div></aside>
+      <aside class="clinic-sidebar"><a class="brand inverse-brand" href="#home"><img src="/assets/brand/timinow-wordmark.png" alt="Tími NOW"></a><p>CLINIC CONSOLE</p><nav><a class="active" href="#clinic">Live intake</a><a href="#clinic" data-toast-message="History is included in the activity feed below.">History</a><a href="#clinic" data-toast-message="Policy controls are shown in the settlement panel.">Policies</a><a href="#legal?section=clinics">Clinic terms</a><a href="#home">Public site</a></nav><button class="workspace-switch-button" type="button" data-workspace-switch hidden><span data-workspace-switch-label>Choose workspace</span><i aria-hidden="true">⇄</i></button><div class="clinic-identity"><span>HP</span><div><strong data-clinic-name>Hearth & Paw</strong><small>Demo tenant</small></div></div></aside>
       <div class="clinic-workspace">
-        <header class="clinic-topbar"><div><p class="eyebrow">HEARTH & PAW · LIVE OPERATIONS</p><h1 id="clinic-title">Immediate intake control</h1><p class="clinic-subtitle">One accountable queue for reported capacity, clinical review, and confirmed arrivals.</p></div><div class="clinic-topbar-actions"><button class="button button-quiet" type="button" data-enable-alerts>Desktop alerts</button><button class="button button-dark" type="button" data-refresh-clinic>Refresh queue</button></div></header>
+        <header class="clinic-topbar"><div><p class="eyebrow">HEARTH & PAW · LIVE OPERATIONS</p><h1 id="clinic-title">Immediate intake control</h1><p class="clinic-subtitle">One accountable queue for reported capacity, clinical review, and confirmed arrivals.</p></div><div class="clinic-topbar-actions"><button class="button button-quiet" type="button" data-enable-alerts>Desktop alerts</button><button class="button button-dark" type="button" data-refresh-clinic>Refresh queue</button><div class="account-menu" data-account-menu hidden></div></div></header>
+        <div class="clinic-denied" data-clinic-denied hidden>
+          <div class="safety-callout"><strong>This account is not part of a veterinary workspace.</strong><p data-clinic-denied-message>Sign in with a clinic account to reach the veterinary console, or return to the customer app.</p></div>
+          <a class="button button-quiet" href="#home">Return to the customer app</a>
+        </div>
+        <div class="clinic-console-body" data-clinic-console-body>
         <section class="availability-console" data-availability-console>
           <div class="availability-current"><span class="large-signal available" data-clinic-signal></span><div><small>CURRENT PUBLIC STATUS</small><strong data-clinic-status>Available now</strong><p data-clinic-freshness>Confirmed moments ago · expires in 30 minutes</p></div></div>
           <form data-availability-form>
@@ -154,11 +159,111 @@
           <aside class="operations-panel"><div class="panel-heading"><div><p class="eyebrow">HOW TÍMI REPORTS LOAD</p><h2>Public visibility</h2></div></div><dl><div><dt>Source</dt><dd data-ops-source>Hospital confirmed</dd></div><div><dt>Confidence</dt><dd data-ops-confidence>High</dd></div><div><dt>Stable-patient wait</dt><dd data-ops-wait>15–35 min</dd></div><div><dt>Critical care</dt><dd data-ops-critical>Accepting</dd></div></dl><p class="operations-note">Tími always labels the source and age of capacity data. An expired report becomes “unverified” automatically.</p></aside></div>
 
         <section class="policy-panel"><div><p class="eyebrow">TENANT POLICY · VERSION 1</p><h2>Arrival deposit and settlement</h2></div><div class="policy-metrics"><span><small>DEPOSIT</small><strong data-policy-deposit>$50</strong></span><span><small>FREE CANCELLATION</small><strong data-policy-cancel>30 min</strong></span><span><small>COMPLETED VISIT FEE</small><strong data-policy-completed>$20</strong></span><span><small>NO-SHOW FEE</small><strong data-policy-noshow>$5</strong></span></div><p>Every intake keeps the exact policy snapshot accepted by the customer. Clinics can use different amounts and refund rules.</p></section>
+        </div>
       </div>
     </section>
 
     <section class="screen sign-in-screen" data-screen="sign-in" aria-labelledby="sign-in-title">
-      <a class="brand" href="#home"><img src="/assets/brand/timinow-wordmark.png" alt="Tími NOW"></a><div class="sign-in-card"><p class="eyebrow coral">SECURE ACCESS</p><h1 id="sign-in-title">Sign in to Tími.</h1><p>Pet-parent and veterinary-team access is managed by Clerk. Clinic access follows the active organization tenant.</p><div id="clerk-sign-in"><div class="loading-state"><span></span><strong>Loading secure sign-in…</strong></div></div><p class="sign-in-note" data-auth-disabled hidden>Sign-in is currently disabled by configuration.</p></div>
+      <a class="brand" href="#home"><img src="/assets/brand/timinow-wordmark.png" alt="Tími NOW"></a>
+      <div class="sign-in-card">
+        <p class="eyebrow coral">SECURE ACCESS</p>
+        <h1 id="sign-in-title">Sign in to Tími.</h1>
+        <p>Pet-parent and veterinary-team access, in one place. Clinic access follows your active workspace.</p>
+        <p class="sign-in-note" data-auth-disabled hidden>Sign-in is currently disabled by configuration.</p>
+
+        <div data-auth-steps>
+          <div class="safety-callout" data-auth-error hidden><p data-auth-error-text></p></div>
+
+          <div class="auth-step" data-auth-step="identifier">
+            <form data-auth-identifier-form novalidate>
+              <label class="stacked-field">Email, username, or phone number
+                <input name="identifier" autocomplete="username" required placeholder="you@example.com">
+              </label>
+              <button class="button button-primary auth-submit" type="submit">Continue <span aria-hidden="true">→</span></button>
+            </form>
+            <div class="auth-divider"><span>or</span></div>
+            <div class="auth-oauth-buttons">
+              <button class="button button-light auth-oauth" type="button" data-oauth="oauth_google">
+                <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><path fill="#4285F4" d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844a4.14 4.14 0 0 1-1.796 2.716v2.259h2.908c1.702-1.567 2.684-3.874 2.684-6.615z"/><path fill="#34A853" d="M9 18c2.43 0 4.467-.806 5.956-2.18l-2.908-2.259c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.583-5.036-3.711H.957v2.332A8.997 8.997 0 0 0 9 18z"/><path fill="#FBBC05" d="M3.964 10.71A5.41 5.41 0 0 1 3.682 9c0-.593.102-1.17.282-1.71V4.958H.957A8.996 8.996 0 0 0 0 9c0 1.452.348 2.827.957 4.042l3.007-2.332z"/><path fill="#EA4335" d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0A8.997 8.997 0 0 0 .957 4.958L3.964 7.29C4.672 5.163 6.656 3.58 9 3.58z"/></svg>
+                Continue with Google
+              </button>
+              <button class="button button-light auth-oauth" type="button" data-oauth="oauth_apple">
+                <svg width="15" height="18" viewBox="0 0 170 170" fill="currentColor" aria-hidden="true"><path d="M150.37 130.25c-2.45 5.66-5.35 10.87-8.71 15.66-4.58 6.53-8.33 11.05-11.22 13.56-4.48 4.12-9.28 6.23-14.42 6.35-3.69 0-8.14-1.05-13.32-3.18-5.197-2.12-9.973-3.17-14.34-3.17-4.58 0-9.492 1.05-14.746 3.17-5.262 2.13-9.501 3.24-12.742 3.35-4.929.21-9.842-1.96-14.746-6.52-3.13-2.73-7.045-7.41-11.735-14.04-5.032-7.08-9.169-15.29-12.41-24.65-3.471-10.11-5.211-19.9-5.211-29.378 0-10.857 2.346-20.221 7.045-28.068 3.693-6.303 8.606-11.275 14.755-14.925s12.793-5.51 19.948-5.629c3.915 0 9.049 1.211 15.429 3.591 6.362 2.388 10.447 3.599 12.238 3.599 1.339 0 5.877-1.416 13.57-4.239 7.275-2.618 13.415-3.702 18.445-3.275 13.63 1.1 23.87 6.473 30.68 16.153-12.19 7.386-18.22 17.731-18.1 31.002.11 10.336 3.86 18.939 11.24 25.769 3.34 3.17 7.07 5.62 11.22 7.36-.9 2.61-1.85 5.11-2.86 7.51zM119.11 7.24c0 8.102-2.96 15.667-8.86 22.669-7.12 8.324-15.732 13.134-25.071 12.375a25.222 25.222 0 0 1-.188-3.07c0-7.778 3.386-16.102 9.399-22.908 3.002-3.446 6.82-6.311 11.45-8.597 4.62-2.253 8.99-3.498 13.1-3.71.12 1.083.17 2.166.17 3.24z"/></svg>
+                Continue with Apple
+              </button>
+              <button class="button button-quiet auth-oauth" type="button" data-passkey-signin>
+                <span aria-hidden="true">🔑</span> Use a passkey
+              </button>
+            </div>
+            <p class="auth-footer"><span data-auth-mode-label>New to Tími?</span> <button class="text-button" type="button" data-auth-toggle-mode>Create account</button></p>
+          </div>
+
+          <div class="auth-step" data-auth-step="strategy" hidden>
+            <button class="icon-button auth-back" type="button" data-auth-back aria-label="Back">←</button>
+            <p class="auth-step-lede">Choose how you'd like to verify it's you.</p>
+            <div class="auth-strategy-list" data-auth-strategy-list></div>
+          </div>
+
+          <div class="auth-step" data-auth-step="password" hidden>
+            <button class="icon-button auth-back" type="button" data-auth-back aria-label="Back">←</button>
+            <form data-auth-password-form novalidate>
+              <label class="stacked-field">Password
+                <input name="password" type="password" autocomplete="current-password" required>
+              </label>
+              <button class="button button-primary auth-submit" type="submit">Sign in <span aria-hidden="true">→</span></button>
+            </form>
+            <p class="auth-footer"><button class="text-button" type="button" data-auth-forgot-password>Forgot password?</button></p>
+          </div>
+
+          <div class="auth-step" data-auth-step="code" hidden>
+            <button class="icon-button auth-back" type="button" data-auth-back aria-label="Back">←</button>
+            <p class="auth-step-lede" data-auth-code-lede>Enter the 6-digit code we sent you.</p>
+            <div class="otp-input" data-otp-input>
+              <input inputmode="numeric" autocomplete="one-time-code" maxlength="1" pattern="[0-9]" aria-label="Digit 1">
+              <input inputmode="numeric" maxlength="1" pattern="[0-9]" aria-label="Digit 2">
+              <input inputmode="numeric" maxlength="1" pattern="[0-9]" aria-label="Digit 3">
+              <input inputmode="numeric" maxlength="1" pattern="[0-9]" aria-label="Digit 4">
+              <input inputmode="numeric" maxlength="1" pattern="[0-9]" aria-label="Digit 5">
+              <input inputmode="numeric" maxlength="1" pattern="[0-9]" aria-label="Digit 6">
+            </div>
+            <button class="button button-primary auth-submit" type="button" data-auth-code-submit>Verify code</button>
+            <p class="auth-footer"><button class="text-button" type="button" data-auth-resend disabled>Resend code</button></p>
+          </div>
+
+          <div class="auth-step" data-auth-step="reset" hidden>
+            <p class="auth-step-lede">Choose a new password.</p>
+            <form data-auth-reset-form novalidate>
+              <label class="stacked-field">New password<input name="password" type="password" required minlength="8" autocomplete="new-password"></label>
+              <label class="stacked-field">Confirm new password<input name="confirmPassword" type="password" required minlength="8" autocomplete="new-password"></label>
+              <button class="button button-primary auth-submit" type="submit">Set new password</button>
+            </form>
+          </div>
+
+          <div class="auth-step" data-auth-step="sign-up" hidden>
+            <form data-auth-signup-form novalidate>
+              <div class="form-grid two-column">
+                <label>First name<input name="firstName" autocomplete="given-name" required></label>
+                <label>Last name<input name="lastName" autocomplete="family-name" required></label>
+              </div>
+              <label class="stacked-field">Email or phone number<input name="identifier" required autocomplete="email"></label>
+              <label class="stacked-field">Password<input name="password" type="password" required minlength="8" autocomplete="new-password"></label>
+              <button class="button button-primary auth-submit" type="submit">Create account <span aria-hidden="true">→</span></button>
+            </form>
+            <p class="auth-footer"><span>Already have an account?</span> <button class="text-button" type="button" data-auth-toggle-mode>Sign in</button></p>
+          </div>
+
+          <div class="auth-step" data-auth-step="organization" hidden>
+            <p class="eyebrow coral">CHOOSE A WORKSPACE</p>
+            <h2 class="auth-step-title">Which workspace?</h2>
+            <div class="auth-org-list" data-auth-org-list></div>
+          </div>
+
+          <div class="auth-step" data-auth-step="denied" hidden>
+            <div class="safety-callout"><strong>This account is not part of a veterinary workspace.</strong><p data-auth-denied-message>Sign in with a clinic account to reach the veterinary console, or return to the customer app.</p></div>
+            <button class="button button-quiet" type="button" data-route="home">Return home</button>
+          </div>
+        </div>
+      </div>
     </section>
 
     <section class="screen legal-screen" data-screen="legal" aria-labelledby="legal-title">

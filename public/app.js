@@ -16,6 +16,8 @@ const state = {
   route: "home",
   config: null,
   clerk: null,
+  session: null,
+  auth: null,
   intakeStep: 1,
   intakeDraft: readStorage(STORAGE_KEYS.draft, {
     position: DEFAULT_POSITION,

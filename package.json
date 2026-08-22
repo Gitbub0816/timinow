@@ -4,16 +4,24 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "wrangler dev --local --persist-to .wrangler/state",
-    "dev:d1": "wrangler dev --config wrangler.d1.jsonc --local --persist-to .wrangler/state",
-    "db:migrate:local": "wrangler d1 migrations apply timinow --config wrangler.d1.jsonc --local --persist-to .wrangler/state",
-    "db:migrate:remote": "wrangler d1 migrations apply timinow --config wrangler.d1.jsonc --remote",
+    "dev": "wrangler dev --config wrangler.local.jsonc --local --persist-to .wrangler/state",
+    "dev:local": "wrangler dev --config wrangler.local.jsonc --local --persist-to .wrangler/state",
+    "dev:vet": "wrangler dev --config wrangler.vet.jsonc --local --persist-to .wrangler/state --port 8788",
+    "dev:admin": "wrangler dev --config wrangler.admin.jsonc --local --persist-to .wrangler/state --port 8789",
+    "db:migrate:local": "wrangler d1 migrations apply timinow --config wrangler.local.jsonc --local --persist-to .wrangler/state",
+    "db:migrate:remote": "wrangler d1 migrations apply timinow --remote",
     "deploy": "wrangler deploy",
+    "deploy:vet": "wrangler deploy --config wrangler.vet.jsonc",
+    "deploy:admin": "wrangler deploy --config wrangler.admin.jsonc",
+    "deploy:all": "npm run deploy && npm run deploy:vet && npm run deploy:admin",
     "types": "wrangler types",
     "build": "wrangler deploy --dry-run --outdir .wrangler/build",
+    "build:vet": "wrangler deploy --dry-run --config wrangler.vet.jsonc --outdir .wrangler/build-vet",
+    "build:admin": "wrangler deploy --dry-run --config wrangler.admin.jsonc --outdir .wrangler/build-admin",
+    "build:all": "npm run build && npm run build:vet && npm run build:admin",
     "check:native": "node scripts/validate-native.mjs",
     "smoke": "node scripts/smoke.mjs && node scripts/auth-test.mjs && node scripts/e2e.mjs",
-    "check": "node --check src/index.js && node --check src/auth.js && node --check src/catalog.js && node --check src/db.js && node --check public/app.js && node scripts/validate.mjs && node scripts/validate-native.mjs && node scripts/smoke.mjs && node scripts/auth-test.mjs && node scripts/e2e.mjs"
+    "check": "node scripts/syntax.mjs && node scripts/validate.mjs && node scripts/validate-native.mjs && node scripts/smoke.mjs && node scripts/auth-test.mjs && node scripts/e2e.mjs"
   },
   "devDependencies": {
     "wrangler": "^4.32.0"

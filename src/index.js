@@ -460,7 +460,7 @@ async function createCareSearch(request, env, actor) {
   return json({ search: await getCareSearch(env, searchId) }, { status: 201 });
 }
 
-async function respondToCareSearch(request, env, actor, tenantId, targetId) {
+export async function respondToCareSearch(request, env, actor, tenantId, targetId) {
   if (!hasDatabase(env)) return apiError(503, "DATABASE_REQUIRED", "D1 is required for multi-clinic offer responses.");
   const body = await readJson(request).catch(() => null);
   const decision = cleanString(body?.decision, 20);
@@ -698,7 +698,7 @@ async function recordObservation(request, env, actor) {
   return json({ recorded: true, observedAt: now }, { status: 201 });
 }
 
-async function clinicDashboard(env, tenantId) {
+export async function clinicDashboard(env, tenantId) {
   const location = await getClinicLocation(env, tenantId);
   if (!location) return apiError(404, "CLINIC_NOT_FOUND", "No clinic is mapped to the active Clerk organization.");
   const [intakes, searchTargets] = await Promise.all([
@@ -732,7 +732,7 @@ async function clinicDashboard(env, tenantId) {
   });
 }
 
-async function setClinicAvailability(request, env, actor, tenantId) {
+export async function setClinicAvailability(request, env, actor, tenantId) {
   const location = await getClinicLocation(env, tenantId);
   if (!location) return apiError(404, "CLINIC_NOT_FOUND", "The clinic location was not found.");
   const body = await readJson(request).catch(() => null);
@@ -775,7 +775,7 @@ async function setClinicAvailability(request, env, actor, tenantId) {
   return json({ location: enrichLocation(await getLocation(env, location.id)) }, { status: 201 });
 }
 
-async function decideIntake(request, env, actor, tenantId, intakeId) {
+export async function decideIntake(request, env, actor, tenantId, intakeId) {
   const body = await readJson(request).catch(() => null);
   const decision = cleanString(body?.decision, 20);
   if (!new Set(["accept", "decline"]).has(decision)) return apiError(422, "INVALID_DECISION", "Choose accept or decline.");

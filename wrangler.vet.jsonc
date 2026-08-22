@@ -1,0 +1,56 @@
+{
+  // Veterinary operations console — timinow-vet.
+  //
+  // This Worker deploys separately from `timinow` (customer) and `timinow-admin`
+  // (platform operator console) so a clinic staffer never shares an origin with
+  // the public application or the tenant-creation surface. See
+  // docs/PLATFORM-CONTRACT.md for the full authorization model and shared API.
+  //
+  // Deploy: npx wrangler deploy --config wrangler.vet.jsonc
+  //
+  // Required secret (set with `wrangler secret put CLERK_SECRET_KEY --config wrangler.vet.jsonc`):
+  //   CLERK_SECRET_KEY   Clerk Backend API secret key. Used to verify session
+  //                      tokens, look up users by email, seat/re-role/remove
+  //                      workspace members, and merge Clerk metadata during the
+  //                      /api/session repair pass.
+  //
+  // Expiry of stale intake/search/offer state is owned by the customer Worker's
+  // cron trigger against the same D1 database, so this config intentionally
+  // declares no `triggers` block.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "timinow-vet",
+  "main": "apps/vet-web/src/index.js",
+  "compatibility_date": "2026-08-20",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "vars": {
+    "SIGN_IN_REQUIRED": "true",
+    "DEMO_MODE": "false",
+    "SURFACE": "clinic",
+    "CLERK_JS_URL": "https://cdn.jsdelivr.net/npm/@clerk/clerk-js@5/dist/clerk.headless.mjs",
+    "CLERK_PUBLISHABLE_KEY": "",
+    "CLERK_ISSUER": "",
+    "AUTHORIZED_PARTIES": "",
+    "MAPBOX_PUBLIC_TOKEN": "",
+    "MAPBOX_STYLE_URL": "mapbox://styles/calebowen2019/cmt3nci25004d01sya8qxcb4u",
+    "STRIPE_PUBLISHABLE_KEY": ""
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "timinow",
+      "database_id": "eae5bd15-686f-4827-9354-e99973daa803",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "assets": {
+    "directory": "./apps/vet-web/public",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
+  },
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  }
+}

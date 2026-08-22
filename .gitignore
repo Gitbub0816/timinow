@@ -2,6 +2,7 @@ node_modules/
 .wrangler/
 .dev.vars
 wrangler.d1.jsonc
+wrangler.local.jsonc
 dist/
 .DS_Store
 apps/customer-mobile/.build/
@@ -11,4 +12,9 @@ apps/customer-mobile/Darwin/TimiNow.xcodeproj/
 apps/customer-mobile/xcuserdata/
 apps/vet-windows/**/bin/
 apps/vet-windows/**/obj/
+apps/vet-desktop/.build/
+apps/vet-desktop/.swiftpm/
+apps/vet-desktop/Package.resolved
+apps/vet-desktop/Darwin/TimiVet.xcodeproj/
+apps/vet-desktop/xcuserdata/
 *.user
