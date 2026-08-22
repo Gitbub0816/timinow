@@ -27,8 +27,15 @@
     "AUTHORIZED_PARTIES": "https://app.timinow.pet,https://timinow.pet,https://www.timinow.pet,https://providers.timinow.pet,https://admin.timinow.pet",
     "MAPBOX_PUBLIC_TOKEN": "",
     "MAPBOX_STYLE_URL": "mapbox://styles/calebowen2019/cmt3nci25004d01sya8qxcb4u",
-    "STRIPE_PUBLISHABLE_KEY": ""
+    "STRIPE_PUBLISHABLE_KEY": "",
+    "VOICE_DRAIN_TOKEN": ""
   },
+  // Worker-to-worker, so a fan-out can ring clinics immediately instead of
+  // waiting for a scheduler. Service bindings do not traverse the public
+  // internet and cost nothing.
+  "services": [
+    { "binding": "VOICE", "service": "timinow-voice" }
+  ],
   "d1_databases": [
     {
       "binding": "DB",

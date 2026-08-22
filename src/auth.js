@@ -22,10 +22,47 @@ function getBearerToken(request) {
   return cookieValue(request.headers.get("cookie"), "__session");
 }
 
+/**
+ * Clerk's publishable key encodes the instance's Frontend API host: the part
+ * after `pk_test_` / `pk_live_` is base64 of `<host>$`.
+ *
+ * Deriving it is more reliable than trusting a hand-set CLERK_ISSUER, because
+ * the two can disagree and the failure is silent — a development key with a
+ * production issuer fetches JWKS from a host that does not serve it, and every
+ * signed-in request simply 401s with nothing in the logs pointing at the cause.
+ * The key is always self-consistent with the instance it belongs to.
+ */
+export function frontendApiFromPublishableKey(publishableKey) {
+  const key = String(publishableKey || "");
+  const encoded = key.replace(/^pk_(?:test|live)_/, "");
+  if (encoded === key || !encoded) return null;
+  try {
+    const decoded = atob(encoded).replace(/\$+$/, "").trim();
+    return /^[a-z0-9.-]+\.[a-z]{2,}$/i.test(decoded) ? decoded : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Every issuer this instance may legitimately claim. */
+function acceptableIssuers(env) {
+  const issuers = [];
+  const configured = String(env.CLERK_ISSUER || "").replace(/\/$/, "");
+  if (configured) issuers.push(configured);
+  const derived = frontendApiFromPublishableKey(env.CLERK_PUBLISHABLE_KEY);
+  if (derived) issuers.push(`https://${derived}`);
+  return issuers;
+}
+
 async function fetchJwk(env, keyId) {
+  // Explicit override first, then the key-derived host, then CLERK_ISSUER. The
+  // derived host outranks CLERK_ISSUER because it cannot be stale.
+  const derived = frontendApiFromPublishableKey(env.CLERK_PUBLISHABLE_KEY);
   const issuer = String(env.CLERK_ISSUER || "").replace(/\/$/, "");
-  const jwksUrl = env.CLERK_JWKS_URL || (issuer ? `${issuer}/.well-known/jwks.json` : "");
-  if (!jwksUrl) throw new Error("CLERK_JWKS_URL or CLERK_ISSUER is required");
+  const jwksUrl = env.CLERK_JWKS_URL
+    || (derived ? `https://${derived}/.well-known/jwks.json` : "")
+    || (issuer ? `${issuer}/.well-known/jwks.json` : "");
+  if (!jwksUrl) throw new Error("CLERK_JWKS_URL, CLERK_PUBLISHABLE_KEY, or CLERK_ISSUER is required");
 
   const response = await fetch(jwksUrl, {
     headers: { accept: "application/json" },
@@ -65,8 +102,9 @@ async function verifyClerkToken(token, env, request) {
   const now = Math.floor(Date.now() / 1000);
   if (!claims.sub || !claims.exp || claims.exp <= now) throw new Error("Expired Clerk session");
   if (claims.nbf && claims.nbf > now + 5) throw new Error("Clerk session is not active yet");
-  if (env.CLERK_ISSUER && claims.iss !== String(env.CLERK_ISSUER).replace(/\/$/, "")) {
-    throw new Error("Unexpected Clerk issuer");
+  const issuers = acceptableIssuers(env);
+  if (issuers.length && !issuers.includes(String(claims.iss || "").replace(/\/$/, ""))) {
+    throw new Error(`Unexpected Clerk issuer ${claims.iss}; expected one of ${issuers.join(", ")}`);
   }
   const allowedOrigins = String(env.AUTHORIZED_PARTIES || "")
     .split(",")

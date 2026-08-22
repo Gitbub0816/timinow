@@ -416,3 +416,35 @@ is manual-dispatch only. Nothing deploys on a push.
 | `TWILIO_ACCOUNT_SID` | `AC…` | ⬜ secret |
 | `TWILIO_AUTH_TOKEN` | — | ⬜ secret |
 | `STRIPE_SECRET_KEY` | `sk_live_…` | ⬜ secret |
+
+## 9. Two things a first deploy runs into
+
+### The Clerk key and CLERK_ISSUER must name the same instance
+
+A `pk_test_…` key belongs to a **development** instance whose Frontend API is
+`<slug>.clerk.accounts.dev`, not `clerk.timinow.pet`. Pointing `CLERK_ISSUER` at
+a custom domain while deploying a test key fetches JWKS from a host that does
+not serve it, and every signed-in request 401s with nothing in the logs
+explaining why.
+
+The Workers now derive the Frontend API host from the publishable key itself —
+it is base64-encoded inside it — and accept a token issued by either that host
+or `CLERK_ISSUER`. So a test key works without changing anything, and switching
+to `pk_live_…` on a production instance works too.
+
+Development instances have real limits: no custom domain, low user caps, and
+Clerk's shared OAuth credentials rather than yours. Create the production
+instance before real clinics use this.
+
+### Cloudflare's free plan allows five cron triggers per account
+
+This project uses exactly one, on the customer Worker. The voice gateway has no
+scheduler: the customer Worker calls its drain endpoint over a service binding
+the moment a search fans out, and its existing five-minute sweep handles
+retries.
+
+That is not only a limit workaround — it is the better design. A care search
+stops collecting offers after ninety seconds, so a one-minute cron would spend
+most of the window before the first clinic phone rang. Now the call goes out
+with the fan-out.
+

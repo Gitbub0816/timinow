@@ -183,7 +183,13 @@ const expiringId = result.body.intake.id;
 database.prepare("UPDATE intake_requests SET request_expires_at = datetime('now', '-1 minute') WHERE id = ?").run(expiringId);
 database.prepare("UPDATE intake_requests SET arrival_by = datetime('now', '-30 minutes') WHERE id = ?").run(pendingId);
 let scheduledWork;
-await worker.scheduled(null, env, { waitUntil(promise) { scheduledWork = promise; } });
+// Collect every waitUntil, not just the last one — the scheduled handler
+// registers more than one piece of background work, and awaiting whichever
+// happened to be registered last is how this test would silently stop covering
+// the expiry sweep.
+const scheduledPromises = [];
+await worker.scheduled(null, env, { waitUntil(promise) { scheduledPromises.push(promise); } });
+scheduledWork = Promise.all(scheduledPromises);
 await scheduledWork;
 const expiredRow = database.prepare("SELECT status FROM intake_requests WHERE id = ?").get(expiringId);
 const noShowRow = database.prepare("SELECT status FROM intake_requests WHERE id = ?").get(pendingId);

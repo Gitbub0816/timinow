@@ -204,6 +204,8 @@ set_var STRIPE_PUBLISHABLE_KEY "$CUSTOMER"
 set_var TWILIO_FROM_NUMBER     "$VOICE"
 set_var PLATFORM_ADMIN_EMAILS  "$ADMIN"
 set_var PLATFORM_ADMIN_USER_IDS "$ADMIN"
+# Shared by both ends of the immediate-dispatch path, so it goes to both.
+set_var VOICE_DRAIN_TOKEN      "$CUSTOMER" "$VOICE"
 echo
 
 # ------------------------------------------------ secrets -> each Worker ---

@@ -562,7 +562,7 @@ async function processOutboxRow(env, row, nowIso) {
 }
 
 export async function drainVoiceQueue(env) {
-  if (!hasDatabase(env)) return;
+  if (!hasDatabase(env)) return 0;
   const nowIso = new Date().toISOString();
   const rows = await env.DB.prepare(`
     SELECT * FROM notification_outbox WHERE channel = 'voice' AND status = 'queued' AND available_at <= ?
@@ -578,6 +578,7 @@ export async function drainVoiceQueue(env) {
     }
   }
   console.log(JSON.stringify({ event: "voice_drain_complete", at: nowIso, processed: rows.results.length }));
+  return rows.results.length;
 }
 
 /* -------------------------------------------------------------- attempts API --- */
@@ -640,6 +641,25 @@ async function handleApi(request, env) {
     });
   }
   if (method === "GET" && path === "/api/config") return json(publicConfig(env));
+
+  /**
+   * Internal drain, invoked by the customer Worker the moment a care search
+   * fans out — a cron tick is too slow for this queue. A search stops
+   * collecting offers after ninety seconds, so waiting up to a minute for a
+   * scheduler would spend most of the window before the first phone rings.
+   *
+   * Reachable over a service binding, and over the public hostname only with
+   * VOICE_DRAIN_TOKEN. The endpoint is idempotent and no-ops on an empty queue,
+   * so the token is a courtesy rather than the thing standing between a caller
+   * and a clinic — that remains the Twilio signature on the webhooks.
+   */
+  if (method === "POST" && path === "/api/voice/drain") {
+    const expected = env.VOICE_DRAIN_TOKEN || "";
+    const supplied = request.headers.get("x-timi-drain-token") || "";
+    if (expected && supplied !== expected) return apiError(403, "DRAIN_FORBIDDEN", "Not permitted.");
+    const processed = await drainVoiceQueue(env);
+    return json({ drained: true, processed: processed ?? null });
+  }
 
   // The phone number's own Voice configuration points here. See
   // docs/PRODUCTION-SETUP.md for the exact three fields Twilio asks for.

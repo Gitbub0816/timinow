@@ -122,7 +122,14 @@ if (!wranglerAdmin.includes("PLATFORM_ADMIN_USER_IDS")) throw new Error("The adm
 // check would let anyone accept an offer on a clinic's behalf.
 if (!wranglerVoice.includes('"name": "timinow-voice"')) throw new Error("The voice Worker must deploy under its own name");
 if (!wranglerVoice.includes('"d1_databases"')) throw new Error("The voice Worker must bind the D1 database");
-if (!wranglerVoice.includes('"crons"')) throw new Error("The voice Worker must run a cron trigger to drain the call queue");
+// The voice gateway deliberately has no scheduler: the customer Worker pokes it
+// the instant a search fans out, because a search stops collecting offers after
+// ninety seconds and a cron tick would spend most of that window. That only
+// works if the service binding and the drain endpoint both exist.
+if (wranglerVoice.includes('"crons"')) throw new Error("The voice Worker should not own a cron; the customer Worker dispatches and sweeps it");
+if (!wrangler.includes('"service": "timinow-voice"')) throw new Error("The customer Worker must bind the voice gateway so calls dispatch immediately");
+if (!voiceWorker.includes("/api/voice/drain")) throw new Error("The voice Worker must expose the internal drain endpoint");
+if (!worker.includes("dispatchVoiceCalls")) throw new Error("The customer Worker must dispatch queued calls on fan-out and on its sweep");
 if (!voiceModule.includes("verifyTwilioSignature")) throw new Error("The voice module must verify Twilio request signatures");
 if (!voiceModule.includes("SHA-1")) throw new Error("Twilio signature verification must use HMAC-SHA1, as Twilio specifies");
 for (const route of ["/api/voice/outbound/", "/api/voice/gather/", "/api/voice/status/", "/api/voice/inbound", "/api/voice/inbound/gather", "/api/voice/inbound-fallback"]) {

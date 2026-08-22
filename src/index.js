@@ -232,6 +232,32 @@ function validateIntake(body, { requireLocation = true } = {}) {
   return { errors, pet, owner, species, urgency, concernSummary, clinicConcernSummary, symptoms, startedWhen, redFlags, legalVersion: "2026-08-21" };
 }
 
+/**
+ * Ask the voice gateway to place its queued calls now.
+ *
+ * A care search stops collecting offers after ninety seconds. Leaving the queue
+ * to a scheduler would spend most of that window before the first clinic phone
+ * rang, so the customer Worker pokes the gateway the moment the fan-out lands
+ * and the gateway's own sweep is left to handle retries.
+ *
+ * Best effort by design: a clinic that is not reached by phone is still
+ * notified on its console, so a failure here must never fail the search.
+ */
+async function dispatchVoiceCalls(env) {
+  if (!env.VOICE) return;
+  try {
+    const response = await env.VOICE.fetch("https://voice.internal/api/voice/drain", {
+      method: "POST",
+      headers: env.VOICE_DRAIN_TOKEN ? { "x-timi-drain-token": env.VOICE_DRAIN_TOKEN } : {}
+    });
+    if (!response.ok) {
+      console.warn(JSON.stringify({ event: "voice_dispatch_rejected", status: response.status }));
+    }
+  } catch (error) {
+    console.warn(JSON.stringify({ event: "voice_dispatch_failed", message: error.message }));
+  }
+}
+
 async function createIntake(request, env, actor) {
   let body;
   try {
@@ -1069,7 +1095,7 @@ async function handleTenantAdmin(request, env, actor, path, method) {
   return null;
 }
 
-async function handleApi(request, env) {
+async function handleApi(request, env, ctx) {
   const url = new URL(request.url);
   const path = url.pathname;
   const method = request.method.toUpperCase();
@@ -1096,7 +1122,12 @@ async function handleApi(request, env) {
   }
 
   if (method === "POST" && path === "/api/intakes") return createIntake(request, env, actor);
-  if (method === "POST" && path === "/api/searches") return createCareSearch(request, env, actor);
+  if (method === "POST" && path === "/api/searches") {
+    const response = await createCareSearch(request, env, actor);
+    // The customer already has their answer; the calls go out behind it.
+    if (response.status === 201) ctx?.waitUntil(dispatchVoiceCalls(env));
+    return response;
+  }
   if (method === "POST" && path === "/api/observations") return recordObservation(request, env, actor);
 
   const searchMatch = path.match(/^\/api\/searches\/([^/]+)(?:\/(select-offer|status))?$/);
@@ -1148,13 +1179,13 @@ async function handleApi(request, env) {
 }
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const requestId = request.headers.get("cf-ray") || crypto.randomUUID();
     const startedAt = Date.now();
     try {
       const url = new URL(request.url);
       const response = url.pathname.startsWith("/api/")
-        ? await handleApi(request, env)
+        ? await handleApi(request, env, ctx)
         : await env.ASSETS.fetch(request);
       const headers = new Headers(response.headers);
       Object.entries(SECURITY_HEADERS).forEach(([key, value]) => headers.set(key, value));
@@ -1169,5 +1200,9 @@ export default {
 
   async scheduled(_controller, env, ctx) {
     ctx.waitUntil(expireStaleState(env));
+    // The voice gateway has no scheduler of its own — one cron for the account
+    // rather than two. Immediate dispatch handles the time-critical path; this
+    // sweep picks up retries and anything that failed to dispatch.
+    ctx.waitUntil(dispatchVoiceCalls(env));
   }
 };

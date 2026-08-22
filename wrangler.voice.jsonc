@@ -37,7 +37,8 @@
     "TWILIO_FROM_NUMBER": "",
     "VOICE_CALLS_ENABLED": "true",
     "VOICE_MAX_ATTEMPTS": "2",
-    "VOICE_PUBLIC_URL": "https://voice.timinow.pet"
+    "VOICE_PUBLIC_URL": "https://voice.timinow.pet",
+    "VOICE_DRAIN_TOKEN": ""
   },
   "d1_databases": [
     {
@@ -56,8 +57,10 @@
   "observability": {
     "enabled": true,
     "head_sampling_rate": 1
-  },
-  "triggers": {
-    "crons": ["* * * * *"]
   }
+  // No cron. The customer Worker pokes /api/voice/drain the moment a search
+  // fans out — far better than waiting up to a minute for a tick, given a
+  // search stops collecting offers after ninety seconds — and its existing
+  // five-minute sweep handles retries. That also keeps this project to one
+  // cron trigger for the whole account.
 }
