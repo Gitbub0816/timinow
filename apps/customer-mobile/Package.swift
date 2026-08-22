@@ -32,7 +32,10 @@ var timiNowUIDependencies: [Target.Dependency] = [
     "TimiNowCore", .product(name: "SkipFuseUI", package: "skip-fuse-ui")
 ]
 
-var timiNowCarPlayDependencies: [Target.Dependency] = ["TimiNowCore"]
+// TimiNowCarPlay links no Mapbox product: its one source shows the offer
+// list through CarPlay's own templates. Starting guidance from the car is
+// still to be written, and the dependency belongs back here when it is.
+let timiNowCarPlayDependencies: [Target.Dependency] = ["TimiNowCore"]
 
 if enableMapbox {
     packageDependencies.append(contentsOf: [
@@ -51,11 +54,6 @@ if enableMapbox {
     // the macOS build while leaving the iOS app and CarPlay builds unchanged.
     timiNowUIDependencies.append(contentsOf: [
         .product(name: "MapboxMaps", package: "mapbox-maps-ios", condition: .when(platforms: [.iOS])),
-        .product(name: "MapboxNavigationCore", package: "mapbox-navigation-ios", condition: .when(platforms: [.iOS])),
-        .product(name: "MapboxNavigationUIKit", package: "mapbox-navigation-ios", condition: .when(platforms: [.iOS])),
-        .product(name: "MapboxDirections", package: "mapbox-navigation-ios", condition: .when(platforms: [.iOS]))
-    ])
-    timiNowCarPlayDependencies.append(contentsOf: [
         .product(name: "MapboxNavigationCore", package: "mapbox-navigation-ios", condition: .when(platforms: [.iOS])),
         .product(name: "MapboxNavigationUIKit", package: "mapbox-navigation-ios", condition: .when(platforms: [.iOS])),
         .product(name: "MapboxDirections", package: "mapbox-navigation-ios", condition: .when(platforms: [.iOS]))

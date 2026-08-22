@@ -26,25 +26,11 @@ import CarPlay
 public final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate {
     private var interfaceController: CPInterfaceController?
 
-    #if canImport(MapboxNavigationUIKit)
-    private var carPlayManager: CarPlayManager?
-    #endif
-
     public func templateApplicationScene(
         _ templateApplicationScene: CPTemplateApplicationScene,
         didConnect interfaceController: CPInterfaceController
     ) {
         self.interfaceController = interfaceController
-        #if canImport(MapboxNavigationUIKit)
-        // NOTE ON VERIFICATION: `CarPlayManager`'s exact wiring (which
-        // properties it exposes for the interface controller, and the
-        // exact call to hand it a route once "Navigate" is tapped) was not
-        // independently verified against the installed SDK — confirm on a
-        // Mac before shipping. Until then this only shows the offer list;
-        // tapping "Navigate" is a no-op in the CarPlay scene.
-        let manager = CarPlayManager()
-        carPlayManager = manager
-        #endif
         interfaceController.setRootTemplate(offersListTemplate(), animated: true, completion: nil)
     }
 
@@ -53,9 +39,6 @@ public final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDel
         didDisconnectInterfaceController interfaceController: CPInterfaceController
     ) {
         self.interfaceController = nil
-        #if canImport(MapboxNavigationUIKit)
-        carPlayManager = nil
-        #endif
     }
 
     /// Mirrors the phone's active care search: the chosen clinic once one
@@ -78,13 +61,14 @@ public final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDel
         return CPListTemplate(title: "Tími NOW", sections: [CPListSection(items: items)])
     }
 
+    /// Tapping an offer does not start guidance yet. Mapbox's
+    /// `CarPlayManager` is the piece that would do it, and wiring it needs to
+    /// be written against the real SDK on a Mac — the previous attempt here
+    /// constructed one, stored it, and never used it, while `canImport` alone
+    /// (with no matching `import`) meant the type was never in scope and the
+    /// whole app failed to compile. Guidance on the phone is unaffected.
     private func beginNavigation(to destination: NavigationDestination) {
-        #if canImport(MapboxNavigationUIKit)
-        // See the NOTE ON VERIFICATION above — wiring `carPlayManager` to
-        // actually start guidance to `destination` still needs to be
-        // confirmed against the installed SDK's CarPlayManager API.
-        _ = carPlayManager
-        #endif
+        _ = destination
     }
 }
 

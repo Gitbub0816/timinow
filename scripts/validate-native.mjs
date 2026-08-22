@@ -523,6 +523,35 @@ for (const path of [
   }
 }
 
+// `#if canImport(M)` asks whether M is available. It does not import it. A
+// file that guards on canImport and then names a type from M, without an
+// `import M` anywhere, compiles fine while M is absent and fails the moment it
+// is present — which is the reverse of what the guard was written to do, and
+// it surfaces only on the machine that has the SDK.
+for (const root of ["apps/customer-mobile/Sources", "apps/vet-desktop/Sources"]) {
+  for (const path of await collectFiles(root, ".swift")) {
+    const source = await read(path);
+    for (const guard of source.matchAll(/canImport\((\w+)\)/g)) {
+      const module = guard[1];
+      if (new RegExp(`^\\s*import ${module}\\b`, "m").test(source)) continue;
+      throw new Error(`${path}: guards on canImport(${module}) but never imports ${module}. canImport only tests availability — without the import, any type from that module is out of scope and the build fails wherever the module actually exists.`);
+    }
+  }
+}
+
+// A Mapbox `Map { }` closure is a MapContentBuilder, and SwiftUI's ForEach is
+// not MapContent — the SDK ships ForEvery for exactly this. Verified against
+// mapbox-maps-ios 11.26: ForEvery.swift says "similar to SwiftUI ForEach, but
+// works with MapContent", and only ForEvery has the MapContent conformance.
+{
+  const path = "apps/customer-mobile/Sources/TimiNowUI/ClinicMapView.swift";
+  const source = await read(path);
+  const mapBuilder = source.match(/Map\(viewport:[^)]*\)\s*\{[\s\S]*?\n        \}/);
+  if (mapBuilder && /\bForEach\(/.test(mapBuilder[0])) {
+    throw new Error(`${path}: uses ForEach inside a Mapbox Map builder. That closure takes MapContent, which ForEach does not conform to — use ForEvery.`);
+  }
+}
+
 const csharpFiles = await collectFiles("apps/vet-windows", ".cs");
 for (const path of csharpFiles) {
   const problems = bracketProblems(await read(path));

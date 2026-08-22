@@ -6,19 +6,26 @@ import SkipFuseUI
 import SwiftUI
 #endif
 
-// NOTE ON VERIFICATION: this file was written without access to a Mac,
-// Xcode, or a Mapbox account (see docs/NAVIGATION.md), so the exact
-// MapboxMaps SwiftUI DSL calls below (`Map`, `Viewport`, `PointAnnotation`,
-// `MapStyle`, ...) should be checked against the installed
-// mapbox-maps-ios 11.x API before shipping. Every symbol here is behind
-// `canImport(MapboxMaps)`, so a mismatch only affects the Mapbox build path
-// — the non-Mapbox fallback below compiles independently of Mapbox's API
-// surface and is what Skip/Android and default CI actually build.
+// Every MapboxMaps symbol below was checked against the v11.26.0 sources:
+// Map(viewport:), Viewport.camera(center:zoom:), PointAnnotation(coordinate:)
+// with .textField/.textColor/.iconColor, PolylineAnnotation(lineCoordinates:)
+// with .lineColor/.lineWidth, .mapStyle(MapStyle(uri:)), StyleURI(rawValue:)
+// and .streets, and StyleColor(UIColor). That check is what caught ForEach
+// being used where the builder requires MapContent — see ForEvery below.
 
 #if canImport(MapboxMaps) && !SKIP && os(iOS)
 import MapboxMaps
 import CoreLocation
 import UIKit
+
+/// One pin on the offer map. A named Identifiable type rather than a tuple,
+/// because ForEvery identifies its elements by KeyPath and Swift has no key
+/// paths into tuples.
+private struct RankedClinic: Identifiable {
+    let location: ClinicLocation
+    let rank: Int
+    var id: String { location.id }
+}
 
 /// Renders customer position + ranked clinic pins (offer comparison) or a
 /// single selected clinic + live route line (tracker), in Tími's custom
@@ -38,10 +45,14 @@ struct ClinicMapView: View {
             PointAnnotation(coordinate: CLLocationCoordinate2D(latitude: userLatitude, longitude: userLongitude))
                 .iconColor(StyleColor(.systemBlue))
 
-            ForEach(Array(rankedClinics.enumerated()), id: \.element.location.id) { index, ranked in
+            // ForEvery, not SwiftUI's ForEach: a Map builder takes MapContent,
+            // and ForEach does not conform to it. ForEvery identifies elements
+            // by KeyPath, which is why these are a named struct rather than a
+            // tuple — Swift has no key paths into tuples.
+            ForEvery(rankedClinics) { ranked in
                 if let lat = ranked.location.latitude, let lon = ranked.location.longitude {
                     PointAnnotation(coordinate: CLLocationCoordinate2D(latitude: lat, longitude: lon))
-                        .textField("\(index + 1)")
+                        .textField("\(ranked.rank)")
                         .textColor(StyleColor(.white))
                         .iconColor(StyleColor(ranked.location.id == selectedClinicId ? .systemBlue : .systemOrange))
                 }
@@ -58,8 +69,8 @@ struct ClinicMapView: View {
         .onChange(of: userLatitude) { _ in recenter() }
     }
 
-    private var rankedClinics: [(location: ClinicLocation, rank: Int)] {
-        Array(clinics.prefix(5).enumerated().map { (location: $0.element, rank: $0.offset + 1) })
+    private var rankedClinics: [RankedClinic] {
+        clinics.prefix(5).enumerated().map { RankedClinic(location: $0.element, rank: $0.offset + 1) }
     }
 
     private func recenter() {
