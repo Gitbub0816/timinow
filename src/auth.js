@@ -81,12 +81,28 @@ async function verifyClerkToken(token, env, request) {
   }
 
   const organization = claims.o && typeof claims.o === "object" ? claims.o : {};
+  const userMetadata = claims.public_metadata || claims.metadata || claims.pmd || {};
+  const orgMetadata = organization.pmd || claims.org_public_metadata || {};
+  const permissions = claims.org_permissions || organization.per || [];
   return {
     authenticated: true,
     userId: claims.sub,
     sessionId: claims.sid || null,
+    email: claims.email || claims.email_address || userMetadata.email || null,
+    username: claims.username || null,
     clerkOrgId: claims.org_id || organization.id || null,
+    clerkOrgSlug: claims.org_slug || organization.slg || null,
     role: claims.role || claims.org_role || organization.rol || "customer",
+    permissions: Array.isArray(permissions) ? permissions : String(permissions).split(",").filter(Boolean),
+    userMetadata,
+    orgMetadata,
+    /**
+     * Set by the Clerk JWT template (or by the metadata backfill in
+     * `src/session.js`) so desktop and native clients resolve their tenant
+     * straight from the session token instead of a second round trip.
+     */
+    tenantId: claims.tenant_id || orgMetadata.tenantId || userMetadata.tenantId || null,
+    locationId: claims.location_id || orgMetadata.locationId || userMetadata.locationId || null,
     claims
   };
 }
@@ -102,7 +118,13 @@ export async function actorForRequest(request, env) {
       userId: request.headers.get("x-demo-user-id") || "demo_customer",
       tenantId: request.headers.get("x-demo-tenant-id") || "tenant_hearth",
       role: request.headers.get("x-demo-role") || "customer",
+      email: request.headers.get("x-demo-email") || null,
+      permissions: [],
+      userMetadata: {},
+      orgMetadata: {},
       clerkOrgId: null,
+      clerkOrgSlug: null,
+      locationId: null,
       demo: true
     };
   }
@@ -123,4 +145,16 @@ export function roleAllows(actor, allowedRoles) {
   if (allowedRoles.includes(normalized)) return true;
   if (allowedRoles.includes("clinic") && (normalized.includes("admin") || normalized.includes("member"))) return true;
   return false;
+}
+
+
+/**
+ * Platform operators may hold `org:admin` inside a tenant while still being
+ * denied tenant creation; that check lives in `src/tenancy.js`. This helper only
+ * answers whether the actor administers the organization the session is scoped to.
+ */
+export function isOrgAdmin(actor) {
+  if (!actor) return false;
+  const role = String(actor.role || "").toLowerCase();
+  return role === "org:admin" || role === "admin";
 }

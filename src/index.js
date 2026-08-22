@@ -1,4 +1,13 @@
-import { actorForRequest, roleAllows, signInRequired } from "./auth.js";
+import { actorForRequest, isOrgAdmin, roleAllows, signInRequired } from "./auth.js";
+import { describeSession } from "./session.js";
+import {
+  addMember,
+  changeMemberRole,
+  listMembers,
+  removeMember,
+  requireTenantAdmin,
+  revokeInvitation
+} from "./tenant-admin.js";
 import { DEMO_LOCATIONS, RED_FLAG_TERMS, VALID_INTAKE_STATUS, VALID_SPECIES, VALID_URGENCY } from "./catalog.js";
 import {
   getCareOffer,
@@ -15,6 +24,7 @@ import {
   tenantIdForClerkOrg
 } from "./db.js";
 
+const DEFAULT_MAP_STYLE = "mapbox://styles/calebowen2019/cmt3nci25004d01sya8qxcb4u";
 const JSON_HEADERS = { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" };
 const SECURITY_HEADERS = {
   "referrer-policy": "strict-origin-when-cross-origin",
@@ -143,7 +153,15 @@ async function handleConfig(env) {
     clerkJsUrl: signInRequired(env) ? (env.CLERK_JS_URL || "https://cdn.jsdelivr.net/npm/@clerk/clerk-js@5/+esm") : null,
     stripePublishableKey: env.STRIPE_PUBLISHABLE_KEY || null,
     demoMode: env.DEMO_MODE === "true",
-    database: hasDatabase(env) ? "d1" : "fixtures"
+    database: hasDatabase(env) ? "d1" : "fixtures",
+    surface: env.SURFACE || "customer",
+    map: {
+      /** Public Mapbox token. Never expose a secret (sk.) token here. */
+      token: env.MAPBOX_PUBLIC_TOKEN || null,
+      styleUrl: env.MAPBOX_STYLE_URL || DEFAULT_MAP_STYLE,
+      /** The navigation UI reuses the same style so guidance matches the map. */
+      navigationStyleUrl: env.MAPBOX_NAVIGATION_STYLE_URL || env.MAPBOX_STYLE_URL || DEFAULT_MAP_STYLE
+    }
   });
 }
 
@@ -915,6 +933,46 @@ async function expireStaleState(env) {
   console.log(JSON.stringify({ event: "scheduled_expiry_complete", at: now, expired: expired.results.length, noShows: noShows.results.length, closedCollections: closedCollections.results.length, expiredSearches: expiredSearches.results.length, expiredOffers: expiredOffers.results.length }));
 }
 
+/**
+ * Workspace people management. Mounted on every Worker so the veterinary console
+ * and the tenant view of the admin console share one implementation. Creating a
+ * tenant is deliberately absent here — that is platform-operator only.
+ */
+async function handleTenantAdmin(request, env, actor, path, method) {
+  const tenantId = actor?.tenantId || (actor?.clerkOrgId ? await tenantIdForClerkOrg(env, actor.clerkOrgId) : null);
+  const guard = requireTenantAdmin(actor, tenantId);
+  if (guard) return apiError(guard.status, guard.code, guard.message);
+
+  const respond = (result) => (result.code
+    ? apiError(result.status, result.code, result.message)
+    : json(result.body, { status: result.status }));
+
+  try {
+    if (method === "GET" && path === "/api/tenant/members") return json(await listMembers(env, actor, tenantId));
+    if (method === "POST" && path === "/api/tenant/members") {
+      const body = await readJson(request).catch(() => null);
+      return respond(await addMember(env, actor, tenantId, body || {}));
+    }
+    const memberMatch = path.match(/^\/api\/tenant\/members\/([^/]+)$/);
+    if (memberMatch) {
+      const memberId = decodeURIComponent(memberMatch[1]);
+      if (method === "PATCH") {
+        const body = await readJson(request).catch(() => null);
+        return respond(await changeMemberRole(env, actor, tenantId, memberId, body || {}));
+      }
+      if (method === "DELETE") return respond(await removeMember(env, actor, tenantId, memberId));
+    }
+    const inviteMatch = path.match(/^\/api\/tenant\/invitations\/([^/]+)$/);
+    if (method === "DELETE" && inviteMatch) {
+      return respond(await revokeInvitation(env, actor, tenantId, decodeURIComponent(inviteMatch[1])));
+    }
+  } catch (error) {
+    if (error.name === "ClerkError") return apiError(error.status >= 400 && error.status < 600 ? error.status : 502, "CLERK_REQUEST_FAILED", error.message);
+    throw error;
+  }
+  return null;
+}
+
 async function handleApi(request, env) {
   const url = new URL(request.url);
   const path = url.pathname;
@@ -930,6 +988,16 @@ async function handleApi(request, env) {
 
   const actor = await authenticatedActor(request, env);
   if (signInRequired(env) && !actor) return authRequiredResponse();
+
+  if (method === "GET" && path === "/api/session") {
+    const session = await describeSession(env, actor);
+    return session ? json({ session }) : authRequiredResponse();
+  }
+
+  if (path.startsWith("/api/tenant/")) {
+    const tenantResponse = await handleTenantAdmin(request, env, actor, path, method);
+    if (tenantResponse) return tenantResponse;
+  }
 
   if (method === "POST" && path === "/api/intakes") return createIntake(request, env, actor);
   if (method === "POST" && path === "/api/searches") return createCareSearch(request, env, actor);

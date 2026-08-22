@@ -53,6 +53,7 @@ const database = new DatabaseSync(":memory:");
 database.exec(await readFile("migrations/0001_initial.sql", "utf8"));
 database.exec(await readFile("migrations/0002_seed.sql", "utf8"));
 database.exec(await readFile("migrations/0003_multi_offer_search.sql", "utf8"));
+database.exec(await readFile("migrations/0004_tenancy_admin.sql", "utf8"));
 
 const env = {
   ASSETS: { fetch: async () => new Response("asset") },
