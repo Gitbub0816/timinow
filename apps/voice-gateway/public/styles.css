@@ -1,0 +1,108 @@
+:root {
+  --ink: #111B3B;
+  --ink-soft: #3F4862;
+  --paper: #FFFAF0;
+  --blue: #2357D9;
+  --blue-dark: #173C9A;
+  --blue-soft: #E5ECFF;
+  --coral: #F25F4C;
+  --coral-dark: #BD3E31;
+  --canvas: #F3F5FA;
+  --line: #D9D8D2;
+  --muted: #6F7483;
+  --hard-shadow: 7px 7px 0 #111B3B;
+  --font-display: Georgia, "Times New Roman", serif;
+  --font-ui: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--canvas);
+  color: var(--ink);
+  font-family: var(--font-ui);
+  line-height: 1.55;
+}
+
+.wrap {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 48px 24px 80px;
+}
+
+.head { margin-bottom: 32px; }
+
+.eyebrow {
+  font-family: var(--font-ui);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--blue-dark);
+  font-size: 0.8rem;
+  margin: 0 0 8px;
+}
+
+h1 {
+  font-family: var(--font-display);
+  font-size: 2.4rem;
+  margin: 0 0 12px;
+  color: var(--ink);
+}
+
+.lede {
+  color: var(--ink-soft);
+  font-size: 1.05rem;
+  max-width: 56ch;
+}
+
+.card {
+  background: var(--paper);
+  border: 2px solid var(--ink);
+  box-shadow: var(--hard-shadow);
+  border-radius: 4px;
+  padding: 24px 28px;
+  margin-bottom: 28px;
+}
+
+.card h2 {
+  font-family: var(--font-display);
+  font-size: 1.3rem;
+  margin: 0 0 12px;
+}
+
+.card p { margin: 0 0 12px; color: var(--ink-soft); }
+.card p:last-child { margin-bottom: 0; }
+
+code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  background: var(--blue-soft);
+  color: var(--blue-dark);
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 0.9em;
+}
+
+.health dl { margin: 0; }
+
+.health .row {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+}
+.health .row:last-child { border-bottom: none; }
+
+.health dt { color: var(--muted); font-weight: 600; }
+.health dd { margin: 0; font-weight: 700; }
+
+.muted { color: var(--muted); }
+
+.foot {
+  margin-top: 40px;
+  padding-top: 20px;
+  border-top: 2px solid var(--ink);
+  color: var(--muted);
+  font-size: 0.9rem;
+}
