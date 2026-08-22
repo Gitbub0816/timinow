@@ -40,23 +40,27 @@ DRY=false
 SECRETS_ONLY=false
 PULL=true
 INSPECT=false
+TEST_CALL=""
 
 # Every argument is read, in any order, so the flags combine — `--dry-run
 # --no-pull` used to silently ignore the second one.
-for arg in "$@"; do
+while [ $# -gt 0 ]; do
+  arg="$1"
   case "$arg" in
     --dry-run)      DRY=true ;;
     --secrets-only) SECRETS_ONLY=true ;;
     --no-pull)      PULL=false ;;
     --inspect)      INSPECT=true ;;
+    --test-call)    TEST_CALL="${2:-}"; shift ;;
     -*)             echo "unknown option: $arg" >&2; exit 1 ;;
     *)              [ -n "$ENV_FILE" ] && { echo "more than one env file given: $ENV_FILE and $arg" >&2; exit 1; }
                     ENV_FILE="$arg" ;;
   esac
+  shift
 done
 
 if [ -z "$ENV_FILE" ]; then
-  echo "usage: $0 <path-to-env-file> [--dry-run] [--secrets-only] [--no-pull] [--inspect]" >&2
+  echo "usage: $0 <path-to-env-file> [--dry-run] [--secrets-only] [--no-pull] [--inspect] [--test-call +1...]" >&2
   echo "example: $0 ~/Downloads/env.example" >&2
   exit 1
 fi
@@ -320,6 +324,38 @@ if $INSPECT; then
       printf "  %-32s %s… %d characters\n", key, substr(val, 1, 2), length(val)
     }
   ' "$ENV_FILE"
+  echo
+  exit 0
+fi
+
+# Place one test call, reading the env file with the same reader everything
+# else here uses.
+#
+# The alternative is a shell one-liner with a grep in it, and a grep does not
+# know about `export KEY=value`, a quoted value, a duplicate assignment, or a
+# trailing carriage return — all of which this reader handles and all of which
+# have already cost a round trip. The token never reaches argv.
+if [ -n "$TEST_CALL" ]; then
+  ORIGIN="$(env_value VOICE_PUBLIC_URL)"
+  [ -n "$ORIGIN" ] || ORIGIN="https://voice.timinow.pet"
+  ORIGIN="${ORIGIN%/}"
+  TOKEN="$(env_value VOICE_DRAIN_TOKEN)"
+  bold "Test call"
+  echo "  to      $TEST_CALL"
+  echo "  through $ORIGIN"
+  if [ -z "$TOKEN" ]; then
+    die "  VOICE_DRAIN_TOKEN is blank in $ENV_FILE, and the endpoint will not
+  place a billable call without it. Add one and deploy it:
+
+    echo \"VOICE_DRAIN_TOKEN=\$(openssl rand -hex 24)\" >> $ENV_FILE
+    $0 $ENV_FILE"
+  fi
+  dim "  token   ${TOKEN%${TOKEN#??}}… ${#TOKEN} characters"
+  echo
+  curl -sS -X POST "$ORIGIN/api/voice/test-call" \
+    -H "x-timi-drain-token: $TOKEN" \
+    -H "content-type: application/json" \
+    -d "{\"to\":\"$TEST_CALL\"}"
   echo
   exit 0
 fi
