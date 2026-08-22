@@ -630,6 +630,42 @@ put_secret() { # put_secret KEY CONFIG...
   done
 }
 
+# Ask Twilio whether the pair is real, rather than finding out on the first
+# call. Both values can be perfectly well formed and still belong to different
+# accounts, or the token can have been rotated in the console — and the only
+# symptom is a 401 whose body is the word "Authenticate", arriving whenever a
+# clinic finally needed a phone call.
+#
+# One GET, no telephony, nothing billable. Credentials go in on stdin rather
+# than argv, so they never appear in `ps` or in shell history.
+if ! $DRY && have TWILIO_ACCOUNT_SID && have TWILIO_AUTH_TOKEN; then
+  bold "4b. Twilio credentials"
+  TW_SID="$(env_value TWILIO_ACCOUNT_SID)"
+  TW_STATUS="$(printf 'user = "%s:%s"\n' "$TW_SID" "$(env_value TWILIO_AUTH_TOKEN)" \
+    | curl -sS --config - -o /dev/null -w '%{http_code}' --max-time 20 \
+      "https://api.twilio.com/2010-04-01/Accounts/$TW_SID.json" 2>/dev/null || echo "000")"
+  case "$TW_STATUS" in
+    200) echo "  accepted by Twilio" ;;
+    401) die "  Twilio rejected TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN together (401).
+
+  Both are the right shape, so this is not a typo — they do not belong to the
+  same active account. The usual causes, in order:
+
+    * the Auth Token is an API Key Secret. Both are 32 characters, and the
+      one that works here is the Auth Token on the Twilio console home page,
+      directly beside the Account SID.
+    * the token was rotated in the console, and this is the previous one.
+    * the SID is a subaccount's and the token is the parent account's.
+
+  Copy both from the console home page in one go, at the same moment.
+  Nothing was deployed." ;;
+    000) warn "  Could not reach Twilio to check the credentials — continuing." ;;
+    *)   warn "  Twilio answered $TW_STATUS when checking the credentials. Continuing," ;
+         warn "  but expect calls to fail if this is not a transient error." ;;
+  esac
+  echo
+fi
+
 bold "5. Worker secrets"
 put_secret CLERK_SECRET_KEY      "$CUSTOMER" "$VET" "$ADMIN" "$VOICE"
 # Not a secret in the security sense — it is served to every browser by
