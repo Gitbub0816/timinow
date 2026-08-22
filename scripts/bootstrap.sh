@@ -42,6 +42,7 @@ PULL=true
 INSPECT=false
 TEST_CALL=""
 TEST_VOICE=""
+TTS_CHECK=false
 
 # Every argument is read, in any order, so the flags combine — `--dry-run
 # --no-pull` used to silently ignore the second one.
@@ -54,6 +55,7 @@ while [ $# -gt 0 ]; do
     --inspect)      INSPECT=true ;;
     --test-call)    TEST_CALL="${2:-}"; shift ;;
     --voice)        TEST_VOICE="${2:-}"; shift ;;
+    --tts-check)    TTS_CHECK=true ;;
     -*)             echo "unknown option: $arg" >&2; exit 1 ;;
     *)              [ -n "$ENV_FILE" ] && { echo "more than one env file given: $ENV_FILE and $arg" >&2; exit 1; }
                     ENV_FILE="$arg" ;;
@@ -62,7 +64,7 @@ while [ $# -gt 0 ]; do
 done
 
 if [ -z "$ENV_FILE" ]; then
-  echo "usage: $0 <path-to-env-file> [--dry-run] [--secrets-only] [--no-pull] [--inspect] [--test-call +1... [--voice NAME]]" >&2
+  echo "usage: $0 <path-to-env-file> [--dry-run] [--secrets-only] [--no-pull] [--inspect] [--tts-check] [--test-call +1... [--voice NAME]]" >&2
   echo "example: $0 ~/Downloads/env.example" >&2
   exit 1
 fi
@@ -337,6 +339,28 @@ fi
 # know about `export KEY=value`, a quoted value, a duplicate assignment, or a
 # trailing carriage return — all of which this reader handles and all of which
 # have already cost a round trip. The token never reaches argv.
+if $TTS_CHECK; then
+  ORIGIN="$(env_value VOICE_PUBLIC_URL)"
+  [ -n "$ORIGIN" ] || ORIGIN="https://voice.timinow.pet"
+  ORIGIN="${ORIGIN%/}"
+  TOKEN="$(env_value VOICE_DRAIN_TOKEN)"
+  bold "Gemini voice check"
+  echo "  through $ORIGIN"
+  BODY="{}"
+  [ -n "$TEST_VOICE" ] && BODY="{\"voice\":\"$TEST_VOICE\"}"
+  echo
+  curl -sS -X POST "$ORIGIN/api/voice/tts-check" \
+    -H "x-timi-drain-token: $TOKEN" \
+    -H "content-type: application/json" \
+    -d "$BODY"
+  echo
+  echo
+  dim "  ok:true means the call will play that voice. ok:false gives Google's"
+  dim "  own reason and names the Twilio voice speaking in its place."
+  dim "  Try a specific one:  $0 $ENV_FILE --tts-check --voice Kore"
+  exit 0
+fi
+
 if [ -n "$TEST_CALL" ]; then
   ORIGIN="$(env_value VOICE_PUBLIC_URL)"
   [ -n "$ORIGIN" ] || ORIGIN="https://voice.timinow.pet"

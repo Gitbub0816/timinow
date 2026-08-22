@@ -25,7 +25,7 @@ import {
   tenantIdForClerkOrg
 } from "../../../src/db.js";
 import { isPlatformAdmin } from "../../../src/tenancy.js";
-import { geminiConfigured, geminiVoice, synthesizeSpeech } from "../../../src/gemini-tts.js";
+import { geminiConfigured, geminiModel, geminiVoice, synthesizeSpeech } from "../../../src/gemini-tts.js";
 import {
   acceptedTwiml,
   alreadyFilledTwiml,
@@ -752,6 +752,42 @@ async function handleApi(request, env) {
     } catch (error) {
       console.error(JSON.stringify({ event: "voice_test_call_failed", message: error.message }));
       return apiError(502, "CALL_FAILED", error.message);
+    }
+  }
+
+  /*
+   * Try one synthesis and report exactly what happened.
+   *
+   * A call that comes out in Twilio's voice has already fallen back, and the
+   * reason is in a Worker log nobody is watching. This runs the same code path
+   * the call does and hands back Google's own words — no key, wrong key, wrong
+   * voice name, wrong model, or a working one with a byte count to prove it.
+   */
+  if (method === "POST" && path === "/api/voice/tts-check") {
+    const expected = env.VOICE_DRAIN_TOKEN || "";
+    const supplied = request.headers.get("x-timi-drain-token") || "";
+    if (!expected || supplied !== expected) return apiError(403, "TTS_CHECK_FORBIDDEN", "Not permitted.");
+    if (!geminiConfigured(env)) {
+      return json({
+        ok: false,
+        reason: "GEMINI_API_KEY is not set on this Worker, so every call falls back to Twilio's voice.",
+        speaking: sayVoice(env)
+      }, { status: 200 });
+    }
+    let body = {};
+    try { body = await request.json(); } catch { body = {}; }
+    const voice = String(body.voice || "").trim() || geminiVoice(env);
+    try {
+      const result = await synthesizeSpeech(env, { text: "Tee-mee test.", voice, style: CALL_STYLE });
+      return json({ ok: true, voice: result.voice, model: result.model, wavBytes: result.wav.length });
+    } catch (error) {
+      return json({
+        ok: false,
+        voice,
+        model: geminiModel(env),
+        reason: error.message,
+        speaking: sayVoice(env)
+      }, { status: 200 });
     }
   }
 
