@@ -72,7 +72,12 @@ struct TurnByTurnNavigationView: UIViewControllerRepresentable {
     var petName: String
     /// Which register to speak in, carried down from the intake's urgency.
     var tone: NavigationTone
-    var mapboxAccessToken: String?
+    /// Not optional. AppStore holds it as `String?` because it is absent until
+    /// /api/config answers, and that optional stops here — one `?? ""` at the
+    /// call site, matching ClinicMapView. Threading it further meant handing an
+    /// optional to Mapbox initializers that take a String, which is a build
+    /// error on the Mapbox path only, so nothing but a device build finds it.
+    var mapboxAccessToken: String
     var onProgress: (NavigationStepModel, RouteSummary) -> Void
     var onArrival: () -> Void
     var onEnd: () -> Void
@@ -95,13 +100,13 @@ final class NavigationHostController: UIViewController {
     private let preferences: NavigationPreferences
     private let petName: String
     private let tone: NavigationTone
-    private let mapboxAccessToken: String?
+    private let mapboxAccessToken: String
     private let onProgress: (NavigationStepModel, RouteSummary) -> Void
     private let onArrival: () -> Void
     private let onEnd: () -> Void
     private var navigationViewController: NavigationViewController?
 
-    init(destination: NavigationDestination, origin: GeoPoint, preferences: NavigationPreferences, petName: String, tone: NavigationTone, mapboxAccessToken: String?, onProgress: @escaping (NavigationStepModel, RouteSummary) -> Void, onArrival: @escaping () -> Void, onEnd: @escaping () -> Void) {
+    init(destination: NavigationDestination, origin: GeoPoint, preferences: NavigationPreferences, petName: String, tone: NavigationTone, mapboxAccessToken: String, onProgress: @escaping (NavigationStepModel, RouteSummary) -> Void, onArrival: @escaping () -> Void, onEnd: @escaping () -> Void) {
         self.destination = destination
         self.origin = origin
         self.preferences = preferences
@@ -213,19 +218,20 @@ final class NavigationHostController: UIViewController {
     }
 }
 
+// Both signatures checked against mapbox-navigation-ios v3.27.0's
+// NavigationViewControllerDelegate, not assumed. Getting one wrong costs
+// nothing at build time and everything at run time: the protocol ships default
+// implementations, so a near-miss compiles, silently satisfies no requirement,
+// and the method is simply never called.
+//
+// didArriveAt returned Bool here and does not in the SDK, which is exactly that
+// failure — arrival never fired, so "I'm here" was the only way to finish a
+// trip and the `arrived` milestone was never recorded on its own.
 extension NavigationHostController: NavigationViewControllerDelegate {
-    func navigationViewController(_ navigationViewController: NavigationViewController, didArriveAt waypoint: Waypoint) -> Bool {
+    func navigationViewController(_ navigationViewController: NavigationViewController, didArriveAt waypoint: Waypoint) {
         onArrival()
-        return true
     }
 
-    // NOTE ON VERIFICATION: `RouteProgress`/`RouteLegProgress`'s exact
-    // property names have been broadly stable across Mapbox Navigation SDK
-    // versions, but this specific delegate method's name/signature was not
-    // independently re-confirmed against the installed 3.27.x SDK. If it
-    // doesn't match, this method is simply never called — `onProgress`
-    // (and therefore the Watch app's mirrored ETA/next-step) stays stale
-    // during an active session, but nothing else here is affected.
     func navigationViewController(_ navigationViewController: NavigationViewController, didUpdate progress: RouteProgress, with location: CLLocation, rawLocation: CLLocation) {
         let leg = progress.currentLegProgress
         let step = NavigationStepModel(
@@ -250,7 +256,7 @@ struct TurnByTurnNavigationView: View {
     var navigationStyleURL: String
     var petName: String
     var tone: NavigationTone
-    var mapboxAccessToken: String?
+    var mapboxAccessToken: String
     var onProgress: (NavigationStepModel, RouteSummary) -> Void
     var onArrival: () -> Void
     var onEnd: () -> Void
@@ -300,7 +306,7 @@ struct NavigationScreen: View {
                 navigationStyleURL: store.navigationStyleURL,
                 petName: store.selectedPet.name,
                 tone: NavigationTone.forUrgency(store.draft.urgency),
-                mapboxAccessToken: store.mapToken,
+                mapboxAccessToken: store.mapToken ?? "",
                 onProgress: { step, summary in store.updateNavigationProgress(step: step, summary: summary) },
                 onArrival: {
                     arrivedPromptShown = true

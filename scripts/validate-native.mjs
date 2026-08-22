@@ -634,6 +634,40 @@ for (const path of await collectFiles("apps/customer-mobile/Sources", ".swift"))
   }
 }
 
+// The Mapbox access token is optional exactly once, in AppStore, because it is
+// absent until /api/config answers. Every UI declaration below that is a plain
+// String, unwrapped at the one call site. Threading the optional deeper means
+// handing it to Mapbox initializers that take a String — a build error that
+// exists only on the Mapbox path, so nothing short of a device build with a
+// downloads token ever sees it.
+for (const path of await collectFiles("apps/customer-mobile/Sources/TimiNowUI", ".swift")) {
+  const source = await read(path);
+  const optional = source.match(/^\s*(?:public\s+|private\s+)?(?:var|let)\s+(mapToken|mapboxAccessToken)\s*:\s*String\?/m);
+  if (optional) {
+    throw new Error(`${path}: declares ${optional[1]} as String?. The optional belongs to AppStore alone — unwrap it at the call site with ?? "" and keep every UI declaration non-optional, or the Mapbox build fails on "value of optional type must be unwrapped".`);
+  }
+  const parameter = source.match(/\b(mapToken|mapboxAccessToken)\s*:\s*String\?[,)]/);
+  if (parameter) {
+    throw new Error(`${path}: takes ${parameter[1]} as String?. Same reason — the Mapbox initializers it reaches take a String.`);
+  }
+}
+
+// A protocol with default implementations does not complain about a near-miss:
+// the wrong signature satisfies nothing, the default runs, and the method is
+// simply never called. didArriveAt returns Void in
+// mapbox-navigation-ios v3.27.0; returning Bool cost us arrival detection with
+// no build error and no run-time complaint.
+{
+  const path = "apps/customer-mobile/Sources/TimiNowUI/NavigationView.swift";
+  const source = await read(path);
+  if (/didArriveAt\s+waypoint:\s*Waypoint\)\s*->/.test(source)) {
+    throw new Error(`${path}: navigationViewController(_:didArriveAt:) returns a value. The SDK declares it returning Void, so this satisfies no protocol requirement, the default implementation runs, and arrival is never reported.`);
+  }
+  if (!/didArriveAt\s+waypoint:\s*Waypoint\)\s*\{/.test(source)) {
+    throw new Error(`${path}: no longer implements navigationViewController(_:didArriveAt:), so arriving at the clinic records nothing.`);
+  }
+}
+
 // `#if canImport(M)` asks whether M is available. It does not import it. A
 // file that guards on canImport and then names a type from M, without an
 // `import M` anywhere, compiles fine while M is absent and fails the moment it
