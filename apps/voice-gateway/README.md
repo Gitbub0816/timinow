@@ -9,6 +9,28 @@ It has no customer-facing or clinic-facing screens. The public page at `/` is
 a status page only — see `public/index.html`. Clinics manage requests by hand
 at `timinow-vet`; this Worker is the unattended fallback.
 
+
+## Inbound: when a clinic calls back
+
+Tími only dials out, but the number it dials from lands on the clinic's caller
+ID and they will ring it. Configure all three fields on the number:
+
+| Twilio field | URL | Method |
+| --- | --- | --- |
+| A call comes in | `https://voice.timinow.pet/api/voice/inbound` | POST |
+| Primary handler fails | `https://voice.timinow.pet/api/voice/inbound-fallback` | POST |
+| Call status changes | `https://voice.timinow.pet/api/voice/status` | POST |
+
+A recognised clinic with a request still open is offered the same keypad choice
+the outbound call made. Anyone else gets a neutral greeting and a pointer to
+providers.timinow.pet — caller ID is a hint, never an authorization, so the
+accept itself still needs a valid Twilio signature and a per-target token.
+
+The fallback is deliberately static: Twilio calls it when the primary handler
+has already failed, so it touches no database and can fail no second time. The
+validator enforces that.
+
+
 ## The call script
 
 Roughly (see `buildCallScript` in `../../src/voice.js` for the exact wording):

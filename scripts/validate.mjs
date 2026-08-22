@@ -119,11 +119,21 @@ if (!wranglerVoice.includes('"d1_databases"')) throw new Error("The voice Worker
 if (!wranglerVoice.includes('"crons"')) throw new Error("The voice Worker must run a cron trigger to drain the call queue");
 if (!voiceModule.includes("verifyTwilioSignature")) throw new Error("The voice module must verify Twilio request signatures");
 if (!voiceModule.includes("SHA-1")) throw new Error("Twilio signature verification must use HMAC-SHA1, as Twilio specifies");
-for (const route of ["/api/voice/outbound/", "/api/voice/gather/", "/api/voice/status/"]) {
+for (const route of ["/api/voice/outbound/", "/api/voice/gather/", "/api/voice/status/", "/api/voice/inbound", "/api/voice/inbound/gather", "/api/voice/inbound-fallback"]) {
   if (!voiceWorker.includes(route)) throw new Error(`The voice Worker is missing its ${route} webhook`);
 }
 if (!voiceWorker.includes("verifyTwilioSignature")) throw new Error("The voice Worker must verify every Twilio webhook signature");
 if (!voiceWorker.includes("verifyAttemptToken")) throw new Error("Voice webhooks must be scoped to a single call attempt");
+
+/**
+ * Twilio calls the fallback URL precisely when the primary one has failed, so a
+ * fallback that reads the database is not a fallback. It must stay static.
+ */
+if (!voiceModule.includes("inboundFallbackTwiml")) throw new Error("The voice module must provide static fallback TwiML");
+const fallbackBody = voiceModule.slice(voiceModule.indexOf("export function inboundFallbackTwiml"));
+if (/env\.DB|prepare\(|await /.test(fallbackBody.slice(0, fallbackBody.indexOf("\n}")))) {
+  throw new Error("The inbound fallback TwiML must not depend on anything that can fail");
+}
 
 /**
  * Twilio signs the whole callback URL, so VOICE_PUBLIC_URL must name exactly

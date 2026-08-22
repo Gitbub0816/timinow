@@ -79,17 +79,52 @@ slash, no `www`. Twilio signs the URL string, so a mismatch rejects every call.
 It is already set in `wrangler.voice.jsonc`, and the validator fails the build
 if it ever stops matching the route.
 
-### What to configure in the Twilio console
+### The phone number's Voice configuration
+
+Twilio asks for three URLs and an HTTP method for each. These handle **inbound**
+calls — a clinic ringing back the number it saw on caller ID. Tími answers them,
+so fill all three in:
+
+| Field | URL | Method |
+| --- | --- | --- |
+| **A call comes in** (Request URL) | `https://voice.timinow.pet/api/voice/inbound` | `HTTP POST` |
+| **Primary handler fails** (Fallback URL) | `https://voice.timinow.pet/api/voice/inbound-fallback` | `HTTP POST` |
+| **Call status changes** (Status Callback) | `https://voice.timinow.pet/api/voice/status` | `HTTP POST` |
+
+`POST` for all three. The Worker reads Twilio's form-encoded body, and the
+request signature is computed over those parameters — `GET` would not carry
+them. (The fallback also answers `GET`, because Twilio retries a failed fallback
+either way, but configure it as `POST`.)
+
+Leave **Configure with** on *Webhooks, TwiML Bins, Functions, Studio or Proxy*.
+Do not create a TwiML App: outbound calls pass their URL directly in the REST
+request, so a TwiML App's `ApplicationSid` is never used.
+
+**What a clinic actually hears when they call back.** If their caller ID matches
+a clinic with a request still open, they get the same question the outbound call
+asked — the missed call becomes a second chance to take the patient rather than
+a dead end:
+
+> "Hi, this is Tími. Thanks for calling back, Hearth & Paw. There is still an
+> open request: a pet owner is looking for immediate care for a dog with
+> vomiting or diarrhea, about 11 minutes away. Do you have time to see them?
+> Press 1 to confirm you can take them, or press 2 to decline."
+
+If nothing is open, or the number is not one Tími recognises, they get a neutral
+greeting pointing at `providers.timinow.pet`. An unrecognised caller is never
+told anything about a patient — the caller ID is treated as a hint, and the
+accept still requires a valid Twilio signature plus a per-target token.
+
+### The rest of the Twilio console
 
 1. **Buy a Voice-capable number** in the area you operate. Clinics see it on
-   caller ID, so pick something you are willing to answer.
+   caller ID, so pick something you are willing to have called back.
 2. Set it as `TWILIO_FROM_NUMBER` in `wrangler.voice.jsonc`, in E.164
    (`+1510XXXXXXX`).
-3. **Inbound handling for that number** — Tími does not serve inbound calls.
-   Point *Voice → A call comes in* at a TwiML Bin that forwards to your real
-   line, or a simple message. Leaving it on Twilio's default demo message means
-   a clinic calling you back hears a Twilio advertisement.
-4. Nothing else. No TwiML App, no Studio Flow, no webhook fields on the number.
+3. **Geographic permissions** — Voice → Settings → Geo permissions. Enable only
+   the countries you call. It is on by default for far more than you need, and
+   it is the usual way a compromised account runs up a bill.
+4. Nothing else. No Studio Flow, no TwiML Bin.
 
 ### Verify it end to end
 

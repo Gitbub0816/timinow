@@ -31,6 +31,8 @@ import {
   buildCallScript,
   declinedTwiml,
   errorTwiml,
+  inboundFallbackTwiml,
+  inboundTwiml,
   noResponseTwiml,
   normalizePhone,
   outboundTwiml,
@@ -228,6 +230,131 @@ async function decideByPhone(env, tenantId, targetId, decision) {
   const result = await applyCareSearchDecision(env, { targetId, tenantId, decision });
   if (result.ok) return { ok: true };
   return { ok: false, reason: result.code };
+}
+
+
+/* ------------------------------------------------------------- inbound --- */
+
+/**
+ * Find the clinic a caller belongs to, and the request they still have open.
+ *
+ * Matched on caller ID, which is a hint rather than proof — so this only ever
+ * *offers* a decision. Actually recording one still goes through the signed
+ * gather step below.
+ */
+async function openRequestForCaller(env, fromNumber) {
+  const normalized = normalizePhone(fromNumber);
+  if (!normalized || !hasDatabase(env)) return null;
+
+  const location = await env.DB.prepare(`
+    SELECT id, name, tenant_id FROM locations
+    WHERE active = 1 AND (voice_phone = ? OR phone = ?
+      OR REPLACE(REPLACE(REPLACE(REPLACE(phone, '(', ''), ')', ''), '-', ''), ' ', '') = ?)
+    LIMIT 1
+  `).bind(normalized, normalized, normalized.replace(/^\+1/, "")).first();
+  if (!location) return null;
+
+  const now = new Date().toISOString();
+  const target = await env.DB.prepare(`
+    SELECT t.id AS target_id, t.travel_minutes, o.payload_json
+    FROM care_search_targets t
+    JOIN care_searches s ON s.id = t.search_id
+    LEFT JOIN notification_outbox o ON o.channel = 'voice'
+      AND json_extract(o.payload_json, '$.targetId') = t.id
+    WHERE t.location_id = ? AND t.status = 'awaiting_response'
+      AND s.status IN ('collecting', 'offers_ready')
+      AND datetime(s.search_expires_at) > datetime(?)
+    ORDER BY t.created_at DESC LIMIT 1
+  `).bind(location.id, now).first();
+
+  if (!target) return { location, target: null };
+  let payload = {};
+  try {
+    payload = JSON.parse(target.payload_json || "{}");
+  } catch {
+    payload = {};
+  }
+  return {
+    location,
+    target: {
+      id: target.target_id,
+      travelMinutes: target.travel_minutes,
+      spokenConcern: payload.spokenConcern || null
+    }
+  };
+}
+
+/**
+ * The number's Request URL. A clinic calling the number back reaches this.
+ *
+ * An unverifiable signature degrades to the neutral greeting rather than a 403,
+ * because a real clinic on the phone should never hear a failure caused by a
+ * configuration mismatch. Nothing here changes state — the accept and decline
+ * live behind the signed gather below.
+ */
+async function handleVoiceInbound(request, env, url) {
+  const bodyText = await request.text();
+  const params = Object.fromEntries(new URLSearchParams(bodyText));
+  const signature = request.headers.get("x-twilio-signature");
+  const origin = voiceOrigin(env, request);
+  const signed = await verifyTwilioSignature(env.TWILIO_AUTH_TOKEN, request.url, params, signature)
+    || await verifyTwilioSignature(env.TWILIO_AUTH_TOKEN, `${origin}${url.pathname}${url.search}`, params, signature);
+
+  const found = signed ? await openRequestForCaller(env, params.From) : null;
+  console.log(JSON.stringify({
+    event: "voice_inbound",
+    signed,
+    from: params.From || null,
+    matchedLocation: found?.location?.id || null,
+    openTarget: found?.target?.id || null
+  }));
+
+  if (!found?.target?.spokenConcern) {
+    return xmlResponse(inboundTwiml({ locationName: found?.location?.name }));
+  }
+
+  const token = await signAttemptToken(env.TWILIO_AUTH_TOKEN, found.target.id);
+  const gatherActionUrl = `${origin}/api/voice/inbound/gather`
+    + `?target=${encodeURIComponent(found.target.id)}&tok=${encodeURIComponent(token)}`;
+  return xmlResponse(inboundTwiml({
+    locationName: found.location.name,
+    spokenConcern: found.target.spokenConcern,
+    travelMinutes: found.target.travelMinutes,
+    gatherActionUrl
+  }));
+}
+
+/** The keypad answer from an inbound call. Signed, because it changes state. */
+async function handleVoiceInboundGather(request, env, url) {
+  const bodyText = await request.text();
+  const params = Object.fromEntries(new URLSearchParams(bodyText));
+  const signature = request.headers.get("x-twilio-signature");
+  const origin = voiceOrigin(env, request);
+  const signed = await verifyTwilioSignature(env.TWILIO_AUTH_TOKEN, request.url, params, signature)
+    || await verifyTwilioSignature(env.TWILIO_AUTH_TOKEN, `${origin}${url.pathname}${url.search}`, params, signature);
+  if (!signed) return forbiddenTwilio();
+
+  const targetId = url.searchParams.get("target");
+  const tok = url.searchParams.get("tok");
+  if (!targetId || !(await verifyAttemptToken(env.TWILIO_AUTH_TOKEN, targetId, tok))) return forbiddenTwilio();
+
+  const row = await env.DB.prepare("SELECT tenant_id FROM care_search_targets WHERE id = ? LIMIT 1").bind(targetId).first();
+  if (!row) return xmlResponse(alreadyFilledTwiml());
+
+  const digits = String(params.Digits || "").trim();
+  if (digits === "1") {
+    const result = await decideByPhone(env, row.tenant_id, targetId, "offer");
+    return xmlResponse(result.ok
+      ? acceptedTwiml(buildCallScript({ locationName: "", spokenConcern: "", travelMinutes: null, urgency: "urgent" }))
+      : alreadyFilledTwiml());
+  }
+  if (digits === "2") {
+    const result = await decideByPhone(env, row.tenant_id, targetId, "decline");
+    return xmlResponse(result.ok
+      ? declinedTwiml(buildCallScript({ locationName: "", spokenConcern: "", travelMinutes: null, urgency: "urgent" }))
+      : alreadyFilledTwiml());
+  }
+  return xmlResponse(inboundFallbackTwiml());
 }
 
 /* ----------------------------------------------------------------- webhooks --- */
@@ -513,6 +640,49 @@ async function handleApi(request, env) {
     });
   }
   if (method === "GET" && path === "/api/config") return json(publicConfig(env));
+
+  // The phone number's own Voice configuration points here. See
+  // docs/PRODUCTION-SETUP.md for the exact three fields Twilio asks for.
+  if (method === "POST" && path === "/api/voice/inbound") {
+    try {
+      return await handleVoiceInbound(request, env, url);
+    } catch (error) {
+      console.error(JSON.stringify({ event: "voice_inbound_error", message: error.message }));
+      return xmlResponse(inboundFallbackTwiml());
+    }
+  }
+
+  if (method === "POST" && path === "/api/voice/inbound/gather") {
+    try {
+      return await handleVoiceInboundGather(request, env, url);
+    } catch (error) {
+      console.error(JSON.stringify({ event: "voice_inbound_gather_error", message: error.message }));
+      return xmlResponse(errorTwiml());
+    }
+  }
+
+  // Twilio's fallback, called when the request URL above errors or times out.
+  // Static by design: it touches nothing that could already be broken, and it
+  // answers on GET as well because Twilio retries a fallback either way.
+  if ((method === "POST" || method === "GET") && path === "/api/voice/inbound-fallback") {
+    return xmlResponse(inboundFallbackTwiml());
+  }
+
+  // Number-level status callback: no attempt id in the path, so it is a log
+  // sink rather than a state transition. The per-call callback that does update
+  // an attempt is /api/voice/status/:callId below.
+  if (method === "POST" && path === "/api/voice/status") {
+    const params = Object.fromEntries(new URLSearchParams(await request.text()));
+    console.log(JSON.stringify({
+      event: "voice_number_status",
+      callSid: params.CallSid || null,
+      callStatus: params.CallStatus || null,
+      from: params.From || null,
+      to: params.To || null,
+      duration: params.CallDuration || null
+    }));
+    return new Response(null, { status: 204 });
+  }
 
   const outboundMatch = path.match(/^\/api\/voice\/outbound\/([^/]+)$/);
   if (method === "POST" && outboundMatch) {

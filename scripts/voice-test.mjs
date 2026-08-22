@@ -384,7 +384,82 @@ const forged = await worker.fetch(new Request(acceptGatherUrl, {
 }), env);
 assert(forged.status === 403, "A request without a valid Twilio signature must be rejected with 403");
 
+/* ------------------------------------------------------------- inbound --- */
+//
+// A clinic that missed the call rings the number back. The number's caller ID is
+// Tími's, so this happens; left unhandled they reach Twilio's demo message.
+
+insertSearchAndTarget({
+  searchId: "search_callback",
+  targetId: "target_callback",
+  tenantId: "tenant_hearth",
+  locationId: "loc_hearth",
+  phone: "(510) 555-0194"
+});
+
+const inboundUrl = "https://voice.timinow.pet/api/voice/inbound";
+const knownCaller = await postForm(inboundUrl, {
+  CallSid: "CA_inbound",
+  From: "(510) 555-0194",
+  To: "+15105550100"
+});
+assertBalancedXml(knownCaller.text, "inbound response");
+assert(/Hearth/.test(knownCaller.text), "A recognised clinic must be greeted by name");
+assert(knownCaller.text.includes("<Gather"), "A clinic with an open request must be offered the keypad choice");
+assert(/press 2|Press 2/.test(knownCaller.text), "The callback must offer the same accept/decline choice");
+assert(!/Milo/.test(knownCaller.text), "The inbound call must not speak the pet's name either");
+
+// The gather URL is signed, so a caller cannot accept on another clinic's behalf.
+const inboundGatherUrl = knownCaller.text.match(/action="([^"]+)"/)[1].replace(/&amp;/g, "&");
+const pressOneInbound = await postForm(inboundGatherUrl, { CallSid: "CA_inbound", Digits: "1" });
+assert(/thank you/i.test(pressOneInbound.text), "Accepting on a callback must confirm");
+assert(
+  database.prepare("SELECT COUNT(*) AS c FROM care_offers WHERE target_id = 'target_callback'").get().c === 1,
+  "Accepting on a callback must create exactly one offer, like every other path"
+);
+assert(
+  database.prepare("SELECT status FROM care_search_targets WHERE id = 'target_callback'").get().status === "offered",
+  "Accepting on a callback must flip the target to offered"
+);
+
+// A forged token must not let a caller answer for a clinic that is not theirs.
+const tamperedGather = inboundGatherUrl.replace(/tok=[^&]+/, "tok=forged");
+const tamperedResult = await postForm(tamperedGather, { CallSid: "CA_inbound", Digits: "1" });
+assert(tamperedResult.response.status === 403, "A forged callback token must be rejected");
+
+// An unknown caller gets a neutral greeting, never another clinic's patient.
+const strangerResult = await postForm(inboundUrl, {
+  CallSid: "CA_stranger",
+  From: "+12125550000",
+  To: "+15105550100"
+});
+assertBalancedXml(strangerResult.text, "unknown-caller response");
+assert(!strangerResult.text.includes("<Gather"), "An unrecognised caller must not be offered a decision");
+assert(!/vomiting/.test(strangerResult.text), "An unrecognised caller must never hear a patient's details");
+assert(/timinow/i.test(strangerResult.text), "An unrecognised caller should still be pointed somewhere useful");
+
+// The fallback must answer even when everything else is broken, and must not
+// depend on a signature — Twilio calls it precisely when things have gone wrong.
+const fallbackResponse = await worker.fetch(
+  new Request("https://voice.timinow.pet/api/voice/inbound-fallback", { method: "POST" }),
+  env
+);
+const fallbackText = await fallbackResponse.text();
+assert(fallbackResponse.status === 200, "The fallback URL must always answer");
+assertBalancedXml(fallbackText, "fallback response");
+assert(!fallbackText.includes("<Gather"), "The fallback must not offer a decision it cannot record");
+
+// The number-level status callback is a log sink, not a state transition.
+const numberStatus = await postForm("https://voice.timinow.pet/api/voice/status", {
+  CallSid: "CA_inbound",
+  CallStatus: "completed",
+  From: "+15105550194",
+  To: "+15105550100",
+  CallDuration: "23"
+});
+assert(numberStatus.response.status === 204, "The number-level status callback must acknowledge with 204");
+
 globalThis.fetch = originalFetch;
 database.close();
 
-console.log("Voice gateway tests passed: Twilio signature verification, call-script content, TwiML well-formedness and escaping, quiet-hours math, phone normalization, cron drain (tenant opt-out + successful placement), and phone acceptance producing a byte-identical offer to the console path.");
+console.log("Voice gateway tests passed: Twilio signature verification, call-script content, TwiML well-formedness and escaping, quiet-hours math, phone normalization, cron drain (tenant opt-out + successful placement), phone acceptance producing a byte-identical offer to the console path, and the inbound callback path.");
