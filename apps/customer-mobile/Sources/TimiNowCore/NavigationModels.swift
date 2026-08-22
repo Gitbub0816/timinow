@@ -275,6 +275,15 @@ public struct MapConfig: Codable, Hashable, Sendable {
 
 public struct AppConfigEnvelope: Codable, Sendable {
     public var map: MapConfig?
+    /// The Clerk instance to sign in against. The host is base64-encoded
+    /// inside the key itself, so this one string is the whole of what the app
+    /// needs to reach Clerk — no second setting to keep in step.
+    public var clerkPublishableKey: String?
+    /// The JWT template whose claims the Workers read.
+    public var clerkTokenTemplate: String?
+    /// Whether the Worker will reject unauthenticated calls. Read rather than
+    /// assumed, so a demo deployment does not show a sign-in wall.
+    public var signInRequired: Bool?
 }
 
 /// Compiled-in defaults used until `GET /api/config` returns live values

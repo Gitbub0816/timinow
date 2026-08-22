@@ -14,6 +14,13 @@ public struct CustomerRootView: View {
     public var body: some View {
         ZStack(alignment: .top) {
             if !store.hasCompletedOnboarding { OnboardingView(store: store) }
+            // Signing in comes after onboarding: the first screens explain what
+            // Tími is, and asking for an email before that is asking a stranger
+            // for their details. After it, the session is restored silently at
+            // every later launch, so this is seen once.
+            else if store.auth.signInRequired && !store.auth.isSignedIn {
+                SignInView(auth: store.auth).transition(.opacity)
+            }
             else { appContent.transition(.opacity) }
             if let error = store.errorMessage { ErrorToast(message: error) { store.errorMessage = nil }.padding(.top, 8).transition(.move(edge: .top).combined(with: .opacity)).zIndex(20) }
             if store.showCelebration { CelebrationOverlay().onAppear { Task { try? await Task.sleep(for: .seconds(1.15)); store.showCelebration = false } }.zIndex(30) }

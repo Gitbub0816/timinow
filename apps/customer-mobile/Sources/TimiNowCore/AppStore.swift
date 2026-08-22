@@ -83,6 +83,12 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
         self.gateway = TimiGateway(baseURL: Self.validBaseURL(apiBaseURLText))
     }
 
+    /// Sign-in, and the token every Worker call carries.
+    ///
+    /// Built here rather than in a view so a session restored at launch is
+    /// already in place before the first screen asks for anything.
+    public private(set) lazy var auth: AuthController = AuthController(gateway: gateway)
+
     /// Single shared instance so the CarPlay scene and the Watch
     /// connectivity bridge — both instantiated by the OS outside the main
     /// SwiftUI view hierarchy — observe the same live state as the phone UI.
@@ -189,6 +195,10 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
         rememberOwnerFromDraft()
         isWorking = true; errorMessage = nil
         do {
+            // Minted fresh if the one in hand is near expiry. A Clerk token
+            // lives about a minute, so a search started on a screen opened
+            // five minutes ago would otherwise arrive expired.
+            try? await auth.ensureFreshToken()
             locations = try await gateway.locations(latitude: draft.latitude, longitude: draft.longitude, species: draft.pet.species)
             currentSearch = try await gateway.startSearch(draft, locationIds: locations.prefix(30).map(\.id))
             route = .searching

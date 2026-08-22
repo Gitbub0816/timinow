@@ -123,6 +123,13 @@ public final class TimiGateway: @unchecked Sendable {
         return envelope.map
     }
 
+    /// The whole config, for sign-in. `fetchMapConfig` reads the same
+    /// response; this returns the rest of it rather than fetching twice.
+    public func fetchAppConfig() async throws -> AppConfigEnvelope {
+        guard let baseURL else { throw TimiAPIError.invalidConfiguration(configuredAddress) }
+        return try await send(baseURL.appendingPathComponent("api/config"))
+    }
+
     private func send<Response: Decodable>(_ url: URL, method: String = "GET") async throws -> Response {
         try await send(url, method: method, data: nil)
     }

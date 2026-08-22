@@ -17,6 +17,7 @@ public struct RootView: View {
     public var body: some View {
         CustomerRootView(store: store)
             .task { logger.info("Tími customer app started") }
+            .task { await store.auth.start() }
             .task { await store.loadMapConfig() }
             .task { WatchBridge.shared.start(observing: store) }
     }

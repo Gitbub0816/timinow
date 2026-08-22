@@ -91,6 +91,12 @@ struct SettingsView: View {
             } footer: {
                 Text("Used to fill in your next care request, and given to the clinic you choose so they can reach you.")
             }
+
+            if store.auth.isSignedIn {
+                Section("Account") {
+                    Button("Sign out", role: .destructive) { Task { await store.auth.signOut() } }
+                }
+            }
             Section("Permissions") { Toggle("Offer notifications", isOn: $store.notificationsEnabled); Toggle("Use precise location", isOn: $store.locationEnabled) }
             Section("Navigation") {
                 Toggle("Spoken turn-by-turn", isOn: $store.navigationPreferences.voiceEnabled)

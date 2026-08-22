@@ -784,6 +784,38 @@ for (const app of ["customer-mobile", "vet-desktop"]) {
   }
 }
 
+// Sign-in is the difference between an app that works and one that shows a
+// 401. These are the seams where it silently stops working: a gate that no
+// longer gates, a token that is never handed to the gateway, a session that is
+// never restored. None of them fail loudly — the app just asks for a password
+// again, or stops asking and starts refusing.
+{
+  const auth = await read("apps/customer-mobile/Sources/TimiNowCore/AuthController.swift");
+  const root = await read("apps/customer-mobile/Sources/TimiNowUI/CustomerRootView.swift");
+  const app = await read("apps/customer-mobile/Sources/TimiNowApp/TimiNowApp.swift");
+  const store = await read("apps/customer-mobile/Sources/TimiNowCore/AppStore.swift");
+
+  if (!/store\.auth\.signInRequired\s*&&\s*!store\.auth\.isSignedIn/.test(root)) {
+    throw new Error("apps/customer-mobile/Sources/TimiNowUI/CustomerRootView.swift no longer gates on sign-in, so the app reaches the Worker unauthenticated and every request comes back 401.");
+  }
+  if (!/await store\.auth\.start\(\)/.test(app)) {
+    throw new Error("apps/customer-mobile/Sources/TimiNowApp/TimiNowApp.swift no longer calls auth.start(), so a stored session is never restored and sign-in is demanded at every launch.");
+  }
+  if (!/gateway\.bearerToken = workerToken/.test(auth)) {
+    throw new Error("apps/customer-mobile/Sources/TimiNowCore/AuthController.swift no longer hands the minted token to the gateway. Signing in would appear to work and every API call would still be unauthenticated.");
+  }
+  if (!/keychain/.test(auth)) {
+    throw new Error("apps/customer-mobile/Sources/TimiNowCore/AuthController.swift no longer persists the credential in the Keychain — the session would not survive a relaunch.");
+  }
+  // A long-lived Clerk cookie in UserDefaults is a plist any backup can read.
+  if (/defaults\.set\([^)]*(clientCookie|workerToken)/.test(store) || /UserDefaults/.test(auth)) {
+    throw new Error("The Clerk credential must stay in the Keychain, not UserDefaults.");
+  }
+  if (!/looksLikeUnknownAccount/.test(auth)) {
+    throw new Error("apps/customer-mobile/Sources/TimiNowCore/AuthController.swift no longer turns an unknown identifier into sign-up. A first-time pet owner would be told their account was not found, with nothing to do about it.");
+  }
+}
+
 // `#if canImport(M)` asks whether M is available. It does not import it. A
 // file that guards on canImport and then names a type from M, without an
 // `import M` anywhere, compiles fine while M is absent and fails the moment it
