@@ -57,17 +57,17 @@ public final class WatchBridge: NSObject, WCSessionDelegate {
         try? WCSession.default.updateApplicationContext(payload)
     }
 
-    nonisolated func session(_ session: WCSession, activationDidCompleteWith activationState: WCSessionActivationState, error: Error?) {
+    nonisolated public func session(_ session: WCSession, activationDidCompleteWith activationState: WCSessionActivationState, error: Error?) {
         Task { @MainActor in self.push() }
     }
-    nonisolated func sessionDidBecomeInactive(_ session: WCSession) { }
-    nonisolated func sessionDidDeactivate(_ session: WCSession) { session.activate() }
+    nonisolated public func sessionDidBecomeInactive(_ session: WCSession) { }
+    nonisolated public func sessionDidDeactivate(_ session: WCSession) { session.activate() }
 
     /// The Watch app relays "arrived" / "triaged" / "seen" milestone
     /// button taps here as `{"milestone": "..."}` messages, so they write
     /// through the same `AppStore.record(_:)` path (and the same Worker
     /// API call) as the phone's own tracker buttons.
-    nonisolated func session(_ session: WCSession, didReceiveMessage message: [String: Any], replyHandler: @escaping ([String: Any]) -> Void) {
+    nonisolated public func session(_ session: WCSession, didReceiveMessage message: [String: Any], replyHandler: @escaping ([String: Any]) -> Void) {
         guard let milestone = message["milestone"] as? String else {
             replyHandler(["ok": false])
             return

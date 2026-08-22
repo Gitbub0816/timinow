@@ -568,6 +568,30 @@ for (const root of ["apps/customer-mobile/Sources", "apps/vet-desktop/Sources"])
   }
 }
 
+// A public type's protocol-requirement implementations must be public too:
+// Swift rejects "method X must be declared public because it matches a
+// requirement in public protocol Y". Internal types are unaffected, which is
+// why this only looks at public ones — making a type public, as happened to
+// WatchBridge, silently puts every one of its delegate methods in scope for
+// this rule.
+for (const root of ["apps/customer-mobile/Sources", "apps/customer-mobile/Watch", "apps/vet-desktop/Sources"]) {
+  for (const path of await collectFiles(root, ".swift")) {
+    const lines = (await read(path)).split("\n");
+    lines.forEach((line, index) => {
+      const declaration = line.match(/^public\s+(?:@\w+\s+)*(?:final\s+)?(?:class|struct|extension)\s+(\w+)([^{]*)\{/);
+      if (!declaration || !(declaration[2] || "").includes("Delegate")) return;
+      let depth = 1;
+      for (let cursor = index + 1; cursor < lines.length && depth > 0; cursor += 1) {
+        depth += (lines[cursor].match(/\{/g) || []).length - (lines[cursor].match(/\}/g) || []).length;
+        const method = lines[cursor].match(/^\s*(?:nonisolated\s+)?(public\s+|private\s+|fileprivate\s+|internal\s+)?func\s+(\w+)/);
+        if (method && !method[1]) {
+          throw new Error(`${path}:${cursor + 1}: ${declaration[1]} is public and conforms to a delegate protocol, but ${method[2]} has no access level. Swift requires a public type's protocol-requirement implementations to be public — mark it public, or private if it is a helper.`);
+        }
+      }
+    });
+  }
+}
+
 const csharpFiles = await collectFiles("apps/vet-windows", ".cs");
 for (const path of csharpFiles) {
   const problems = bracketProblems(await read(path));
