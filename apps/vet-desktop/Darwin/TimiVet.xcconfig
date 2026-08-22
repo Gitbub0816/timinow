@@ -1,6 +1,5 @@
 #include "../Skip.env"
 
-SKIP_ACTION = launch
 GENERATE_INFOPLIST_FILE = NO
 INFOPLIST_FILE = Info.plist
 MACOSX_DEPLOYMENT_TARGET = 14.0
