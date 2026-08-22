@@ -222,7 +222,19 @@ public final class VoicePreviewer: NSObject, AVSpeechSynthesizerDelegate {
 //   - `RouteStep.maneuverType` is a `String`-backed `ManeuverType` whose raw
 //     values are exactly the keys used in `instruction-phrases.json`.
 #if canImport(MapboxNavigationCore) && os(iOS) && !SKIP
-import MapboxNavigationCore
+// @_spi(MapboxInternal), not a plain import: `SystemSpeechSynthesizer` — the
+// on-device voice, used below when the map token is absent or the on-device
+// profile is chosen — is declared `@_spi(MapboxInternal) public` in the SDK,
+// so a plain import leaves it out of scope entirely ("cannot find
+// 'SystemSpeechSynthesizer' in scope", from a symbol that is plainly there in
+// the sources). MapboxNavigationCore is a source package, not a binary one, so
+// the SPI is compiled with the rest of it and nothing extra is needed.
+//
+// The alternative is writing our own AVSpeechSynthesizer-backed
+// SpeechSynthesizing. Not worth it: Mapbox's handles AVAudioSession
+// activation, ducking, and deactivation ordering, which is exactly the code
+// you do not want to be debugging from a car.
+@_spi(MapboxInternal) import MapboxNavigationCore
 import MapboxDirections
 import Combine
 
@@ -393,6 +405,12 @@ public final class TimiSpeechSynthesizer: SpeechSynthesizing {
     }
 }
 
+/// `TimiSpeechSynthesizer` is `@MainActor`, as `SpeechSynthesizing` requires,
+/// so anything that constructs one has to be too — a plain static factory is
+/// nonisolated and fails with "call to main actor-isolated initializer in a
+/// synchronous nonisolated context". The only caller is a UIViewController
+/// method, which is already on the main actor.
+@MainActor
 enum TimiSpeechStack {
     static func makeSynthesizer(
         preferences: NavigationPreferences,

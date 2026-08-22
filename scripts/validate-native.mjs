@@ -548,6 +548,43 @@ for (const path of [
   }
 }
 
+// Some of the navigation SDK's types are declared `@_spi(MapboxInternal)
+// public`, which is not the same as public: a plain `import` leaves them out
+// of scope, and the compiler says "cannot find X in scope" about a symbol that
+// is plainly there in the SDK sources. The import has to carry the same SPI
+// group.
+{
+  const spiSymbols = ["SystemSpeechSynthesizer"];
+  for (const path of await collectFiles("apps/customer-mobile/Sources", ".swift")) {
+    const source = await read(path);
+    for (const symbol of spiSymbols) {
+      if (!new RegExp(`\\b${symbol}\\b`).test(source)) continue;
+      if (/@_spi\(MapboxInternal\)\s+import MapboxNavigationCore/.test(source)) continue;
+      throw new Error(`${path}: names ${symbol}, which MapboxNavigationCore declares @_spi(MapboxInternal). Import it as "@_spi(MapboxInternal) import MapboxNavigationCore" or the symbol is not in scope.`);
+    }
+  }
+}
+
+// A @MainActor type can only be constructed from the main actor, so a factory
+// that builds one has to be isolated too. Swift catches it — "call to main
+// actor-isolated initializer in a synchronous nonisolated context" — but only
+// once everything ahead of it has compiled, which for this package is minutes.
+for (const path of await collectFiles("apps/customer-mobile/Sources", ".swift")) {
+  const source = await read(path);
+  const isolated = new Set(
+    [...source.matchAll(/@MainActor\s+(?:public\s+|final\s+|internal\s+)*(?:class|struct|actor)\s+(\w+)/g)].map((m) => m[1])
+  );
+  if (!isolated.size) continue;
+  for (const factory of source.matchAll(/(@MainActor\s+)?\b(?:public\s+|internal\s+)?enum\s+(\w+)\s*\{([\s\S]*?)\n\}/g)) {
+    const [, mainActor, name, body] = factory;
+    if (mainActor) continue;
+    const built = [...isolated].find((type) => new RegExp(`->\\s*${type}\\b`).test(body) && new RegExp(`\\b${type}\\s*\\(`).test(body));
+    if (built) {
+      throw new Error(`${path}: ${name} constructs ${built}, which is @MainActor, but ${name} is not. Annotate ${name} with @MainActor — a nonisolated factory cannot call a main-actor initializer.`);
+    }
+  }
+}
+
 // `#if canImport(M)` asks whether M is available. It does not import it. A
 // file that guards on canImport and then names a type from M, without an
 // `import M` anywhere, compiles fine while M is absent and fails the moment it
@@ -558,7 +595,8 @@ for (const root of ["apps/customer-mobile/Sources", "apps/vet-desktop/Sources"])
     const source = await read(path);
     for (const guard of source.matchAll(/canImport\((\w+)\)/g)) {
       const module = guard[1];
-      if (new RegExp(`^\\s*import ${module}\\b`, "m").test(source)) continue;
+      // The import may carry an SPI group — see the @_spi check above.
+      if (new RegExp(`^\\s*(?:@_spi\\(\\w+\\)\\s+)?import ${module}\\b`, "m").test(source)) continue;
       throw new Error(`${path}: guards on canImport(${module}) but never imports ${module}. canImport only tests availability — without the import, any type from that module is out of scope and the build fails wherever the module actually exists.`);
     }
   }
