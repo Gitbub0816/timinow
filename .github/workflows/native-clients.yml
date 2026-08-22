@@ -89,6 +89,8 @@ jobs:
           -sdk iphonesimulator
           -destination 'generic/platform=iOS Simulator'
           CODE_SIGNING_ALLOWED=NO
+          -skipPackagePluginValidation
+          -skipMacroValidation
           build
 
   watch:
@@ -127,6 +129,8 @@ jobs:
           -sdk watchsimulator
           -destination 'generic/platform=watchOS Simulator'
           CODE_SIGNING_ALLOWED=NO
+          -skipPackagePluginValidation
+          -skipMacroValidation
           build
 
   vet-macos:
@@ -172,6 +176,9 @@ jobs:
           name: vet-macos-test-log
           path: ${{ runner.temp }}/timi-vet-test.log
           retention-days: 3
+      # skipstone is a SwiftPM build plugin, and xcodebuild refuses to run a
+      # plugin that has not been trusted interactively — "Validate plug-in
+      # skipstone in package skip" fails the build with no other explanation.
       - name: Compile macOS app
         run: >-
           xcodebuild
@@ -179,6 +186,8 @@ jobs:
           -scheme TimiVet
           -destination 'generic/platform=macOS'
           CODE_SIGNING_ALLOWED=NO
+          -skipPackagePluginValidation
+          -skipMacroValidation
           build
 
   windows:

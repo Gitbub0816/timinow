@@ -399,6 +399,23 @@ for (const [appRoot, libraryRoots] of [
   }
 }
 
+// skipstone is a SwiftPM build plugin, and xcodebuild refuses to run one that
+// was never trusted interactively. In CI that surfaces as "Validate plug-in
+// skipstone in package skip" with no other explanation, so every xcodebuild
+// invocation has to opt out of the prompt.
+{
+  const workflow = await read(".github/workflows/native-clients.yml");
+  const invocations = workflow.split(/^\s*xcodebuild$/m).slice(1);
+  for (const invocation of invocations) {
+    const command = invocation.split(/\n\s*\n/)[0];
+    const scheme = (command.match(/-scheme\s+(\S+)/) || [])[1] || "(unnamed)";
+    if (!command.includes("-skipPackagePluginValidation")) {
+      throw new Error(`.github/workflows/native-clients.yml: the ${scheme} build does not pass -skipPackagePluginValidation. xcodebuild will refuse to run the skipstone build plugin and fail with "Validate plug-in".`);
+    }
+  }
+  if (!invocations.length) throw new Error(".github/workflows/native-clients.yml: no xcodebuild invocation found — the native apps are no longer being compiled.");
+}
+
 const csharpFiles = await collectFiles("apps/vet-windows", ".cs");
 for (const path of csharpFiles) {
   const problems = bracketProblems(await read(path));
