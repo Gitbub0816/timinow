@@ -13,6 +13,7 @@
  */
 
 import { actorForRequest, signInRequired } from "../../../src/auth.js";
+import { publicConfig } from "../../../src/config.js";
 import { describeSession } from "../../../src/session.js";
 import {
   addMember,
@@ -51,7 +52,6 @@ import {
   upsertTenantMember
 } from "../../../src/tenancy.js";
 
-const DEFAULT_MAP_STYLE = "mapbox://styles/calebowen2019/cmt3nci25004d01sya8qxcb4u";
 const JSON_HEADERS = { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" };
 const SECURITY_HEADERS = {
   "referrer-policy": "strict-origin-when-cross-origin",
@@ -130,22 +130,7 @@ async function authenticatedActor(request, env) {
 /* ------------------------------------------------------------ /api/config --- */
 
 async function handleConfig(env) {
-  return json({
-    appName: "Tími NOW — Platform Console",
-    version: "1.0.0-admin",
-    signInRequired: signInRequired(env),
-    clerkPublishableKey: signInRequired(env) ? (env.CLERK_PUBLISHABLE_KEY || null) : null,
-    clerkJsUrl: signInRequired(env) ? (env.CLERK_JS_URL || "https://cdn.jsdelivr.net/npm/@clerk/clerk-js@5/+esm") : null,
-    stripePublishableKey: env.STRIPE_PUBLISHABLE_KEY || null,
-    demoMode: env.DEMO_MODE === "true",
-    database: hasDatabase(env) ? "d1" : "fixtures",
-    surface: env.SURFACE || "admin",
-    map: {
-      token: env.MAPBOX_PUBLIC_TOKEN || null,
-      styleUrl: env.MAPBOX_STYLE_URL || DEFAULT_MAP_STYLE,
-      navigationStyleUrl: env.MAPBOX_NAVIGATION_STYLE_URL || env.MAPBOX_STYLE_URL || DEFAULT_MAP_STYLE
-    }
-  });
+  return json(publicConfig(env));
 }
 
 /* --------------------------------------------------------- /api/admin/* --- */

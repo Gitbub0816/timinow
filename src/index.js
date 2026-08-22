@@ -1,4 +1,5 @@
 import { actorForRequest, isOrgAdmin, roleAllows, signInRequired } from "./auth.js";
+import { publicConfig } from "./config.js";
 import { describeSession } from "./session.js";
 import {
   addMember,
@@ -24,7 +25,6 @@ import {
   tenantIdForClerkOrg
 } from "./db.js";
 
-const DEFAULT_MAP_STYLE = "mapbox://styles/calebowen2019/cmt3nci25004d01sya8qxcb4u";
 const JSON_HEADERS = { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" };
 const SECURITY_HEADERS = {
   "referrer-policy": "strict-origin-when-cross-origin",
@@ -145,24 +145,7 @@ function authRequiredResponse() {
 }
 
 async function handleConfig(env) {
-  return json({
-    appName: "Tími NOW",
-    version: "1.1.0-multi-offer",
-    signInRequired: signInRequired(env),
-    clerkPublishableKey: signInRequired(env) ? (env.CLERK_PUBLISHABLE_KEY || null) : null,
-    clerkJsUrl: signInRequired(env) ? (env.CLERK_JS_URL || "https://cdn.jsdelivr.net/npm/@clerk/clerk-js@5/+esm") : null,
-    stripePublishableKey: env.STRIPE_PUBLISHABLE_KEY || null,
-    demoMode: env.DEMO_MODE === "true",
-    database: hasDatabase(env) ? "d1" : "fixtures",
-    surface: env.SURFACE || "customer",
-    map: {
-      /** Public Mapbox token. Never expose a secret (sk.) token here. */
-      token: env.MAPBOX_PUBLIC_TOKEN || null,
-      styleUrl: env.MAPBOX_STYLE_URL || DEFAULT_MAP_STYLE,
-      /** The navigation UI reuses the same style so guidance matches the map. */
-      navigationStyleUrl: env.MAPBOX_NAVIGATION_STYLE_URL || env.MAPBOX_STYLE_URL || DEFAULT_MAP_STYLE
-    }
-  });
+  return json(publicConfig(env));
 }
 
 async function handleLocationSearch(url, env) {
