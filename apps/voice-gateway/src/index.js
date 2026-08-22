@@ -661,6 +661,72 @@ async function handleApi(request, env) {
     return json({ drained: true, processed: processed ?? null });
   }
 
+  /*
+   * Ring one number with the real clinic script.
+   *
+   * Everything else in this Worker needs a care search, a clinic row with a
+   * phone number, and a queued outbox entry before a phone rings — which is a
+   * lot of production state to arrange when the question is only "do the
+   * Twilio credentials work and does the wording sound right". This places one
+   * call, writes nothing, and speaks exactly what a clinic hears.
+   *
+   * Behind VOICE_DRAIN_TOKEN, the same key the drain uses. It costs real
+   * telephony minutes, so it is not open.
+   */
+  if (method === "POST" && path === "/api/voice/test-call") {
+    const expected = env.VOICE_DRAIN_TOKEN || "";
+    const supplied = request.headers.get("x-timi-drain-token") || "";
+    if (!expected || supplied !== expected) return apiError(403, "TEST_CALL_FORBIDDEN", "Not permitted.");
+    if (!env.TWILIO_ACCOUNT_SID || !env.TWILIO_AUTH_TOKEN || !env.TWILIO_FROM_NUMBER) {
+      return apiError(409, "TWILIO_NOT_CONFIGURED", "Set TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN and TWILIO_FROM_NUMBER first.");
+    }
+    let body = {};
+    try { body = await request.json(); } catch { body = {}; }
+    const to = normalizePhone(body.to);
+    if (!to) return apiError(422, "INVALID_NUMBER", "Provide `to` in E.164, for example +14155550123.");
+    const origin = voiceOrigin(env, request);
+    try {
+      const call = await placeCall(env, { to, url: `${origin}/api/voice/test-script` });
+      console.log(JSON.stringify({ event: "voice_test_call", to, callSid: call.sid || null }));
+      return json({ calling: to, callSid: call.sid || null });
+    } catch (error) {
+      console.error(JSON.stringify({ event: "voice_test_call_failed", message: error.message }));
+      return apiError(502, "CALL_FAILED", error.message);
+    }
+  }
+
+  // What the test call says. Twilio fetches this, so it answers GET too.
+  if ((method === "POST" || method === "GET") && path === "/api/voice/test-script") {
+    const origin = voiceOrigin(env, request);
+    const script = buildCallScript({
+      locationName: "your clinic",
+      spokenConcern: "a dog that has vomited three times since this morning",
+      travelMinutes: 12,
+      urgency: "urgent"
+    });
+    return xmlResponse(outboundTwiml({
+      script,
+      gatherActionUrl: `${origin}/api/voice/test-gather`,
+      repeatActionUrl: `${origin}/api/voice/test-script`
+    }));
+  }
+
+  // The keypad answer. Says what a real acceptance or decline says, and — this
+  // being a test — changes nothing anywhere.
+  if (method === "POST" && path === "/api/voice/test-gather") {
+    const params = Object.fromEntries(new URLSearchParams(await request.text()));
+    const script = buildCallScript({
+      locationName: "your clinic",
+      spokenConcern: "a dog that has vomited three times since this morning",
+      travelMinutes: 12,
+      urgency: "urgent"
+    });
+    const digit = String(params.Digits || "");
+    if (digit === "1") return xmlResponse(acceptedTwiml(script));
+    if (digit === "2") return xmlResponse(declinedTwiml(script));
+    return xmlResponse(noResponseTwiml(script));
+  }
+
   // The phone number's own Voice configuration points here. See
   // docs/PRODUCTION-SETUP.md for the exact three fields Twilio asks for.
   if (method === "POST" && path === "/api/voice/inbound") {

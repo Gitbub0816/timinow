@@ -16,6 +16,8 @@
     <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
     <key>CFBundleDevelopmentRegion</key><string>$(DEVELOPMENT_LANGUAGE)</string>
     <key>CFBundleDisplayName</key><string>Tími NOW</string>
+    <!-- See TimiNowApp.swift: the palette has no dark variant. -->
+    <key>UIUserInterfaceStyle</key><string>Light</string>
     <!--
       Set from MARKETING_VERSION / CURRENT_PROJECT_VERSION in project.yml.
       They are spelled out here because GENERATE_INFOPLIST_FILE is NO for this

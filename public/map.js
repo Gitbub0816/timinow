@@ -271,17 +271,21 @@ export function clearRoute(map, { sourceId = "timi-route" } = {}) {
  *    come in three registers. A pun that is warm on the way to a limp check-up
  *    is grotesque on the way to a collapse, so the emergency register has none.
  */
+// Animal-flavoured, and only in the framing. The maneuver itself — the side,
+// the modifier, the road name — is never the joke. A driver working out
+// whether "paws" means pause is a driver not watching the road, so the pun
+// goes around the instruction and never inside it.
 export const INSTRUCTION_PHRASES = {
-  depart: "Off we go — head {side} on {road}",
+  depart: "And we're off — hoof it {side} on {road}",
   arrive: "That's {clinic}, right there",
   turn: "Take the {modifier} onto {road}",
-  merge: "Merge {side} onto {road}",
+  merge: "Join the pack — merge {side} onto {road}",
   "on ramp": "Hop on the ramp on the {side} toward {road}",
-  "off ramp": "Take the exit on the {side} toward {road}",
+  "off ramp": "Peel off on the {side} toward {road}",
   fork: "Keep {side} at the fork",
-  roundabout: "Round the roundabout, then out onto {road}",
-  continue: "Stay on {road}",
-  "new name": "Same road, new name — it's {road} now"
+  roundabout: "Round you go, then out onto {road}",
+  continue: "Stay on {road} — nice and steady",
+  "new name": "Same road, new collar — it's {road} now"
 };
 
 /**
@@ -337,14 +341,14 @@ export const SIDE_WORDS = {
  */
 export const TIMI_ANNOUNCEMENTS = {
   calm: {
-    start: "Off we go. {clinic} is expecting {pet}, so the hard part is already behind you.",
-    halfway: "About {minutes} minutes out — and {pet} is in good paws from here.",
+    start: "Off we go. {clinic} is expecting {pet}, so the hard part is already behind you — this bit is just the tail end.",
+    halfway: "About {minutes} minutes out, and {pet} is in good paws from here.",
     approaching: "{clinic} is just ahead. Look for the {kind} entrance.",
     arrival: "You made it. Tell the front desk you're the Tími arrival for {pet}. Nicely done — that was a fetching bit of driving."
   },
   urgent: {
     start: "On our way to {clinic}. They know {pet} is coming.",
-    halfway: "About {minutes} minutes to {clinic}. You're doing great.",
+    halfway: "About {minutes} minutes to {clinic}. You're doing great — no need to rush the herd.",
     approaching: "{clinic} is just ahead. Look for the {kind} entrance.",
     arrival: "You've arrived. Tell the front desk you're the Tími arrival for {pet}."
   },

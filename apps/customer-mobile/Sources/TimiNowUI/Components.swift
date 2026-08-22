@@ -5,13 +5,103 @@ import SkipFuseUI
 #else
 import SwiftUI
 #endif
+#if !SKIP && canImport(UIKit)
+import UIKit
+#endif
 
+/// Falls back to type when the bundled artwork is missing.
+///
+/// `Image(_:bundle:)` renders an empty view for a name it cannot resolve, so a
+/// resource that fails to make it into the app is a silent hole in the layout
+/// rather than an error — which is exactly how it presented: a blank top-left
+/// corner on the home screen with nothing to search for. Drawing the wordmark
+/// as text instead means the app always reads as Tími.
 struct TimiWordmark: View {
     var compact = false
+
     var body: some View {
+        #if !SKIP && canImport(UIKit)
+        if let artwork = UIImage(named: "timinow-wordmark", in: .module, with: nil) {
+            Image(uiImage: artwork)
+                .resizable().scaledToFit()
+                .frame(width: CGFloat(compact ? 132 : 194), height: CGFloat(compact ? 46 : 68))
+                .accessibilityLabel("Tími NOW")
+        } else {
+            lettering
+        }
+        #else
         Image("timinow-wordmark", bundle: .module)
-            .resizable().scaledToFit().frame(width: CGFloat(compact ? 132 : 194), height: CGFloat(compact ? 46 : 68))
+            .resizable().scaledToFit()
+            .frame(width: CGFloat(compact ? 132 : 194), height: CGFloat(compact ? 46 : 68))
             .accessibilityLabel("Tími NOW")
+        #endif
+    }
+
+    private var lettering: some View {
+        HStack(spacing: 4) {
+            Text("Tími")
+                .font(.system(size: CGFloat(compact ? 27 : 40), weight: .bold, design: .serif))
+                .foregroundStyle(TimiColor.ink)
+            Text("NOW")
+                .font(.system(size: CGFloat(compact ? 12 : 17), weight: .black))
+                .tracking(1.2)
+                .foregroundStyle(.white)
+                .padding(.horizontal, 6).padding(.vertical, 3)
+                .background(TimiColor.coral, in: RoundedRectangle(cornerRadius: 6))
+        }
+        .accessibilityElement()
+        .accessibilityLabel("Tími NOW")
+    }
+}
+
+/// What happens when you tap the button, in one panel.
+///
+/// This replaces a decorative card that showed a floating illustration beside
+/// the words "Live intake near you" — which said nothing, and rendered as an
+/// empty blue rectangle whenever the illustration failed to load. The numbers
+/// here are the actual product promise, and they need no artwork to survive.
+struct CareLaunchPanel: View {
+    var petName: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(spacing: 11) {
+                ZStack {
+                    Circle().fill(TimiColor.blue).frame(width: 42, height: 42)
+                    Image(systemName: "wave.3.right")
+                        .font(.system(size: 17, weight: .black)).foregroundStyle(.white)
+                }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("One intake, many answers")
+                        .font(.system(size: 17, weight: .black)).foregroundStyle(TimiColor.ink)
+                    Text("Nothing is booked for \(petName) until you choose.")
+                        .font(.caption).foregroundStyle(TimiColor.muted)
+                }
+                Spacer(minLength: 0)
+            }
+            HStack(spacing: 8) {
+                step("30", "asked", TimiColor.blueSoft)
+                chevron
+                step("5", "answer", TimiColor.goldSoft)
+                chevron
+                step("1", "you pick", TimiColor.coralSoft)
+            }
+        }
+    }
+
+    private var chevron: some View {
+        Image(systemName: "chevron.right")
+            .font(.system(size: 11, weight: .black)).foregroundStyle(TimiColor.muted)
+    }
+
+    private func step(_ value: String, _ label: String, _ tint: Color) -> some View {
+        VStack(spacing: 2) {
+            Text(value).font(.system(size: 22, weight: .bold, design: .serif)).foregroundStyle(TimiColor.ink)
+            Text(label).font(.system(size: 10, weight: .black)).tracking(0.6).foregroundStyle(TimiColor.muted)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 11)
+        .background(tint, in: RoundedRectangle(cornerRadius: 14))
     }
 }
 

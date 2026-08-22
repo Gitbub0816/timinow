@@ -282,3 +282,14 @@ public struct AppConfigEnvelope: Codable, Sendable {
 public enum MapDefaults {
     public static let styleURL = "mapbox://styles/calebowen2019/cmt3nci25004d01sya8qxcb4u"
 }
+
+public enum TimiEnvironment {
+    /// Where a fresh install talks to.
+    ///
+    /// This used to be empty, and an empty address is what puts the gateway in
+    /// demo mode — so every new install showed invented clinics and an
+    /// "INTERACTIVE DEMO" badge until someone found the field in Settings and
+    /// typed a URL into it. Settings still overrides this; it is only the
+    /// starting point.
+    public static let defaultAPIBaseURL = "https://timinow.pet"
+}

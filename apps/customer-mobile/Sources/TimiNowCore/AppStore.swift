@@ -45,7 +45,7 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
         let selectedPetId = storedPets[0].id
         let storedHistory: [CareHistoryItem] = []
         let completedOnboarding = false
-        let apiBaseURLText = ""
+        let apiBaseURLText = TimiEnvironment.defaultAPIBaseURL
         let storedNavigationPreferences = NavigationPreferences.default
         #else
         let defaults = UserDefaults.standard
@@ -54,7 +54,10 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
         let selectedPetId = defaults.string(forKey: "timi.selectedPet") ?? storedPets[0].id
         let storedHistory = Self.decode([CareHistoryItem].self, from: defaults.data(forKey: "timi.history")) ?? []
         let completedOnboarding = defaults.bool(forKey: "timi.onboarding.complete")
-        let apiBaseURLText = defaults.string(forKey: "timi.apiBaseURL") ?? ""
+        // Empty as well as absent: a previously saved blank would otherwise
+        // pin the app in demo mode forever.
+        let storedBaseURL = defaults.string(forKey: "timi.apiBaseURL") ?? ""
+        let apiBaseURLText = storedBaseURL.isEmpty ? TimiEnvironment.defaultAPIBaseURL : storedBaseURL
         let storedNavigationPreferences = Self.decode(NavigationPreferences.self, from: defaults.data(forKey: "timi.navigation.preferences")) ?? .default
         #endif
         self.pets = storedPets
