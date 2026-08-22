@@ -39,6 +39,7 @@ SKIPPED=""
 DRY=false
 SECRETS_ONLY=false
 PULL=true
+INSPECT=false
 
 # Every argument is read, in any order, so the flags combine — `--dry-run
 # --no-pull` used to silently ignore the second one.
@@ -47,6 +48,7 @@ for arg in "$@"; do
     --dry-run)      DRY=true ;;
     --secrets-only) SECRETS_ONLY=true ;;
     --no-pull)      PULL=false ;;
+    --inspect)      INSPECT=true ;;
     -*)             echo "unknown option: $arg" >&2; exit 1 ;;
     *)              [ -n "$ENV_FILE" ] && { echo "more than one env file given: $ENV_FILE and $arg" >&2; exit 1; }
                     ENV_FILE="$arg" ;;
@@ -54,7 +56,7 @@ for arg in "$@"; do
 done
 
 if [ -z "$ENV_FILE" ]; then
-  echo "usage: $0 <path-to-env-file> [--dry-run] [--secrets-only] [--no-pull]" >&2
+  echo "usage: $0 <path-to-env-file> [--dry-run] [--secrets-only] [--no-pull] [--inspect]" >&2
   echo "example: $0 ~/Downloads/env.example" >&2
   exit 1
 fi
@@ -294,6 +296,33 @@ set_var() { # set_var KEY CONFIG...
   done
   $DRY || echo "  set   $key -> $*"
 }
+
+# What is in the env file, without putting any of it on screen.
+#
+# Half the questions in a bad deploy are "is that value actually set, and is it
+# the right shape" — and answering them with grep prints live secrets into a
+# terminal, a scrollback buffer, and whatever they get pasted into. Two
+# characters and a length answer the same question and disclose nothing.
+if $INSPECT; then
+  bold "$ENV_FILE"
+  awk '
+    /^[[:space:]]*#/ { next }
+    {
+      idx = index($0, "=")
+      if (idx == 0) next
+      key = substr($0, 1, idx - 1)
+      val = substr($0, idx + 1)
+      sub(/^[[:space:]]*export[[:space:]]+/, "", key)
+      gsub(/[[:space:]]/, "", key)
+      sub(/[[:space:]]+$/, "", val)
+      if (key == "") next
+      if (val == "") { printf "  %-32s (blank)\n", key; next }
+      printf "  %-32s %s… %d characters\n", key, substr(val, 1, 2), length(val)
+    }
+  ' "$ENV_FILE"
+  echo
+  exit 0
+fi
 
 bold "0. Latest code"
 if ! $PULL; then
