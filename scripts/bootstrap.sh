@@ -492,11 +492,39 @@ echo
 
 fi   # end of the block skipped by --secrets-only
 
+# Values whose shape is knowable, checked here rather than at the moment they
+# are used. A Twilio API Key SID starts SK and an Account SID starts AC; they
+# are the same length and Twilio answers a call made with the wrong one with
+# the single word "Authenticate", hours after the deploy that caused it.
+check_secret_shape() { # check_secret_shape KEY VALUE
+  case "$1" in
+    TWILIO_ACCOUNT_SID)
+      case "$2" in
+        AC*) [ "${#2}" -eq 34 ] || die "  TWILIO_ACCOUNT_SID is ${#2} characters. An Account SID is \"AC\" and 32 hex characters." ;;
+        SK*) die "  TWILIO_ACCOUNT_SID starts \"SK\", which is an API Key SID, not an Account SID.
+
+  They are the same length and easy to confuse. Only the Account SID works:
+  it goes into the request URL as /Accounts/AC.../Calls.json, so an API key
+  there produces a 401 saying only \"Authenticate\".
+
+  Both are on the Twilio console home page. Take the Account SID (AC...) and
+  the Auth Token beside it — and check TWILIO_AUTH_TOKEN too, since an API
+  Key Secret is also 32 characters and looks just as plausible. The auth
+  token is what signs the webhooks, so the wrong one breaks inbound calls as
+  well as outbound." ;;
+        *)   die "  TWILIO_ACCOUNT_SID does not look like an Account SID. It is \"AC\" and 32 hex characters, from the Twilio console home page." ;;
+      esac ;;
+    TWILIO_AUTH_TOKEN)
+      [ "${#2}" -eq 32 ] || die "  TWILIO_AUTH_TOKEN is ${#2} characters; a Twilio auth token is 32. Check for a truncated paste or surrounding quotes." ;;
+  esac
+}
+
 put_secret() { # put_secret KEY CONFIG...
   local key="$1"; shift
   local value
   value="$(env_value "$key")"
   [ -n "$value" ] || { dim "  skip  $key (blank in env file)"; return 0; }
+  check_secret_shape "$key" "$value"
   local config
   for config in "$@"; do
     if $DRY; then
