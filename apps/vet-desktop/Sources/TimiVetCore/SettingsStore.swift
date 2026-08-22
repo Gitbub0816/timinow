@@ -19,7 +19,14 @@ public final class SettingsStore: @unchecked Sendable {
 
     public func load() -> AppSettings {
         guard let data = try? Data(contentsOf: fileURL) else { return AppSettings() }
-        return (try? JSONDecoder().decode(AppSettings.self, from: data)) ?? AppSettings()
+        var settings = (try? JSONDecoder().decode(AppSettings.self, from: data)) ?? AppSettings()
+        // An address saved as empty pins the console on nothing at all, and
+        // every settings file written before there was a default holds exactly
+        // that.
+        if settings.apiBaseUrl.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            settings.apiBaseUrl = TimiVetEnvironment.defaultAPIBaseURL
+        }
+        return settings
     }
 
     public func save(_ settings: AppSettings) {

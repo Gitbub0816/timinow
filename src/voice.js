@@ -46,12 +46,52 @@ export function buildCallScript({ locationName, spokenConcern, travelMinutes, ur
  */
 export const DEFAULT_SAY_VOICE = "Polly.Joanna-Neural";
 
-function sayXml(text, { voice = DEFAULT_SAY_VOICE } = {}) {
-  return `<Say voice="${escapeXml(voice)}">${escapeXml(text)}</Say>`;
+/** The configured voice, or the default. VOICE_SAY_VOICE was documented and
+ * read by nothing, so every call used Joanna whatever the setting said. */
+export function sayVoice(env) {
+  const configured = String(env?.VOICE_SAY_VOICE || "").trim();
+  return configured || DEFAULT_SAY_VOICE;
 }
 
-function gatherXml({ actionUrl, sayText, numDigits = 1, timeout = 8 }) {
-  return `<Gather input="dtmf" numDigits="${numDigits}" timeout="${timeout}" action="${escapeXml(actionUrl)}" method="POST">${sayXml(sayText)}</Gather>`;
+/**
+ * Tími is "TEE-mee". Every engine reads it as "Timmy" otherwise, which is the
+ * first word a clinic hears and the name of the company saying it.
+ *
+ * Applied after escaping rather than before, because the script is escaped —
+ * correctly — and markup written into it beforehand would come out as visible
+ * angle brackets. "Tími" contains no XML-special character, so it survives
+ * escaping unchanged and can be matched afterwards; the replacement is fixed
+ * markup, never anything from the caller, so nothing can be injected through
+ * a clinic or pet name that happens to contain it.
+ *
+ * The text inside the tag is the respelling rather than the brand, so an
+ * engine that ignores <phoneme> still says it right.
+ */
+const BRAND_SPOKEN = '<phoneme alphabet="ipa" ph="\u02c8ti\u02d0mi\u02d0">Tee-mee</phoneme>';
+
+export function pronounceBrand(escapedText) {
+  return escapedText.replace(/T\u00edmi|Timi/g, BRAND_SPOKEN);
+}
+
+function sayXml(text, { voice = DEFAULT_SAY_VOICE } = {}) {
+  return `<Say voice="${escapeXml(voice)}">${pronounceBrand(escapeXml(text))}</Say>`;
+}
+
+/**
+ * A line of the call: pre-rendered audio when there is any, spoken text
+ * otherwise.
+ *
+ * The fallback is the point. Twilio cannot speak a voice it does not host, so
+ * a custom voice has to arrive as a file — and if that file is not there when
+ * the phone is already ringing, the clinic hears nothing at all. Falling back
+ * to <Say> costs the voice and keeps the call.
+ */
+function lineXml(text, { voice, audioUrl } = {}) {
+  return audioUrl ? `<Play>${escapeXml(audioUrl)}</Play>` : sayXml(text, { voice });
+}
+
+function gatherXml({ actionUrl, sayText, numDigits = 1, timeout = 8, voice, audioUrl }) {
+  return `<Gather input="dtmf" numDigits="${numDigits}" timeout="${timeout}" action="${escapeXml(actionUrl)}" method="POST">${lineXml(sayText, { voice, audioUrl })}</Gather>`;
 }
 
 function redirectXml(url) {
@@ -67,42 +107,42 @@ function responseXml(inner) {
 }
 
 /** The very first thing the clinic hears: the intro, then the Gather prompt. Falls through to `repeatActionUrl` on no input. */
-export function outboundTwiml({ script, gatherActionUrl, repeatActionUrl }) {
+export function outboundTwiml({ script, gatherActionUrl, repeatActionUrl, voice, audio = {} }) {
   return responseXml(
-    sayXml(script.intro) +
-    gatherXml({ actionUrl: gatherActionUrl, sayText: script.prompt }) +
+    lineXml(script.intro, { voice, audioUrl: audio.intro }) +
+    gatherXml({ actionUrl: gatherActionUrl, sayText: script.prompt, voice, audioUrl: audio.prompt }) +
     redirectXml(repeatActionUrl)
   );
 }
 
 /** Re-plays the prompt (pressed 9, or no input yet within the repeat budget). */
-export function repeatTwiml({ script, gatherActionUrl, repeatActionUrl }) {
+export function repeatTwiml({ script, gatherActionUrl, repeatActionUrl, voice, audio = {} }) {
   return responseXml(
-    gatherXml({ actionUrl: gatherActionUrl, sayText: script.repeat }) +
+    gatherXml({ actionUrl: gatherActionUrl, sayText: script.repeat, voice, audioUrl: audio.repeat }) +
     redirectXml(repeatActionUrl)
   );
 }
 
-export function acceptedTwiml(script) {
-  return responseXml(sayXml(script.accepted) + hangupXml());
+export function acceptedTwiml(script, { voice, audioUrl } = {}) {
+  return responseXml(lineXml(script.accepted, { voice, audioUrl }) + hangupXml());
 }
 
-export function declinedTwiml(script) {
-  return responseXml(sayXml(script.declined) + hangupXml());
+export function declinedTwiml(script, { voice, audioUrl } = {}) {
+  return responseXml(lineXml(script.declined, { voice, audioUrl }) + hangupXml());
 }
 
 /** The search was already filled (max offers reached, expired, or selected) by the time the clinic answered. */
-export function alreadyFilledTwiml() {
-  return responseXml(sayXml("Thank you — that request has already been filled.") + hangupXml());
+export function alreadyFilledTwiml({ voice } = {}) {
+  return responseXml(sayXml("Thank you — that request has already been filled.", { voice }) + hangupXml());
 }
 
 /** No digits after the repeat budget is exhausted. */
-export function noResponseTwiml(script) {
-  return responseXml(sayXml(script.goodbye) + hangupXml());
+export function noResponseTwiml(script, { voice, audioUrl } = {}) {
+  return responseXml(lineXml(script.goodbye, { voice, audioUrl }) + hangupXml());
 }
 
-export function errorTwiml(message = "Sorry, something went wrong. Goodbye.") {
-  return responseXml(sayXml(message) + hangupXml());
+export function errorTwiml(message = "Sorry, something went wrong. Goodbye.", { voice } = {}) {
+  return responseXml(sayXml(message, { voice }) + hangupXml());
 }
 
 /* --------------------------------------------------------- signatures --- */
@@ -186,9 +226,20 @@ export async function verifyAttemptToken(authToken, attemptId, token) {
  * whole tick.
  */
 export async function placeCall(env, { to, from, url, statusCallback }) {
-  const accountSid = env.TWILIO_ACCOUNT_SID;
-  const authToken = env.TWILIO_AUTH_TOKEN;
+  const accountSid = (env.TWILIO_ACCOUNT_SID || "").trim();
+  const authToken = (env.TWILIO_AUTH_TOKEN || "").trim();
   if (!accountSid || !authToken) throw new Error("TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN must be configured");
+  // Checked before the request, because Twilio answers all of these with the
+  // single word "Authenticate" and a 401, which is true and unhelpful. An API
+  // key SID in particular looks close enough to an Account SID to paste by
+  // mistake and is the most common way to land here.
+  if (!/^AC[0-9a-f]{32}$/i.test(accountSid)) {
+    const kind = accountSid.startsWith("SK") ? "an API Key SID" : accountSid.startsWith("AC") ? "the right shape but the wrong length" : "not an Account SID";
+    throw new Error(`TWILIO_ACCOUNT_SID is ${kind} (${accountSid.length} characters, starts "${accountSid.slice(0, 2)}"). It must be the Account SID from the Twilio console: "AC" followed by 32 hex characters.`);
+  }
+  if (!/^[0-9a-f]{32}$/i.test(authToken)) {
+    throw new Error(`TWILIO_AUTH_TOKEN is ${authToken.length} characters; a Twilio auth token is 32 hex characters. Check for a truncated paste or surrounding quotes.`);
+  }
   const fromNumber = from || env.TWILIO_FROM_NUMBER;
   if (!fromNumber) throw new Error("TWILIO_FROM_NUMBER is not configured — cannot place outbound calls");
 
@@ -212,7 +263,17 @@ export async function placeCall(env, { to, from, url, statusCallback }) {
     body: form.toString()
   });
   const body = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(body?.message || `Twilio call request failed (${response.status})`);
+  if (!response.ok) {
+    // Twilio's own message is often one word. Its numeric code is the part
+    // worth searching for, and 20003 has a specific cause worth naming.
+    const parts = [body?.message || "Twilio rejected the call request", `HTTP ${response.status}`];
+    if (body?.code) parts.push(`Twilio code ${body.code}`);
+    if (Number(body?.code) === 20003) {
+      parts.push("the Account SID and Auth Token do not match an active account — check they come from the same account, and that the token has not been rotated in the Twilio console");
+    }
+    if (body?.more_info) parts.push(body.more_info);
+    throw new Error(parts.join(" — "));
+  }
   return { sid: body.sid, status: body.status, raw: body };
 }
 

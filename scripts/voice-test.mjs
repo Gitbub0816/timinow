@@ -2,10 +2,17 @@ import { readFile } from "node:fs/promises";
 import { DatabaseSync } from "node:sqlite";
 import worker from "../apps/voice-gateway/src/index.js";
 import {
+  acceptedTwiml,
+  alreadyFilledTwiml,
   buildCallScript,
+  DEFAULT_SAY_VOICE,
+  declinedTwiml,
   escapeXml,
+  noResponseTwiml,
   normalizePhone,
   outboundTwiml,
+  repeatTwiml,
+  sayVoice,
   verifyTwilioSignature,
   withinQuietHours
 } from "../src/voice.js";
@@ -206,7 +213,10 @@ database.exec(await readFile("migrations/0003_multi_offer_search.sql", "utf8"));
 database.exec(await readFile("migrations/0004_tenancy_admin.sql", "utf8"));
 database.exec(await readFile("migrations/0005_voice_calls.sql", "utf8"));
 
-const TWILIO_AUTH_TOKEN = "test_auth_token_abc123";
+// Shaped like the real thing — 32 hex characters — because placeCall now
+// checks that shape before it calls Twilio, and a fixture that could never be
+// a real credential would exercise the rejection path rather than the drain.
+const TWILIO_AUTH_TOKEN = "0123456789abcdef0123456789abcdef";
 const env = {
   ASSETS: { fetch: async () => new Response("asset") },
   DB: new D1Mock(database),
@@ -214,7 +224,7 @@ const env = {
   DEMO_MODE: "false",
   SURFACE: "voice",
   MAPBOX_STYLE_URL: "mapbox://styles/example/example",
-  TWILIO_ACCOUNT_SID: "AC_test_sid",
+  TWILIO_ACCOUNT_SID: "AC00000000000000000000000000000001",
   TWILIO_AUTH_TOKEN,
   TWILIO_FROM_NUMBER: "+15005550006",
   VOICE_MAX_ATTEMPTS: "2",
@@ -461,5 +471,33 @@ assert(numberStatus.response.status === 204, "The number-level status callback m
 
 globalThis.fetch = originalFetch;
 database.close();
+
+// The brand name, and the voice that says it.
+{
+  const script = buildCallScript({ locationName: "Hearth", spokenConcern: "a dog", travelMinutes: 9, urgency: "urgent" });
+  const spoken = outboundTwiml({ script, gatherActionUrl: "https://x/g", repeatActionUrl: "https://x/r" });
+  assert(spoken.includes('alphabet="ipa"'), "the brand name is spoken phonetically");
+  assert(!/>[^<]*T\u00edmi/.test(spoken), "no bare Tími is left for an engine to read as Timmy");
+  assert(spoken.includes(">Tee-mee<"), "the phoneme's own text is the respelling, so an engine that ignores the tag still says it right");
+
+  // A voice reaches TwiML as an attribute; it must be the configured one and
+  // it must be escaped.
+  assert(outboundTwiml({ script, gatherActionUrl: "https://x/g", repeatActionUrl: "https://x/r", voice: "Google.en-US-Chirp3-HD-Aoede" })
+    .includes('<Say voice="Google.en-US-Chirp3-HD-Aoede">'), "the requested voice is used");
+  assert(sayVoice({ VOICE_SAY_VOICE: "Google.en-US-Studio-O" }) === "Google.en-US-Studio-O", "VOICE_SAY_VOICE is read");
+  assert(sayVoice({}) === DEFAULT_SAY_VOICE, "a blank setting falls back to the default");
+  assert(sayVoice({ VOICE_SAY_VOICE: "  " }) === DEFAULT_SAY_VOICE, "whitespace is not a voice");
+
+  // Every spoken surface, not just the first one.
+  for (const [label, xml] of [
+    ["accepted", acceptedTwiml(script, { voice: "Polly.Danielle-Neural" })],
+    ["declined", declinedTwiml(script, { voice: "Polly.Danielle-Neural" })],
+    ["no response", noResponseTwiml(script, { voice: "Polly.Danielle-Neural" })],
+    ["already filled", alreadyFilledTwiml({ voice: "Polly.Danielle-Neural" })],
+    ["repeat", repeatTwiml({ script, gatherActionUrl: "https://x/g", repeatActionUrl: "https://x/r", voice: "Polly.Danielle-Neural" })]
+  ]) {
+    assert(xml.includes('voice="Polly.Danielle-Neural"'), `${label} uses the configured voice`);
+  }
+}
 
 console.log("Voice gateway tests passed: Twilio signature verification, call-script content, TwiML well-formedness and escaping, quiet-hours math, phone normalization, cron drain (tenant opt-out + successful placement), phone acceptance producing a byte-identical offer to the console path, and the inbound callback path.");

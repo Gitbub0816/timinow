@@ -215,13 +215,52 @@ fi
 echo "  installed on $DEVICE_NAME"
 
 bold "8. Launch"
-if xcrun devicectl device process launch --device "$DEVICE_ID" --terminate-existing "$BUNDLE_ID" >/dev/null 2>&1; then
-  echo "  running"
+# --console attaches to the app's output, so a process that dies on launch says
+# why — a missing dylib, a rejected entitlement, a fatalError. Without it the
+# only signal is that the app closes, and the reason has to be hunted for in
+# the device's crash reports.
+LAUNCH_LOG=/tmp/timi-ios-launch.log
+set +e +o pipefail
+( xcrun devicectl device process launch \
+    --device "$DEVICE_ID" \
+    --console \
+    --terminate-existing \
+    "$BUNDLE_ID" > "$LAUNCH_LOG" 2>&1 ) &
+LAUNCH_PID=$!
+CONSOLE_WAIT=0
+while [ "$CONSOLE_WAIT" -lt 12 ] && kill -0 "$LAUNCH_PID" 2>/dev/null; do
+  sleep 1
+  CONSOLE_WAIT=$(( CONSOLE_WAIT + 1 ))
+done
+STILL_RUNNING=0
+kill -0 "$LAUNCH_PID" 2>/dev/null && STILL_RUNNING=1
+pkill -P "$LAUNCH_PID" 2>/dev/null
+kill "$LAUNCH_PID" 2>/dev/null
+set -e -o pipefail
+
+# A locked phone refuses the launch and says so precisely. It is not a crash,
+# and dumping a crash-shaped block under it — with a hint about untrusted
+# certificates — buries the one sentence that matters.
+if grep -qi "could not be, unlocked\|BSErrorCodeDescription = Locked" "$LAUNCH_LOG" 2>/dev/null; then
+  echo "  installed, but not launched — the phone is locked"
+  dim  "  iOS will not start a freshly installed app while the device is locked."
+  dim  "  Unlock it and open Tími NOW from the home screen, or run this again"
+  dim  "  with the phone unlocked and it will launch by itself."
+elif [ "$STILL_RUNNING" -eq 1 ] && ! grep -qiE "terminated|crash|Library not loaded|dyld|Fatal error" "$LAUNCH_LOG" 2>/dev/null; then
+  echo "  running — still up after ${CONSOLE_WAIT}s"
 else
-  warn "  Installed, but iOS refused to start it. On the first install with a"
-  warn "  personal Apple ID that is expected — the certificate is untrusted"
-  warn "  until you say otherwise:"
-  dim  "    Settings -> General -> VPN & Device Management -> your Apple ID -> Trust"
-  dim  "  Then open Tími NOW from the home screen."
+  echo >&2
+  warn "  It launched and then stopped. Everything the app printed:"
+  # The dyld and fatalError lines are the ones that name a cause; the rest is
+  # ordinary logging, so it is kept but the summary leads with the cause.
+  {
+    grep -iE "Library not loaded|dyld|Fatal error|Terminating|NSException|Referenced from|Reason:" "$LAUNCH_LOG" 2>/dev/null | head -12
+    echo "--- last lines ---"
+    tail -15 "$LAUNCH_LOG" 2>/dev/null
+  } | copy_and_show >&2
+  echo >&2
+  dim "  Full output: $LAUNCH_LOG"
+  warn "  If instead it never started at all, the certificate is untrusted until"
+  warn "  you say so: Settings -> General -> VPN & Device Management -> Trust."
 fi
 echo

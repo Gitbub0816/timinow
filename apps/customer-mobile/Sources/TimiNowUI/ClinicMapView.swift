@@ -74,7 +74,7 @@ struct ClinicMapView: View {
     }
 
     private func recenter() {
-        viewport = .camera(center: CLLocationCoordinate2D(latitude: userLatitude, longitude: userLongitude), zoom: clinics.isEmpty ? 13 : 11)
+        viewport = .camera(center: CLLocationCoordinate2D(latitude: userLatitude, longitude: userLongitude), zoom: CGFloat(clinics.isEmpty ? 13 : 11))
     }
 }
 

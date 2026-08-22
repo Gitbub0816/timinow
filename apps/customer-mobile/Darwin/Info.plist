@@ -2,7 +2,22 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+    <!--
+      The identity keys. With GENERATE_INFOPLIST_FILE set to NO, nothing
+      injects these — the file is used exactly as written. Without
+      CFBundleIdentifier the build succeeds, produces a .app, and then
+      devicectl refuses it: "The item at TimiNow.app is not a valid bundle …
+      Failed to get the identifier for the app to be installed."
+    -->
+    <key>CFBundleIdentifier</key><string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+    <key>CFBundleExecutable</key><string>$(EXECUTABLE_NAME)</string>
+    <key>CFBundleName</key><string>$(PRODUCT_NAME)</string>
+    <key>CFBundlePackageType</key><string>$(PRODUCT_BUNDLE_PACKAGE_TYPE)</string>
+    <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
+    <key>CFBundleDevelopmentRegion</key><string>$(DEVELOPMENT_LANGUAGE)</string>
     <key>CFBundleDisplayName</key><string>Tími NOW</string>
+    <!-- See TimiNowApp.swift: the palette has no dark variant. -->
+    <key>UIUserInterfaceStyle</key><string>Light</string>
     <!--
       Set from MARKETING_VERSION / CURRENT_PROJECT_VERSION in project.yml.
       They are spelled out here because GENERATE_INFOPLIST_FILE is NO for this

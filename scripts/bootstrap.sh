@@ -34,28 +34,73 @@ fi
 set -euo pipefail
 
 ENV_FILE=""
+# Every key left blank in the env file, repeated in the closing summary.
+SKIPPED=""
 DRY=false
 SECRETS_ONLY=false
 PULL=true
+INSPECT=false
+TEST_CALL=""
+TEST_VOICE=""
+TTS_CHECK=false
 
 # Every argument is read, in any order, so the flags combine — `--dry-run
 # --no-pull` used to silently ignore the second one.
-for arg in "$@"; do
+while [ $# -gt 0 ]; do
+  arg="$1"
   case "$arg" in
     --dry-run)      DRY=true ;;
     --secrets-only) SECRETS_ONLY=true ;;
     --no-pull)      PULL=false ;;
+    --inspect)      INSPECT=true ;;
+    --test-call)    TEST_CALL="${2:-}"; shift ;;
+    --voice)        TEST_VOICE="${2:-}"; shift ;;
+    --tts-check)    TTS_CHECK=true ;;
     -*)             echo "unknown option: $arg" >&2; exit 1 ;;
     *)              [ -n "$ENV_FILE" ] && { echo "more than one env file given: $ENV_FILE and $arg" >&2; exit 1; }
                     ENV_FILE="$arg" ;;
   esac
+  shift
 done
 
-if [ -z "$ENV_FILE" ] || [ ! -f "$ENV_FILE" ]; then
-  echo "usage: $0 <path-to-env-file> [--dry-run] [--secrets-only] [--no-pull]" >&2
+if [ -z "$ENV_FILE" ]; then
+  echo "usage: $0 <path-to-env-file> [--dry-run] [--secrets-only] [--no-pull] [--inspect] [--tts-check] [--test-call +1... [--voice NAME]]" >&2
   echo "example: $0 ~/Downloads/env.example" >&2
   exit 1
 fi
+
+# "It printed the usage" and "that file is not where you think it is" are two
+# different problems, and printing the first for the second sends you off to
+# re-read the flags when the answer is a path.
+if [ ! -f "$ENV_FILE" ]; then
+  echo "no env file at: $ENV_FILE" >&2
+  case "$ENV_FILE" in
+    /*) ;;
+    *)  echo "  (looked relative to $PWD)" >&2 ;;
+  esac
+  # A file of that name sitting somewhere obvious is worth naming, since the
+  # usual mistake is the directory rather than the name.
+  BASENAME="$(basename "$ENV_FILE")"
+  for WHERE in "$PWD" "$HOME" "$HOME/Downloads" "$HOME/Desktop" "$(dirname "$0")/.."; do
+    if [ -f "$WHERE/$BASENAME" ]; then
+      # Canonicalised, so the suggestion is a path worth copying rather than
+      # one with a scripts/.. in the middle of it.
+      FOUND="$(cd "$WHERE" && pwd)/$BASENAME"
+      echo >&2
+      echo "found one here — did you mean:" >&2
+      echo "    $0 $FOUND" >&2
+      break
+    fi
+  done
+  exit 1
+fi
+
+# Absolute before the cd below, or a relative path stops resolving the moment
+# the script moves to the repository root.
+case "$ENV_FILE" in
+  /*) ;;
+  *)  ENV_FILE="$PWD/$ENV_FILE" ;;
+esac
 
 cd "$(dirname "$0")/.."
 
@@ -132,6 +177,41 @@ bold "Read $FOUND non-empty values from $ENV_FILE"
 # non-empty one wins, but it is also exactly what a half-filled copy of
 # .env.example looks like, and the reader deserves to know which value is
 # actually in play before it turns up in production.
+# Two assignments of the same key with two different non-empty values is not a
+# stale placeholder — it is a coin toss over a production credential, and the
+# loser is invisible. A Clerk key set twice deployed the wrong instance and
+# took sign-in down on every surface while the file plainly showed the right
+# one further up. Refused rather than resolved.
+CONFLICTS="$(awk '
+  /^[[:space:]]*#/ { next }
+  {
+    idx = index($0, "=")
+    if (idx == 0) next
+    key = substr($0, 1, idx - 1)
+    val = substr($0, idx + 1)
+    sub(/^[[:space:]]*export[[:space:]]+/, "", key)
+    gsub(/[[:space:]]/, "", key)
+    sub(/^[[:space:]]+/, "", val); sub(/[[:space:]]+$/, "", val)
+    if (key == "" || val == "") next
+    if (key in value) { if (value[key] != val) conflict[key] = 1 }
+    else value[key] = val
+  }
+  END { for (k in conflict) printf "%s ", k }
+' "$ENV_FILE")"
+if [ -n "$CONFLICTS" ]; then
+  die "  Assigned twice, with different values, in $ENV_FILE:
+
+    $CONFLICTS
+
+  Whichever comes last would win and the other would vanish silently, so
+  nothing was deployed. Note that \"export KEY=value\" counts — a plain
+  search for \"^KEY=\" will not show you the second one. Find them all with:
+
+    grep -nE '^[[:space:]]*(export[[:space:]]+)?($(printf '%s' "$CONFLICTS" | tr -s ' ' '|' | sed 's/|$//'))=' $ENV_FILE
+
+  Delete the wrong one and run this again."
+fi
+
 DUPLICATES="$(awk '
   /^[[:space:]]*#/ { next }
   {
@@ -188,7 +268,7 @@ set_var() { # set_var KEY CONFIG...
   local key="$1"; shift
   local value
   value="$(env_value "$key")"
-  [ -n "$value" ] || { dim "  skip  $key (blank in env file)"; return 0; }
+  [ -n "$value" ] || { dim "  skip  $key (blank in env file)"; SKIPPED="$SKIPPED $key"; return 0; }
 
   # A setting whose name ends in _URL has to be one. Catching it here beats
   # letting it reach the configuration check, which can only report that
@@ -259,6 +339,136 @@ set_var() { # set_var KEY CONFIG...
   done
   $DRY || echo "  set   $key -> $*"
 }
+
+# What is in the env file, without putting any of it on screen.
+#
+# Half the questions in a bad deploy are "is that value actually set, and is it
+# the right shape" — and answering them with grep prints live secrets into a
+# terminal, a scrollback buffer, and whatever they get pasted into. Two
+# characters and a length answer the same question and disclose nothing.
+if $INSPECT; then
+  bold "$ENV_FILE"
+  awk '
+    /^[[:space:]]*#/ { next }
+    {
+      idx = index($0, "=")
+      if (idx == 0) next
+      key = substr($0, 1, idx - 1)
+      val = substr($0, idx + 1)
+      sub(/^[[:space:]]*export[[:space:]]+/, "", key)
+      gsub(/[[:space:]]/, "", key)
+      sub(/[[:space:]]+$/, "", val)
+      if (key == "") next
+      if (val == "") { printf "  %-32s (blank)\n", key; next }
+      printf "  %-32s %s… %d characters\n", key, substr(val, 1, 2), length(val)
+    }
+  ' "$ENV_FILE"
+  echo
+  exit 0
+fi
+
+# Place one test call, reading the env file with the same reader everything
+# else here uses.
+#
+# The alternative is a shell one-liner with a grep in it, and a grep does not
+# know about `export KEY=value`, a quoted value, a duplicate assignment, or a
+# trailing carriage return — all of which this reader handles and all of which
+# have already cost a round trip. The token never reaches argv.
+if $TTS_CHECK; then
+  ORIGIN="$(env_value VOICE_PUBLIC_URL)"
+  [ -n "$ORIGIN" ] || ORIGIN="https://voice.timinow.pet"
+  ORIGIN="${ORIGIN%/}"
+  TOKEN="$(env_value VOICE_DRAIN_TOKEN)"
+  bold "Gemini voice check"
+  echo "  through $ORIGIN"
+  BODY="{}"
+  [ -n "$TEST_VOICE" ] && BODY="{\"voice\":\"$TEST_VOICE\"}"
+  echo
+  curl -sS -X POST "$ORIGIN/api/voice/tts-check" \
+    -H "x-timi-drain-token: $TOKEN" \
+    -H "content-type: application/json" \
+    -d "$BODY"
+  echo
+  echo
+  dim "  ok:true means the call will play that voice. ok:false gives Google's"
+  dim "  own reason and names the Twilio voice speaking in its place."
+  dim "  Try a specific one:  $0 $ENV_FILE --tts-check --voice Kore"
+  exit 0
+fi
+
+if [ -n "$TEST_CALL" ]; then
+  ORIGIN="$(env_value VOICE_PUBLIC_URL)"
+  [ -n "$ORIGIN" ] || ORIGIN="https://voice.timinow.pet"
+  ORIGIN="${ORIGIN%/}"
+  TOKEN="$(env_value VOICE_DRAIN_TOKEN)"
+  SOURCE="$ENV_FILE"
+  # What was actually deployed. This flag exits before step 0, so a value added
+  # to the env file since the last full run is still sitting on this machine —
+  # and the Worker then answers about a token it has never been given, which
+  # reads as though the env file were wrong.
+  DEPLOYED="$(CONFIG="$VOICE" node -e '
+    const fs = require("fs");
+    const text = fs.readFileSync(process.env.CONFIG, "utf8").replace(/^\s*\/\/.*$/gm, "");
+    process.stdout.write((JSON.parse(text).vars || {}).VOICE_DRAIN_TOKEN || "");
+  ' 2>/dev/null || true)"
+  # Falling back to the wrangler config, because that is what was deployed and
+  # therefore what the Worker is actually checking against. A blank value in the
+  # env file leaves whatever the config held — set_var skips blanks by design,
+  # so "keep the current value" is a legitimate answer — and the two can drift.
+  # Testing against the env file alone reports a token missing while the Worker
+  # is happily holding one.
+  if [ -z "$TOKEN" ] && [ -n "$DEPLOYED" ]; then
+    TOKEN="$DEPLOYED"
+    SOURCE="$VOICE (blank in the env file)"
+  fi
+  bold "Test call"
+  echo "  to      $TEST_CALL"
+  echo "  through $ORIGIN"
+  if [ -z "$TOKEN" ]; then
+    die "  VOICE_DRAIN_TOKEN is blank in $ENV_FILE and in $VOICE, and the endpoint
+  will not place a billable call without it. Add one and deploy it:
+
+    echo \"VOICE_DRAIN_TOKEN=\$(openssl rand -hex 24)\" >> $ENV_FILE
+    $0 $ENV_FILE"
+  fi
+  dim "  token   ${TOKEN%${TOKEN#??}}… ${#TOKEN} characters, from $SOURCE"
+  if [ "$TOKEN" != "$DEPLOYED" ]; then
+    echo
+    die "  That token is in $ENV_FILE but has not been deployed — $VOICE
+  still holds $([ -n "$DEPLOYED" ] && echo "a different one" || echo "none at all"), and the Worker checks against what it was
+  given. This flag stops before the deploy step on purpose.
+
+  Deploy first, then call:
+
+    $0 $ENV_FILE
+    $0 $ENV_FILE --test-call $TEST_CALL"
+  fi
+  echo
+  if [ -n "$TEST_VOICE" ]; then
+    echo "  voice   $TEST_VOICE (this call only — set VOICE_SAY_VOICE to keep it)"
+    BODY="{\"to\":\"$TEST_CALL\",\"voice\":\"$TEST_VOICE\"}"
+  else
+    CONFIGURED="$(env_value VOICE_SAY_VOICE)"
+    echo "  voice   ${CONFIGURED:-Polly.Joanna-Neural (the default)}"
+    BODY="{\"to\":\"$TEST_CALL\"}"
+  fi
+  echo
+  curl -sS -X POST "$ORIGIN/api/voice/test-call" \
+    -H "x-timi-drain-token: $TOKEN" \
+    -H "content-type: application/json" \
+    -d "$BODY"
+  echo
+  echo
+  dim "  Auditioning voices: re-run with --voice NAME. Nothing is deployed, so"
+  dim "  each call can use a different one. Some to try, most natural first:"
+  dim "    Google.en-US-Chirp3-HD-Aoede      Google.en-US-Chirp3-HD-Charon"
+  dim "    Google.en-US-Neural2-F            Google.en-US-Studio-O"
+  dim "    Polly.Danielle-Neural             Polly.Joanna-Neural"
+  dim "  A name Twilio does not know fails at answer time — the call connects"
+  dim "  and then drops — so if a voice goes silent, that is the name."
+  dim "  Keep the one you like: VOICE_SAY_VOICE=<name> in $ENV_FILE, then re-run."
+  exit 0
+fi
 
 bold "0. Latest code"
 if ! $PULL; then
@@ -345,10 +555,24 @@ set_var TWILIO_FROM_NUMBER     "$VOICE"
 set_var VOICE_PUBLIC_URL       "$VOICE"
 set_var VOICE_CALLS_ENABLED    "$VOICE"
 set_var VOICE_MAX_ATTEMPTS     "$VOICE"
+set_var VOICE_SAY_VOICE        "$VOICE"
+set_var GEMINI_TTS_VOICE       "$VOICE"
+set_var GEMINI_TTS_MODEL       "$VOICE"
+set_var GEMINI_TTS_STYLE       "$VOICE"
 set_var PLATFORM_ADMIN_EMAILS  "$ADMIN"
 set_var PLATFORM_ADMIN_USER_IDS "$ADMIN"
 # Shared by both ends of the immediate-dispatch path, so it goes to both.
 set_var VOICE_DRAIN_TOKEN      "$CUSTOMER" "$VOICE"
+# Optional for the drain itself, which no-ops on an empty queue and is reachable
+# over the service binding regardless. Not optional for /api/voice/test-call,
+# which places a real, billable call and therefore refuses to run without one —
+# and "not permitted" is a confusing answer when the reason is that nobody ever
+# set a token.
+if ! have VOICE_DRAIN_TOKEN; then
+  warn "  VOICE_DRAIN_TOKEN is blank, so /api/voice/test-call will refuse to"
+  warn "  place a test call. Add a line like this to $ENV_FILE and re-run:"
+  dim  "    VOICE_DRAIN_TOKEN=$(openssl rand -hex 24 2>/dev/null || head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+fi
 echo
 
 # ------------------------------------------------ secrets -> each Worker ---
@@ -370,6 +594,36 @@ if $SECRETS_ONLY; then
   bold "Secrets only — skipping validation, migration, and deploy"
   echo
 else
+
+# The publishable key carries its own host, base64-encoded. CLERK_ISSUER and
+# CLERK_JWKS_URL name the same instance separately, and a file edited halfway —
+# key updated, issuer left behind — deploys a Worker that hands browsers one
+# instance and verifies tokens against another. Every symptom of that points
+# somewhere else.
+if ! $DRY && have CLERK_PUBLISHABLE_KEY; then
+  CLERK_HOST_FROM_KEY="$(printf '%s' "$(env_value CLERK_PUBLISHABLE_KEY)" | node -e '
+    let key = "";
+    process.stdin.on("data", (chunk) => { key += chunk; });
+    process.stdin.on("end", () => {
+      const encoded = key.trim().replace(/^pk_(live|test)_/, "");
+      if (!encoded || encoded === key.trim()) return;
+      const host = Buffer.from(encoded, "base64").toString("utf8").replace(/\$$/, "");
+      if (/^[a-z0-9.-]+\.[a-z]{2,}$/i.test(host)) process.stdout.write(host);
+    });
+  ' 2>/dev/null || true)"
+  for PAIR in "CLERK_ISSUER" "CLERK_JWKS_URL"; do
+    PAIR_VALUE="$(env_value "$PAIR")"
+    [ -n "$PAIR_VALUE" ] || continue
+    PAIR_HOST="$(printf '%s' "$PAIR_VALUE" | sed -E 's#^https?://##; s#/.*$##')"
+    if [ -n "$CLERK_HOST_FROM_KEY" ] && [ "$PAIR_HOST" != "$CLERK_HOST_FROM_KEY" ]; then
+      die "  $PAIR names $PAIR_HOST, but CLERK_PUBLISHABLE_KEY decodes to
+  $CLERK_HOST_FROM_KEY. They must be the same Clerk instance — browsers would
+  be sent to one and tokens verified against the other.
+
+  This is what a half-finished edit looks like. Nothing was deployed."
+    fi
+  done
+fi
 
 bold "1b. Sign-in is possible"
 # A blank CLERK_PUBLISHABLE_KEY is not a configuration, it is an outage: the
@@ -449,11 +703,39 @@ echo
 
 fi   # end of the block skipped by --secrets-only
 
+# Values whose shape is knowable, checked here rather than at the moment they
+# are used. A Twilio API Key SID starts SK and an Account SID starts AC; they
+# are the same length and Twilio answers a call made with the wrong one with
+# the single word "Authenticate", hours after the deploy that caused it.
+check_secret_shape() { # check_secret_shape KEY VALUE
+  case "$1" in
+    TWILIO_ACCOUNT_SID)
+      case "$2" in
+        AC*) [ "${#2}" -eq 34 ] || die "  TWILIO_ACCOUNT_SID is ${#2} characters. An Account SID is \"AC\" and 32 hex characters." ;;
+        SK*) die "  TWILIO_ACCOUNT_SID starts \"SK\", which is an API Key SID, not an Account SID.
+
+  They are the same length and easy to confuse. Only the Account SID works:
+  it goes into the request URL as /Accounts/AC.../Calls.json, so an API key
+  there produces a 401 saying only \"Authenticate\".
+
+  Both are on the Twilio console home page. Take the Account SID (AC...) and
+  the Auth Token beside it — and check TWILIO_AUTH_TOKEN too, since an API
+  Key Secret is also 32 characters and looks just as plausible. The auth
+  token is what signs the webhooks, so the wrong one breaks inbound calls as
+  well as outbound." ;;
+        *)   die "  TWILIO_ACCOUNT_SID does not look like an Account SID. It is \"AC\" and 32 hex characters, from the Twilio console home page." ;;
+      esac ;;
+    TWILIO_AUTH_TOKEN)
+      [ "${#2}" -eq 32 ] || die "  TWILIO_AUTH_TOKEN is ${#2} characters; a Twilio auth token is 32. Check for a truncated paste or surrounding quotes." ;;
+  esac
+}
+
 put_secret() { # put_secret KEY CONFIG...
   local key="$1"; shift
   local value
   value="$(env_value "$key")"
-  [ -n "$value" ] || { dim "  skip  $key (blank in env file)"; return 0; }
+  [ -n "$value" ] || { dim "  skip  $key (blank in env file)"; SKIPPED="$SKIPPED $key"; return 0; }
+  check_secret_shape "$key" "$value"
   local config
   for config in "$@"; do
     if $DRY; then
@@ -477,6 +759,42 @@ put_secret() { # put_secret KEY CONFIG...
   done
 }
 
+# Ask Twilio whether the pair is real, rather than finding out on the first
+# call. Both values can be perfectly well formed and still belong to different
+# accounts, or the token can have been rotated in the console — and the only
+# symptom is a 401 whose body is the word "Authenticate", arriving whenever a
+# clinic finally needed a phone call.
+#
+# One GET, no telephony, nothing billable. Credentials go in on stdin rather
+# than argv, so they never appear in `ps` or in shell history.
+if ! $DRY && have TWILIO_ACCOUNT_SID && have TWILIO_AUTH_TOKEN; then
+  bold "4b. Twilio credentials"
+  TW_SID="$(env_value TWILIO_ACCOUNT_SID)"
+  TW_STATUS="$(printf 'user = "%s:%s"\n' "$TW_SID" "$(env_value TWILIO_AUTH_TOKEN)" \
+    | curl -sS --config - -o /dev/null -w '%{http_code}' --max-time 20 \
+      "https://api.twilio.com/2010-04-01/Accounts/$TW_SID.json" 2>/dev/null || echo "000")"
+  case "$TW_STATUS" in
+    200) echo "  accepted by Twilio" ;;
+    401) die "  Twilio rejected TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN together (401).
+
+  Both are the right shape, so this is not a typo — they do not belong to the
+  same active account. The usual causes, in order:
+
+    * the Auth Token is an API Key Secret. Both are 32 characters, and the
+      one that works here is the Auth Token on the Twilio console home page,
+      directly beside the Account SID.
+    * the token was rotated in the console, and this is the previous one.
+    * the SID is a subaccount's and the token is the parent account's.
+
+  Copy both from the console home page in one go, at the same moment.
+  Nothing was deployed." ;;
+    000) warn "  Could not reach Twilio to check the credentials — continuing." ;;
+    *)   warn "  Twilio answered $TW_STATUS when checking the credentials. Continuing," ;
+         warn "  but expect calls to fail if this is not a transient error." ;;
+  esac
+  echo
+fi
+
 bold "5. Worker secrets"
 put_secret CLERK_SECRET_KEY      "$CUSTOMER" "$VET" "$ADMIN" "$VOICE"
 # Not a secret in the security sense — it is served to every browser by
@@ -486,6 +804,7 @@ put_secret CLERK_SECRET_KEY      "$CUSTOMER" "$VET" "$ADMIN" "$VOICE"
 put_secret MAPBOX_PUBLIC_TOKEN   "$CUSTOMER" "$VET" "$ADMIN"
 put_secret TWILIO_ACCOUNT_SID    "$VOICE"
 put_secret TWILIO_AUTH_TOKEN     "$VOICE"
+put_secret GEMINI_API_KEY        "$VOICE"
 put_secret STRIPE_SECRET_KEY     "$CUSTOMER"
 put_secret STRIPE_WEBHOOK_SECRET "$CUSTOMER"
 echo
@@ -498,7 +817,7 @@ if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
     local key="$1"
     local value
     value="$(env_value "$key")"
-    [ -n "$value" ] || { dim "  skip  $key (blank in env file)"; return 0; }
+    [ -n "$value" ] || { dim "  skip  $key (blank in env file)"; SKIPPED="$SKIPPED $key"; return 0; }
     if $DRY; then
       dim "    would run: gh secret set $key"
     else
@@ -620,6 +939,15 @@ if ! $DRY; then
 fi
 echo
 
+if [ -n "$SKIPPED" ]; then
+  # Blank is a legitimate answer for most of these — CLERK_JWKS_URL is meant to
+  # be derived, STRIPE_* is not configured yet. It is legitimate right up until
+  # it is the one you needed, and by then it has scrolled off the top.
+  warn "Left blank in $ENV_FILE, so nothing was deployed for them:"
+  for KEY in $SKIPPED; do dim "    $KEY"; done
+  echo
+fi
+
 bold "Done."
 echo "Public values changed in the wrangler configs. They are deployed already —"
 echo "committing them is optional, and only worth it for values you want other"
@@ -630,3 +958,8 @@ echo "    git commit -m 'Configure production keys' && git push"
 echo
 echo "Never 'git add -A' after this runs: it sweeps up every config at once, and"
 echo "one rejected file blocks the whole push."
+echo
+echo "And do not 'git pull' by hand before running this again. Step 1 above"
+echo "rewrites those four configs every time, so a plain pull stops on \"local"
+echo "changes would be overwritten\". Step 0 already pulls, and discards exactly"
+echo "those four files first because it is about to overwrite them anyway."

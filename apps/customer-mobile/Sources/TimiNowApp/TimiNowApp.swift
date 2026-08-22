@@ -17,6 +17,7 @@ public struct RootView: View {
     public var body: some View {
         CustomerRootView(store: store)
             .task { logger.info("Tími customer app started") }
+            .task { await store.auth.start() }
             .task { await store.loadMapConfig() }
             .task { WatchBridge.shared.start(observing: store) }
     }
@@ -25,6 +26,13 @@ public struct RootView: View {
 #if !SKIP
 public protocol TimiNowApplication: App { }
 public extension TimiNowApplication {
-    var body: some Scene { WindowGroup { RootView() } }
+    // .light, not the system's choice. Tími's palette is a fixed light design
+    // — paper, canvas, ink — with no dark counterpart, so on a phone in dark
+    // mode every unstyled control took the system scheme while the backgrounds
+    // stayed light: white headings on near-white, black text fields, a grey
+    // tab bar. Info.plist sets UIUserInterfaceStyle to match, which also
+    // covers UIKit chrome this modifier never reaches — the Mapbox navigation
+    // view controller among it.
+    var body: some Scene { WindowGroup { RootView().preferredColorScheme(.light) } }
 }
 #endif

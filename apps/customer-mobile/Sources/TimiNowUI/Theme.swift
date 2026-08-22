@@ -5,6 +5,21 @@ import SkipFuseUI
 import SwiftUI
 #endif
 
+extension Color {
+    /// `opacity`, but the result is unambiguously a `Color`.
+    ///
+    /// `Color` has three different `opacity(_:)` members reachable on it: its
+    /// own, `View`'s, and `ShapeStyle`'s. Passed to something that takes any
+    /// `ShapeStyle` — `stroke`, `fill`, `background` — more than one of them
+    /// fits, and the compiler reports "ambiguous use of 'opacity'" pointing at
+    /// whichever it happened to be looking at. It only surfaces once the
+    /// overload set gets crowded enough, so it appears with the Mapbox build
+    /// and not without, in a file that has nothing to do with Mapbox.
+    ///
+    /// A concrete return type ends the argument.
+    func faded(_ amount: Double) -> Color { opacity(amount) }
+}
+
 enum TimiColor {
     static let ink = Color(red: 0.067, green: 0.106, blue: 0.231)
     static let paper = Color(red: 1.0, green: 0.980, blue: 0.941)
@@ -27,11 +42,23 @@ struct TimiPrimaryButtonStyle: ButtonStyle {
             .foregroundStyle(.white)
             .frame(maxWidth: .infinity, minHeight: 54)
             .padding(.horizontal, 18)
-            .background(color.opacity(configuration.isPressed ? 0.82 : 1), in: RoundedRectangle(cornerRadius: 17))
-            .overlay(RoundedRectangle(cornerRadius: 17).stroke(TimiColor.ink, lineWidth: 2))
-            .offset(y: configuration.isPressed ? 3 : 0)
-            .shadow(color: TimiColor.ink, radius: 0, x: configuration.isPressed ? 0 : 4, y: configuration.isPressed ? 0 : 5)
+            // The shadow is cast by the shape, not by the button. `.shadow` on
+            // a view applies to everything it has drawn, the label included,
+            // so a hard offset shadow — radius 0 — renders a second copy of
+            // the text a few points down and to the right. On the web this is
+            // a box-shadow, which is a property of the box; SwiftUI has no
+            // such thing, and the direct translation ghosts every label in
+            // the app.
+            .background(Self.plate(color: color, pressed: configuration.isPressed))
+            .offset(y: CGFloat(configuration.isPressed ? 3 : 0))
             .animation(.easeOut(duration: 0.14), value: configuration.isPressed)
+    }
+
+    private static func plate(color: Color, pressed: Bool) -> some View {
+        let shape = RoundedRectangle(cornerRadius: 17)
+        return shape.fill(color.faded(pressed ? 0.82 : 1))
+            .overlay(shape.stroke(TimiColor.ink, lineWidth: 2))
+            .shadow(color: TimiColor.ink, radius: 0, x: CGFloat(pressed ? 0 : 4), y: CGFloat(pressed ? 0 : 5))
     }
 }
 
@@ -42,14 +69,21 @@ struct TimiQuietButtonStyle: ButtonStyle {
             .font(.system(size: 15, weight: .bold))
             .foregroundStyle(TimiColor.ink)
             .frame(maxWidth: .infinity, minHeight: 50)
-            .background(Color.white.opacity(configuration.isPressed ? 0.55 : 0.95), in: RoundedRectangle(cornerRadius: 16))
-            .overlay(RoundedRectangle(cornerRadius: 16).stroke(TimiColor.ink.opacity(0.25), lineWidth: 1))
+            .background(Color.white.faded(configuration.isPressed ? 0.55 : 0.95), in: RoundedRectangle(cornerRadius: 16))
+            .overlay(RoundedRectangle(cornerRadius: 16).stroke(TimiColor.ink.faded(0.25), lineWidth: 1))
     }
 }
 
 extension View {
+    /// The card's border and drop shadow belong to the card, not to what is
+    /// written on it — see TimiPrimaryButtonStyle.plate for why that matters.
     func timiCard(_ color: Color = .white) -> some View {
-        self.padding(18).background(color, in: RoundedRectangle(cornerRadius: 24)).overlay(RoundedRectangle(cornerRadius: 24).stroke(TimiColor.ink, lineWidth: 2)).shadow(color: TimiColor.ink.opacity(0.95), radius: 0, x: 5, y: 6)
+        let shape = RoundedRectangle(cornerRadius: 24)
+        return self.padding(18).background(
+            shape.fill(color)
+                .overlay(shape.stroke(TimiColor.ink, lineWidth: 2))
+                .shadow(color: TimiColor.ink.faded(0.95), radius: 0, x: 5, y: 6)
+        )
     }
 }
 

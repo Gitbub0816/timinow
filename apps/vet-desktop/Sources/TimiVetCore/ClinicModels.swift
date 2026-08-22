@@ -168,8 +168,19 @@ public struct DecisionPayload: Sendable {
     }
 }
 
+public enum TimiVetEnvironment {
+    /// Where a fresh install talks to.
+    ///
+    /// This was empty, and an empty address means the console never reaches
+    /// /api/config, never learns the Clerk publishable key, and reports it as
+    /// "Tími could not reach Clerk" — which sends you looking at Clerk and at
+    /// DNS rather than at a blank field in Settings. Settings still overrides
+    /// it; this is only the starting point.
+    public static let defaultAPIBaseURL = "https://providers.timinow.pet"
+}
+
 public struct AppSettings: Codable, Sendable {
-    public var apiBaseUrl: String = ""
+    public var apiBaseUrl: String = TimiVetEnvironment.defaultAPIBaseURL
     public var tenantId: String = "tenant_hearth"
     public var pollSeconds: Int = 6
     public var alertsEnabled: Bool = true

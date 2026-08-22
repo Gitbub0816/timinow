@@ -39,13 +39,23 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
     #endif
     private var gateway: TimiGateway
 
+    /// Sign-in, and the token every Worker call carries.
+    ///
+    /// A plain stored property, not `lazy`: @Observable rewrites stored
+    /// properties into computed ones backed by init accessors, and neither
+    /// `lazy` nor a default expression referring to another property survives
+    /// that. Built in init, after the gateway it needs.
+    public private(set) var auth: AuthController
+
     public init() {
         #if os(Android)
         let storedPets = [DemoData.pet]
         let selectedPetId = storedPets[0].id
         let storedHistory: [CareHistoryItem] = []
         let completedOnboarding = false
-        let apiBaseURLText = ""
+        let apiBaseURLText = TimiEnvironment.defaultAPIBaseURL
+        let storedOwner = ("", "", "")
+        let storedDeveloperMode = false
         let storedNavigationPreferences = NavigationPreferences.default
         #else
         let defaults = UserDefaults.standard
@@ -54,7 +64,16 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
         let selectedPetId = defaults.string(forKey: "timi.selectedPet") ?? storedPets[0].id
         let storedHistory = Self.decode([CareHistoryItem].self, from: defaults.data(forKey: "timi.history")) ?? []
         let completedOnboarding = defaults.bool(forKey: "timi.onboarding.complete")
-        let apiBaseURLText = defaults.string(forKey: "timi.apiBaseURL") ?? ""
+        // Empty as well as absent: a previously saved blank would otherwise
+        // pin the app in demo mode forever.
+        let storedBaseURL = defaults.string(forKey: "timi.apiBaseURL") ?? ""
+        let apiBaseURLText = storedBaseURL.isEmpty ? TimiEnvironment.defaultAPIBaseURL : storedBaseURL
+        let storedDeveloperMode = defaults.bool(forKey: "timi.developerMode")
+        let storedOwner = (
+            defaults.string(forKey: "timi.owner.name") ?? "",
+            defaults.string(forKey: "timi.owner.phone") ?? "",
+            defaults.string(forKey: "timi.owner.email") ?? ""
+        )
         let storedNavigationPreferences = Self.decode(NavigationPreferences.self, from: defaults.data(forKey: "timi.navigation.preferences")) ?? .default
         #endif
         self.pets = storedPets
@@ -64,8 +83,14 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
         self.history = storedHistory
         self.hasCompletedOnboarding = completedOnboarding
         self.apiBaseURLText = apiBaseURLText
+        self.developerModeEnabled = storedDeveloperMode
+        self.ownerName = storedOwner.0
+        self.ownerPhone = storedOwner.1
+        self.ownerEmail = storedOwner.2
         self.navigationPreferences = storedNavigationPreferences
-        self.gateway = TimiGateway(baseURL: Self.validBaseURL(apiBaseURLText))
+        let gateway = TimiGateway(baseURL: Self.validBaseURL(apiBaseURLText))
+        self.gateway = gateway
+        self.auth = AuthController(gateway: gateway)
     }
 
     /// Single shared instance so the CarPlay scene and the Watch
@@ -75,6 +100,13 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
 
     public var selectedPet: PetProfile { pets.first(where: { $0.id == selectedPetId }) ?? pets[0] }
     public var isDemoMode: Bool { gateway.isDemo }
+    /// What the gateway resolved to, which is not always what is in the text
+    /// field — an address that fails validation leaves the gateway on nothing
+    /// at all, and the difference is worth being able to see.
+    public var resolvedAPIAddress: String {
+        let address = gateway.configuredAddress
+        return address.isEmpty ? "nothing — demo data" : address
+    }
     public var concernValidation: ConcernValidation { ConcernValidator.evaluate(summary: draft.summary, symptoms: draft.symptomKeys, startedWhen: draft.startedWhen) }
 
     public func completeOnboarding(name: String, species: PetSpecies) {
@@ -90,11 +122,57 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
         persistPets()
     }
 
+    /// Who to call, remembered.
+    ///
+    /// The draft is rebuilt from scratch on every care request — it has to be,
+    /// since the concern is new each time — and that wiped the owner's name,
+    /// phone and email along with it. Typing your own phone number again while
+    /// your dog is being sick is not a small annoyance. Kept separately from
+    /// the draft for exactly that reason, and written back whenever it changes.
+    /// Reveals the Worker address and the onboarding replay. Off for everyone
+    /// who has not deliberately turned it on.
+    public var developerModeEnabled: Bool {
+        didSet {
+            #if !os(Android)
+            defaults.set(developerModeEnabled, forKey: "timi.developerMode")
+            #endif
+        }
+    }
+
+    public var ownerName: String {
+        didSet { persistOwner() }
+    }
+    public var ownerPhone: String {
+        didSet { persistOwner() }
+    }
+    public var ownerEmail: String {
+        didSet { persistOwner() }
+    }
+
     public func beginCare() {
         draft = CareDraft(pet: selectedPet)
         draft.latitude = currentLatitude
         draft.longitude = currentLongitude
+        draft.ownerName = ownerName
+        draft.ownerPhone = ownerPhone
+        draft.ownerEmail = ownerEmail
         route = .intake
+    }
+
+    /// Called when a search is submitted, so details typed into the intake
+    /// screen are remembered even if Settings was never opened.
+    func rememberOwnerFromDraft() {
+        if !draft.ownerName.isEmpty { ownerName = draft.ownerName }
+        if !draft.ownerPhone.isEmpty { ownerPhone = draft.ownerPhone }
+        if !draft.ownerEmail.isEmpty { ownerEmail = draft.ownerEmail }
+    }
+
+    private func persistOwner() {
+        #if !os(Android)
+        defaults.set(ownerName, forKey: "timi.owner.name")
+        defaults.set(ownerPhone, forKey: "timi.owner.phone")
+        defaults.set(ownerEmail, forKey: "timi.owner.email")
+        #endif
     }
 
     public func setLocation(latitude: Double, longitude: Double) {
@@ -118,19 +196,24 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
         guard concernValidation.isReady, draft.legalConsent, draft.contactConsent else {
             errorMessage = "Complete the observable concern details and required acknowledgements first."; return
         }
+        rememberOwnerFromDraft()
         isWorking = true; errorMessage = nil
         do {
+            // Minted fresh if the one in hand is near expiry. A Clerk token
+            // lives about a minute, so a search started on a screen opened
+            // five minutes ago would otherwise arrive expired.
+            try? await auth.ensureFreshToken()
             locations = try await gateway.locations(latitude: draft.latitude, longitude: draft.longitude, species: draft.pet.species)
             currentSearch = try await gateway.startSearch(draft, locationIds: locations.prefix(30).map(\.id))
             route = .searching
-        } catch { errorMessage = error.localizedDescription }
+        } catch { errorMessage = Self.describe(error) }
         isWorking = false
     }
 
     public func refreshSearch() async {
         guard let search = currentSearch, !gateway.isDemo, ["collecting", "offers_ready"].contains(search.status) else { return }
         do { currentSearch = try await gateway.refreshSearch(search.id) }
-        catch { errorMessage = error.localizedDescription }
+        catch { errorMessage = Self.describe(error) }
     }
 
     public func selectOffer(_ offer: CareOffer) async {
@@ -145,7 +228,7 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
             showCelebration = true
             history.insert(CareHistoryItem(id: result.intake.id, petName: result.intake.pet?.name ?? selectedPet.name, clinicName: (result.location ?? offer.location)?.name ?? "Veterinary clinic", status: result.intake.status, dateISO: result.intake.decisionAt ?? ""), at: 0)
             persistHistory()
-        } catch { errorMessage = error.localizedDescription }
+        } catch { errorMessage = Self.describe(error) }
         isWorking = false
     }
 
@@ -154,14 +237,14 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
         if gateway.isDemo { intake.status = status; currentIntake = intake }
         else {
             do { currentIntake = try await gateway.updateIntake(intake.id, status: status) }
-            catch { errorMessage = error.localizedDescription }
+            catch { errorMessage = Self.describe(error) }
         }
     }
 
     public func record(_ milestone: String) async {
         guard var intake = currentIntake else { return }
         do { try await gateway.recordObservation(intake: intake, milestone: milestone); intake.status = milestone; currentIntake = intake }
-        catch { errorMessage = error.localizedDescription }
+        catch { errorMessage = Self.describe(error) }
     }
 
     public func resetCareFlow() {
@@ -225,5 +308,15 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
         #endif
     }
     private static func decode<T: Decodable>(_ type: T.Type, from data: Data?) -> T? { guard let data else { return nil }; return try? JSONDecoder().decode(type, from: data) }
+    /// TimiAPIError is not a LocalizedError — Skip cannot translate one — so
+    /// `localizedDescription` on it yields "The operation couldn't be
+    /// completed. (TimiNowCore.TimiAPIError error 0.)" and nothing else.
+    /// Every catch block goes through here so the real message reaches the
+    /// screen.
+    static func describe(_ error: Error) -> String {
+        if let apiError = error as? TimiAPIError { return apiError.message }
+        return error.localizedDescription
+    }
+
     private static func validBaseURL(_ text: String) -> URL? { guard let url = URL(string: text), url.scheme == "https", url.host != nil else { return nil }; return url }
 }

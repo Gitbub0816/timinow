@@ -1,17 +1,40 @@
 import Foundation
 
+/// Every case carries enough to act on: which address, which path, which
+/// status, which code.
+///
+/// Not `LocalizedError` — Skip cannot translate it, and there is a guard that
+/// says so. That matters, because `error.localizedDescription` on a plain
+/// Swift error gives "The operation couldn't be completed.
+/// (TimiNowCore.TimiAPIError error 0.)", where 0 is the case's position in
+/// this declaration and nothing else. So callers must read `.message`
+/// instead — see AppStore.describe, which every catch block goes through.
 public enum TimiAPIError: Error, Sendable {
-    case invalidConfiguration
-    case server(String)
-    case invalidResponse
+    /// The configured Worker address, or empty when there is none.
+    case invalidConfiguration(String)
+    /// The Worker answered, and said no.
+    case server(status: Int, code: String?, message: String, path: String)
+    /// The Worker answered with something that is not the expected shape.
+    case invalidResponse(path: String)
+    /// The Worker was never reached: offline, DNS, TLS, timeout.
+    case transport(reason: String, path: String)
 
     public var message: String {
         switch self {
-        case .invalidConfiguration: return "Enter the HTTPS address of your Tími Worker in Settings."
-        case .server(let message): return message
-        case .invalidResponse: return "Tími received a response it could not read."
+        case .invalidConfiguration(let address):
+            return address.isEmpty
+                ? "No Tími Worker address is set. Add one in Settings."
+                : "\(address) is not a usable address. It must start with https:// and name a host."
+        case .server(let status, let code, let message, let path):
+            let label = code.map { " [\($0)]" } ?? ""
+            return "\(message) (\(status)\(label) from \(path))"
+        case .invalidResponse(let path):
+            return "Tími could not read the response from \(path)."
+        case .transport(let reason, let path):
+            return "Could not reach \(path): \(reason)"
         }
     }
+
 }
 
 public final class TimiGateway: @unchecked Sendable {
@@ -26,6 +49,11 @@ public final class TimiGateway: @unchecked Sendable {
     }
 
     public var isDemo: Bool { baseURL == nil }
+
+    /// What the gateway was actually pointed at, for an error to quote. The
+    /// address the user typed is held by AppStore; this is what survived
+    /// validation, which is the one that matters when a call fails.
+    public var configuredAddress: String { baseURL?.absoluteString ?? "" }
 
     public func locations(latitude: Double, longitude: Double, species: PetSpecies) async throws -> [ClinicLocation] {
         guard let baseURL else { return DemoData.clinics }
@@ -54,7 +82,7 @@ public final class TimiGateway: @unchecked Sendable {
     }
 
     public func refreshSearch(_ id: String) async throws -> CareSearch {
-        guard let baseURL else { throw TimiAPIError.invalidConfiguration }
+        guard let baseURL else { throw TimiAPIError.invalidConfiguration(configuredAddress) }
         let envelope: CareSearchEnvelope = try await send(baseURL.appendingPathComponent("api/searches/\(id)"))
         return envelope.search
     }
@@ -70,13 +98,13 @@ public final class TimiGateway: @unchecked Sendable {
     }
 
     public func refreshIntake(_ id: String) async throws -> CareIntake {
-        guard let baseURL else { throw TimiAPIError.invalidConfiguration }
+        guard let baseURL else { throw TimiAPIError.invalidConfiguration(configuredAddress) }
         let envelope: IntakeEnvelope = try await send(baseURL.appendingPathComponent("api/intakes/\(id)"))
         return envelope.intake
     }
 
     public func updateIntake(_ id: String, status: String) async throws -> CareIntake {
-        guard let baseURL else { throw TimiAPIError.invalidConfiguration }
+        guard let baseURL else { throw TimiAPIError.invalidConfiguration(configuredAddress) }
         let envelope: IntakeEnvelope = try await send(baseURL.appendingPathComponent("api/intakes/\(id)/status"), method: "POST", body: StatusPayload(status: status))
         return envelope.intake
     }
@@ -95,6 +123,13 @@ public final class TimiGateway: @unchecked Sendable {
         return envelope.map
     }
 
+    /// The whole config, for sign-in. `fetchMapConfig` reads the same
+    /// response; this returns the rest of it rather than fetching twice.
+    public func fetchAppConfig() async throws -> AppConfigEnvelope {
+        guard let baseURL else { throw TimiAPIError.invalidConfiguration(configuredAddress) }
+        return try await send(baseURL.appendingPathComponent("api/config"))
+    }
+
     private func send<Response: Decodable>(_ url: URL, method: String = "GET") async throws -> Response {
         try await send(url, method: method, data: nil)
     }
@@ -110,14 +145,32 @@ public final class TimiGateway: @unchecked Sendable {
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         if let data { request.httpBody = data; request.setValue("application/json", forHTTPHeaderField: "Content-Type") }
         if let bearerToken, !bearerToken.isEmpty { request.setValue("Bearer \(bearerToken)", forHTTPHeaderField: "Authorization") }
-        let (responseData, response) = try await session.data(for: request)
-        guard let http = response as? HTTPURLResponse else { throw TimiAPIError.invalidResponse }
+        let path = url.path
+        let responseData: Data
+        let response: URLResponse
+        do {
+            (responseData, response) = try await session.data(for: request)
+        } catch {
+            // A URLError reaching the UI unwrapped reads as "The operation
+            // couldn't be completed" with no host and no reason, which is the
+            // same dead end as before. Wrapped, it says which address failed
+            // and how.
+            throw TimiAPIError.transport(reason: error.localizedDescription, path: url.absoluteString)
+        }
+        guard let http = response as? HTTPURLResponse else { throw TimiAPIError.invalidResponse(path: path) }
         guard (200..<300).contains(http.statusCode) else {
-            let error = try? decoder.decode(APIErrorEnvelope.self, from: responseData)
-            throw TimiAPIError.server(error?.message ?? error?.error ?? "Tími could not complete that request (\(http.statusCode)).")
+            let envelope = try? decoder.decode(APIErrorEnvelope.self, from: responseData)
+            let failure = envelope?.error
+            let detail = (failure?.details?.isEmpty == false) ? " " + (failure?.details ?? []).joined(separator: " ") : ""
+            throw TimiAPIError.server(
+                status: http.statusCode,
+                code: failure?.code,
+                message: (failure?.message ?? "Tími could not complete that request.") + detail,
+                path: path
+            )
         }
         do { return try decoder.decode(Response.self, from: responseData) }
-        catch { throw TimiAPIError.invalidResponse }
+        catch { throw TimiAPIError.invalidResponse(path: path) }
     }
 }
 

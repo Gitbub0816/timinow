@@ -71,11 +71,24 @@ let package = Package(
         // by TimiNow and TimiNowApp, but cannot be built dynamically because
         // there is a package product with the same name." The targets are
         // still built and tested — they are reached through TimiNowApp.
-        .library(name: "TimiNowApp", type: .dynamic, targets: ["TimiNowApp"]),
+        //
+        // Static, like the console's. A dynamic product has to end up in the
+        // app's Frameworks directory or dyld cannot find it at launch: the app
+        // builds, signs, installs, and dies immediately with "Library not
+        // loaded: @rpath/TimiNowApp.framework/TimiNowApp". Nothing here embeds
+        // it — the only embed in Darwin/project.yml is the watch app — and
+        // Xcode does not do it on its own for a package product. Linking the
+        // code into the executable removes the lookup rather than adding a
+        // phase to satisfy it.
+        //
+        // The Android build is untouched by this: skipstone transpiles these
+        // targets to Kotlin whatever the Apple product type is, and Gradle
+        // builds its own artifacts from that.
+        .library(name: "TimiNowApp", type: .static, targets: ["TimiNowApp"]),
         // Apple-only, opt-in from the Darwin Xcode project (see
         // Darwin/project.yml). Never a dependency of TimiNowUI/TimiNowApp so
         // Skip's Android build never has to compile it.
-        .library(name: "TimiNowCarPlay", type: .dynamic, targets: ["TimiNowCarPlay"])
+        .library(name: "TimiNowCarPlay", type: .static, targets: ["TimiNowCarPlay"])
     ],
     dependencies: packageDependencies,
     targets: [

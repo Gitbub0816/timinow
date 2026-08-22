@@ -83,7 +83,15 @@ for (const [source, needle, label] of expectations) {
 }
 
 if (gateway.includes("bearerToken: String? = nil, session:")) throw new Error("URLSession must not appear in the public Skip bridge surface.");
-if (gateway.includes("LocalizedError") || gateway.includes("errorDescription")) throw new Error("Swift-only LocalizedError overrides cannot be translated by Skip.");
+// Comments stripped first. The file explains this very rule, and a guard that
+// fires on its own explanation can never be satisfied — the same trap the
+// xcconfig and keychain checks already had to be taught.
+{
+  const executable = gateway.split("\n").filter((line) => !/^\s*\/\//.test(line)).join("\n");
+  if (executable.includes("LocalizedError") || executable.includes("errorDescription")) {
+    throw new Error("Swift-only LocalizedError overrides cannot be translated by Skip. Callers read TimiAPIError.message through AppStore.describe instead.");
+  }
+}
 if (appStore.includes("init(defaults: UserDefaults")) throw new Error("UserDefaults must not appear in the public Skip bridge surface.");
 if (appStore.includes("where: { $0.id == self.selectedPetId }")) throw new Error("AppStore initialization must not capture self before all members are initialized.");
 if (/public\s+(struct|extension).*ButtonStyle|public\s+func\s+timiCard/.test(theme)) throw new Error("SwiftUI implementation helpers must stay out of the public Skip bridge surface.");
@@ -634,6 +642,194 @@ for (const path of await collectFiles("apps/customer-mobile/Sources", ".swift"))
   }
 }
 
+// The Mapbox access token is optional exactly once, in AppStore, because it is
+// absent until /api/config answers. Every UI declaration below that is a plain
+// String, unwrapped at the one call site. Threading the optional deeper means
+// handing it to Mapbox initializers that take a String — a build error that
+// exists only on the Mapbox path, so nothing short of a device build with a
+// downloads token ever sees it.
+for (const path of await collectFiles("apps/customer-mobile/Sources/TimiNowUI", ".swift")) {
+  const source = await read(path);
+  const optional = source.match(/^\s*(?:public\s+|private\s+)?(?:var|let)\s+(mapToken|mapboxAccessToken)\s*:\s*String\?/m);
+  if (optional) {
+    throw new Error(`${path}: declares ${optional[1]} as String?. The optional belongs to AppStore alone — unwrap it at the call site with ?? "" and keep every UI declaration non-optional, or the Mapbox build fails on "value of optional type must be unwrapped".`);
+  }
+  const parameter = source.match(/\b(mapToken|mapboxAccessToken)\s*:\s*String\?[,)]/);
+  if (parameter) {
+    throw new Error(`${path}: takes ${parameter[1]} as String?. Same reason — the Mapbox initializers it reaches take a String.`);
+  }
+}
+
+// A protocol with default implementations does not complain about a near-miss:
+// the wrong signature satisfies nothing, the default runs, and the method is
+// simply never called. didArriveAt returns Void in
+// mapbox-navigation-ios v3.27.0; returning Bool cost us arrival detection with
+// no build error and no run-time complaint.
+{
+  const path = "apps/customer-mobile/Sources/TimiNowUI/NavigationView.swift";
+  const source = await read(path);
+  if (/didArriveAt\s+waypoint:\s*Waypoint\)\s*->/.test(source)) {
+    throw new Error(`${path}: navigationViewController(_:didArriveAt:) returns a value. The SDK declares it returning Void, so this satisfies no protocol requirement, the default implementation runs, and arrival is never reported.`);
+  }
+  if (!/didArriveAt\s+waypoint:\s*Waypoint\)\s*\{/.test(source)) {
+    throw new Error(`${path}: no longer implements navigationViewController(_:didArriveAt:), so arriving at the clinic records nothing.`);
+  }
+}
+
+// `Color` has three reachable `opacity(_:)` members — its own, `View`'s, and
+// `ShapeStyle`'s. Handed to a parameter that takes any ShapeStyle (stroke,
+// fill, background), more than one fits, and the compiler reports "ambiguous
+// use of 'opacity'". It only bites once the overload set is crowded, so it
+// appears on the Mapbox build and not the fallback, in files with no Mapbox in
+// them — which makes it look like anything but what it is. Color.faded(_:)
+// returns a concrete Color and ends the argument.
+//
+// Scoped to the customer app: it is the one that carries Mapbox. The console
+// has the same shape and no crowded overload set, so it is left alone rather
+// than churned.
+for (const path of await collectFiles("apps/customer-mobile/Sources", ".swift")) {
+  const source = await read(path);
+  const ambiguous = source.match(/\.(stroke|fill|background)\([^)\n]*?\.opacity\(/);
+  if (ambiguous) {
+    const line = source.slice(0, ambiguous.index).split("\n").length;
+    throw new Error(`${path}:${line}: passes a Color's .opacity(...) to .${ambiguous[1]}(...), which takes any ShapeStyle. Use .faded(...) instead — it returns a concrete Color, so the call is not ambiguous.`);
+  }
+}
+
+// A ternary of bare numeric literals handed to an overloaded SwiftUI modifier
+// — scaleEffect, opacity, offset, frame, shadow, lineWidth — leaves the
+// literal's type for the solver to pick, and several overloads accept it. The
+// error is "ambiguous use of <that modifier>", it names a modifier nobody
+// touched, and it only appears once the module's overload set is crowded
+// enough, which is why the Mapbox build hits it and the fallback CI build does
+// not. CGFloat(...) or Double(...) around the ternary settles it.
+{
+  const MODIFIERS = "scaleEffect|opacity|offset|frame|shadow|lineWidth|zoom|padding|blur|rotationEffect";
+  const bare = new RegExp(`\\b(${MODIFIERS})\\(([^()]*?)\\?[^:()]*:\\s*-?\\d+(?:\\.\\d+)?\\s*[,)]`);
+  for (const path of await collectFiles("apps/customer-mobile/Sources/TimiNowUI", ".swift")) {
+    const source = await read(path);
+    for (const [index, line] of source.split("\n").entries()) {
+      // Only the argument itself matters; a conversion anywhere in it means the
+      // literal already has a type.
+      const stripped = line.replace(/\b(?:CGFloat|Double|Int|Float)\([^()]*(?:\([^()]*\)[^()]*)*\)/g, "TYPED");
+      const hit = stripped.match(bare);
+      if (hit) {
+        throw new Error(`${path}:${index + 1}: .${hit[1]}(...) is given a ternary of bare numeric literals. Wrap it in CGFloat(...) or Double(...) — untyped, several overloads accept it and the build fails with "ambiguous use of '${hit[1]}'".`);
+      }
+    }
+  }
+}
+
+// With GENERATE_INFOPLIST_FILE off, the Info.plist is used exactly as written
+// and nothing injects the identity keys. Missing CFBundleIdentifier, the build
+// succeeds, produces a .app, and the install is refused with "not a valid
+// bundle … Failed to get the identifier for the app to be installed" — a
+// message that reads like a signing or Developer Mode problem and is neither.
+for (const app of ["customer-mobile", "vet-desktop"]) {
+  const xcconfigs = {
+    "customer-mobile": "apps/customer-mobile/Darwin/TimiNow.xcconfig",
+    "vet-desktop": "apps/vet-desktop/Darwin/TimiVet.xcconfig"
+  };
+  const xcconfig = await read(xcconfigs[app]);
+  if (!/GENERATE_INFOPLIST_FILE\s*=\s*NO/.test(xcconfig)) continue;
+  const path = `apps/${app}/Darwin/Info.plist`;
+  const info = await read(path);
+  for (const key of ["CFBundleIdentifier", "CFBundleExecutable", "CFBundlePackageType", "CFBundleName"]) {
+    if (!info.includes(`<key>${key}</key>`)) {
+      throw new Error(`${path} has no ${key}, and ${xcconfigs[app]} sets GENERATE_INFOPLIST_FILE = NO, so nothing supplies it. The app builds and then will not install.`);
+    }
+  }
+}
+
+// One bundle identifier, named in five places: the Xcode target, the launch in
+// each of the three build scripts, and the watch app's companion key. xcodegen
+// would otherwise derive it from bundleIdPrefix and the target name — giving a
+// capital T — and the app then installs and cannot be launched by id, with the
+// watch silently never pairing.
+{
+  const project = await read("apps/customer-mobile/Darwin/project.yml");
+  const declared = project.match(/^\s*PRODUCT_BUNDLE_IDENTIFIER:\s*(\S+)\s*$/m);
+  if (!declared) {
+    throw new Error("apps/customer-mobile/Darwin/project.yml does not set PRODUCT_BUNDLE_IDENTIFIER for the app target, so xcodegen derives it from the target name and it stops matching everything else that names it.");
+  }
+  const bundleId = declared[1];
+  for (const script of ["scripts/build-ios-app.sh", "scripts/install-ios-device.sh", "scripts/upload-testflight.sh"]) {
+    const text = await read(script);
+    const used = text.match(/^BUNDLE_ID="([^"]+)"/m);
+    if (!used) throw new Error(`${script} no longer defines BUNDLE_ID.`);
+    if (used[1] !== bundleId) {
+      throw new Error(`${script} launches ${used[1]} but the app is built as ${bundleId}. It would install and then fail to start.`);
+    }
+  }
+  const companion = project.match(/INFOPLIST_KEY_WKCompanionAppBundleIdentifier:\s*(\S+)/);
+  if (companion && companion[1] !== bundleId) {
+    throw new Error(`apps/customer-mobile/Darwin/project.yml: the watch app names ${companion[1]} as its companion, but the phone app is ${bundleId}. The watch would never pair.`);
+  }
+}
+
+// The Worker answers a failure with { "error": { "code", "message" } } — a
+// nested object. The client decoded `error` as a top-level string, so every
+// error response failed to decode, the `try?` swallowed it, and the app showed
+// a generic sentence instead. The Worker's actual reason never once reached a
+// screen, which is why every failure in this app has been unreadable.
+{
+  const worker = await read("src/index.js");
+  const nests = /return json\(\s*\{\s*error:\s*\{\s*code\s*,\s*message/.test(worker);
+  const models = await read("apps/customer-mobile/Sources/TimiNowCore/Models.swift");
+  const envelope = models.match(/struct APIErrorEnvelope[\s\S]*?\n\}/);
+  if (!envelope) throw new Error("apps/customer-mobile/Sources/TimiNowCore/Models.swift no longer declares APIErrorEnvelope, so no server error can be read.");
+  const nestsToo = /struct \w+: Codable[\s\S]*?var code/.test(envelope[0]) && /var error:\s*\w+\?/.test(envelope[0]);
+  if (nests && !nestsToo) {
+    throw new Error("src/index.js answers errors as { error: { code, message } }, but APIErrorEnvelope decodes them flat. Decoding fails on every error response and the real reason is replaced by a generic fallback.");
+  }
+}
+
+// Sign-in is the difference between an app that works and one that shows a
+// 401. These are the seams where it silently stops working: a gate that no
+// longer gates, a token that is never handed to the gateway, a session that is
+// never restored. None of them fail loudly — the app just asks for a password
+// again, or stops asking and starts refusing.
+{
+  const auth = await read("apps/customer-mobile/Sources/TimiNowCore/AuthController.swift");
+  const root = await read("apps/customer-mobile/Sources/TimiNowUI/CustomerRootView.swift");
+  const app = await read("apps/customer-mobile/Sources/TimiNowApp/TimiNowApp.swift");
+  const store = await read("apps/customer-mobile/Sources/TimiNowCore/AppStore.swift");
+
+  if (!/store\.auth\.signInRequired\s*&&\s*!store\.auth\.isSignedIn/.test(root)) {
+    throw new Error("apps/customer-mobile/Sources/TimiNowUI/CustomerRootView.swift no longer gates on sign-in, so the app reaches the Worker unauthenticated and every request comes back 401.");
+  }
+  if (!/await store\.auth\.start\(\)/.test(app)) {
+    throw new Error("apps/customer-mobile/Sources/TimiNowApp/TimiNowApp.swift no longer calls auth.start(), so a stored session is never restored and sign-in is demanded at every launch.");
+  }
+  if (!/gateway\.bearerToken = workerToken/.test(auth)) {
+    throw new Error("apps/customer-mobile/Sources/TimiNowCore/AuthController.swift no longer hands the minted token to the gateway. Signing in would appear to work and every API call would still be unauthenticated.");
+  }
+  if (!/keychain/.test(auth)) {
+    throw new Error("apps/customer-mobile/Sources/TimiNowCore/AuthController.swift no longer persists the credential in the Keychain — the session would not survive a relaunch.");
+  }
+  // A long-lived Clerk cookie in UserDefaults is a plist any backup can read.
+  if (/defaults\.set\([^)]*(clientCookie|workerToken)/.test(store) || /UserDefaults/.test(auth)) {
+    throw new Error("The Clerk credential must stay in the Keychain, not UserDefaults.");
+  }
+  if (!/looksLikeUnknownAccount/.test(auth)) {
+    throw new Error("apps/customer-mobile/Sources/TimiNowCore/AuthController.swift no longer turns an unknown identifier into sign-up. A first-time pet owner would be told their account was not found, with nothing to do about it.");
+  }
+}
+
+// @Observable rewrites every stored property into a computed one backed by an
+// init accessor, and those accessors may only refer to other stored
+// properties. So `lazy` is rejected outright, and a default expression naming
+// another property fails with "init accessor cannot refer to property" from a
+// generated file with no line of yours in it. Both belong in init instead.
+for (const path of await collectFiles("apps/customer-mobile/Sources", ".swift")) {
+  const source = await read(path);
+  if (!/@Observable/.test(source)) continue;
+  const lazyStored = source.match(/^\s*(?:public\s+)?(?:private\(set\)\s+)?lazy\s+var\s+(\w+)/m);
+  if (lazyStored) {
+    throw new Error(`${path}: '${lazyStored[1]}' is lazy inside an @Observable type. The macro turns stored properties into computed ones, and lazy cannot be used on a computed property — assign it in init instead.`);
+  }
+}
+
 // `#if canImport(M)` asks whether M is available. It does not import it. A
 // file that guards on canImport and then names a type from M, without an
 // `import M` anywhere, compiles fine while M is absent and fails the moment it
@@ -665,17 +861,22 @@ for (const root of ["apps/customer-mobile/Sources", "apps/vet-desktop/Sources"])
 }
 
 // A dynamic library product has to be embedded in the bundle, or dyld cannot
-// find it at launch — the app builds, signs, validates, and then dies with
-// "Library not loaded: @rpath/...". The console's Xcode target has no embed
-// phase, so its product must be static. (The customer app is different: Xcode
-// embeds SwiftPM dynamic products into an iOS app itself, and Skip's Android
-// bridge needs them dynamic.)
-{
-  const manifest = await read("apps/vet-desktop/Package.swift");
-  const project = await read("apps/vet-desktop/Darwin/project.yml");
+// find it at launch — the app builds, signs, validates, installs, and then
+// dies immediately with "Library not loaded: @rpath/...".
+//
+// Every app, not just the console. This check used to read vet-desktop alone,
+// carrying a comment claiming the customer app was different because "Xcode
+// embeds SwiftPM dynamic products into an iOS app itself". It does not. The
+// customer app had the identical defect and crashed on launch the identical
+// way, and the guard written for that exact bug was scoped past it.
+for (const app of ["customer-mobile", "vet-desktop"]) {
+  const manifest = await read(`apps/${app}/Package.swift`);
+  const project = await read(`apps/${app}/Darwin/project.yml`);
   for (const product of manifest.matchAll(/\.library\(name:\s*"(\w+)",\s*type:\s*\.dynamic/g)) {
-    if (!/embed:\s*true/.test(project)) {
-      throw new Error(`apps/vet-desktop/Package.swift: ${product[1]} is a dynamic library, but apps/vet-desktop/Darwin/project.yml embeds nothing. dyld will not find it at launch — make it .static.`);
+    // An embed of some other target — the watch app, say — does not embed this.
+    const embedded = new RegExp(`product:\\s*${product[1]}[\\s\\S]{0,120}?embed:\\s*true`).test(project);
+    if (!embedded) {
+      throw new Error(`apps/${app}/Package.swift: ${product[1]} is a dynamic library that apps/${app}/Darwin/project.yml never embeds. dyld will not find it at launch — make it .static.`);
     }
   }
 }

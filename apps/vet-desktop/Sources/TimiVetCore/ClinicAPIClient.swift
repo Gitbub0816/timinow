@@ -107,6 +107,13 @@ public final class ClinicAPIClient: @unchecked Sendable {
         return envelope.session
     }
 
+    /// The address actually in use, for an error to quote. A blank one is the
+    /// most common cause of "could not reach Clerk" and the least visible.
+    public var configuredAddress: String {
+        let address = settings.apiBaseUrl.trimmingCharacters(in: .whitespacesAndNewlines)
+        return address.isEmpty ? "no Worker address" : address
+    }
+
     public func getConfig() async throws -> AppConfig {
         try await send("GET", "/api/config")
     }

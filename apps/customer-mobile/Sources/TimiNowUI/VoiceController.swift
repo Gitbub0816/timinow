@@ -125,6 +125,39 @@ public enum TimiInstructionRewriter {
 #if os(iOS) && !SKIP
 import AVFoundation
 
+/// Makes the app audible with the ring switch set to silent.
+///
+/// Nothing here ever configured an audio session, so everything spoken used
+/// the default `.soloAmbient` category — which is silenced by the hardware
+/// switch. That reads as "Preview voice is broken", and it is: it is also
+/// every turn of spoken guidance going missing on a phone that happens to be
+/// on silent, which is most phones, in a car, where the whole point is not
+/// looking at the screen.
+///
+/// `.playback` plays regardless of the switch. `.spokenAudio` tells the system
+/// this is speech rather than music, so CarPlay and Bluetooth treat it
+/// correctly, and `.duckOthers` lowers the podcast instead of fighting it.
+enum TimiAudioSession {
+    static func activateForSpeech() {
+        #if canImport(AVFoundation) && os(iOS) && !SKIP
+        let session = AVAudioSession.sharedInstance()
+        do {
+            try session.setCategory(.playback, mode: .spokenAudio, options: [.duckOthers, .interruptSpokenAudioAndMixWithOthers])
+            try session.setActive(true, options: [])
+        } catch {
+            // Audible-but-wrong beats silent-and-correct: if the category will
+            // not take, speaking anyway may still be heard.
+        }
+        #endif
+    }
+
+    static func release() {
+        #if canImport(AVFoundation) && os(iOS) && !SKIP
+        try? AVAudioSession.sharedInstance().setActive(false, options: [.notifyOthersOnDeactivation])
+        #endif
+    }
+}
+
 /// Enumerates voices for the settings picker and drives the "Preview
 /// voice" button. Uses only system AVFoundation APIs, so it works even in
 /// a build without the Mapbox Navigation SDK.
@@ -138,12 +171,45 @@ public final class VoicePreviewer: NSObject, AVSpeechSynthesizerDelegate {
         synthesizer.delegate = self
     }
 
-    /// Voices available for the app's language, enhanced/premium/personal
-    /// tiers first so the best-quality option is easiest to pick.
+    /// Voices worth offering, best first.
+    ///
+    /// `speechVoices()` returns everything the system has, and on iOS that
+    /// still includes the 1980s Macintosh novelty set — Grandpa, Zarvox,
+    /// Bells, Bubbles, Trinoids. They are all `.default` quality, they sound
+    /// like a joke, and offering them beside a real voice in a driving app
+    /// makes the whole picker look broken.
+    ///
+    /// So: enhanced and premium only, which is exactly the line between a
+    /// downloaded high-quality voice and a compact fallback. If the phone has
+    /// none installed, the list falls back to the compact voices rather than
+    /// being empty — `bestVoice` still has something to return, and the
+    /// picker says where to get better ones.
     public static func availableVoices(languagePrefix: String = Locale.current.language.languageCode?.identifier ?? "en") -> [AVSpeechSynthesisVoice] {
-        AVSpeechSynthesisVoice.speechVoices()
-            .filter { $0.language.hasPrefix(languagePrefix) }
+        let all = AVSpeechSynthesisVoice.speechVoices().filter { $0.language.hasPrefix(languagePrefix) }
+        let good = all.filter { $0.quality == .enhanced || $0.quality == .premium }
+        return (good.isEmpty ? all.filter { !isNovelty($0) } : good)
             .sorted { rank(of: $0.quality) > rank(of: $1.quality) }
+    }
+
+    /// Named rather than inferred: these carry no marker distinguishing them
+    /// from a plain compact voice, so the only way to exclude them is to know
+    /// them.
+    private static let noveltyNames: Set<String> = [
+        "Albert", "Bad News", "Bahh", "Bells", "Boing", "Bubbles", "Cellos", "Wobble",
+        "Eddy", "Flo", "Fred", "Good News", "Grandma", "Grandpa", "Jester", "Junior",
+        "Kathy", "Organ", "Reed", "Ralph", "Rocko", "Sandy", "Shelley", "Superstar",
+        "Trinoids", "Whisper", "Zarvox"
+    ]
+
+    private static func isNovelty(_ voice: AVSpeechSynthesisVoice) -> Bool {
+        noveltyNames.contains(where: { voice.name.hasPrefix($0) })
+    }
+
+    /// Whether the phone has any high-quality voice installed, so the picker
+    /// can say so instead of silently offering the compact ones.
+    public static func hasHighQualityVoice(languagePrefix: String = Locale.current.language.languageCode?.identifier ?? "en") -> Bool {
+        AVSpeechSynthesisVoice.speechVoices()
+            .contains { $0.language.hasPrefix(languagePrefix) && ($0.quality == .enhanced || $0.quality == .premium) }
     }
 
     private static func rank(of quality: AVSpeechSynthesisVoiceQuality) -> Int {
@@ -190,6 +256,7 @@ public final class VoicePreviewer: NSObject, AVSpeechSynthesizerDelegate {
     }
 
     public func preview(text: String, preferences: NavigationPreferences) {
+        TimiAudioSession.activateForSpeech()
         let utterance = AVSpeechUtterance(string: text)
         if let identifier = preferences.preferredVoiceIdentifier, let voice = AVSpeechSynthesisVoice(identifier: identifier) {
             utterance.voice = voice

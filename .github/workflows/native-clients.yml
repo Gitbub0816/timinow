@@ -75,8 +75,25 @@ jobs:
           # honours it and then finds nothing.
           echo "MAPBOX_DEVELOPER_DIR=$(xcode-select -p)" >> "$GITHUB_ENV"
 
+          # ::warning:: rather than echo, and repeated on the job summary: a
+          # green run that never compiled the Mapbox path reads exactly like a
+          # green run that did, and the difference is a whole class of error
+          # that then has nowhere to surface but somebody's laptop.
+          fallback() {
+            echo "::warning title=Mapbox path not compiled::$1"
+            {
+              echo "### Mapbox path NOT compiled"
+              echo
+              echo "$1"
+              echo
+              echo "Every Mapbox-only source in this repository went unchecked by this run."
+              echo "Set the \`MAPBOX_DOWNLOADS_TOKEN\` repository secret to compile it here"
+              echo "instead of on a developer's machine."
+            } >> "$GITHUB_STEP_SUMMARY"
+          }
+
           if [ -z "$MAPBOX_DOWNLOADS_TOKEN" ]; then
-            echo "No Mapbox downloads token; building the non-Mapbox fallback path."
+            fallback "No MAPBOX_DOWNLOADS_TOKEN secret is set, so this job built the non-Mapbox fallback."
             exit 0
           fi
 
@@ -96,8 +113,7 @@ jobs:
           done
 
           if [ -z "$chosen" ]; then
-            echo "::warning::No installed Xcode has Swift 6.2 or newer, which the Mapbox"
-            echo "::warning::binary frameworks require. Building the non-Mapbox fallback path."
+            fallback "No installed Xcode has Swift 6.2 or newer, which the Mapbox binary frameworks require."
             exit 0
           fi
 

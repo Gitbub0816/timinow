@@ -14,6 +14,13 @@ public struct CustomerRootView: View {
     public var body: some View {
         ZStack(alignment: .top) {
             if !store.hasCompletedOnboarding { OnboardingView(store: store) }
+            // Signing in comes after onboarding: the first screens explain what
+            // Tími is, and asking for an email before that is asking a stranger
+            // for their details. After it, the session is restored silently at
+            // every later launch, so this is seen once.
+            else if store.auth.signInRequired && !store.auth.isSignedIn {
+                SignInView(auth: store.auth).transition(.opacity)
+            }
             else { appContent.transition(.opacity) }
             if let error = store.errorMessage { ErrorToast(message: error) { store.errorMessage = nil }.padding(.top, 8).transition(.move(edge: .top).combined(with: .opacity)).zIndex(20) }
             if store.showCelebration { CelebrationOverlay().onAppear { Task { try? await Task.sleep(for: .seconds(1.15)); store.showCelebration = false } }.zIndex(30) }
@@ -38,17 +45,12 @@ public struct CustomerRootView: View {
 
 struct HomeView: View {
     @Bindable var store: AppStore
-    @State var breathe = false
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
                 HStack { TimiWordmark(compact: true); Spacer(); Button { store.selectedTab = 1 } label: { Image(systemName: store.selectedPet.species.icon).font(.title3).foregroundStyle(.white).frame(width: 44, height: 44).background(TimiColor.blue, in: Circle()).overlay(Circle().stroke(TimiColor.ink, lineWidth: 2)) } }
                 VStack(alignment: .leading, spacing: 8) { Eyebrow(text: store.isDemoMode ? "INTERACTIVE DEMO" : "LIVE NETWORK", color: TimiColor.blue); Text("Who can see\n\(store.selectedPet.name) now?").font(.system(size: 45, weight: .bold, design: .serif)).foregroundStyle(TimiColor.ink); Text("Tell us what's happening once. Compare current responses before you leave home.").font(.title3).foregroundStyle(TimiColor.muted) }
-                ZStack {
-                    RoundedRectangle(cornerRadius: 28).fill(TimiColor.blueSoft).frame(height: 220).overlay(RoundedRectangle(cornerRadius: 28).stroke(TimiColor.ink, lineWidth: 2)).shadow(color: TimiColor.ink, radius: 0, x: 6, y: 7)
-                    Circle().stroke(TimiColor.blue.opacity(0.18), lineWidth: 2).frame(width: 160).scaleEffect(breathe ? 1.12 : 0.75).opacity(breathe ? 0.15 : 1).animation(.easeOut(duration: 1.9).repeatForever(autoreverses: false), value: breathe)
-                    HStack(spacing: 2) { CareCompanionArtwork(compact: true).frame(maxWidth: 178); VStack(alignment: .leading, spacing: 7) { Text("Live intake\nnear you").font(.title3).fontWeight(.black); Text("Source and freshness shown on every response").font(.caption).foregroundStyle(TimiColor.muted) }.frame(maxWidth: 140, alignment: .leading) }.padding(.horizontal, 12)
-                }.onAppear { breathe = true }
+                CareLaunchPanel(petName: store.selectedPet.name).timiCard(TimiColor.paper)
                 Button { withAnimation(.spring(response: 0.42)) { store.beginCare() } } label: { Label("Find care for \(store.selectedPet.name)", systemImage: "arrow.right") }.buttonStyle(TimiPrimaryButtonStyle())
                 HStack(spacing: 12) { MetricChip(title: "One intake", value: "Up to 30 clinics"); MetricChip(title: "Your choice", value: "Up to 5 offers", color: TimiColor.goldSoft) }
                 SafetyBanner(compact: true)

@@ -33,6 +33,10 @@ BUILD_FILTER='^(Skip |Compiling|Compile|Build|Ld |Link|CodeSign|Signing|Touch|Co
 #
 # Piped rather than followed with `tail -f`: in `a | b | c &` the shell reports
 # only c's pid, so killing it would leave tail running after the script exits.
+# stderr goes to /dev/null, and only stderr: the loop reports on stdout. The
+# subshell spends its life blocked in `sleep`, so stopping it makes the shell
+# announce "Terminated: 15 sleep 30" — which then lands in the middle of a
+# build failure looking like one more thing that went wrong.
 start_heartbeat() { # start_heartbeat LOGFILE
   ( log="$1"
     elapsed=0
@@ -58,7 +62,7 @@ start_heartbeat() { # start_heartbeat LOGFILE
       else
         printf '\033[2m  … still building (%dm%02ds)\033[0m\n' "$(( elapsed / 60 ))" "$(( elapsed % 60 ))"
       fi
-    done ) &
+    done ) 2>/dev/null &
   HEARTBEAT_PID=$!
 }
 
@@ -99,7 +103,39 @@ run_build() { # run_build LOGFILE WORKDIR COMMAND...
 # The last twenty distinct errors, which is invariably where the cause is.
 summarise_failure() { # summarise_failure LOGFILE
   echo >&2
-  grep -E "error:|Error Domain" "$1" | sort -u | head -20 >&2
+  # Each error WITH the note: lines under it. Swift explains "ambiguous use of
+  # X" by listing the competing declarations in notes directly beneath the
+  # error, and "cannot convert" the same way. Grepping for error: alone leaves
+  # the one line that cannot be acted on and discards the answer — which is how
+  # you end up guessing at a diagnosis the compiler already printed.
+  awk '
+    /: error:/        { print; keep = 1; want = 0; next }
+    # A note names a competing declaration; the indented line under it is the
+    # signature, which is the part worth reading. Joined into one line so the
+    # pair survives the de-duplication below — Xcode repeats each diagnostic
+    # once per target.
+    keep && /: note:/ { pending = $0; want = 1; next }
+    # The echoed source line and its caret sit between the error and its notes,
+    # and both are indented. Treating them as the end of the diagnostic drops
+    # every note that follows.
+    keep && want && /^[[:space:]]/ { sub(/^[[:space:]]+/, ""); print pending "  " $0; want = 0; next }
+    keep && /^[[:space:]]/ { next }
+    /Error Domain/    { print; keep = 0; next }
+    { keep = 0 }
+  ' "$1" | awk '!seen[$0]++' | head -40 | copy_and_show >&2
+}
+
+# Print, and put the same text on the clipboard. Pasting a failure back is the
+# whole feedback loop here, and selecting it out of a scrolled terminal is the
+# part that goes wrong — a truncated paste costs a round trip.
+copy_and_show() {
+  if command -v pbcopy >/dev/null 2>&1; then
+    tee /tmp/timi-last-failure.txt
+    pbcopy < /tmp/timi-last-failure.txt
+    printf '\033[2m  (copied to the clipboard — paste it as-is)\033[0m\n'
+  else
+    cat
+  fi
 }
 
 # The team id is the OU of the Apple Development certificate. The name in

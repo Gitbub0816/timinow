@@ -25,6 +25,7 @@ import {
   tenantIdForClerkOrg
 } from "../../../src/db.js";
 import { isPlatformAdmin } from "../../../src/tenancy.js";
+import { geminiConfigured, geminiModel, geminiStyle, geminiVoice, synthesizeSpeech } from "../../../src/gemini-tts.js";
 import {
   acceptedTwiml,
   alreadyFilledTwiml,
@@ -37,12 +38,52 @@ import {
   normalizePhone,
   outboundTwiml,
   placeCall,
+  sayVoice,
   repeatTwiml,
   signAttemptToken,
   verifyAttemptToken,
   verifyTwilioSignature,
   withinQuietHours
 } from "../../../src/voice.js";
+
+const TEST_SCRIPT_INPUT = {
+  locationName: "your clinic",
+  spokenConcern: "a dog that has vomited three times since this morning",
+  travelMinutes: 12,
+  urgency: "urgent"
+};
+
+/**
+ * Audio for one line, cached on its own URL.
+ *
+ * Every fixed line — the prompt, the acceptance, the decline — is identical on
+ * every call, so the first synthesis pays for all of them. The cache is keyed
+ * by the request URL, which already carries the part and the voice, so nothing
+ * else has to be invented to key it.
+ */
+async function cachedSpeech(request, env, text) {
+  const cache = caches.default;
+  const hit = await cache.match(request);
+  if (hit) return hit;
+  const { wav } = await synthesizeSpeech(env, { text, style: geminiStyle(env) });
+  const response = new Response(wav, {
+    headers: {
+      "content-type": "audio/wav",
+      "content-length": String(wav.length),
+      "cache-control": "public, max-age=86400"
+    }
+  });
+  await cache.put(request, response.clone());
+  return response;
+}
+
+/** Twilio voice names are letters, digits, dots and dashes. Constrained at the
+ * door rather than escaped downstream: this value becomes a TwiML attribute,
+ * and a name Twilio does not recognise fails the call at answer time. */
+function cleanVoiceName(value) {
+  const name = String(value ?? "").trim();
+  return /^[A-Za-z0-9.\-]{1,64}$/.test(name) ? name : "";
+}
 
 const JSON_HEADERS = { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" };
 const TWIML_HEADERS = { "content-type": "text/xml; charset=utf-8", "cache-control": "no-store" };
@@ -339,19 +380,19 @@ async function handleVoiceInboundGather(request, env, url) {
   if (!targetId || !(await verifyAttemptToken(env.TWILIO_AUTH_TOKEN, targetId, tok))) return forbiddenTwilio();
 
   const row = await env.DB.prepare("SELECT tenant_id FROM care_search_targets WHERE id = ? LIMIT 1").bind(targetId).first();
-  if (!row) return xmlResponse(alreadyFilledTwiml());
+  if (!row) return xmlResponse(alreadyFilledTwiml({ voice: sayVoice(env) }));
 
   const digits = String(params.Digits || "").trim();
   if (digits === "1") {
     const result = await decideByPhone(env, row.tenant_id, targetId, "offer");
     return xmlResponse(result.ok
-      ? acceptedTwiml(buildCallScript({ locationName: "", spokenConcern: "", travelMinutes: null, urgency: "urgent" }))
+      ? acceptedTwiml(buildCallScript({ locationName: "", spokenConcern: "", travelMinutes: null, urgency: "urgent" }), { voice: sayVoice(env) })
       : alreadyFilledTwiml());
   }
   if (digits === "2") {
     const result = await decideByPhone(env, row.tenant_id, targetId, "decline");
     return xmlResponse(result.ok
-      ? declinedTwiml(buildCallScript({ locationName: "", spokenConcern: "", travelMinutes: null, urgency: "urgent" }))
+      ? declinedTwiml(buildCallScript({ locationName: "", spokenConcern: "", travelMinutes: null, urgency: "urgent" }), { voice: sayVoice(env) })
       : alreadyFilledTwiml());
   }
   return xmlResponse(inboundFallbackTwiml());
@@ -372,12 +413,12 @@ async function handleVoiceOutbound(request, env, targetId, url) {
 
   const target = await getClinicSearchTarget(env, targetId, attempt.tenant_id);
   const script = scriptFromUrl(url);
-  if (!target || target.status !== "pending") return xmlResponse(alreadyFilledTwiml());
+  if (!target || target.status !== "pending") return xmlResponse(alreadyFilledTwiml({ voice: sayVoice(env) }));
 
   const origin = voiceOrigin(env, request);
   const tok = url.searchParams.get("tok");
   const gatherUrl = gatherUrlFor(origin, targetId, attemptId, tok, payloadLikeFromUrl(url), 0);
-  return xmlResponse(outboundTwiml({ script, gatherActionUrl: gatherUrl, repeatActionUrl: gatherUrl }));
+  return xmlResponse(outboundTwiml({ script, gatherActionUrl: gatherUrl, repeatActionUrl: gatherUrl, voice: sayVoice(env) }));
 }
 
 async function handleVoiceGather(request, env, targetId, url) {
@@ -398,25 +439,25 @@ async function handleVoiceGather(request, env, targetId, url) {
     const result = await decideByPhone(env, attempt.tenant_id, targetId, "offer");
     const accepted = result.ok;
     await recordAttemptOutcome(env, attemptId, digits, accepted ? "accepted" : "error");
-    return xmlResponse(accepted ? acceptedTwiml(script) : alreadyFilledTwiml());
+    return xmlResponse(accepted ? acceptedTwiml(script, { voice: sayVoice(env) }) : alreadyFilledTwiml());
   }
   if (digits === "2") {
     const result = await decideByPhone(env, attempt.tenant_id, targetId, "decline");
     const declined = result.ok;
     await recordAttemptOutcome(env, attemptId, digits, declined ? "declined" : "error");
-    return xmlResponse(declined ? declinedTwiml(script) : alreadyFilledTwiml());
+    return xmlResponse(declined ? declinedTwiml(script, { voice: sayVoice(env) }) : alreadyFilledTwiml());
   }
   if (digits === "9") {
     const gatherUrl = gatherUrlFor(origin, targetId, attemptId, tok, payloadLike, repeatCount);
     await recordAttemptOutcome(env, attemptId, digits, null, { terminal: false });
-    return xmlResponse(repeatTwiml({ script, gatherActionUrl: gatherUrl, repeatActionUrl: gatherUrl }));
+    return xmlResponse(repeatTwiml({ script, gatherActionUrl: gatherUrl, repeatActionUrl: gatherUrl, voice: sayVoice(env) }));
   }
   if (repeatCount < VOICE_MAX_REPEATS) {
     const gatherUrl = gatherUrlFor(origin, targetId, attemptId, tok, payloadLike, repeatCount + 1);
-    return xmlResponse(repeatTwiml({ script, gatherActionUrl: gatherUrl, repeatActionUrl: gatherUrl }));
+    return xmlResponse(repeatTwiml({ script, gatherActionUrl: gatherUrl, repeatActionUrl: gatherUrl, voice: sayVoice(env) }));
   }
   await recordAttemptOutcome(env, attemptId, digits || null, "no_response");
-  return xmlResponse(noResponseTwiml(script));
+  return xmlResponse(noResponseTwiml(script, { voice: sayVoice(env) }));
 }
 
 const TWILIO_STATUS_MAP = {
@@ -661,6 +702,161 @@ async function handleApi(request, env) {
     return json({ drained: true, processed: processed ?? null });
   }
 
+  /*
+   * Ring one number with the real clinic script.
+   *
+   * Everything else in this Worker needs a care search, a clinic row with a
+   * phone number, and a queued outbox entry before a phone rings — which is a
+   * lot of production state to arrange when the question is only "do the
+   * Twilio credentials work and does the wording sound right". This places one
+   * call, writes nothing, and speaks exactly what a clinic hears.
+   *
+   * Behind VOICE_DRAIN_TOKEN, the same key the drain uses. It costs real
+   * telephony minutes, so it is not open.
+   */
+  if (method === "POST" && path === "/api/voice/test-call") {
+    const expected = env.VOICE_DRAIN_TOKEN || "";
+    const supplied = request.headers.get("x-timi-drain-token") || "";
+    // Three different problems, and one message for all three sends you off to
+    // check the wrong one. None of these tells an attacker anything they could
+    // use: the token itself is never echoed, and knowing that a Worker has no
+    // token configured does not produce one.
+    if (!expected) {
+      return apiError(403, "TEST_CALL_NO_TOKEN", "This Worker has no VOICE_DRAIN_TOKEN set, so the test endpoint stays closed. Put one in your env file and run scripts/bootstrap.sh again.");
+    }
+    if (!supplied) {
+      return apiError(403, "TEST_CALL_NO_HEADER", "No x-timi-drain-token header was sent.");
+    }
+    if (supplied !== expected) {
+      return apiError(403, "TEST_CALL_TOKEN_MISMATCH", `The x-timi-drain-token sent does not match this Worker's VOICE_DRAIN_TOKEN (sent ${supplied.length} characters, expected ${expected.length}).`);
+    }
+    if (!env.TWILIO_ACCOUNT_SID || !env.TWILIO_AUTH_TOKEN || !env.TWILIO_FROM_NUMBER) {
+      return apiError(409, "TWILIO_NOT_CONFIGURED", "Set TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN and TWILIO_FROM_NUMBER first.");
+    }
+    let body = {};
+    try { body = await request.json(); } catch { body = {}; }
+    const to = normalizePhone(body.to);
+    if (!to) return apiError(422, "INVALID_NUMBER", "Provide `to` in E.164, for example +14155550123.");
+    const origin = voiceOrigin(env, request);
+    try {
+      const voice = cleanVoiceName(body.voice) || sayVoice(env);
+      const call = await placeCall(env, { to, url: `${origin}/api/voice/test-script?voice=${encodeURIComponent(voice)}` });
+      console.log(JSON.stringify({ event: "voice_test_voice", voice }));
+      console.log(JSON.stringify({ event: "voice_test_call", to, callSid: call.sid || null }));
+      return json({ calling: to, callSid: call.sid || null, voice });
+    } catch (error) {
+      console.error(JSON.stringify({ event: "voice_test_call_failed", message: error.message }));
+      return apiError(502, "CALL_FAILED", error.message);
+    }
+  }
+
+  /*
+   * Try one synthesis and report exactly what happened.
+   *
+   * A call that comes out in Twilio's voice has already fallen back, and the
+   * reason is in a Worker log nobody is watching. This runs the same code path
+   * the call does and hands back Google's own words — no key, wrong key, wrong
+   * voice name, wrong model, or a working one with a byte count to prove it.
+   */
+  if (method === "POST" && path === "/api/voice/tts-check") {
+    const expected = env.VOICE_DRAIN_TOKEN || "";
+    const supplied = request.headers.get("x-timi-drain-token") || "";
+    if (!expected || supplied !== expected) return apiError(403, "TTS_CHECK_FORBIDDEN", "Not permitted.");
+    if (!geminiConfigured(env)) {
+      return json({
+        ok: false,
+        reason: "GEMINI_API_KEY is not set on this Worker, so every call falls back to Twilio's voice.",
+        speaking: sayVoice(env)
+      }, { status: 200 });
+    }
+    let body = {};
+    try { body = await request.json(); } catch { body = {}; }
+    const voice = String(body.voice || "").trim() || geminiVoice(env);
+    try {
+      const result = await synthesizeSpeech(env, { text: "Tee-mee test.", voice, style: geminiStyle(env) });
+      return json({ ok: true, voice: result.voice, model: result.model, wavBytes: result.wav.length, style: geminiStyle(env) });
+    } catch (error) {
+      return json({
+        ok: false,
+        voice,
+        model: geminiModel(env),
+        reason: error.message,
+        speaking: sayVoice(env)
+      }, { status: 200 });
+    }
+  }
+
+  // What the test call says. Twilio fetches this, so it answers GET too.
+  if ((method === "POST" || method === "GET") && path === "/api/voice/test-script") {
+    const origin = voiceOrigin(env, request);
+    const script = buildCallScript(TEST_SCRIPT_INPUT);
+    const voice = cleanVoiceName(url.searchParams.get("voice")) || sayVoice(env);
+    // Synthesised here rather than left for Twilio to fetch blind: if Gemini
+    // is going to fail, it fails now, while there is still a <Say> to fall
+    // back to. Once the phone is ringing a missing file is silence.
+    //
+    // All lines or none. A call that opens in a custom voice and answers in
+    // Polly is worse than one that is consistently either.
+    let audio = {};
+    if (geminiConfigured(env)) {
+      try {
+        const base = `${origin}/api/voice/test-audio?voice=${encodeURIComponent(geminiVoice(env))}`;
+        await Promise.all([
+          cachedSpeech(new Request(`${base}&part=intro`), env, script.intro),
+          cachedSpeech(new Request(`${base}&part=prompt`), env, script.prompt)
+        ]);
+        audio = { intro: `${base}&part=intro`, prompt: `${base}&part=prompt` };
+      } catch (error) {
+        console.warn(JSON.stringify({ event: "voice_tts_fallback", message: error.message }));
+      }
+    }
+    return xmlResponse(outboundTwiml({
+      script,
+      gatherActionUrl: `${origin}/api/voice/test-gather?voice=${encodeURIComponent(voice)}`,
+      repeatActionUrl: `${origin}/api/voice/test-script?voice=${encodeURIComponent(voice)}`,
+      voice,
+      audio
+    }));
+  }
+
+  // The audio itself. Twilio fetches this from <Play>, so it is a plain GET
+  // with no signature — it returns a fixed sample sentence and nothing else.
+  if (method === "GET" && path === "/api/voice/test-audio") {
+    if (!geminiConfigured(env)) return apiError(409, "TTS_NOT_CONFIGURED", "GEMINI_API_KEY is not set.");
+    const script = buildCallScript(TEST_SCRIPT_INPUT);
+    const text = script[url.searchParams.get("part")];
+    if (!text) return apiError(422, "UNKNOWN_PART", "Ask for intro, prompt, repeat, accepted, declined or goodbye.");
+    try {
+      return await cachedSpeech(request, env, text);
+    } catch (error) {
+      console.error(JSON.stringify({ event: "voice_tts_failed", message: error.message }));
+      return apiError(502, "TTS_FAILED", error.message);
+    }
+  }
+
+  // The keypad answer. Says what a real acceptance or decline says, and — this
+  // being a test — changes nothing anywhere.
+  if (method === "POST" && path === "/api/voice/test-gather") {
+    const params = Object.fromEntries(new URLSearchParams(await request.text()));
+    const script = buildCallScript(TEST_SCRIPT_INPUT);
+    const digit = String(params.Digits || "");
+    const voice = cleanVoiceName(url.searchParams.get("voice")) || sayVoice(env);
+    const part = digit === "1" ? "accepted" : digit === "2" ? "declined" : "goodbye";
+    let audioUrl;
+    if (geminiConfigured(env)) {
+      const candidate = `${voiceOrigin(env, request)}/api/voice/test-audio?voice=${encodeURIComponent(geminiVoice(env))}&part=${part}`;
+      try {
+        await cachedSpeech(new Request(candidate), env, script[part]);
+        audioUrl = candidate;
+      } catch (error) {
+        console.warn(JSON.stringify({ event: "voice_tts_fallback", message: error.message }));
+      }
+    }
+    if (digit === "1") return xmlResponse(acceptedTwiml(script, { voice, audioUrl }));
+    if (digit === "2") return xmlResponse(declinedTwiml(script, { voice, audioUrl }));
+    return xmlResponse(noResponseTwiml(script, { voice, audioUrl }));
+  }
+
   // The phone number's own Voice configuration points here. See
   // docs/PRODUCTION-SETUP.md for the exact three fields Twilio asks for.
   if (method === "POST" && path === "/api/voice/inbound") {
@@ -677,7 +873,7 @@ async function handleApi(request, env) {
       return await handleVoiceInboundGather(request, env, url);
     } catch (error) {
       console.error(JSON.stringify({ event: "voice_inbound_gather_error", message: error.message }));
-      return xmlResponse(errorTwiml());
+      return xmlResponse(errorTwiml(undefined, { voice: sayVoice(env) }));
     }
   }
 
@@ -710,7 +906,7 @@ async function handleApi(request, env) {
       return await handleVoiceOutbound(request, env, decodeURIComponent(outboundMatch[1]), url);
     } catch (error) {
       console.error(JSON.stringify({ event: "voice_outbound_error", message: error.message }));
-      return xmlResponse(errorTwiml());
+      return xmlResponse(errorTwiml(undefined, { voice: sayVoice(env) }));
     }
   }
 
@@ -720,7 +916,7 @@ async function handleApi(request, env) {
       return await handleVoiceGather(request, env, decodeURIComponent(gatherMatch[1]), url);
     } catch (error) {
       console.error(JSON.stringify({ event: "voice_gather_error", message: error.message }));
-      return xmlResponse(errorTwiml());
+      return xmlResponse(errorTwiml(undefined, { voice: sayVoice(env) }));
     }
   }
 
