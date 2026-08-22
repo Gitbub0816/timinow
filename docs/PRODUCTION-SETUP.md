@@ -298,7 +298,15 @@ Paste these without trailing `# comments`. zsh — the default macOS shell — d
 not treat `#` as a comment interactively unless `interactive_comments` is set,
 so a commented command line is passed through as arguments and fails.
 
-The script reads the env file once and routes each value to where it actually
+The script runs in this order, and the order is deliberate: public
+configuration, validate, migrate, **deploy**, then secrets. `wrangler secret
+put` refuses to run against a Worker whose latest version is not deployed, which
+is always true before the first deploy — so the Workers have to exist first.
+Deploying before the secrets land is safe, because sign-in verifies Clerk tokens
+against public JWKS; the only thing unavailable in the gap is the Clerk Backend
+API, and nothing has traffic yet.
+
+It reads the env file once and routes each value to where it actually
 belongs — public configuration into the wrangler configs, secrets straight to
 `wrangler secret put` over stdin so nothing lands in shell history, and the two
 build credentials to GitHub. Then it validates, migrates, asks before deploying,
@@ -318,6 +326,19 @@ git push
 
 DNS and Clerk must be in place first — a Worker will not answer on a hostname
 whose zone is not active, and sign-in fails until Clerk's records resolve.
+
+
+### One thing the env file must get right
+
+`MAPBOX_PUBLIC_TOKEN` takes the **`pk.`** token. The **`sk.`** token is Mapbox's
+*downloads* token and is not a Worker variable at all — it exists so Xcode can
+fetch the iOS SDKs. Putting it in the public slot publishes it to every browser
+through `/api/config`.
+
+The script refuses to write a value shaped like a secret into a public slot, and
+`npm run check` fails if one ever reaches a committed config, so this cannot be
+committed by accident. The `sk.` token belongs under `MAPBOX_DOWNLOADS_TOKEN`,
+which goes to GitHub and to `~/.netrc`.
 
 ### Which secret goes where
 

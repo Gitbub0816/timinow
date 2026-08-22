@@ -180,9 +180,31 @@ if (/INSERT INTO care_offers/i.test(voiceWorker)) throw new Error("The voice Wor
 for (const key of ["TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "TWILIO_FROM_NUMBER", "CLERK_SECRET_KEY", "STRIPE_SECRET_KEY", "MAPBOX_PUBLIC_TOKEN"]) {
   if (!envExample.includes(key)) throw new Error(`.env.example is missing ${key}`);
 }
+/**
+ * Two different mistakes, both of which put a secret in version control.
+ *
+ * The first is naming it: a `CLERK_SECRET_KEY` with a value in a committed
+ * config. The second is subtler and is the one that actually happened — a
+ * secret pasted into a *public* slot, where the name looks innocent but the
+ * value is served to every browser by `/api/config`. Check the shape of the
+ * value, not only the name of the key.
+ */
+const SECRET_SHAPES = [
+  [/"sk\.[A-Za-z0-9._-]{8,}"/, "a Mapbox secret token (sk.)"],
+  [/"sk_(?:live|test)_[A-Za-z0-9]{8,}"/, "a Clerk or Stripe secret key (sk_)"],
+  [/"rk_(?:live|test)_[A-Za-z0-9]{8,}"/, "a Stripe restricted key (rk_)"],
+  [/"whsec_[A-Za-z0-9]{8,}"/, "a webhook signing secret (whsec_)"],
+  [/"SG\.[A-Za-z0-9._-]{16,}"/, "a SendGrid key (SG.)"],
+  [/"TWILIO_AUTH_TOKEN"\s*:\s*"[0-9a-f]{32}"/, "a Twilio auth token"]
+];
 for (const [label, config] of [["customer", wrangler], ["veterinary", wranglerVet], ["admin", wranglerAdmin], ["voice", wranglerVoice]]) {
-  if (/(?:CLERK_SECRET_KEY|TWILIO_AUTH_TOKEN|STRIPE_SECRET_KEY)"\s*:\s*"[^"]+"/.test(config)) {
-    throw new Error(`The ${label} Worker config appears to contain a secret value; use wrangler secret put`);
+  if (/(?:CLERK_SECRET_KEY|TWILIO_AUTH_TOKEN|STRIPE_SECRET_KEY|STRIPE_WEBHOOK_SECRET)"\s*:\s*"[^"]+"/.test(config)) {
+    throw new Error(`The ${label} Worker config names a secret with a value; use wrangler secret put instead`);
+  }
+  for (const [shape, description] of SECRET_SHAPES) {
+    if (shape.test(config)) {
+      throw new Error(`The ${label} Worker config contains ${description}. Committed config is public and is served to browsers by /api/config — move it to wrangler secret put and rotate the exposed value.`);
+    }
   }
 }
 

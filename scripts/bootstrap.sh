@@ -112,11 +112,53 @@ VET=wrangler.vet.jsonc
 ADMIN=wrangler.admin.jsonc
 VOICE=wrangler.voice.jsonc
 
+# Everything written by set_var ends up in `/api/config`, which is public by
+# design. A secret pasted into one of these slots is not a configuration
+# mistake, it is a disclosure — so refuse it here rather than discover it from
+# a scanner after it has been committed.
+looks_secret() { # looks_secret KEY VALUE
+  case "$2" in
+    sk.*)                 echo "a Mapbox secret token (sk.)"; return 0 ;;
+    sk_live_*|sk_test_*)  echo "a Clerk or Stripe secret key (sk_)"; return 0 ;;
+    rk_live_*|rk_test_*)  echo "a Stripe restricted key (rk_)"; return 0 ;;
+    whsec_*)              echo "a webhook signing secret (whsec_)"; return 0 ;;
+    SG.*)                 echo "a SendGrid key (SG.)"; return 0 ;;
+  esac
+  # Twilio auth tokens are 32 hex characters with no prefix to key off.
+  if [ "$1" = "TWILIO_AUTH_TOKEN" ] || printf '%s' "$2" | grep -Eq '^[0-9a-f]{32}$'; then
+    case "$1" in
+      *TOKEN*|*SECRET*|*AUTH*) echo "a 32-character token"; return 0 ;;
+    esac
+  fi
+  return 1
+}
+
 set_var() { # set_var KEY CONFIG...
   local key="$1"; shift
   local value
   value="$(env_value "$key")"
   [ -n "$value" ] || { dim "  skip  $key (blank in env file)"; return 0; }
+
+  local why
+  if why="$(looks_secret "$key" "$value")"; then
+    echo >&2
+    die "  $key holds what looks like $why.
+
+  That value would be written into a committed config and served to every
+  browser by /api/config. Nothing was changed.
+
+  $key must be the PUBLIC value:
+    MAPBOX_PUBLIC_TOKEN     starts with pk.
+    CLERK_PUBLISHABLE_KEY   starts with pk_live_ or pk_test_
+    STRIPE_PUBLISHABLE_KEY  starts with pk_live_ or pk_test_
+
+  A Mapbox sk. token is the downloads token. It is not a Worker variable at
+  all — it belongs in ~/.netrc on the machine that builds the iOS app, and as
+  the MAPBOX_DOWNLOADS_TOKEN repository secret. Put it under that name in your
+  env file instead, fix $key, and re-run.
+
+  If that token has already been committed anywhere, rotate it."
+  fi
   for config in "$@"; do
     if $DRY; then
       if grep -q "\"$key\"[[:space:]]*:" "$config"; then
@@ -162,35 +204,81 @@ echo
 # ------------------------------------------------ secrets -> each Worker ---
 # Piped on stdin so no secret ever appears in argv or shell history.
 
+# ------------------------------------------------ validate, ship, secure ---
+#
+# Order matters here, and the first version of this script had it wrong.
+# `wrangler secret put` refuses to run against a Worker whose latest version is
+# not deployed, which is always true before the first deploy. So the Workers are
+# created first, then the secrets are attached to them.
+#
+# Deploying before the secrets land is safe: sign-in verifies Clerk tokens
+# against public JWKS, so the only thing unavailable in the gap is the Clerk
+# Backend API — metadata repair and the admin console — and nothing has traffic
+# yet anyway.
+
+bold "2. Configuration check"
+run npm run check
+echo
+
+bold "3. Production database"
+if $DRY; then
+  dim "    would run: npm run db:migrate:remote"
+else
+  npm run db:migrate:remote
+fi
+echo
+
+bold "4. Deploy"
+if $DRY; then
+  dim "    would run: npm run deploy:all"
+else
+  read -r -p "Deploy all four Workers to production? [y/N] " reply
+  case "$reply" in
+    [yY]*) npm run deploy:all ;;
+    *) die "  Secrets cannot be set before the Workers exist. Re-run when ready to deploy." ;;
+  esac
+fi
+echo
+
 put_secret() { # put_secret KEY CONFIG...
   local key="$1"; shift
   local value
   value="$(env_value "$key")"
   [ -n "$value" ] || { dim "  skip  $key (blank in env file)"; return 0; }
+  local config
   for config in "$@"; do
     if $DRY; then
       dim "    would run: wrangler secret put $key --config $config"
     else
-      printf '%s' "$value" | npx wrangler secret put "$key" --config "$config" >/dev/null \
-        || die "failed to set $key on $config"
+      # Piped on stdin so no secret reaches argv or shell history.
+      if printf '%s' "$value" | npx wrangler secret put "$key" --config "$config" >/dev/null 2>&1; then
+        :
+      elif printf '%s' "$value" | npx wrangler versions secret put "$key" --config "$config" >/dev/null 2>&1; then
+        # Gradual-deployment mode: the secret lands on a new version that still
+        # needs promoting.
+        npx wrangler versions deploy --config "$config" --yes >/dev/null 2>&1 \
+          || warn "  $key staged on a new version of $config — promote it in the dashboard"
+      else
+        die "failed to set $key on $config
+  Try it by hand to see the reason:
+    npx wrangler secret put $key --config $config"
+      fi
     fi
     echo "  set   $key -> $config"
   done
 }
 
-bold "2. Worker secrets"
-put_secret CLERK_SECRET_KEY     "$CUSTOMER" "$VET" "$ADMIN" "$VOICE"
-put_secret TWILIO_ACCOUNT_SID   "$VOICE"
-put_secret TWILIO_AUTH_TOKEN    "$VOICE"
-put_secret STRIPE_SECRET_KEY    "$CUSTOMER"
+bold "5. Worker secrets"
+put_secret CLERK_SECRET_KEY      "$CUSTOMER" "$VET" "$ADMIN" "$VOICE"
+put_secret TWILIO_ACCOUNT_SID    "$VOICE"
+put_secret TWILIO_AUTH_TOKEN     "$VOICE"
+put_secret STRIPE_SECRET_KEY     "$CUSTOMER"
 put_secret STRIPE_WEBHOOK_SECRET "$CUSTOMER"
 echo
 
-# ------------------------------------------------- repository secrets ------
 # Only what a workflow actually consumes. Setting a secret nothing reads is
 # noise that looks like configuration.
-
-bold "3. GitHub repository secrets"
+bold "6. GitHub repository secrets"
 if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
   gh_secret() {
     local key="$1"
@@ -215,32 +303,6 @@ else
 fi
 echo
 
-# ---------------------------------------------------------- verify + ship ---
-
-bold "4. Configuration check"
-run npm run check
-echo
-
-bold "5. Production database"
-if $DRY; then
-  dim "    would run: npm run db:migrate:remote"
-else
-  npm run db:migrate:remote
-fi
-echo
-
-bold "6. Deploy"
-if $DRY; then
-  dim "    would run: npm run deploy:all"
-else
-  read -r -p "Deploy all four Workers to production? [y/N] " reply
-  case "$reply" in
-    [yY]*) npm run deploy:all ;;
-    *) warn "  Skipped. Run 'npm run deploy:all' when ready."; exit 0 ;;
-  esac
-fi
-echo
-
 bold "7. Health"
 if ! $DRY; then
   for host in timinow.pet providers.timinow.pet admin.timinow.pet voice.timinow.pet; do
@@ -254,4 +316,5 @@ echo
 bold "Done."
 echo "Public values changed in the wrangler configs — review and commit:"
 echo "    git diff --stat"
-echo "    git add wrangler.*.jsonc && git commit -m 'Configure production keys' && git push"
+echo "    git add wrangler.jsonc wrangler.vet.jsonc wrangler.admin.jsonc wrangler.voice.jsonc"
+echo "    git commit -m 'Configure production keys' && git push"
