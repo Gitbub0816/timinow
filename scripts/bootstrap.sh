@@ -34,6 +34,8 @@ fi
 set -euo pipefail
 
 ENV_FILE=""
+# Every key left blank in the env file, repeated in the closing summary.
+SKIPPED=""
 DRY=false
 SECRETS_ONLY=false
 PULL=true
@@ -221,7 +223,7 @@ set_var() { # set_var KEY CONFIG...
   local key="$1"; shift
   local value
   value="$(env_value "$key")"
-  [ -n "$value" ] || { dim "  skip  $key (blank in env file)"; return 0; }
+  [ -n "$value" ] || { dim "  skip  $key (blank in env file)"; SKIPPED="$SKIPPED $key"; return 0; }
 
   # A setting whose name ends in _URL has to be one. Catching it here beats
   # letting it reach the configuration check, which can only report that
@@ -523,7 +525,7 @@ put_secret() { # put_secret KEY CONFIG...
   local key="$1"; shift
   local value
   value="$(env_value "$key")"
-  [ -n "$value" ] || { dim "  skip  $key (blank in env file)"; return 0; }
+  [ -n "$value" ] || { dim "  skip  $key (blank in env file)"; SKIPPED="$SKIPPED $key"; return 0; }
   check_secret_shape "$key" "$value"
   local config
   for config in "$@"; do
@@ -569,7 +571,7 @@ if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
     local key="$1"
     local value
     value="$(env_value "$key")"
-    [ -n "$value" ] || { dim "  skip  $key (blank in env file)"; return 0; }
+    [ -n "$value" ] || { dim "  skip  $key (blank in env file)"; SKIPPED="$SKIPPED $key"; return 0; }
     if $DRY; then
       dim "    would run: gh secret set $key"
     else
@@ -690,6 +692,15 @@ if ! $DRY; then
   fi
 fi
 echo
+
+if [ -n "$SKIPPED" ]; then
+  # Blank is a legitimate answer for most of these — CLERK_JWKS_URL is meant to
+  # be derived, STRIPE_* is not configured yet. It is legitimate right up until
+  # it is the one you needed, and by then it has scrolled off the top.
+  warn "Left blank in $ENV_FILE, so nothing was deployed for them:"
+  for KEY in $SKIPPED; do dim "    $KEY"; done
+  echo
+fi
 
 bold "Done."
 echo "Public values changed in the wrangler configs. They are deployed already —"
