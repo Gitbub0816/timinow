@@ -211,6 +211,84 @@ for (const path of swiftFiles) {
   if (leadingDot) {
     throw new Error(`${path}: ${leadingDot[0]} passes a leading-dot member to one of our own helpers. Skip cannot infer the owning type — write it out, e.g. Color.white.`);
   }
+
+  // A default argument is evaluated at the call site, so a public function
+  // cannot name a private member in one. Swift rejects this outright; it
+  // reached CI once because the only build that compiles this module is the
+  // macOS/iOS one.
+  const privateStatics = new Set(
+    [...source.matchAll(/^\s*private\s+static\s+(?:let|var)\s+(\w+)/gm)].map((m) => m[1])
+  );
+  if (privateStatics.size) {
+    for (const declaration of source.matchAll(/^\s*public\s+(?:static\s+)?func\s+\w+[^{]*?\)(?:\s*(?:async|throws|rethrows))*\s*(?:->[^{]*)?\{/gms)) {
+      for (const argument of declaration[0].matchAll(/[:,]\s*[^,()]*?=\s*(\w+)/g)) {
+        if (privateStatics.has(argument[1])) {
+          throw new Error(`${path}: a public function defaults an argument to the private ${argument[1]}. Swift evaluates a default at the call site, so it must be at least as visible as the function — default to nil and resolve inside instead.`);
+        }
+      }
+    }
+  }
+
+  // Conditional variants of one function must agree on their signature. The
+  // Mapbox, non-Mapbox, and Android paths are compiled one at a time, so a
+  // parameter added to the real implementation and forgotten on the stub only
+  // fails on the machine that builds the other branch. Overloads in the same
+  // branch (delegate methods) are untouched — only mutually exclusive
+  // declarations are compared.
+  const branchPaths = [];
+  {
+    const stack = [];
+    let blocks = 0;
+    const lines = source.split("\n");
+    for (let i = 0; i < lines.length; i += 1) {
+      const line = lines[i];
+      if (/^\s*#if\b/.test(line)) stack.push({ id: (blocks += 1), branch: 0 });
+      else if (/^\s*#(?:else|elseif)\b/.test(line) && stack.length) stack[stack.length - 1].branch += 1;
+      else if (/^\s*#endif\b/.test(line)) stack.pop();
+      const declaration = line.match(/\bfunc\s+(\w+)\s*\(/);
+      if (!declaration) continue;
+      // Parameters can wrap, so read forward until the argument list closes.
+      let text = lines.slice(i, i + 20).join("\n").slice(line.indexOf(declaration[0]) + declaration[0].length);
+      let depth = 1;
+      let end = 0;
+      while (end < text.length && depth > 0) {
+        if (text[end] === "(") depth += 1;
+        if (text[end] === ")") depth -= 1;
+        end += 1;
+      }
+      const labels = text
+        .slice(0, Math.max(0, end - 1))
+        .split(",")
+        .map((argument) => argument.trim().split(/[\s:]/)[0])
+        .filter(Boolean)
+        .join(", ");
+      branchPaths.push({ name: declaration[1], labels, path: stack.map((b) => `${b.id}:${b.branch}`), line: i + 1 });
+    }
+  }
+  for (let a = 0; a < branchPaths.length; a += 1) {
+    for (let b = a + 1; b < branchPaths.length; b += 1) {
+      const left = branchPaths[a];
+      const right = branchPaths[b];
+      if (left.name !== right.name || left.labels === right.labels) continue;
+      const exclusive = left.path.some((entry) => {
+        const [id, branch] = entry.split(":");
+        return right.path.some((other) => other.startsWith(`${id}:`) && other !== `${id}:${branch}`);
+      });
+      if (exclusive) {
+        throw new Error(`${path}: conditional variants of ${left.name} disagree — line ${left.line} takes (${left.labels}) but line ${right.line} takes (${right.labels}). Only one branch compiles at a time, so the other only fails elsewhere.`);
+      }
+    }
+  }
+
+  // Skip's bridge generator emits a non-optional @Sendable closure for a
+  // bridged callback property, so an optional one produces generated Swift
+  // that does not compile. Only the bridged core modules are affected.
+  if (/Sources\/(?:TimiVetCore|TimiNowCore)\//.test(path)) {
+    const optionalClosure = source.match(/^\s*public\s+var\s+(\w+)\s*:\s*\(\([^)]*\)\s*->\s*\w+\)\?/m);
+    if (optionalClosure) {
+      throw new Error(`${path}: public var ${optionalClosure[1]} is an optional closure on a Skip-bridged type. The generated bridge assumes a non-optional closure and fails to compile — give it a no-op default instead.`);
+    }
+  }
 }
 
 const csharpFiles = await collectFiles("apps/vet-windows", ".cs");

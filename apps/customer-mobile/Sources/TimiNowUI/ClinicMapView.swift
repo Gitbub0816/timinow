@@ -177,6 +177,6 @@ struct ClinicMapView: View {
 }
 
 enum RoutePreviewFetcher {
-    static func fetch(from origin: GeoPoint, to destination: GeoPoint, preferences: NavigationPreferences) async -> (coordinates: [GeoPoint], summary: RouteSummary)? { nil }
+    static func fetch(from origin: GeoPoint, to destination: GeoPoint, preferences: NavigationPreferences, mapToken: String) async -> (coordinates: [GeoPoint], summary: RouteSummary)? { nil }
 }
 #endif

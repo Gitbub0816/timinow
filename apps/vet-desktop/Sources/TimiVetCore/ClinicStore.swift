@@ -51,7 +51,12 @@ import Observation
     /// Set by TimiVetApp/AlertCenter to raise a desktop notification; fired
     /// only for requests that arrived after the console was already running
     /// — the same "don't alert on first load" guard as the Windows client.
-    public var onNewRequest: ((ClinicRequest) -> Void)?
+    ///
+    /// Not optional, and deliberately so: Skip's bridge generator emits a
+    /// non-optional `@Sendable` closure for a bridged callback property, so
+    /// an optional here produces generated Swift that does not compile. A
+    /// no-op default carries the same "nobody is listening yet" meaning.
+    public var onNewRequest: (ClinicRequest) -> Void = { _ in }
 
     private let settingsStore: SettingsStore
     private let api: ClinicAPIClient
@@ -115,7 +120,7 @@ import Observation
                 if initialized {
                     if !knownPending.contains(request.id) {
                         knownPending.insert(request.id)
-                        onNewRequest?(request)
+                        onNewRequest(request)
                     }
                 } else {
                     knownPending.insert(request.id)

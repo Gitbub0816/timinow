@@ -53,8 +53,12 @@ public enum TimiInstructionRewriter {
         modifier: String,
         road: String,
         clinicName: String,
-        table: InstructionPhraseTable = cachedTable
+        // Defaulted to nil rather than to `cachedTable`: a default argument is
+        // evaluated at the call site, so a public function cannot name a
+        // private member there. The seam stays open for tests either way.
+        table: InstructionPhraseTable? = nil
     ) -> String? {
+        let table = table ?? cachedTable
         let key = modifier.lowercased()
         let template = table.instructionOverrides["\(maneuverType):\(key)"]
             ?? table.instructionPhrases[maneuverType]
@@ -76,8 +80,9 @@ public enum TimiInstructionRewriter {
         petName: String,
         minutes: Int? = nil,
         kind: String? = nil,
-        table: InstructionPhraseTable = cachedTable
+        table: InstructionPhraseTable? = nil
     ) -> String? {
+        let table = table ?? cachedTable
         let register = table.timiAnnouncements[tone.rawValue]
             ?? table.timiAnnouncements[NavigationTone.calm.rawValue]
         guard let template = register?[key] else { return nil }
