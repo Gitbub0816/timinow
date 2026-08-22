@@ -25,6 +25,8 @@ const requiredFiles = [
   "migrations/0004_tenancy_admin.sql",
   "scripts/smoke.mjs",
   "scripts/auth-test.mjs",
+  "scripts/tenancy-test.mjs",
+  "scripts/syntax.mjs",
   "scripts/e2e.mjs",
   "docs/MVP-ARCHITECTURE.md",
   "docs/PAYMENTS-AND-TENANT-POLICIES.md",

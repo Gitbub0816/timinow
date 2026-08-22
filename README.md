@@ -2,35 +2,74 @@
 
 Tími NOW is a real-time veterinary intake network. It answers **“Which veterinary hospital can take my pet right now?”** rather than offering future appointment scheduling.
 
-The repository contains the complete Cloudflare MVP:
+## What is in this repository
 
-- Customer-only native SwiftUI iOS app with guided onboarding and Skip Fuse-ready shared modules
-- Veterinary-team-only native Windows operations app with tray alerts and an always-on-top compact queue
-- Customer-facing responsive PWA
-- Non-diagnostic concern intake and emergency red-flag escalation
-- Live hospital capacity search with freshness, source, and confidence
-- Multi-clinic search fan-out to as many as 30 matching locations
-- Up to five expiring clinic offers with customer comparison and selection
-- Atomic confirmation of one clinic and automatic release of every other offer
-- Arrival-request state machine and customer tracker after selection
-- Clinic live-status console and availability-offer workflow
-- Customer-supplied arrival, triage, and seen observations
-- Tenant-versioned deposit policies
-- Optional Stripe PaymentIntent collection after clinic acceptance
-- Clerk organization tenancy scaffolded behind an exact runtime flag
-- Cloudflare Worker, D1 migrations, Static Assets, scheduled expiry, and observability
+| Surface | Path | Deploys as |
+| --- | --- | --- |
+| Customer PWA — intake, live capacity, offer comparison, map, turn-by-turn | `public/`, `src/` | Worker `timinow` |
+| Veterinary web console — queue, capacity, decisions, always-on-top mini window | `apps/vet-web/` | Worker `timinow-vet` |
+| Platform operator console — the only place a tenant can be created | `apps/admin-console/` | Worker `timinow-admin` |
+| Customer iOS app — SwiftUI, Skip Fuse ready, Mapbox navigation, CarPlay, Watch | `apps/customer-mobile/` | App Store |
+| Veterinary Windows app — WPF, tray alerts, floating queue | `apps/vet-windows/` | Signed installer |
+| Veterinary macOS app — SwiftUI, floating panel, menu-bar item | `apps/vet-desktop/` | Developer ID / Mac App Store |
 
-The checked-in configuration deploys immediately in zero-configuration demo mode. Search, five-offer comparison, selection, tracking, simulated deposits, clinic status publishing, and clinic responses all work with fixtures and browser-local persistence. D1, Clerk, and Stripe are opt-in production upgrades.
+All three Workers bind the same D1 database and share the same session, tenancy,
+and Clerk metadata code in `src/`.
 
 ## Product routes
 
 - `/#home` — public explanation and safety boundaries
 - `/#find` — concise two-step immediate-care intake
-- `/#results` — nearby live intake capacity
-- `/#tracker` — multi-clinic offer comparison followed by confirmation, payment, and milestones
+- `/#results` — nearby live intake capacity, on the map and in the list
+- `/#tracker` — offer comparison, confirmation, payment, milestones, and navigation to the clinic
 - `/#pets` — portable pet-profile demonstration
-- `/#clinic` — veterinary team operations console
-- `/#sign-in` — Clerk sign-in surface, dormant by default
+- `/#clinic` — veterinary operations console
+- `/#sign-in` — Tími's own sign-in, on Clerk's headless client
+- `/#legal` — versioned terms, privacy, safety, deposit, and clinic policies
+
+## Authentication
+
+Sign-in is enforced (`SIGN_IN_REQUIRED = "true"`) and every screen is Tími's own
+design. Clerk loads through its **headless** build and the flows are driven
+against the client API directly, so no Clerk-branded modal, user button, or
+organization switcher appears anywhere. `scripts/validate.mjs` fails the build if
+a prebuilt Clerk component is reintroduced on any surface.
+
+Supported identifiers are email, username, and phone number; supported factors
+are password, email code, phone code, passkey, Google, and Apple.
+
+Tenancy is Clerk organizations mapped to `tenants.clerk_org_id`. `GET /api/session`
+repairs the organization, membership, and user metadata on every sign-in, so the
+desktop and native clients resolve their tenant straight from the session token.
+
+Read [`docs/PLATFORM-CONTRACT.md`](docs/PLATFORM-CONTRACT.md) before changing any
+surface — it is the contract all six clients share.
+
+## Who can do what
+
+| Capability | Customer | Tenant member | Tenant administrator | Platform operator |
+| --- | :-: | :-: | :-: | :-: |
+| Request care, compare offers, navigate | ✅ | ✅ | ✅ | ✅ |
+| Publish capacity, answer requests | | ✅ | ✅ | ✅ |
+| Add and remove people in their workspace | | | ✅ | ✅ |
+| **Create a tenant** | | | | ✅ |
+
+Tenant creation exists only in the admin console Worker. The customer and
+veterinary Workers do not implement the route at all.
+
+## Maps and navigation
+
+One style everywhere:
+`mapbox://styles/calebowen2019/cmt3nci25004d01sya8qxcb4u`.
+
+- **Web** — `public/map.js` loads Mapbox GL JS on demand, renders clinic pins and
+  the route line, and runs browser turn-by-turn with spoken directions.
+- **iOS** — the Mapbox Navigation SDK renders full guidance against the same
+  style, with a custom speech synthesizer, CarPlay, and a companion Watch app.
+
+Driving-instruction wording lives in phrase tables, not in the guidance code, so
+it can be changed without touching navigation logic. See
+[`docs/NAVIGATION.md`](docs/NAVIGATION.md).
 
 ## Run locally
 
@@ -38,87 +77,60 @@ Requires Node.js 20+.
 
 ```bash
 npm install
-npm run dev
+cp wrangler.local.example.jsonc wrangler.local.jsonc   # sign-in off, local D1
+npm run db:migrate:local
+npm run dev            # customer PWA
+npm run dev:vet        # veterinary console, port 8788
+npm run dev:admin      # admin console, port 8789
 ```
 
-Wrangler serves the Worker and static PWA with five East Bay demonstration clinics. No Cloudflare resources, IDs, accounts, or secrets are required for this mode.
+The committed `wrangler.jsonc` is the **production** configuration. Local
+development uses the git-ignored override so a stray `wrangler dev` can never
+point at production with authentication disabled.
 
-## Deploy by connecting the repository to Cloudflare
-
-The default `wrangler.jsonc` intentionally has no required bindings, so a first deployment cannot be blocked by an unconfigured D1, Clerk, or Stripe resource.
-
-1. In Cloudflare, open **Workers & Pages** and choose **Create application**.
-2. Choose **Import a repository**, authorize GitHub, and select this repository.
-3. Keep the Worker name as `timinow` (it must match `wrangler.jsonc`).
-4. Choose the branch to deploy. No build command or environment variables are required. The default deploy command, `npx wrangler deploy`, is sufficient.
-5. Select **Save and Deploy**. The fixture-backed PWA will be live at the generated `workers.dev` address.
-
-Future pushes to the selected production branch deploy automatically. Branch builds use Cloudflare preview versions.
-
-## Authentication switch
-
-Authentication is intentionally disabled in `wrangler.jsonc`:
-
-```json
-"SIGN_IN_REQUIRED": "false"
-```
-
-Sign-in activates only when its value is the exact string `"true"`. Before changing it, configure:
-
-- `CLERK_PUBLISHABLE_KEY` as a non-secret Worker variable
-- `CLERK_ISSUER` or `CLERK_JWKS_URL` as a Worker variable
-- `AUTHORIZED_PARTIES` with comma-separated production origins
-- Clerk organizations whose IDs map to `tenants.clerk_org_id`
-
-The Worker verifies Clerk RS256 session tokens with Web Crypto. Clinic API access is tied to the active Clerk organization. Do not enable the flag with empty Clerk configuration.
-
-## Payments
-
-The MVP takes a deposit only after the customer selects one clinic offer. In demonstration mode, the payment endpoint records a simulated successful deposit. For Stripe:
-
-```bash
-npx wrangler secret put STRIPE_SECRET_KEY
-```
-
-Set `STRIPE_PUBLISHABLE_KEY` in `wrangler.jsonc` or the Cloudflare dashboard and set `DEMO_MODE` to `"false"`. The frontend mounts Stripe Payment Element from the returned PaymentIntent client secret and the Worker verifies final state directly with Stripe.
-
-## Create the production D1 database
-
-```bash
-npx wrangler d1 create timinow
-cp wrangler.d1.example.jsonc wrangler.d1.jsonc
-```
-
-Replace `REPLACE_WITH_YOUR_D1_DATABASE_ID` in the ignored `wrangler.d1.jsonc` file with the UUID returned by Cloudflare. Then apply migrations and run the database-backed app locally:
+## Deploy
 
 ```bash
 npm run db:migrate:remote
-npm run dev:d1
+npm run deploy:all
 ```
 
-For a database-backed Cloudflare Git deployment, add the same D1 binding in the Cloudflare dashboard or commit a real binding to `wrangler.jsonc` after the resource exists. Never commit secrets. Until then, the default deploy remains in safe demonstration mode.
+Before the first production request, fill in the keys listed in
+[`docs/PRODUCTION-KEYS.md`](docs/PRODUCTION-KEYS.md). Clerk and Mapbox values are
+required; without them sign-in and the map stay dark.
 
-## Validate and deploy
+```bash
+npx wrangler secret put CLERK_SECRET_KEY
+npx wrangler secret put CLERK_SECRET_KEY --config wrangler.vet.jsonc
+npx wrangler secret put CLERK_SECRET_KEY --config wrangler.admin.jsonc
+```
+
+## Payments
+
+A deposit is taken only after the customer selects one clinic offer. `DEMO_MODE`
+is `"false"`, so the payment endpoint no longer simulates success — set the
+Stripe keys, or set every tenant's `deposit_required` to `0`, before taking real
+traffic.
+
+## Validate
 
 ```bash
 npm run check
-npm run build
-npm run deploy
 ```
 
-No repository changes are automatically committed or pushed by these commands.
+Runs a repository-wide syntax pass, the platform validator (files, screens, D1
+tables, API routes, Worker topology, the no-Clerk-component rule, and the pinned
+map style), the native-client validator, and the Worker smoke, auth, and
+end-to-end suites.
 
-## Native clients
+## Documents
 
-- [`apps/customer-mobile`](apps/customer-mobile) — iOS 17+ SwiftUI app, interactive demo mode, live Worker integration, deterministic concern-quality guard, and Skip Fuse module configuration
-- [`apps/vet-windows`](apps/vet-windows) — .NET 8 WPF clinic console with capacity controls, request review, native alerts, tray behavior, and a draggable floating queue
-
-Native platform builds run in [GitHub Actions](.github/workflows/native-clients.yml). See [`docs/NATIVE-CLIENTS.md`](docs/NATIVE-CLIENTS.md) for release boundaries and production configuration.
-
-## Architecture and policy documents
-
+- [`docs/PLATFORM-CONTRACT.md`](docs/PLATFORM-CONTRACT.md) — the cross-surface contract
+- [`docs/PRODUCTION-KEYS.md`](docs/PRODUCTION-KEYS.md) — every key and dashboard setting still needed
+- [`docs/NAVIGATION.md`](docs/NAVIGATION.md) — voices, instruction wording, CarPlay, Watch
 - [`docs/MVP-ARCHITECTURE.md`](docs/MVP-ARCHITECTURE.md)
 - [`docs/PAYMENTS-AND-TENANT-POLICIES.md`](docs/PAYMENTS-AND-TENANT-POLICIES.md)
 - [`docs/INTEGRATION-COST-MATRIX.md`](docs/INTEGRATION-COST-MATRIX.md)
+- [`docs/LEGAL-LAUNCH-CHECKLIST.md`](docs/LEGAL-LAUNCH-CHECKLIST.md)
 - [`docs/UX-WIREFRAME.md`](docs/UX-WIREFRAME.md)
 - [`docs/NATIVE-CLIENTS.md`](docs/NATIVE-CLIENTS.md)

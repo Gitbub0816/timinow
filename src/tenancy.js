@@ -7,6 +7,7 @@
  */
 
 import { hasDatabase } from "./db.js";
+import { getUser, primaryEmail } from "./clerk.js";
 
 function newId(prefix) {
   return `${prefix}_${crypto.randomUUID().replaceAll("-", "")}`;
@@ -36,15 +37,35 @@ export function slugify(value) {
  */
 export async function isPlatformAdmin(env, actor) {
   if (!actor?.userId) return false;
+
   const userIds = allowlist(env.PLATFORM_ADMIN_USER_IDS);
   if (userIds.includes(String(actor.userId).toLowerCase())) return true;
+
   const emails = allowlist(env.PLATFORM_ADMIN_EMAILS);
   if (actor.email && emails.includes(String(actor.email).toLowerCase())) return true;
-  if (!hasDatabase(env)) return false;
-  const row = await env.DB.prepare("SELECT clerk_user_id FROM platform_admins WHERE clerk_user_id = ? LIMIT 1")
-    .bind(actor.userId)
-    .first();
-  return Boolean(row);
+
+  if (hasDatabase(env)) {
+    const row = await env.DB.prepare("SELECT clerk_user_id FROM platform_admins WHERE clerk_user_id = ? LIMIT 1")
+      .bind(actor.userId)
+      .first();
+    if (row) return true;
+  }
+
+  // Bootstrap path. The email claim only reaches us once the `timinow` JWT
+  // template exists, so the very first operator would otherwise be locked out of
+  // the console they need in order to finish setting Clerk up. Resolve the
+  // address from the Backend API instead — only when an email allowlist is
+  // configured and nothing cheaper has already answered.
+  if (emails.length && !actor.email && env.CLERK_SECRET_KEY) {
+    try {
+      const email = primaryEmail(await getUser(env, actor.userId));
+      if (email && emails.includes(email.toLowerCase())) return true;
+    } catch (error) {
+      console.warn(JSON.stringify({ event: "platform_admin_lookup_failed", message: error.message }));
+    }
+  }
+
+  return false;
 }
 
 export async function recordAudit(env, { actorUserId, actorScope, tenantId = null, action, target = null, detail = {} }) {
