@@ -595,6 +595,36 @@ if $SECRETS_ONLY; then
   echo
 else
 
+# The publishable key carries its own host, base64-encoded. CLERK_ISSUER and
+# CLERK_JWKS_URL name the same instance separately, and a file edited halfway —
+# key updated, issuer left behind — deploys a Worker that hands browsers one
+# instance and verifies tokens against another. Every symptom of that points
+# somewhere else.
+if ! $DRY && have CLERK_PUBLISHABLE_KEY; then
+  CLERK_HOST_FROM_KEY="$(printf '%s' "$(env_value CLERK_PUBLISHABLE_KEY)" | node -e '
+    let key = "";
+    process.stdin.on("data", (chunk) => { key += chunk; });
+    process.stdin.on("end", () => {
+      const encoded = key.trim().replace(/^pk_(live|test)_/, "");
+      if (!encoded || encoded === key.trim()) return;
+      const host = Buffer.from(encoded, "base64").toString("utf8").replace(/\$$/, "");
+      if (/^[a-z0-9.-]+\.[a-z]{2,}$/i.test(host)) process.stdout.write(host);
+    });
+  ' 2>/dev/null || true)"
+  for PAIR in "CLERK_ISSUER" "CLERK_JWKS_URL"; do
+    PAIR_VALUE="$(env_value "$PAIR")"
+    [ -n "$PAIR_VALUE" ] || continue
+    PAIR_HOST="$(printf '%s' "$PAIR_VALUE" | sed -E 's#^https?://##; s#/.*$##')"
+    if [ -n "$CLERK_HOST_FROM_KEY" ] && [ "$PAIR_HOST" != "$CLERK_HOST_FROM_KEY" ]; then
+      die "  $PAIR names $PAIR_HOST, but CLERK_PUBLISHABLE_KEY decodes to
+  $CLERK_HOST_FROM_KEY. They must be the same Clerk instance — browsers would
+  be sent to one and tokens verified against the other.
+
+  This is what a half-finished edit looks like. Nothing was deployed."
+    fi
+  done
+fi
+
 bold "1b. Sign-in is possible"
 # A blank CLERK_PUBLISHABLE_KEY is not a configuration, it is an outage: the
 # Worker deploys, the page loads, and /api/config serves null, so ClerkJS never
