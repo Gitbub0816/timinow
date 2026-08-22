@@ -483,6 +483,24 @@ for (const [manifestPath, projectPath] of [
   }
 }
 
+// xcconfig comments are //, not #. A leading # is a preprocessor directive, so
+// a shell-style comment does not read as a comment at all — it fails the build
+// with "unsupported preprocessor directive", naming the first word of the
+// comment as the directive.
+for (const path of [
+  "apps/vet-desktop/Darwin/TimiVet.xcconfig",
+  "apps/customer-mobile/Darwin/TimiNow.xcconfig"
+]) {
+  const source = await read(path);
+  source.split("\n").forEach((line, index) => {
+    // The space matters: Xcode reads "# Optional" as the directive Optional.
+    const directive = line.match(/^#\s*(\w+)/);
+    if (directive && !["include", "if", "else", "elseif", "endif", "error", "warning"].includes(directive[1])) {
+      throw new Error(`${path}:${index + 1}: "#${directive[1]}" is not an xcconfig directive. Comments here start with // — a leading # fails the build with "unsupported preprocessor directive".`);
+    }
+  });
+}
+
 const csharpFiles = await collectFiles("apps/vet-windows", ".cs");
 for (const path of csharpFiles) {
   const problems = bracketProblems(await read(path));

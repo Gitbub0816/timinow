@@ -134,7 +134,7 @@ bold "2. Xcode project"
 echo "  generated"
 
 bold "3. Build"
-dim "  The first build compiles the whole Skip stack — expect several minutes."
+dim "  Plain macOS package, no dependencies — this should take well under a minute."
 dim "  Full output: /tmp/timi-mac-build.log"
 set +e +o pipefail
 start_heartbeat /tmp/timi-mac-build.log

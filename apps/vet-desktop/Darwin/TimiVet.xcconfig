@@ -11,5 +11,8 @@ CODE_SIGN_STYLE = Automatic
 CODE_SIGN_ENTITLEMENTS = TimiVet.entitlements
 ENABLE_HARDENED_RUNTIME = YES
 
-# Optional per-developer settings — DEVELOPMENT_TEAM, mainly. Git-ignored.
+// Optional per-developer settings — DEVELOPMENT_TEAM, mainly. Git-ignored.
+// Comments here are //, not #: xcconfig reads a leading # as a preprocessor
+// directive, so a shell-style comment fails the build with "unsupported
+// preprocessor directive".
 #include? "Local.xcconfig"
