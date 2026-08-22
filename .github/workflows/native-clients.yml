@@ -81,6 +81,9 @@ jobs:
           name: swift-test-log
           path: ${{ runner.temp }}/timi-swift-test.log
           retention-days: 3
+      # skipstone is a SwiftPM build plugin, and xcodebuild refuses to run a
+      # plugin that has not been trusted interactively — "Validate plug-in
+      # skipstone in package skip" fails the build with no other explanation.
       - name: Compile iOS app
         run: >-
           xcodebuild
@@ -149,20 +152,12 @@ jobs:
         run: xcodegen generate
       - name: Resolve Swift packages
         run: swift package resolve
-      # The console's core is deliberately platform-agnostic, so its tests run
-      # under plain SwiftPM rather than needing a simulator.
-      #
-      # Filtered to the test classes by name, not to the target: the target also
-      # contains SkipTest's XCSkipTests, which drives the whole Kotlin suite
-      # through Gradle and needs a JNI-loadable Swift-for-Android library that
-      # this job has no way to produce — every bridged initializer fails with
-      # UnsatisfiedLinkError. The iOS job filters the same way for the same
-      # reason. The Kotlin *transpile* still runs either way, since skipstone is
-      # a build plugin, so a source Skip cannot translate still fails here.
+      # The console is a plain macOS SwiftPM package — no Skip, no Kotlin, no
+      # simulator — so the whole suite runs directly.
       - name: Run core tests
         run: |
           set +e
-          swift test --filter 'DecisionPayloadTests|ClinicStoreTests' > "$RUNNER_TEMP/timi-vet-test.log" 2>&1
+          swift test > "$RUNNER_TEMP/timi-vet-test.log" 2>&1
           status=$?
           if [ "$status" -ne 0 ]; then
             tail -120 "$RUNNER_TEMP/timi-vet-test.log"
@@ -176,9 +171,9 @@ jobs:
           name: vet-macos-test-log
           path: ${{ runner.temp }}/timi-vet-test.log
           retention-days: 3
-      # skipstone is a SwiftPM build plugin, and xcodebuild refuses to run a
-      # plugin that has not been trusted interactively — "Validate plug-in
-      # skipstone in package skip" fails the build with no other explanation.
+      # The validation flags are carried by every xcodebuild here for
+      # uniformity. They are no-ops for this package now that it has no build
+      # plugins, and load-bearing for the customer app, which does.
       - name: Compile macOS app
         run: >-
           xcodebuild

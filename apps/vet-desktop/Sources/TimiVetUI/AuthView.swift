@@ -1,10 +1,6 @@
 import Foundation
 import TimiVetCore
-#if os(Android)
-import SkipFuseUI
-#else
 import SwiftUI
-#endif
 
 // Fully custom Clerk sign-in screens — identifier, strategy picker,
 // password/code, then a workspace picker when the account belongs to

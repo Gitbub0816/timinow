@@ -1,13 +1,12 @@
 # Tími Vet — macOS
 
-A native SwiftUI veterinary operations console for macOS, structured the same way as `apps/customer-mobile`: a Skip Fuse-ready Swift package (`TimiVetCore` / `TimiVetUI` / `TimiVetApp`) wrapped by a thin Xcode project under `Darwin/`. It is a port of `apps/vet-windows` (WPF/.NET) to the same design and Worker API, with two Windows-specific things fixed along the way: the Clerk bearer token is never written to disk in plaintext, and the floating console remembers where you left it instead of resetting to `(80, 80)` on every launch.
+A native SwiftUI veterinary operations console for macOS, structured like `apps/customer-mobile`: a Swift package (`TimiVetCore` / `TimiVetUI` / `TimiVetApp`) wrapped by a thin Xcode project under `Darwin/`. Unlike the customer app it carries no Skip — the console ships to macOS, and the clinic's other surfaces are the Windows client and the web console, so transpiling it to Kotlin on every build bought nothing. It is a port of `apps/vet-windows` (WPF/.NET) to the same design and Worker API, with two Windows-specific things fixed along the way: the Clerk bearer token is never written to disk in plaintext, and the floating console remembers where you left it instead of resetting to `(80, 80)` on every launch.
 
 ## Requirements
 
 - macOS 14 (Sonoma) or newer, both to build and to run
 - Xcode 16 or newer
 - [XcodeGen](https://github.com/yonaskolb/XcodeGen) (`brew install xcodegen`)
-- [Skip](https://skip.tools) 1.7+ if you want to exercise the Skip Fuse toolchain (`brew tap skiptools/skip && brew install skip`) — not required just to build and run the macOS app
 
 ## Open and build on macOS
 
@@ -27,7 +26,7 @@ swift build
 swift test
 ```
 
-`swift test` runs `Tests/TimiVetCoreTests` (XCTest, plumbed through `SkipTest` the same way `apps/customer-mobile/Tests` is) — a decision-payload shape test and a poll-interval clamping test at minimum.
+`swift test` runs `Tests/TimiVetCoreTests` (plain XCTest — no Skip harness, so it needs no Android toolchain and no Gradle) — a decision-payload shape test and a poll-interval clamping test at minimum.
 
 The app starts in **interactive demo mode** if no Worker URL is configured, backed by `TimiVetCore/DemoClinicData.swift` — the same three fixture requests the Windows client ships. Set the Cloudflare Worker HTTPS URL from the sign-in screen or the console's settings section to talk to a live `timinow-vet` Worker.
 
@@ -72,16 +71,16 @@ The Clerk bearer token is **never** written to `settings.json` — unlike the Wi
 ## Package layout
 
 ```
-Package.swift                      TimiVetApp / TimiVetUI / TimiVetCore products, Skip Fuse dependencies
+Package.swift                      TimiVetApp / TimiVetUI / TimiVetCore, no external dependencies
 Skip.env                           PRODUCT_NAME, bundle id, versions
 Darwin/                            XcodeGen project, Info.plist, entitlements, the tiny @main file
 Sources/TimiVetCore/               Models, ClinicAPIClient, AuthController, KeychainStore, SettingsStore, ClinicStore, DemoClinicData
 Sources/TimiVetUI/                 Theme, ConsoleView, MiniConsoleView, FloatingPanel, AuthView, PeopleView, AlertCenter
 Sources/TimiVetApp/                RootView/TimiVetApplication (portable), AppDelegate (macOS-specific composition root)
-Tests/TimiVetCoreTests/            XCTest + SkipTest
+Tests/TimiVetCoreTests/            XCTest
 ```
 
-`TimiVetCore` and `TimiVetUI` both declare `mode: native, bridging: true` in their `Skip/skip.yml`, mirroring `apps/customer-mobile`, so the shared model/networking/auth layer and the SwiftUI views could later be compiled for another Skip Fuse platform. `TimiVetApp`'s `AppDelegate.swift` is deliberately **not** guarded for that — it is the macOS-specific composition root (real `NSPanel`/`NSStatusItem`/`NSApplicationDelegate` usage), the same role `TimiNowApp.swift`'s Darwin-only wiring plays in the customer app. `Package.swift` also only declares `.macOS(.v14)`, unlike the customer app's `[.iOS, .macOS, .macCatalyst]` — this package's portability claim is scoped to Core + UI, not the app shell.
+This package declares only `.macOS(.v14)`, unlike the customer app's `[.iOS, .macOS, .macCatalyst]`, and it makes no portability claim at all. `TimiVetApp` is the macOS composition root — real `NSPanel`, `NSStatusItem`, `NSApplicationDelegate` — and `TimiVetCore`/`TimiVetUI` are plain SwiftUI and Foundation. If an Android console is ever wanted, Skip goes back in then; carrying it against that possibility cost minutes on every build and produced Kotlin nothing consumed.
 
 ## Production checklist
 

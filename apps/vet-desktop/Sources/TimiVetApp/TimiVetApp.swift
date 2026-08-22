@@ -43,7 +43,6 @@ public struct RootView: View {
     }
 }
 
-#if !SKIP
 /// `appDelegate` is a protocol *requirement*, not a stored property added by
 /// the extension below — Swift does not allow a property wrapper
 /// (`@NSApplicationDelegateAdaptor`) inside a protocol extension's default
@@ -70,4 +69,3 @@ public extension TimiVetApplication {
         }
     }
 }
-#endif

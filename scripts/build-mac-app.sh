@@ -44,13 +44,34 @@ die()  { printf '\033[31m%s\033[0m\n' "$*" >&2; exit 1; }
 BUILD_FILTER='^(Skip |Compiling|Compile|Build|Ld |Link|CodeSign|Signing|Touch|Copy|Prepare|Resolve|Apply build tool|Process build tool|Create|Validate|\*\* |error:|.*: error:)'
 
 # xcodebuild goes quiet for minutes at a time while Skip transpiles its stack.
-# Without this there is no way to tell that from a hang.
-start_heartbeat() {
-  ( elapsed=0
+# Without this there is no way to tell that from a hang — and it does hang: two
+# builds at once block on SwiftPM's shared lock with no message at all. So the
+# heartbeat watches the log grow, and says so when it stops.
+start_heartbeat() { # start_heartbeat LOGFILE
+  ( log="$1"
+    elapsed=0
+    last_size=0
+    stalled=0
     while true; do
       sleep 30
       elapsed=$(( elapsed + 30 ))
-      printf '\033[2m  … still building (%dm%02ds)\033[0m\n' "$(( elapsed / 60 ))" "$(( elapsed % 60 ))"
+      size=$(wc -c < "$log" 2>/dev/null || echo 0)
+      if [ "$size" -eq "$last_size" ]; then
+        stalled=$(( stalled + 30 ))
+      else
+        stalled=0
+        last_size="$size"
+      fi
+      if [ "$stalled" -ge 120 ]; then
+        printf '\033[33m  Nothing written for %dm. Last line:\033[0m\n' "$(( stalled / 60 ))"
+        printf '\033[2m    %s\033[0m\n' "$(tail -1 "$log" 2>/dev/null | cut -c1-100)"
+        printf '\033[33m  If another xcodebuild or Xcode itself is open on this package, they are\033[0m\n'
+        printf '\033[33m  sharing SwiftPM'"'"'s lock and this one waits forever. Check with:\033[0m\n'
+        printf '\033[2m    ps -eo pid,etime,args | grep [x]codebuild\033[0m\n'
+        stalled=0
+      else
+        printf '\033[2m  … still building (%dm%02ds)\033[0m\n' "$(( elapsed / 60 ))" "$(( elapsed % 60 ))"
+      fi
     done ) &
   HEARTBEAT_PID=$!
 }
@@ -116,7 +137,7 @@ bold "3. Build"
 dim "  The first build compiles the whole Skip stack — expect several minutes."
 dim "  Full output: /tmp/timi-mac-build.log"
 set +e +o pipefail
-start_heartbeat
+start_heartbeat /tmp/timi-mac-build.log
 # -allowProvisioningUpdates lets Xcode create the development profile for the
 # keychain-access-group on first run rather than failing with a bare
 # "requires a development certificate". It talks to Apple to do that, so if

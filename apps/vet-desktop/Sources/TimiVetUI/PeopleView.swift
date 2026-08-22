@@ -1,10 +1,6 @@
 import Foundation
 import TimiVetCore
-#if os(Android)
-import SkipFuseUI
-#else
 import SwiftUI
-#endif
 
 // SwiftUI port of the tenant people console. Windows: PeopleWindow +
 // PeopleViewModel(_api, _viewModel.IsAdmin). Reads/writes

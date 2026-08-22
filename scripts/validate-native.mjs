@@ -39,8 +39,6 @@ const required = [
   "apps/vet-windows/src/TimiVet/Services/AlertService.cs",
   "apps/vet-desktop/Package.swift",
   "apps/vet-desktop/Darwin/project.yml",
-  "apps/vet-desktop/Sources/TimiVetCore/Skip/skip.yml",
-  "apps/vet-desktop/Sources/TimiVetUI/Skip/skip.yml",
   "apps/vet-desktop/Sources/TimiVetUI/FloatingPanel.swift",
   "apps/vet-desktop/Sources/TimiVetCore/AuthController.swift"
 ];
@@ -460,6 +458,28 @@ for (const [manifestPath, projectPath] of [
   const settings = await read("apps/vet-desktop/Sources/TimiVetCore/SettingsStore.swift");
   if (/bearerToken|sessionToken/i.test(settings)) {
     throw new Error("apps/vet-desktop/Sources/TimiVetCore/SettingsStore.swift: credentials must stay in the Keychain, not the settings file.");
+  }
+}
+
+// The console is deliberately Skip-free: it ships to macOS only, so transpiling
+// it to Kotlin on every build produced something nothing consumes and cost
+// minutes each time — including a local build that could wedge inside the
+// plugin with no output at all. If an Android console is ever wanted, this
+// guard is the place to reconsider it, not an import that quietly creeps back.
+{
+  // Comments stripped first: the manifest explains at length why Skip is gone,
+  // and matching that explanation would fail the build forever. Same trap the
+  // signing guard fell into.
+  const manifest = (await read("apps/vet-desktop/Package.swift"))
+    .split("\n").filter((line) => !/^\s*\/\//.test(line)).join("\n");
+  if (/skip/i.test(manifest)) {
+    throw new Error("apps/vet-desktop/Package.swift names Skip again. The console is macOS-only — adding Skip back puts a Kotlin transpile in front of every build.");
+  }
+  for (const path of await collectFiles("apps/vet-desktop/Sources", ".swift")) {
+    const source = await read(path);
+    if (/^import Skip\w+/m.test(source) || /\bos\(Android\)/.test(source)) {
+      throw new Error(`${path}: imports Skip or branches on Android, but the console has no Android build — the branch is unreachable and the import will not resolve.`);
+    }
   }
 }
 

@@ -1,6 +1,15 @@
 // swift-tools-version: 5.9
 import PackageDescription
 
+// No Skip here, deliberately. The veterinary console ships to macOS, and the
+// clinic's other surfaces are the Windows client (apps/vet-windows) and the web
+// console at providers.timinow.pet — there is no Android console and no plan
+// for one. Carrying skipstone anyway meant every build transpiled this package
+// to Kotlin first, which is minutes of work per build to produce something
+// nothing consumes, and it is where a local build could wedge with no output.
+//
+// The customer app (apps/customer-mobile) is the one that genuinely needs Skip:
+// it ships to iOS *and* Android from the same sources.
 let package = Package(
     name: "timinow-vet-desktop",
     defaultLocalization: "en",
@@ -11,37 +20,10 @@ let package = Package(
         // each target breaks the app build.
         .library(name: "TimiVetApp", type: .dynamic, targets: ["TimiVetApp"])
     ],
-    dependencies: [
-        .package(url: "https://source.skip.tools/skip.git", from: "1.7.0"),
-        .package(url: "https://source.skip.tools/skip-ui.git", from: "1.29.3"),
-        .package(url: "https://source.skip.tools/skip-model.git", from: "1.5.0"),
-        .package(url: "https://source.skip.tools/skip-fuse-ui.git", from: "1.0.0"),
-        .package(url: "https://source.skip.tools/skip-fuse.git", from: "1.0.2")
-    ],
     targets: [
-        .target(
-            name: "TimiVetApp",
-            dependencies: ["TimiVetUI", "TimiVetCore", .product(name: "SkipUI", package: "skip-ui")],
-            plugins: [.plugin(name: "skipstone", package: "skip")]
-        ),
-        .target(
-            name: "TimiVetUI",
-            dependencies: ["TimiVetCore", .product(name: "SkipFuseUI", package: "skip-fuse-ui")],
-            resources: [.process("Resources")],
-            plugins: [.plugin(name: "skipstone", package: "skip")]
-        ),
-        .target(
-            name: "TimiVetCore",
-            dependencies: [
-                .product(name: "SkipFuse", package: "skip-fuse"),
-                .product(name: "SkipModel", package: "skip-model")
-            ],
-            plugins: [.plugin(name: "skipstone", package: "skip")]
-        ),
-        .testTarget(
-            name: "TimiVetCoreTests",
-            dependencies: ["TimiVetCore", .product(name: "SkipTest", package: "skip")],
-            plugins: [.plugin(name: "skipstone", package: "skip")]
-        )
+        .target(name: "TimiVetApp", dependencies: ["TimiVetUI", "TimiVetCore"]),
+        .target(name: "TimiVetUI", dependencies: ["TimiVetCore"], resources: [.process("Resources")]),
+        .target(name: "TimiVetCore"),
+        .testTarget(name: "TimiVetCoreTests", dependencies: ["TimiVetCore"])
     ]
 )

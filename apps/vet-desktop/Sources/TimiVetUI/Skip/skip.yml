@@ -1,4 +1,0 @@
-# Compile the shared SwiftUI layer natively through Skip Fuse.
-skip:
-  mode: native
-  bridging: true

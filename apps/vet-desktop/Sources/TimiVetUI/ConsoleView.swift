@@ -1,10 +1,6 @@
 import Foundation
 import TimiVetCore
-#if os(Android)
-import SkipFuseUI
-#else
 import SwiftUI
-#endif
 
 // SwiftUI port of apps/vet-windows/src/TimiVet/Views/MainWindow.xaml.
 public struct ConsoleView: View {

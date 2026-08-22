@@ -1,9 +1,5 @@
 import Foundation
-#if os(Android)
-import SkipFuseUI
-#else
 import SwiftUI
-#endif
 
 /// Shown when `GET /api/session` comes back authenticated but with
 /// `surfaces.clinic == false` — a real Clerk account with no membership in

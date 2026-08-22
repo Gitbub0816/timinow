@@ -1,9 +1,5 @@
 import Foundation
-#if os(Android)
-import SkipFuseUI
-#else
 import SwiftUI
-#endif
 
 // Design tokens ported from docs/PLATFORM-CONTRACT.md and
 // apps/vet-windows/src/TimiVet/Theme/Theme.xaml. Kept `internal` (no `public`)
