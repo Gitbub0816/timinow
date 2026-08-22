@@ -178,7 +178,10 @@ echo "  built $BUILT"
 # failed ... Unknown error: 163" (EBADEXEC) at open time, which says nothing
 # about the cause. Checking here turns that into a message at build time.
 bold "3b. Signature"
-if ! codesign --verify --strict --verbose=1 "$BUILT" 2>&1 | grep -q "valid on disk"; then
+# By exit status, not by output: codesign --verify is silent on success, so
+# grepping its output for a reassuring phrase reports every valid signature as
+# invalid.
+if ! codesign --verify --strict "$BUILT" 2>/dev/null; then
   codesign --verify --strict --verbose=2 "$BUILT" 2>&1 | tail -5 >&2
   die "  The bundle is not validly signed, so macOS will refuse to launch it."
 fi
