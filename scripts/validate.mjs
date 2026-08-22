@@ -42,6 +42,7 @@ const requiredFiles = [
   "migrations/0005_voice_calls.sql",
   "scripts/voice-test.mjs",
   ".env.example",
+  "docs/PRODUCTION-SETUP.md",
   "apps/vet-web/public/index.html",
   "apps/vet-web/public/app.js",
   "apps/vet-web/src/index.js",
@@ -123,6 +124,40 @@ for (const route of ["/api/voice/outbound/", "/api/voice/gather/", "/api/voice/s
 }
 if (!voiceWorker.includes("verifyTwilioSignature")) throw new Error("The voice Worker must verify every Twilio webhook signature");
 if (!voiceWorker.includes("verifyAttemptToken")) throw new Error("Voice webhooks must be scoped to a single call attempt");
+
+/**
+ * Twilio signs the whole callback URL, so VOICE_PUBLIC_URL must name exactly
+ * the host the voice Worker answers on. A mismatch does not degrade — every
+ * clinic call is rejected and nobody is ever reached — and it is invisible
+ * until someone reads the logs, so it is worth a build failure.
+ */
+const voicePublicUrl = wranglerVoice.match(/"VOICE_PUBLIC_URL":\s*"([^"]*)"/)?.[1] || "";
+const voiceRoutes = [...wranglerVoice.matchAll(/"pattern":\s*"([^"]+)"/g)].map((match) => match[1]);
+if (voicePublicUrl) {
+  const host = new URL(voicePublicUrl).host;
+  if (!voiceRoutes.some((route) => route.split("/")[0] === host)) {
+    throw new Error(`VOICE_PUBLIC_URL is ${voicePublicUrl} but no route serves ${host}; Twilio signature verification would reject every call`);
+  }
+} else if (voiceRoutes.length) {
+  throw new Error("The voice Worker has a route but no VOICE_PUBLIC_URL, so it cannot build Twilio callback URLs");
+}
+
+/**
+ * Every origin a browser loads a Clerk session on must be an authorized party,
+ * or the Worker rejects its own front end.
+ */
+const authorizedParties = (wrangler.match(/"AUTHORIZED_PARTIES":\s*"([^"]*)"/)?.[1] || "")
+  .split(",").map((entry) => entry.trim()).filter(Boolean);
+if (authorizedParties.length) {
+  for (const [label, config] of [["customer", wrangler], ["veterinary", wranglerVet], ["admin", wranglerAdmin]]) {
+    for (const pattern of [...config.matchAll(/"pattern":\s*"([^"]+)"/g)].map((match) => match[1])) {
+      const origin = `https://${pattern.split("/")[0]}`;
+      if (!authorizedParties.includes(origin)) {
+        throw new Error(`The ${label} Worker serves ${origin} but it is not in AUTHORIZED_PARTIES, so Clerk sessions from it would be rejected`);
+      }
+    }
+  }
+}
 
 // A clinic answering the phone must take exactly the same path as a clinic
 // clicking accept. A second implementation is the failure mode this guards.

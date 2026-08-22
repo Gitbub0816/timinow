@@ -24,6 +24,12 @@
   "compatibility_date": "2026-08-20",
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": true,
+  // Twilio webhooks only. No human ever visits this hostname, but Twilio
+  // must reach it, and the request signature covers the whole URL — so
+  // VOICE_PUBLIC_URL below has to match this route exactly.
+  "routes": [
+    { "pattern": "voice.timinow.pet/*", "zone_name": "timinow.pet" }
+  ],
   "vars": {
     "SIGN_IN_REQUIRED": "true",
     "DEMO_MODE": "false",
@@ -32,7 +38,7 @@
     "TWILIO_FROM_NUMBER": "",
     "VOICE_CALLS_ENABLED": "true",
     "VOICE_MAX_ATTEMPTS": "2",
-    "VOICE_PUBLIC_URL": ""
+    "VOICE_PUBLIC_URL": "https://voice.timinow.pet"
   },
   "d1_databases": [
     {

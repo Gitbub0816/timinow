@@ -5,14 +5,21 @@
   "compatibility_date": "2026-08-20",
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": true,
+  // Public site and customer app. The apex and www serve the same
+  // Worker so a link to timinow.pet lands on the real product.
+  "routes": [
+    { "pattern": "timinow.pet/*", "zone_name": "timinow.pet" },
+    { "pattern": "www.timinow.pet/*", "zone_name": "timinow.pet" },
+    { "pattern": "app.timinow.pet/*", "zone_name": "timinow.pet" }
+  ],
   "vars": {
     "SIGN_IN_REQUIRED": "true",
     "DEMO_MODE": "false",
     "SURFACE": "customer",
     "CLERK_JS_URL": "https://cdn.jsdelivr.net/npm/@clerk/clerk-js@5/headless/+esm",
     "CLERK_PUBLISHABLE_KEY": "",
-    "CLERK_ISSUER": "",
-    "AUTHORIZED_PARTIES": "",
+    "CLERK_ISSUER": "https://clerk.timinow.pet",
+    "AUTHORIZED_PARTIES": "https://app.timinow.pet,https://timinow.pet,https://www.timinow.pet,https://providers.timinow.pet,https://admin.timinow.pet",
     "MAPBOX_PUBLIC_TOKEN": "",
     "MAPBOX_STYLE_URL": "mapbox://styles/calebowen2019/cmt3nci25004d01sya8qxcb4u",
     "STRIPE_PUBLISHABLE_KEY": ""
