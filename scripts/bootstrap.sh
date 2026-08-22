@@ -41,6 +41,7 @@ SECRETS_ONLY=false
 PULL=true
 INSPECT=false
 TEST_CALL=""
+TEST_VOICE=""
 
 # Every argument is read, in any order, so the flags combine — `--dry-run
 # --no-pull` used to silently ignore the second one.
@@ -52,6 +53,7 @@ while [ $# -gt 0 ]; do
     --no-pull)      PULL=false ;;
     --inspect)      INSPECT=true ;;
     --test-call)    TEST_CALL="${2:-}"; shift ;;
+    --voice)        TEST_VOICE="${2:-}"; shift ;;
     -*)             echo "unknown option: $arg" >&2; exit 1 ;;
     *)              [ -n "$ENV_FILE" ] && { echo "more than one env file given: $ENV_FILE and $arg" >&2; exit 1; }
                     ENV_FILE="$arg" ;;
@@ -60,7 +62,7 @@ while [ $# -gt 0 ]; do
 done
 
 if [ -z "$ENV_FILE" ]; then
-  echo "usage: $0 <path-to-env-file> [--dry-run] [--secrets-only] [--no-pull] [--inspect] [--test-call +1...]" >&2
+  echo "usage: $0 <path-to-env-file> [--dry-run] [--secrets-only] [--no-pull] [--inspect] [--test-call +1... [--voice NAME]]" >&2
   echo "example: $0 ~/Downloads/env.example" >&2
   exit 1
 fi
@@ -383,11 +385,29 @@ if [ -n "$TEST_CALL" ]; then
     $0 $ENV_FILE --test-call $TEST_CALL"
   fi
   echo
+  if [ -n "$TEST_VOICE" ]; then
+    echo "  voice   $TEST_VOICE (this call only — set VOICE_SAY_VOICE to keep it)"
+    BODY="{\"to\":\"$TEST_CALL\",\"voice\":\"$TEST_VOICE\"}"
+  else
+    CONFIGURED="$(env_value VOICE_SAY_VOICE)"
+    echo "  voice   ${CONFIGURED:-Polly.Joanna-Neural (the default)}"
+    BODY="{\"to\":\"$TEST_CALL\"}"
+  fi
+  echo
   curl -sS -X POST "$ORIGIN/api/voice/test-call" \
     -H "x-timi-drain-token: $TOKEN" \
     -H "content-type: application/json" \
-    -d "{\"to\":\"$TEST_CALL\"}"
+    -d "$BODY"
   echo
+  echo
+  dim "  Auditioning voices: re-run with --voice NAME. Nothing is deployed, so"
+  dim "  each call can use a different one. Some to try, most natural first:"
+  dim "    Google.en-US-Chirp3-HD-Aoede      Google.en-US-Chirp3-HD-Charon"
+  dim "    Google.en-US-Neural2-F            Google.en-US-Studio-O"
+  dim "    Polly.Danielle-Neural             Polly.Joanna-Neural"
+  dim "  A name Twilio does not know fails at answer time — the call connects"
+  dim "  and then drops — so if a voice goes silent, that is the name."
+  dim "  Keep the one you like: VOICE_SAY_VOICE=<name> in $ENV_FILE, then re-run."
   exit 0
 fi
 
@@ -476,6 +496,7 @@ set_var TWILIO_FROM_NUMBER     "$VOICE"
 set_var VOICE_PUBLIC_URL       "$VOICE"
 set_var VOICE_CALLS_ENABLED    "$VOICE"
 set_var VOICE_MAX_ATTEMPTS     "$VOICE"
+set_var VOICE_SAY_VOICE        "$VOICE"
 set_var PLATFORM_ADMIN_EMAILS  "$ADMIN"
 set_var PLATFORM_ADMIN_USER_IDS "$ADMIN"
 # Shared by both ends of the immediate-dispatch path, so it goes to both.

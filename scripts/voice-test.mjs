@@ -2,10 +2,17 @@ import { readFile } from "node:fs/promises";
 import { DatabaseSync } from "node:sqlite";
 import worker from "../apps/voice-gateway/src/index.js";
 import {
+  acceptedTwiml,
+  alreadyFilledTwiml,
   buildCallScript,
+  DEFAULT_SAY_VOICE,
+  declinedTwiml,
   escapeXml,
+  noResponseTwiml,
   normalizePhone,
   outboundTwiml,
+  repeatTwiml,
+  sayVoice,
   verifyTwilioSignature,
   withinQuietHours
 } from "../src/voice.js";
@@ -464,5 +471,33 @@ assert(numberStatus.response.status === 204, "The number-level status callback m
 
 globalThis.fetch = originalFetch;
 database.close();
+
+// The brand name, and the voice that says it.
+{
+  const script = buildCallScript({ locationName: "Hearth", spokenConcern: "a dog", travelMinutes: 9, urgency: "urgent" });
+  const spoken = outboundTwiml({ script, gatherActionUrl: "https://x/g", repeatActionUrl: "https://x/r" });
+  assert(spoken.includes('alphabet="ipa"'), "the brand name is spoken phonetically");
+  assert(!/>[^<]*T\u00edmi/.test(spoken), "no bare Tími is left for an engine to read as Timmy");
+  assert(spoken.includes(">Tee-mee<"), "the phoneme's own text is the respelling, so an engine that ignores the tag still says it right");
+
+  // A voice reaches TwiML as an attribute; it must be the configured one and
+  // it must be escaped.
+  assert(outboundTwiml({ script, gatherActionUrl: "https://x/g", repeatActionUrl: "https://x/r", voice: "Google.en-US-Chirp3-HD-Aoede" })
+    .includes('<Say voice="Google.en-US-Chirp3-HD-Aoede">'), "the requested voice is used");
+  assert(sayVoice({ VOICE_SAY_VOICE: "Google.en-US-Studio-O" }) === "Google.en-US-Studio-O", "VOICE_SAY_VOICE is read");
+  assert(sayVoice({}) === DEFAULT_SAY_VOICE, "a blank setting falls back to the default");
+  assert(sayVoice({ VOICE_SAY_VOICE: "  " }) === DEFAULT_SAY_VOICE, "whitespace is not a voice");
+
+  // Every spoken surface, not just the first one.
+  for (const [label, xml] of [
+    ["accepted", acceptedTwiml(script, { voice: "Polly.Danielle-Neural" })],
+    ["declined", declinedTwiml(script, { voice: "Polly.Danielle-Neural" })],
+    ["no response", noResponseTwiml(script, { voice: "Polly.Danielle-Neural" })],
+    ["already filled", alreadyFilledTwiml({ voice: "Polly.Danielle-Neural" })],
+    ["repeat", repeatTwiml({ script, gatherActionUrl: "https://x/g", repeatActionUrl: "https://x/r", voice: "Polly.Danielle-Neural" })]
+  ]) {
+    assert(xml.includes('voice="Polly.Danielle-Neural"'), `${label} uses the configured voice`);
+  }
+}
 
 console.log("Voice gateway tests passed: Twilio signature verification, call-script content, TwiML well-formedness and escaping, quiet-hours math, phone normalization, cron drain (tenant opt-out + successful placement), phone acceptance producing a byte-identical offer to the console path, and the inbound callback path.");

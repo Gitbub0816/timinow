@@ -37,12 +37,21 @@ import {
   normalizePhone,
   outboundTwiml,
   placeCall,
+  sayVoice,
   repeatTwiml,
   signAttemptToken,
   verifyAttemptToken,
   verifyTwilioSignature,
   withinQuietHours
 } from "../../../src/voice.js";
+
+/** Twilio voice names are letters, digits, dots and dashes. Constrained at the
+ * door rather than escaped downstream: this value becomes a TwiML attribute,
+ * and a name Twilio does not recognise fails the call at answer time. */
+function cleanVoiceName(value) {
+  const name = String(value ?? "").trim();
+  return /^[A-Za-z0-9.\-]{1,64}$/.test(name) ? name : "";
+}
 
 const JSON_HEADERS = { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" };
 const TWIML_HEADERS = { "content-type": "text/xml; charset=utf-8", "cache-control": "no-store" };
@@ -339,19 +348,19 @@ async function handleVoiceInboundGather(request, env, url) {
   if (!targetId || !(await verifyAttemptToken(env.TWILIO_AUTH_TOKEN, targetId, tok))) return forbiddenTwilio();
 
   const row = await env.DB.prepare("SELECT tenant_id FROM care_search_targets WHERE id = ? LIMIT 1").bind(targetId).first();
-  if (!row) return xmlResponse(alreadyFilledTwiml());
+  if (!row) return xmlResponse(alreadyFilledTwiml({ voice: sayVoice(env) }));
 
   const digits = String(params.Digits || "").trim();
   if (digits === "1") {
     const result = await decideByPhone(env, row.tenant_id, targetId, "offer");
     return xmlResponse(result.ok
-      ? acceptedTwiml(buildCallScript({ locationName: "", spokenConcern: "", travelMinutes: null, urgency: "urgent" }))
+      ? acceptedTwiml(buildCallScript({ locationName: "", spokenConcern: "", travelMinutes: null, urgency: "urgent" }), { voice: sayVoice(env) })
       : alreadyFilledTwiml());
   }
   if (digits === "2") {
     const result = await decideByPhone(env, row.tenant_id, targetId, "decline");
     return xmlResponse(result.ok
-      ? declinedTwiml(buildCallScript({ locationName: "", spokenConcern: "", travelMinutes: null, urgency: "urgent" }))
+      ? declinedTwiml(buildCallScript({ locationName: "", spokenConcern: "", travelMinutes: null, urgency: "urgent" }), { voice: sayVoice(env) })
       : alreadyFilledTwiml());
   }
   return xmlResponse(inboundFallbackTwiml());
@@ -372,12 +381,12 @@ async function handleVoiceOutbound(request, env, targetId, url) {
 
   const target = await getClinicSearchTarget(env, targetId, attempt.tenant_id);
   const script = scriptFromUrl(url);
-  if (!target || target.status !== "pending") return xmlResponse(alreadyFilledTwiml());
+  if (!target || target.status !== "pending") return xmlResponse(alreadyFilledTwiml({ voice: sayVoice(env) }));
 
   const origin = voiceOrigin(env, request);
   const tok = url.searchParams.get("tok");
   const gatherUrl = gatherUrlFor(origin, targetId, attemptId, tok, payloadLikeFromUrl(url), 0);
-  return xmlResponse(outboundTwiml({ script, gatherActionUrl: gatherUrl, repeatActionUrl: gatherUrl }));
+  return xmlResponse(outboundTwiml({ script, gatherActionUrl: gatherUrl, repeatActionUrl: gatherUrl, voice: sayVoice(env) }));
 }
 
 async function handleVoiceGather(request, env, targetId, url) {
@@ -398,25 +407,25 @@ async function handleVoiceGather(request, env, targetId, url) {
     const result = await decideByPhone(env, attempt.tenant_id, targetId, "offer");
     const accepted = result.ok;
     await recordAttemptOutcome(env, attemptId, digits, accepted ? "accepted" : "error");
-    return xmlResponse(accepted ? acceptedTwiml(script) : alreadyFilledTwiml());
+    return xmlResponse(accepted ? acceptedTwiml(script, { voice: sayVoice(env) }) : alreadyFilledTwiml());
   }
   if (digits === "2") {
     const result = await decideByPhone(env, attempt.tenant_id, targetId, "decline");
     const declined = result.ok;
     await recordAttemptOutcome(env, attemptId, digits, declined ? "declined" : "error");
-    return xmlResponse(declined ? declinedTwiml(script) : alreadyFilledTwiml());
+    return xmlResponse(declined ? declinedTwiml(script, { voice: sayVoice(env) }) : alreadyFilledTwiml());
   }
   if (digits === "9") {
     const gatherUrl = gatherUrlFor(origin, targetId, attemptId, tok, payloadLike, repeatCount);
     await recordAttemptOutcome(env, attemptId, digits, null, { terminal: false });
-    return xmlResponse(repeatTwiml({ script, gatherActionUrl: gatherUrl, repeatActionUrl: gatherUrl }));
+    return xmlResponse(repeatTwiml({ script, gatherActionUrl: gatherUrl, repeatActionUrl: gatherUrl, voice: sayVoice(env) }));
   }
   if (repeatCount < VOICE_MAX_REPEATS) {
     const gatherUrl = gatherUrlFor(origin, targetId, attemptId, tok, payloadLike, repeatCount + 1);
-    return xmlResponse(repeatTwiml({ script, gatherActionUrl: gatherUrl, repeatActionUrl: gatherUrl }));
+    return xmlResponse(repeatTwiml({ script, gatherActionUrl: gatherUrl, repeatActionUrl: gatherUrl, voice: sayVoice(env) }));
   }
   await recordAttemptOutcome(env, attemptId, digits || null, "no_response");
-  return xmlResponse(noResponseTwiml(script));
+  return xmlResponse(noResponseTwiml(script, { voice: sayVoice(env) }));
 }
 
 const TWILIO_STATUS_MAP = {
@@ -698,9 +707,11 @@ async function handleApi(request, env) {
     if (!to) return apiError(422, "INVALID_NUMBER", "Provide `to` in E.164, for example +14155550123.");
     const origin = voiceOrigin(env, request);
     try {
-      const call = await placeCall(env, { to, url: `${origin}/api/voice/test-script` });
+      const voice = cleanVoiceName(body.voice) || sayVoice(env);
+      const call = await placeCall(env, { to, url: `${origin}/api/voice/test-script?voice=${encodeURIComponent(voice)}` });
+      console.log(JSON.stringify({ event: "voice_test_voice", voice }));
       console.log(JSON.stringify({ event: "voice_test_call", to, callSid: call.sid || null }));
-      return json({ calling: to, callSid: call.sid || null });
+      return json({ calling: to, callSid: call.sid || null, voice });
     } catch (error) {
       console.error(JSON.stringify({ event: "voice_test_call_failed", message: error.message }));
       return apiError(502, "CALL_FAILED", error.message);
@@ -716,10 +727,12 @@ async function handleApi(request, env) {
       travelMinutes: 12,
       urgency: "urgent"
     });
+    const voice = cleanVoiceName(url.searchParams.get("voice")) || sayVoice(env);
     return xmlResponse(outboundTwiml({
       script,
-      gatherActionUrl: `${origin}/api/voice/test-gather`,
-      repeatActionUrl: `${origin}/api/voice/test-script`
+      gatherActionUrl: `${origin}/api/voice/test-gather?voice=${encodeURIComponent(voice)}`,
+      repeatActionUrl: `${origin}/api/voice/test-script?voice=${encodeURIComponent(voice)}`,
+      voice
     }));
   }
 
@@ -734,9 +747,10 @@ async function handleApi(request, env) {
       urgency: "urgent"
     });
     const digit = String(params.Digits || "");
-    if (digit === "1") return xmlResponse(acceptedTwiml(script));
-    if (digit === "2") return xmlResponse(declinedTwiml(script));
-    return xmlResponse(noResponseTwiml(script));
+    const voice = cleanVoiceName(url.searchParams.get("voice")) || sayVoice(env);
+    if (digit === "1") return xmlResponse(acceptedTwiml(script, { voice }));
+    if (digit === "2") return xmlResponse(declinedTwiml(script, { voice }));
+    return xmlResponse(noResponseTwiml(script, { voice }));
   }
 
   // The phone number's own Voice configuration points here. See
@@ -755,7 +769,7 @@ async function handleApi(request, env) {
       return await handleVoiceInboundGather(request, env, url);
     } catch (error) {
       console.error(JSON.stringify({ event: "voice_inbound_gather_error", message: error.message }));
-      return xmlResponse(errorTwiml());
+      return xmlResponse(errorTwiml(undefined, { voice: sayVoice(env) }));
     }
   }
 
@@ -788,7 +802,7 @@ async function handleApi(request, env) {
       return await handleVoiceOutbound(request, env, decodeURIComponent(outboundMatch[1]), url);
     } catch (error) {
       console.error(JSON.stringify({ event: "voice_outbound_error", message: error.message }));
-      return xmlResponse(errorTwiml());
+      return xmlResponse(errorTwiml(undefined, { voice: sayVoice(env) }));
     }
   }
 
@@ -798,7 +812,7 @@ async function handleApi(request, env) {
       return await handleVoiceGather(request, env, decodeURIComponent(gatherMatch[1]), url);
     } catch (error) {
       console.error(JSON.stringify({ event: "voice_gather_error", message: error.message }));
-      return xmlResponse(errorTwiml());
+      return xmlResponse(errorTwiml(undefined, { voice: sayVoice(env) }));
     }
   }
 

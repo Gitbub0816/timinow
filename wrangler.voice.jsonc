@@ -37,6 +37,7 @@
     "TWILIO_FROM_NUMBER": "",
     "VOICE_CALLS_ENABLED": "true",
     "VOICE_MAX_ATTEMPTS": "2",
+    "VOICE_SAY_VOICE": "",
     "VOICE_PUBLIC_URL": "https://voice.timinow.pet",
     "VOICE_DRAIN_TOKEN": ""
   },

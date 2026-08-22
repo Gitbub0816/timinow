@@ -46,12 +46,39 @@ export function buildCallScript({ locationName, spokenConcern, travelMinutes, ur
  */
 export const DEFAULT_SAY_VOICE = "Polly.Joanna-Neural";
 
-function sayXml(text, { voice = DEFAULT_SAY_VOICE } = {}) {
-  return `<Say voice="${escapeXml(voice)}">${escapeXml(text)}</Say>`;
+/** The configured voice, or the default. VOICE_SAY_VOICE was documented and
+ * read by nothing, so every call used Joanna whatever the setting said. */
+export function sayVoice(env) {
+  const configured = String(env?.VOICE_SAY_VOICE || "").trim();
+  return configured || DEFAULT_SAY_VOICE;
 }
 
-function gatherXml({ actionUrl, sayText, numDigits = 1, timeout = 8 }) {
-  return `<Gather input="dtmf" numDigits="${numDigits}" timeout="${timeout}" action="${escapeXml(actionUrl)}" method="POST">${sayXml(sayText)}</Gather>`;
+/**
+ * Tími is "TEE-mee". Every engine reads it as "Timmy" otherwise, which is the
+ * first word a clinic hears and the name of the company saying it.
+ *
+ * Applied after escaping rather than before, because the script is escaped —
+ * correctly — and markup written into it beforehand would come out as visible
+ * angle brackets. "Tími" contains no XML-special character, so it survives
+ * escaping unchanged and can be matched afterwards; the replacement is fixed
+ * markup, never anything from the caller, so nothing can be injected through
+ * a clinic or pet name that happens to contain it.
+ *
+ * The text inside the tag is the respelling rather than the brand, so an
+ * engine that ignores <phoneme> still says it right.
+ */
+const BRAND_SPOKEN = '<phoneme alphabet="ipa" ph="\u02c8ti\u02d0mi\u02d0">Tee-mee</phoneme>';
+
+export function pronounceBrand(escapedText) {
+  return escapedText.replace(/T\u00edmi|Timi/g, BRAND_SPOKEN);
+}
+
+function sayXml(text, { voice = DEFAULT_SAY_VOICE } = {}) {
+  return `<Say voice="${escapeXml(voice)}">${pronounceBrand(escapeXml(text))}</Say>`;
+}
+
+function gatherXml({ actionUrl, sayText, numDigits = 1, timeout = 8, voice }) {
+  return `<Gather input="dtmf" numDigits="${numDigits}" timeout="${timeout}" action="${escapeXml(actionUrl)}" method="POST">${sayXml(sayText, { voice })}</Gather>`;
 }
 
 function redirectXml(url) {
@@ -67,42 +94,42 @@ function responseXml(inner) {
 }
 
 /** The very first thing the clinic hears: the intro, then the Gather prompt. Falls through to `repeatActionUrl` on no input. */
-export function outboundTwiml({ script, gatherActionUrl, repeatActionUrl }) {
+export function outboundTwiml({ script, gatherActionUrl, repeatActionUrl, voice }) {
   return responseXml(
-    sayXml(script.intro) +
-    gatherXml({ actionUrl: gatherActionUrl, sayText: script.prompt }) +
+    sayXml(script.intro, { voice }) +
+    gatherXml({ actionUrl: gatherActionUrl, sayText: script.prompt, voice }) +
     redirectXml(repeatActionUrl)
   );
 }
 
 /** Re-plays the prompt (pressed 9, or no input yet within the repeat budget). */
-export function repeatTwiml({ script, gatherActionUrl, repeatActionUrl }) {
+export function repeatTwiml({ script, gatherActionUrl, repeatActionUrl, voice }) {
   return responseXml(
-    gatherXml({ actionUrl: gatherActionUrl, sayText: script.repeat }) +
+    gatherXml({ actionUrl: gatherActionUrl, sayText: script.repeat, voice }) +
     redirectXml(repeatActionUrl)
   );
 }
 
-export function acceptedTwiml(script) {
-  return responseXml(sayXml(script.accepted) + hangupXml());
+export function acceptedTwiml(script, { voice } = {}) {
+  return responseXml(sayXml(script.accepted, { voice }) + hangupXml());
 }
 
-export function declinedTwiml(script) {
-  return responseXml(sayXml(script.declined) + hangupXml());
+export function declinedTwiml(script, { voice } = {}) {
+  return responseXml(sayXml(script.declined, { voice }) + hangupXml());
 }
 
 /** The search was already filled (max offers reached, expired, or selected) by the time the clinic answered. */
-export function alreadyFilledTwiml() {
-  return responseXml(sayXml("Thank you — that request has already been filled.") + hangupXml());
+export function alreadyFilledTwiml({ voice } = {}) {
+  return responseXml(sayXml("Thank you — that request has already been filled.", { voice }) + hangupXml());
 }
 
 /** No digits after the repeat budget is exhausted. */
-export function noResponseTwiml(script) {
-  return responseXml(sayXml(script.goodbye) + hangupXml());
+export function noResponseTwiml(script, { voice } = {}) {
+  return responseXml(sayXml(script.goodbye, { voice }) + hangupXml());
 }
 
-export function errorTwiml(message = "Sorry, something went wrong. Goodbye.") {
-  return responseXml(sayXml(message) + hangupXml());
+export function errorTwiml(message = "Sorry, something went wrong. Goodbye.", { voice } = {}) {
+  return responseXml(sayXml(message, { voice }) + hangupXml());
 }
 
 /* --------------------------------------------------------- signatures --- */
