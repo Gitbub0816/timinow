@@ -18,7 +18,15 @@ let package = Package(
         // Only the product the Xcode project links — see the customer
         // package's Package.swift for why a same-named library product for
         // each target breaks the app build.
-        .library(name: "TimiVetApp", type: .dynamic, targets: ["TimiVetApp"])
+        //
+        // Static, not dynamic. A dynamic product has to be embedded in
+        // Contents/Frameworks or dyld cannot find it at launch: the app builds
+        // and signs cleanly, then dies immediately with "Library not loaded:
+        // @rpath/TimiVetApp.framework". Nothing here needs a separate dylib —
+        // that was a requirement of Skip's Android bridge, which this package
+        // no longer has — so linking the code straight into the executable
+        // removes the failure rather than adding an embed phase to carry it.
+        .library(name: "TimiVetApp", type: .static, targets: ["TimiVetApp"])
     ],
     targets: [
         .target(name: "TimiVetApp", dependencies: ["TimiVetUI", "TimiVetCore"]),

@@ -552,6 +552,22 @@ for (const root of ["apps/customer-mobile/Sources", "apps/vet-desktop/Sources"])
   }
 }
 
+// A dynamic library product has to be embedded in the bundle, or dyld cannot
+// find it at launch — the app builds, signs, validates, and then dies with
+// "Library not loaded: @rpath/...". The console's Xcode target has no embed
+// phase, so its product must be static. (The customer app is different: Xcode
+// embeds SwiftPM dynamic products into an iOS app itself, and Skip's Android
+// bridge needs them dynamic.)
+{
+  const manifest = await read("apps/vet-desktop/Package.swift");
+  const project = await read("apps/vet-desktop/Darwin/project.yml");
+  for (const product of manifest.matchAll(/\.library\(name:\s*"(\w+)",\s*type:\s*\.dynamic/g)) {
+    if (!/embed:\s*true/.test(project)) {
+      throw new Error(`apps/vet-desktop/Package.swift: ${product[1]} is a dynamic library, but apps/vet-desktop/Darwin/project.yml embeds nothing. dyld will not find it at launch — make it .static.`);
+    }
+  }
+}
+
 const csharpFiles = await collectFiles("apps/vet-windows", ".cs");
 for (const path of csharpFiles) {
   const problems = bracketProblems(await read(path));

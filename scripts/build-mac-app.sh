@@ -196,6 +196,34 @@ else
   warn "  then run this again."
 fi
 
+# Signed and valid still does not mean launchable: a missing dynamic library or
+# an unauthorised entitlement kills the process at exec, and the only symptom
+# at `open` time is a message that names neither. Launching it here turns that
+# into a failure with the real reason attached.
+bold "3c. Launch"
+"$BUILT/Contents/MacOS/TimiVet" >/tmp/timi-mac-launch.log 2>&1 &
+LAUNCH_PID=$!
+sleep 3
+if kill -0 "$LAUNCH_PID" 2>/dev/null; then
+  # Children first: a GUI app can spawn helpers that would otherwise be
+  # reparented to launchd and left running.
+  pkill -P "$LAUNCH_PID" 2>/dev/null || true
+  kill "$LAUNCH_PID" 2>/dev/null || true
+  echo "  starts cleanly"
+else
+  wait "$LAUNCH_PID" 2>/dev/null
+  LAUNCH_STATUS=$?
+  echo >&2
+  tail -5 /tmp/timi-mac-launch.log >&2 2>/dev/null || true
+  if [ "$LAUNCH_STATUS" -eq 137 ] || [ "$LAUNCH_STATUS" -eq 134 ]; then
+    warn "  The app was killed at launch (status $LAUNCH_STATUS). The most recent"
+    warn "  crash report says why, and names the missing library or the rejected"
+    warn "  entitlement directly:"
+    dim  "    ls -t ~/Library/Logs/DiagnosticReports/TimiVet* | head -1"
+  fi
+  die "  Built and signed, but it does not start (status $LAUNCH_STATUS)."
+fi
+
 bold "4. Install"
 if $INSTALL; then
   rm -rf "/Applications/TimiVet.app"
