@@ -92,80 +92,108 @@ requires a local Mac with the secret token configured.
 
 ## Changing driving-instruction wording
 
-`Sources/TimiNowUI/Resources/instruction-phrases.json` is the single source
-of truth, mirrored exactly (same keys, same wording) from the web client's
-table in `public/map.js` (`INSTRUCTION_PHRASES` / `TIMI_ANNOUNCEMENTS`), so
-the web and native apps say the same things:
+`public/map.js` is the single source of truth. The iOS app reads a bundled JSON
+copy at `Sources/TimiNowUI/Resources/instruction-phrases.json`, generated from
+it by:
 
-```json
-{
-  "instructionPhrases": { "depart": "Head {modifier} on {road}", "arrive": "…", "turn": "…", … },
-  "timiAnnouncements": { "start": "…", "halfway": "…", "approaching": "…", "arrival": "…" }
-}
+```bash
+npm run sync:phrases
 ```
 
-- `instructionPhrases` is keyed by Mapbox's maneuver `type` and rewrites
-  ordinary turn-by-turn steps. `{modifier}` / `{road}` / `{clinic}` are the
-  placeholders.
-- `timiAnnouncements` are lines Tími adds that Mapbox would never say —
-  `{clinic}` / `{pet}` / `{minutes}` / `{kind}` placeholders. `{kind}` comes
-  from the clinic's `kind` field (`"urgent"`, `"emergency"`, …).
+`scripts/validate.mjs` fails the build if the copy is stale, so the two clients
+cannot drift. **To change wording, edit `public/map.js` and re-run that
+command.** No Swift edit is required.
 
-**To change wording: edit the JSON file only.** No Swift recompile is
-required beyond re-bundling the resource (`TimiNowUI`'s
-`resources: [.process("Resources")]` already picks it up).
-`TimiInstructionRewriter` in `VoiceController.swift` loads it via
-`Bundle.module` at first use and falls back to
-`InstructionPhraseTable.fallback` (a Swift-literal copy of the same table)
-if the resource is ever missing, so a bad edit degrades to the built-in
-copy rather than crashing.
+### The five tables
 
-The rewrite runs on every spoken instruction
-(`TimiSpeechSynthesizer.rewritten` in `VoiceController.swift`). The phrase
-table is keyed by Mapbox's own maneuver identifiers deliberately:
-`RouteStep.maneuverType` is a `String`-backed `ManeuverType` whose raw values
-are exactly `depart`, `turn`, `continue`, `new name`, `merge`, `on ramp`,
-`off ramp`, `fork`, `roundabout`, and `arrive` — the same keys the web client
-uses. Reading `rawValue` rather than pattern-matching case names keeps this
-working across SDK releases and lets one JSON file drive both clients.
+| Table | What it does |
+| --- | --- |
+| `INSTRUCTION_PHRASES` | Keyed by Mapbox's maneuver id (`turn`, `depart`, `arrive`, `merge`, `on ramp`, `off ramp`, `fork`, `roundabout`, `continue`, `new name`) |
+| `INSTRUCTION_OVERRIDES` | Keyed `"maneuver:modifier"`, for pairings the generic template cannot say naturally |
+| `MODIFIER_WORDS` | Mapbox's raw directions, said the way a person says them |
+| `SIDE_WORDS` | The same directions reduced to a side, for ramps, merges, and forks |
+| `TIMI_ANNOUNCEMENTS` | Tími's own lines, by register then by moment |
 
-Three behaviours fall out of that:
+Placeholders: `{modifier}`, `{side}`, `{road}`, `{clinic}` in instructions;
+`{clinic}`, `{pet}`, `{minutes}`, `{kind}` in announcements.
 
-- Every ordinary maneuver is rephrased from `instructionPhrases`, with
-  `{modifier}` from `step.maneuverDirection`, `{road}` from `step.names` (or,
-  on unnamed service roads, parsed out of Mapbox's own phrasing).
-- Arrival replaces the line entirely with the `arrival` announcement, because
-  what matters on arrival is what to say at the front desk, not that the drive
-  is over.
-- The `approaching` line is appended once, inside the last 400 m.
+A template whose placeholders cannot all be filled produces **nothing**, and the
+caller falls back to Mapbox's own wording. That is deliberate: a half-built
+sentence is worse than a plain one. It also means an optional flourish — the
+`halfway` line with no minutes estimate — simply goes unsaid.
 
-Both `text` and `ssmlText` are rewritten. The cloud voice speaks `ssmlText` and
-the on-device voice speaks `text`, so rewriting only one would produce two
-different sentences depending on network conditions.
+### Two rules, enforced by the build
+
+**1. Maneuvers are never funny.** A driver gets one pass at "turn left onto
+Foothill" with a sick animal in the back seat. Instruction templates read
+naturally and carry no wordplay.
+
+**2. Personality scales inversely with urgency.** Announcements come in three
+registers, chosen from the intake's urgency rather than from a setting, so
+nobody has to have turned something off to avoid a joke on the worst day of
+their year:
+
+| Register | Urgency | Voice |
+| --- | --- | --- |
+| `calm` | `same_day` | Warm, and allowed its wordplay |
+| `urgent` | `urgent` | Warm, focused, no wordplay |
+| `emergency` | `emergency` | Clear and nothing else |
+
+`scripts/validate.mjs` fails the build if playful wording appears in the urgent
+or emergency register, or if the calm register goes entirely flat. The rule is
+structural, not a style note someone has to remember.
+
+On the native side the register is `NavigationTone`, derived by
+`NavigationTone.forUrgency(_:)` and threaded down to `TimiSpeechSynthesizer`.
+On the web it is `toneFor(urgency)` in `map.js`, read by `navigationTone()` in
+`app.js`.
+
+### Where the rewrite happens
+
+`TimiSpeechSynthesizer.rewritten` in `VoiceController.swift`, on every spoken
+instruction. `RouteStep.maneuverType` is a `String`-backed enum whose raw values
+are exactly the phrase-table keys, so reading `rawValue` rather than
+pattern-matching case names keeps this working across SDK releases and lets one
+JSON file drive both clients.
+
+Arrival replaces the line entirely rather than rephrasing it — what matters on
+arrival is what to say at the front desk. The `approaching` line is appended
+once, inside the last 400 m.
+
+Both `text` and `ssmlText` are produced from the same finished sentence. The
+cloud voice speaks the SSML and the on-device voice speaks the text, so
+generating one from the other is what stops them saying different things
+depending on signal.
 
 ## Adding or swapping voices
 
-- **Device (AVSpeech) voices**: `VoicePreviewer.availableVoices()` in
-  `VoiceController.swift` enumerates `AVSpeechSynthesisVoice.speechVoices()`
-  filtered to the app's language, sorted premium/enhanced first. They
-  appear automatically in Settings → Navigation → "Device voice" — nothing
-  to wire up when Apple ships new voices or the user installs Personal
-  Voice (`VoicePreviewer.requestPersonalVoiceAuthorization()` must be
-  called once to surface Personal Voice entries).
+The default is the best voice the device has, not the one the OS hands out
+first. That distinction is most of what separates guidance that sounds
+synthetic from guidance that sounds like a person, and it costs nothing.
+
+- **iOS**: `VoicePreviewer.bestVoice()` returns the highest-quality installed
+  voice for the app's language. `AVSpeechSynthesisVoice(language:)` — the
+  obvious call — returns the *compact* voice on most devices, which is the flat,
+  clipped one people recognise as robotic. Settings → Navigation lists every
+  installed voice with its tier (`Premium`, `Enhanced`), plus Personal Voice
+  once `VoicePreviewer.requestPersonalVoiceAuthorization()` has been called.
+- **Web**: `VoiceGuide.rank()` scores the browser's unordered voice list by
+  name — `Natural`/`Neural` and `Premium`/`Enhanced` score highest, novelty and
+  `compact` voices score negative, and network voices get a small bonus because
+  they are usually the higher-fidelity ones. `VoiceGuide.bestVoice()` is used
+  until a driver picks their own.
 - **Cloud voice**: `TimiSpeechSynthesizer` composes Mapbox's standard
-  arrangement — confirmed against a local clone of `mapbox-navigation-ios`
-  (`Sources/MapboxNavigationCore/VoiceGuidance/SpeechSynthesizing.swift`) —
-  `MultiplexedSpeechSynthesizer([MapboxSpeechSynthesizer(), SystemSpeechSynthesizer()])`,
-  cloud first with on-device fallback, installed via
-  `CoreConfig(ttsConfig: .custom(speechSynthesizer:))` and
-  `MapboxNavigationProvider(coreConfig:)`. To swap which voice is primary,
-  change `NavigationPreferences.voiceProfile` (`.mapboxCloud` vs.
-  `.systemDefault`/`.systemEnhanced`/`.personalVoice`) — `TimiSpeechSynthesizer`
-  reads that preference when it's constructed in
-  `NavigationHostController.presentNavigation`.
-- **Rate/pitch**: `NavigationPreferences.speechRate` /
-  `.speechPitch`, exposed as a slider in Settings, feed `VoicePreviewer`'s
-  `AVSpeechUtterance` directly (`utterance.rate`, `.pitchMultiplier`).
+  arrangement through `MultiplexedSpeechSynthesizer`'s convenience initializer
+  — cloud first, on-device fallback — installed via
+  `CoreConfig(ttsConfig: .custom(speechSynthesizer:))`. Set
+  `NavigationPreferences.voiceProfile` to `.systemDefault` to skip the cloud
+  entirely, which also skips Mapbox Speech charges.
+- **Pacing**: `ssmlFor` / `TimiInstructionRewriter.ssml(for:tone:)` wrap each
+  line in `<prosody>` at 94% (calm), 97% (urgent), or 100% (emergency), with a
+  320 ms break at every sentence boundary. Whole sentences read at default rate
+  land as one anxious run-on; this is the cheapest fix for that.
+- **Rate and pitch**: `NavigationPreferences.speechRate` / `.speechPitch`,
+  exposed as sliders, multiply the register's own rate.
 
 ## CarPlay: exact entitlement situation
 
