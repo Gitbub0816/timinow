@@ -53,7 +53,7 @@ public struct AuthFactorOption: Identifiable, Hashable, Sendable {
     public var id: String { strategy }
 }
 
-@MainActor @Observable public final class AuthController: @unchecked Sendable {
+@MainActor @Observable public final class AuthController: TimiSessionTokenProviding, @unchecked Sendable {
     public var stage: AuthStage = .identifier
     public var identifierText = ""
     public var passwordText = ""
@@ -244,7 +244,7 @@ public struct AuthFactorOption: Identifiable, Hashable, Sendable {
             if Self.looksLikeUnknownAccount(error) {
                 beginProfileEntry(identifier: identifier)
             } else {
-                errorMessage = error.message
+                errorMessage = ErrorPresenter.signIn(error).displayText
             }
         } catch {
             errorMessage = "Tími could not start sign-in. Check your connection and try again."
@@ -317,7 +317,7 @@ public struct AuthFactorOption: Identifiable, Hashable, Sendable {
             // refresh, naming nothing anyone can act on.
             errorMessage = Self.looksLikeCaptchaRequired(error)
                 ? "Tími could not create the account. Clerk's bot protection is asking for a CAPTCHA this app cannot show — enable the Native API for this instance in the Clerk dashboard."
-                : error.message
+                : ErrorPresenter.signIn(error).displayText
         } catch {
             errorMessage = "Tími could not create an account for those details."
         }
@@ -370,7 +370,7 @@ public struct AuthFactorOption: Identifiable, Hashable, Sendable {
             track(signIn)
             stage = .code
         } catch let error as TimiAPIError {
-            errorMessage = error.message
+            errorMessage = ErrorPresenter.signIn(error).displayText
         } catch {
             errorMessage = "Could not send a verification code. Try again."
         }
@@ -389,7 +389,7 @@ public struct AuthFactorOption: Identifiable, Hashable, Sendable {
             let signIn = try Self.clerkDecoder.decode(ClerkWireSignIn.self, from: data)
             try await completeIfNeeded(signIn)
         } catch let error as TimiAPIError {
-            errorMessage = error.message
+            errorMessage = ErrorPresenter.signIn(error).displayText
         } catch {
             errorMessage = "That password was not accepted."
         }
@@ -418,7 +418,7 @@ public struct AuthFactorOption: Identifiable, Hashable, Sendable {
                 try await completeIfNeeded(signIn)
             }
         } catch let error as TimiAPIError {
-            errorMessage = error.message
+            errorMessage = ErrorPresenter.signIn(error).displayText
         } catch {
             errorMessage = "That code was not accepted."
         }
@@ -553,6 +553,22 @@ public struct AuthFactorOption: Identifiable, Hashable, Sendable {
         factorOptions = []; selectedFactor = nil
         isSignedIn = false
         stage = .identifier
+    }
+
+    /// Whether there is a session to mint a token from. Read by the gateway
+    /// before every request.
+    public var hasSession: Bool { get async { activeSessionId != nil } }
+
+    /// Mints a new Worker token whatever the one in hand says about its own
+    /// expiry — used once after a 401.
+    @discardableResult
+    public func forceRefreshToken() async throws -> String {
+        guard activeSessionId != nil else { throw TimiAPIError.invalidConfiguration("") }
+        try await mintWorkerToken()
+        saveCredential()
+        guard let token = workerToken else { throw TimiAPIError.invalidConfiguration("") }
+        gateway.bearerToken = token
+        return token
     }
 
     /// A Worker token, minted fresh when the one in hand is close to expiring.

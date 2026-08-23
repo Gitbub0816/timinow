@@ -97,6 +97,9 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
         self.auth = AuthController(gateway: gateway)
         // Signing in is the last time these should ever be asked for. Set
         // after every stored property, which is when `self` may be captured.
+        // Every request mints its own token from here on, so no caller has to
+        // remember to.
+        gateway.tokenProvider = self.auth
         self.auth.onProfileResolved = { [weak self] profile in self?.adoptOwner(profile) }
         self.auth.onSignedOut = { [weak self] in self?.forgetAccountData() }
     }
@@ -458,7 +461,23 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
     /// stop.
     func report(_ error: Error) {
         if error is CancellationError || Task.isCancelled { return }
-        errorMessage = Self.describe(error)
+        let failure = ErrorPresenter.present(error)
+        guard !failure.message.isEmpty else { return }
+        errorMessage = failure.displayText
+        // The detail leaves the screen and goes where somebody can act on it.
+        // Fire-and-forget: a failed report must never become a second error.
+        let diagnostics = ErrorPresenter.diagnostics(error)
+        let report = ClientErrorReport(
+            surface: "customer_ios",
+            appVersion: TimiEnvironment.appVersion,
+            path: diagnostics.path,
+            status: diagnostics.status,
+            code: diagnostics.code,
+            message: diagnostics.message,
+            reference: failure.reference,
+            detail: ["route": String(describing: route), "demo": String(gateway.isDemo)]
+        )
+        Task { [gateway] in await gateway.reportFailure(report) }
     }
 
     static func describe(_ error: Error) -> String {

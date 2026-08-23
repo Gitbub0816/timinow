@@ -25,6 +25,7 @@
     <nav class="admin-nav" data-operator-nav hidden aria-label="Platform console navigation">
       <a href="#tenants" data-nav="tenants">Tenants</a>
       <a href="#audit" data-nav="audit">Audit log</a>
+      <a href="#errors" data-nav="errors">Client errors</a>
     </nav>
     <div class="account-menu" data-account-menu hidden>
       <button class="account-trigger" type="button" data-account-trigger aria-haspopup="true" aria-expanded="false">
@@ -273,6 +274,24 @@
           </div>
         </div>
         <div data-audit-list></div>
+      </div>
+    </section>
+
+    <section class="screen" data-screen="errors" aria-labelledby="errors-title">
+      <div class="shell">
+        <div class="page-head">
+          <div>
+            <p class="eyebrow">Platform-wide</p>
+            <h1 class="page-title" id="errors-title">Client errors</h1>
+            <p class="page-lede">What the apps hit, in the detail nobody should be shown. Customers get one sentence and a reference; the reference finds the row.</p>
+          </div>
+        </div>
+        <form data-form="error-lookup" class="form-grid two-col" style="margin-bottom: 1.25rem;">
+          <label class="field"><span>Reference<span class="hint"> — as read out by the customer</span></span><input type="text" name="reference" maxlength="16" placeholder="K7MQ2B" autocomplete="off"></label>
+          <div class="field"><span>&nbsp;</span><button class="button" type="submit">Find</button></div>
+        </form>
+        <div data-error-groups></div>
+        <div data-error-list></div>
       </div>
     </section>
 

@@ -1305,11 +1305,17 @@ for (const path of [
   if (!/error is CancellationError/.test(reportBody[0])) {
     throw new Error("apps/customer-mobile/Sources/TimiNowCore/AppStore.swift: report(_:) no longer drops cancellations, which is the only reason it exists.");
   }
-  // The assignment belongs inside report(_:) and nowhere else — a catch that
-  // writes errorMessage directly is a cancellation toast waiting to happen.
-  const assignments = [...store.matchAll(/errorMessage = Self\.describe\(error\)/g)].length;
-  if (assignments !== 1) {
-    throw new Error(`apps/customer-mobile/Sources/TimiNowCore/AppStore.swift assigns errorMessage from a caught error in ${assignments} places; only report(_:) may. Pressing Cancel would show "cancelled" as a failure.`);
+  // Nothing outside report(_:) may turn a caught error into screen text: a
+  // catch that writes errorMessage directly is both a cancellation toast and
+  // a raw diagnostic — a route, a status and a record id — in front of a
+  // customer.
+  const raw = [...store.matchAll(/errorMessage = Self\.describe\(error\)/g)].length
+    + [...store.matchAll(/errorMessage = error\.(message|localizedDescription)/g)].length;
+  if (raw !== 0) {
+    throw new Error(`apps/customer-mobile/Sources/TimiNowCore/AppStore.swift renders a caught error directly in ${raw} places. Everything goes through report(_:), which shows a sentence and sends the detail to the Worker.`);
+  }
+  if (!/ErrorPresenter\.present\(error\)/.test(store) || !/gateway\.reportFailure\(report\)/.test(store)) {
+    throw new Error("apps/customer-mobile/Sources/TimiNowCore/AppStore.swift: report(_:) must present a public sentence and send the diagnostics to /api/client-errors, not put the diagnostics on screen.");
   }
 }
 
@@ -1421,6 +1427,67 @@ for (const [path, marker] of [
   const offers = await read("apps/customer-mobile/Sources/TimiNowUI/OfferAndTrackerViews.swift");
   if (!/var stillCollecting: Bool/.test(offers) || !/Still asking/.test(offers)) {
     throw new Error("apps/customer-mobile/Sources/TimiNowUI/OfferAndTrackerViews.swift does not say whether more clinics are still being asked, so the first offer looks like the last one.");
+  }
+}
+
+// A Clerk session token lives about a minute. Two callers out of seven
+// refreshed it, so anything done more than sixty seconds after signing in
+// went out with a dead token and came back 401 AUTHENTICATION_REQUIRED —
+// which reads as being signed out, and was not.
+{
+  const client = await read("apps/customer-mobile/Sources/TimiNowCore/APIClient.swift");
+  if (!/weak var tokenProvider: TimiSessionTokenProviding\?/.test(client)) {
+    throw new Error("apps/customer-mobile/Sources/TimiNowCore/APIClient.swift has no token provider, so every caller has to remember to refresh — and five of seven did not.");
+  }
+  if (!/tokenProvider\.ensureFreshToken\(\)/.test(client)) {
+    throw new Error("apps/customer-mobile/Sources/TimiNowCore/APIClient.swift does not mint a token per request. A token minted at sign-in is dead a minute later.");
+  }
+  if (!/forceRefreshToken\(\)/.test(client) || !/http\.statusCode == 401, !retried/.test(client)) {
+    throw new Error("apps/customer-mobile/Sources/TimiNowCore/APIClient.swift does not retry once on a 401 with a freshly minted token, so a token that expired in flight signs somebody out.");
+  }
+  const store = await read("apps/customer-mobile/Sources/TimiNowCore/AppStore.swift");
+  if (!/gateway\.tokenProvider = self\.auth/.test(store)) {
+    throw new Error("apps/customer-mobile/Sources/TimiNowCore/AppStore.swift never gives the gateway a token provider, so it falls back to whatever token was last set by hand.");
+  }
+}
+
+// Diagnostics are for operators. "Sign in is required to continue. (401
+// [AUTHENTICATION_REQUIRED] from /api/intakes/intake_be49b8c2…/status)" names
+// an internal route and a record id, tells somebody to do what they have
+// already done, and was not even true.
+{
+  const presenter = await read("apps/customer-mobile/Sources/TimiNowCore/ErrorPresenter.swift");
+  if (!/static let vague/.test(presenter) || !/func diagnostics\(/.test(presenter)) {
+    throw new Error("apps/customer-mobile/Sources/TimiNowCore/ErrorPresenter.swift must separate what a person is shown from what an operator is sent.");
+  }
+  const auth = await read("apps/customer-mobile/Sources/TimiNowCore/AuthController.swift");
+  if (/errorMessage = error\.message/.test(auth)) {
+    throw new Error("apps/customer-mobile/Sources/TimiNowCore/AuthController.swift renders TimiAPIError.message directly, which appends \"(422 [code] from /v1/client/…)\" to every sign-in error.");
+  }
+  const worker = await read("src/index.js");
+  if (!/path === "\/api\/client-errors"/.test(worker) || !/function recordClientError/.test(worker)) {
+    throw new Error("src/index.js has no /api/client-errors ingest, so the detail the apps stopped showing has nowhere to go.");
+  }
+  const adminWorker = await read("apps/admin-console/src/index.js");
+  if (!/handleClientErrors/.test(adminWorker)) {
+    throw new Error("apps/admin-console/src/index.js does not serve client errors, so nothing an app reports can be read.");
+  }
+  const adminApp = await read("apps/admin-console/public/app.js");
+  if (!/loadClientErrors/.test(adminApp)) {
+    throw new Error("apps/admin-console/public/app.js has no client-errors screen, so a customer reading out a reference has nowhere to be looked up.");
+  }
+}
+
+// The pet sheet is the one screen a customer reaches from a coral button with
+// a 2pt ink border, so a grouped system Form makes the join obvious.
+{
+  const support = await read("apps/customer-mobile/Sources/TimiNowUI/SupportViews.swift");
+  const editor = support.slice(support.indexOf("struct PetEditor: View {"), support.indexOf("struct ActivityView: View {"));
+  if (/\bForm\s*\{/.test(editor) || /NavigationStack/.test(editor)) {
+    throw new Error("apps/customer-mobile/Sources/TimiNowUI/SupportViews.swift: PetEditor is back to a system Form. Every other screen in this app is painted by hand.");
+  }
+  if (!/timiField\(\)/.test(editor)) {
+    throw new Error("apps/customer-mobile/Sources/TimiNowUI/SupportViews.swift: PetEditor's fields are not Tími fields.");
   }
 }
 

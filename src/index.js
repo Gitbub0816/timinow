@@ -251,6 +251,72 @@ async function handleEmergencyNearby(url, env, ctx) {
   return cacheable;
 }
 
+/**
+ * Take a client failure so it does not have to be shown to a customer.
+ *
+ * The apps render one short sentence and a reference code; everything that
+ * would actually help — the route, the status, the Worker's request id, the
+ * app version — arrives here. Nothing is trusted: every field is clamped,
+ * the body is size-limited, and a malformed report is accepted rather than
+ * argued with, because a client that is already broken should not be made to
+ * handle an error about its error.
+ */
+async function recordClientError(request, env) {
+  const body = await readJson(request).catch(() => null);
+  if (!body || typeof body !== "object") return json({ recorded: false }, { status: 202 });
+
+  const reference = cleanString(body.reference, 16) || newReference();
+  const surface = cleanString(body.surface, 40) || "unknown";
+  const path = cleanString(body.path, 160) || null;
+  const code = cleanString(body.code, 80) || null;
+  const message = cleanString(body.message, 500) || null;
+  const status = numberInRange(body.status, 0, 599, null);
+  // Same failure, same row group: route and code, not the message, because a
+  // message often carries an id and would make every occurrence unique.
+  const fingerprint = [surface, status ?? "-", code ?? "-", path ?? "-"].join("|").slice(0, 200);
+
+  if (!hasDatabase(env)) {
+    console.warn(JSON.stringify({ event: "client_error", reference, surface, status, code, path, message }));
+    return json({ recorded: false, reference }, { status: 202 });
+  }
+
+  let detail = {};
+  try {
+    detail = body.detail && typeof body.detail === "object" ? body.detail : {};
+  } catch { detail = {}; }
+  const detailJson = JSON.stringify(detail).slice(0, 4000);
+
+  await env.DB.prepare(`
+    INSERT INTO client_errors (
+      id, occurred_at, surface, app_version, path, status, code, message,
+      detail_json, clerk_user_id, tenant_id, request_id, reference, fingerprint
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).bind(
+    newId("clienterr"), new Date().toISOString(), surface,
+    cleanString(body.appVersion, 40) || null, path, status, code, message,
+    detailJson, cleanString(body.clerkUserId, 100) || null,
+    cleanString(body.tenantId, 100) || null, cleanString(body.requestId, 100) || null,
+    reference, fingerprint
+  ).run();
+
+  // Logged as well as stored: a Worker tail is where somebody looks first.
+  console.warn(JSON.stringify({ event: "client_error", reference, surface, status, code, path }));
+  return json({ recorded: true, reference }, { status: 202 });
+}
+
+/**
+ * The code a customer is shown. Short, unambiguous out loud, and unique
+ * enough to find one row: no vowels, so it cannot spell anything, and no
+ * characters that are read back wrong over a phone.
+ */
+function newReference() {
+  const alphabet = "23456789BCDFGHJKLMNPQRSTVWXZ";
+  let out = "";
+  const random = crypto.getRandomValues(new Uint8Array(6));
+  for (const byte of random) out += alphabet[byte % alphabet.length];
+  return out;
+}
+
 function humanizeOnset(value) {
   return ({ within_hour: "Started within the last hour", today: "Started today", one_to_three_days: "Started 1–3 days ago", more_than_three_days: "Started more than 3 days ago", unknown: "Onset unknown" })[value] || "Onset not reported";
 }
@@ -1200,6 +1266,9 @@ async function handleApi(request, env, ctx) {
   // Public, and deliberately above the sign-in gate. Somebody whose animal may
   // be dying does not get asked to sign in first.
   if (method === "GET" && path === "/api/emergency-nearby") return handleEmergencyNearby(url, env, ctx);
+  // Public on purpose: the reports worth having most are from somebody who
+  // could not sign in.
+  if (method === "POST" && path === "/api/client-errors") return recordClientError(request, env);
   if (method === "GET" && path.startsWith("/api/locations/")) {
     const location = await getLocation(env, decodeURIComponent(path.slice("/api/locations/".length)));
     return location ? json({ location: enrichLocation(location) }) : apiError(404, "LOCATION_NOT_FOUND", "The hospital was not found.");

@@ -603,6 +603,73 @@ async function seatAdmin(request, env, actor, tenantId) {
   return json(result.body, { status: result.status });
 }
 
+/**
+ * Recent client failures, newest first, grouped by fingerprint.
+ *
+ * The counterpart to the one-sentence message the apps now show. An operator
+ * gets the route, the status, the code, the app version and the reference the
+ * customer was given; the customer gets "That didn't work, give it a moment".
+ */
+async function handleClientErrors(url, env) {
+  if (!hasDatabase(env)) return json({ errors: [], groups: [] });
+  const limit = Math.min(500, Math.max(1, Number(url.searchParams.get("limit")) || 200));
+  const reference = cleanString(url.searchParams.get("reference"), 16).toUpperCase();
+
+  // Looking up a reference somebody read out is the single most common thing
+  // this screen is for, so it is a first-class query rather than a filter.
+  if (reference) {
+    const row = await env.DB.prepare("SELECT * FROM client_errors WHERE reference = ? ORDER BY occurred_at DESC LIMIT 1")
+      .bind(reference).first();
+    return json({ errors: row ? [clientErrorFromRow(row)] : [], groups: [] });
+  }
+
+  const [rows, groups] = await Promise.all([
+    env.DB.prepare("SELECT * FROM client_errors ORDER BY occurred_at DESC LIMIT ?").bind(limit).all(),
+    env.DB.prepare(`
+      SELECT fingerprint, COUNT(*) AS total, MAX(occurred_at) AS last_seen,
+             MAX(surface) AS surface, MAX(status) AS status, MAX(code) AS code, MAX(path) AS path
+      FROM client_errors
+      WHERE occurred_at > datetime('now', '-7 days')
+      GROUP BY fingerprint
+      ORDER BY total DESC
+      LIMIT 50
+    `).all()
+  ]);
+  return json({
+    errors: rows.results.map(clientErrorFromRow),
+    groups: groups.results.map((row) => ({
+      fingerprint: row.fingerprint,
+      total: Number(row.total),
+      lastSeen: row.last_seen,
+      surface: row.surface,
+      status: row.status,
+      code: row.code,
+      path: row.path
+    }))
+  });
+}
+
+function clientErrorFromRow(row) {
+  let detail = {};
+  try { detail = JSON.parse(row.detail_json || "{}"); } catch { detail = {}; }
+  return {
+    id: row.id,
+    occurredAt: row.occurred_at,
+    surface: row.surface,
+    appVersion: row.app_version,
+    path: row.path,
+    status: row.status,
+    code: row.code,
+    message: row.message,
+    detail,
+    clerkUserId: row.clerk_user_id,
+    tenantId: row.tenant_id,
+    requestId: row.request_id,
+    reference: row.reference,
+    fingerprint: row.fingerprint
+  };
+}
+
 async function handleAudit(url, env) {
   const limit = Math.min(200, Math.max(1, Number(url.searchParams.get("limit")) || 100));
   const result = await env.DB.prepare(`
@@ -705,6 +772,7 @@ async function handleApi(request, env) {
     const locationsMatch = path.match(/^\/api\/admin\/tenants\/([^/]+)\/locations$/);
     if (method === "POST" && locationsMatch) return addLocation(request, env, actor, decodeURIComponent(locationsMatch[1]));
 
+    if (method === "GET" && path === "/api/admin/client-errors") return handleClientErrors(url, env);
     const adminsMatch = path.match(/^\/api\/admin\/tenants\/([^/]+)\/admins$/);
     if (method === "POST" && adminsMatch) return seatAdmin(request, env, actor, decodeURIComponent(adminsMatch[1]));
 

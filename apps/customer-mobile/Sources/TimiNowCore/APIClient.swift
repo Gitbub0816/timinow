@@ -37,9 +37,26 @@ public enum TimiAPIError: Error, Sendable {
 
 }
 
+/// Lets the gateway mint a live Clerk token for every request without holding
+/// a type-level dependency on `AuthController`.
+///
+/// `async` because the real conformer is `@MainActor`-isolated, and spelled
+/// `get async` because Skip transpiles the requirement to a suspend function —
+/// a plain getter would leave the Kotlin class with an unimplemented member.
+public protocol TimiSessionTokenProviding: AnyObject, Sendable {
+    var hasSession: Bool { get async }
+    /// The current token, re-minted first if it is missing or near expiry.
+    func ensureFreshToken() async throws -> String
+    /// Unconditionally mints a new one — used once, after a 401.
+    func forceRefreshToken() async throws -> String
+}
+
 public final class TimiGateway: @unchecked Sendable {
     public var baseURL: URL?
     public var bearerToken: String?
+    /// Set by `AppStore` once both objects exist. `weak`, so the two never
+    /// form a retain cycle.
+    public weak var tokenProvider: TimiSessionTokenProviding?
     private let session: URLSession
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
@@ -155,6 +172,25 @@ public final class TimiGateway: @unchecked Sendable {
 /// own — `LEGAL_VERSION` in src/catalog.js — so a version bumped in one place
 /// and not the other is a 422 on the last screen of the flow with no
 /// explanation attached to the notice that changed.
+/// What goes to the Worker when something fails. Never rendered.
+public struct ClientErrorReport: Encodable, Sendable {
+    public var surface: String
+    public var appVersion: String?
+    public var path: String?
+    public var status: Int?
+    public var code: String?
+    public var message: String?
+    public var reference: String?
+    public var clerkUserId: String?
+    public var detail: [String: String]?
+
+    public init(surface: String = "customer_ios", appVersion: String? = nil, path: String? = nil, status: Int? = nil, code: String? = nil, message: String? = nil, reference: String? = nil, clerkUserId: String? = nil, detail: [String: String]? = nil) {
+        self.surface = surface; self.appVersion = appVersion; self.path = path; self.status = status
+        self.code = code; self.message = message; self.reference = reference
+        self.clerkUserId = clerkUserId; self.detail = detail
+    }
+}
+
 public enum TimiLegal {
     public static let version = "2026-08-22"
 }
@@ -166,6 +202,23 @@ public enum TimiLegal {
         guard let baseURL else { return nil }
         let envelope: AppConfigEnvelope = try await send(baseURL.appendingPathComponent("api/config"))
         return envelope.map
+    }
+
+    /// Sends a failure report and forgets about it.
+    ///
+    /// Deliberately fire-and-forget and deliberately unauthenticated: the
+    /// reports worth having most are from somebody who could not sign in, and
+    /// a reporter that can itself fail visibly would just be a second thing
+    /// to go wrong on a screen that has already gone wrong.
+    public func reportFailure(_ report: ClientErrorReport) async {
+        guard let baseURL else { return }
+        guard let body = try? encoder.encode(report) else { return }
+        var request = URLRequest(url: baseURL.appendingPathComponent("api/client-errors"))
+        request.httpMethod = "POST"
+        request.timeoutInterval = 8
+        request.httpBody = body
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        _ = try? await session.data(for: request)
     }
 
     /// The whole config, for sign-in. `fetchMapConfig` reads the same
@@ -183,13 +236,25 @@ public enum TimiLegal {
         try await send(url, method: method, data: try encoder.encode(body))
     }
 
-    private func send<Response: Decodable>(_ url: URL, method: String, data: Data?) async throws -> Response {
+    private func send<Response: Decodable>(_ url: URL, method: String, data: Data?, retried: Bool = false) async throws -> Response {
         var request = URLRequest(url: url)
         request.httpMethod = method
         request.timeoutInterval = 20
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         if let data { request.httpBody = data; request.setValue("application/json", forHTTPHeaderField: "Content-Type") }
-        if let bearerToken, !bearerToken.isEmpty { request.setValue("Bearer \(bearerToken)", forHTTPHeaderField: "Authorization") }
+        // Minted here, per request, rather than whenever somebody remembered
+        // to call ensureFreshToken. A Clerk session token lives about a
+        // minute; two callers out of seven refreshed, so anything done more
+        // than sixty seconds after signing in — marking yourself en route,
+        // saying you arrived, choosing an offer — went out with a dead token
+        // and came back 401 AUTHENTICATION_REQUIRED. It read as being signed
+        // out, and it was not.
+        if let tokenProvider, await tokenProvider.hasSession,
+           let fresh = try? await tokenProvider.ensureFreshToken(), !fresh.isEmpty {
+            request.setValue("Bearer \(fresh)", forHTTPHeaderField: "Authorization")
+        } else if let bearerToken, !bearerToken.isEmpty {
+            request.setValue("Bearer \(bearerToken)", forHTTPHeaderField: "Authorization")
+        }
         let path = url.path
         let responseData: Data
         let response: URLResponse
@@ -210,6 +275,14 @@ public enum TimiLegal {
             throw TimiAPIError.transport(reason: error.localizedDescription, path: url.absoluteString)
         }
         guard let http = response as? HTTPURLResponse else { throw TimiAPIError.invalidResponse(path: path) }
+        // One retry on a 401, with a token minted from scratch. A token can
+        // expire between being minted and arriving, and a clock a few seconds
+        // fast is enough to do it — retrying once costs a round trip and saves
+        // a person being told to sign in while they are signed in.
+        if http.statusCode == 401, !retried, let tokenProvider, await tokenProvider.hasSession,
+           let minted = try? await tokenProvider.forceRefreshToken(), !minted.isEmpty {
+            return try await send(url, method: method, data: data, retried: true)
+        }
         guard (200..<300).contains(http.statusCode) else {
             let envelope = try? decoder.decode(APIErrorEnvelope.self, from: responseData)
             let failure = envelope?.error

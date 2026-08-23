@@ -106,6 +106,13 @@ struct PetsView: View {
     }
 }
 
+/// The pet sheet, in Tími's own hand.
+///
+/// It was a `Form`: grouped grey sections, hairline separators, a system
+/// header in small caps. That is what every settings screen on the phone looks
+/// like, and it is the one screen in this app that looked like all of them —
+/// opened straight from a coral button with a 2pt ink border and a hard drop
+/// shadow, which made the join obvious.
 struct PetEditor: View {
     @Bindable var store: AppStore
     @Binding var isPresented: Bool
@@ -124,83 +131,134 @@ struct PetEditor: View {
     @State var loaded = false
 
     var body: some View {
-        NavigationStack {
-            Form {
-                Section("Pet") {
-                    TextField("Name", text: $name)
-                    Picker("Species", selection: $species) {
-                        ForEach(PetSpecies.allCases, id: \.self) { Text($0.title).tag($0) }
+        ZStack {
+            TimiColor.canvas.ignoresSafeArea()
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    HStack {
+                        Button { isPresented = false } label: {
+                            Image(systemName: "xmark").frame(width: 42, height: 42).background(.white, in: Circle())
+                                .overlay(Circle().stroke(TimiColor.ink.faded(0.25)))
+                        }.buttonStyle(.plain)
+                        Spacer()
                     }
-                    TextField("Breed", text: $breed)
-                    TextField("Weight in pounds", text: $weight)
-                }
-                // Optional, and said so twice: in the header and in the
-                // footer. An owner who leaves both blank is not missing a step.
-                Section {
-                    TextField("Medications", text: $medications)
-                    TextField("Allergies", text: $allergies)
-                } header: {
-                    Text("Medications and allergies — optional")
-                } footer: {
-                    Text("Shared with the clinics your care request reaches, exactly as you write it. Tími is not a medical record: nothing here comes from a veterinarian, none of it is verified, and a clinic will confirm everything with you on arrival. Leave it blank if you would rather not.")
-                }
-                if let pet = editing {
-                    Section {
-                        if confirmingDelete {
-                            Text("Remove \(pet.name)? Past requests stay in your activity.")
-                                .font(.caption).foregroundStyle(TimiColor.muted)
-                            Button("Remove \(pet.name)", role: .destructive) {
-                                store.deletePet(pet.id)
-                                note = ""
-                                isPresented = false
+                    Eyebrow(text: editing == nil ? "NEW CARE COMPANION" : "EDIT PROFILE")
+                    Text(editing == nil ? "Who are we\nlooking after?" : "Edit \(editing?.name ?? "this pet")")
+                        .font(.system(size: 38, weight: .bold, design: .serif)).foregroundStyle(TimiColor.ink)
+
+                    field("Name") {
+                        TextField("Otis", text: $name).textContentType(.name).timiField()
+                    }
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Species").font(.headline)
+                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 104))], spacing: 10) {
+                            ForEach(PetSpecies.allCases, id: \.self) { option in
+                                let selected = species == option
+                                Button { species = option } label: {
+                                    HStack(spacing: 7) {
+                                        Image(systemName: option.icon)
+                                        Text(option.title).font(.caption).fontWeight(.bold)
+                                        Spacer()
+                                    }
+                                    .padding(11)
+                                    .frame(minHeight: 48)
+                                    .background(selected ? TimiColor.blueSoft : .white, in: RoundedRectangle(cornerRadius: 14))
+                                    .overlay(RoundedRectangle(cornerRadius: 14).stroke(selected ? TimiColor.blue : TimiColor.ink.faded(0.14), lineWidth: CGFloat(selected ? 2 : 1)))
+                                }.buttonStyle(.plain)
                             }
-                        } else {
-                            Button("Remove this pet", role: .destructive) { confirmingDelete = true }
                         }
                     }
-                }
-                Section {
+
+                    field("Breed") {
+                        TextField("Optional", text: $breed).timiField()
+                    }
+                    field("Weight in pounds") {
+                        TextField("Optional", text: $weight).keyboardType(.decimalPad).timiField()
+                    }
+
+                    VStack(alignment: .leading, spacing: 10) {
+                        Eyebrow(text: "OPTIONAL — MEDICATIONS AND ALLERGIES")
+                        TextField("Medications", text: $medications).timiField()
+                        TextField("Allergies", text: $allergies).timiField()
+                        Text("Shared with the clinics your care request reaches, exactly as you write it. Tími is not a medical record: nothing here comes from a veterinarian, none of it is verified, and a clinic will confirm everything with you on arrival. Leave it blank if you would rather not.")
+                            .font(.caption).foregroundStyle(TimiColor.muted)
+                    }.timiCard(TimiColor.paper)
+
+                    Button { save() } label: {
+                        Label(editing == nil ? "Add \(displayName)" : "Save changes", systemImage: "checkmark")
+                    }
+                    .buttonStyle(TimiPrimaryButtonStyle())
+                    .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
+
+                    if let pet = editing {
+                        VStack(alignment: .leading, spacing: 10) {
+                            if confirmingDelete {
+                                Text("Remove \(pet.name)? Past requests stay in your activity.")
+                                    .font(.callout).fontWeight(.semibold).foregroundStyle(TimiColor.ink)
+                                Button("Yes, remove \(pet.name)") {
+                                    store.deletePet(pet.id)
+                                    note = ""
+                                    isPresented = false
+                                }.buttonStyle(TimiPrimaryButtonStyle())
+                                Button("Keep \(pet.name)") { confirmingDelete = false }.buttonStyle(TimiQuietButtonStyle())
+                            } else {
+                                Button("Remove this pet") { confirmingDelete = true }.buttonStyle(TimiQuietButtonStyle())
+                            }
+                        }.timiCard(TimiColor.coralSoft)
+                    }
+
                     Text("Profiles are kept with your account, so they follow you to a new phone.")
                         .font(.caption).foregroundStyle(TimiColor.muted)
+                    Spacer(minLength: 20)
                 }
-            }
-            .navigationTitle(editing == nil ? "Add a pet" : "Edit pet")
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { isPresented = false } }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") {
-                        let trimmed = name.trimmingCharacters(in: .whitespaces)
-                        let existing = editing
-                        store.savePet(PetProfile(
-                            id: existing?.id ?? UUID().uuidString,
-                            name: trimmed,
-                            species: species,
-                            breed: breed.trimmingCharacters(in: .whitespaces),
-                            weightLbs: Double(weight),
-                            birthYear: existing?.birthYear,
-                            colorToken: existing?.colorToken ?? store.pets.count,
-                            medications: medications.trimmingCharacters(in: .whitespacesAndNewlines),
-                            allergies: allergies.trimmingCharacters(in: .whitespacesAndNewlines)
-                        ))
-                        isPresented = false
-                    }.disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
-                }
-            }
-            // A sheet's @State survives between presentations, so without this
-            // the second pet opened still shows the first one's details.
-            .onAppear {
-                guard !loaded else { return }
-                loaded = true
-                if let pet = editing {
-                    name = pet.name
-                    species = pet.species
-                    breed = pet.breed
-                    weight = pet.weightLbs.map { String(format: "%.0f", $0) } ?? ""
-                    medications = pet.medications
-                    allergies = pet.allergies
-                }
+                .padding(22)
             }
         }
+        // A sheet's @State survives between presentations, so without this the
+        // second pet opened still shows the first one's details.
+        .onAppear {
+            guard !loaded else { return }
+            loaded = true
+            if let pet = editing {
+                name = pet.name
+                species = pet.species
+                breed = pet.breed
+                weight = pet.weightLbs.map { String(format: "%.0f", $0) } ?? ""
+                medications = pet.medications
+                allergies = pet.allergies
+            }
+        }
+    }
+
+    var displayName: String {
+        let trimmed = name.trimmingCharacters(in: .whitespaces)
+        return trimmed.isEmpty ? "this pet" : trimmed
+    }
+
+    @ViewBuilder
+    func field(_ title: String, @ViewBuilder content: () -> some View) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title).font(.headline)
+            content()
+        }
+    }
+
+    func save() {
+        let trimmed = name.trimmingCharacters(in: .whitespaces)
+        let existing = editing
+        store.savePet(PetProfile(
+            id: existing?.id ?? UUID().uuidString,
+            name: trimmed,
+            species: species,
+            breed: breed.trimmingCharacters(in: .whitespaces),
+            weightLbs: Double(weight),
+            birthYear: existing?.birthYear,
+            colorToken: existing?.colorToken ?? store.pets.count,
+            medications: medications.trimmingCharacters(in: .whitespacesAndNewlines),
+            allergies: allergies.trimmingCharacters(in: .whitespacesAndNewlines)
+        ))
+        isPresented = false
     }
 }
 

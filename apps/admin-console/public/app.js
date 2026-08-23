@@ -94,11 +94,12 @@ function parseHash() {
   const detailMatch = raw.match(/^tenants\/([^/]+)$/);
   if (detailMatch) return { screen: "tenant-detail", id: decodeURIComponent(detailMatch[1]) };
   if (raw === "audit") return { screen: "audit" };
+  if (raw === "errors") return { screen: "errors" };
   return { screen: "tenants" };
 }
 
 function updateNavActive() {
-  const top = state.route.screen === "audit" ? "audit" : "tenants";
+  const top = ["audit", "errors"].includes(state.route.screen) ? state.route.screen : "tenants";
   document.querySelectorAll("[data-nav]").forEach((a) => a.classList.toggle("active", a.dataset.nav === top));
 }
 
@@ -146,6 +147,11 @@ async function renderRoute() {
   if (state.route.screen === "audit") {
     showScreen("audit");
     await loadAudit();
+    return;
+  }
+  if (state.route.screen === "errors") {
+    showScreen("errors");
+    await loadClientErrors();
     return;
   }
   showScreen("tenants");
@@ -796,6 +802,11 @@ function wireStaticHandlers() {
     }
   });
 
+  document.querySelector('form[data-form="error-lookup"]')?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    loadClientErrors(event.target.reference.value.trim().toUpperCase());
+  });
+
   window.addEventListener("hashchange", route);
 }
 
@@ -805,6 +816,46 @@ function wireStaticHandlers() {
  * What actually happened to the first administrator. The Worker has always
  * returned this; nothing read it.
  */
+/**
+ * The other half of the app's one-sentence failure message.
+ *
+ * Grouped first — the same failure forty-seven times is one problem, not
+ * forty-seven — then the raw rows underneath, newest first.
+ */
+async function loadClientErrors(reference = "") {
+  const groupsMount = document.querySelector("[data-error-groups]");
+  const listMount = document.querySelector("[data-error-list]");
+  listMount.innerHTML = '<p class="page-lede">Loading…</p>';
+  try {
+    const query = reference ? `?reference=${encodeURIComponent(reference)}` : "";
+    const { errors = [], groups = [] } = await apiFetch(`/api/admin/client-errors${query}`);
+    groupsMount.innerHTML = groups.length
+      ? `<div class="panel"><h2>Most frequent, last 7 days</h2>${groups.map((group) => `
+          <div class="member-row">
+            <div class="who"><strong>${escapeHtml(group.code || "no code")} · ${escapeHtml(String(group.status ?? "—"))}</strong><small>${escapeHtml(group.surface)} · ${escapeHtml(group.path || "no route")}</small></div>
+            <div><strong>${group.total}</strong> <small>last ${escapeHtml(formatDateTime(group.lastSeen))}</small></div>
+          </div>`).join("")}</div>`
+      : "";
+    listMount.innerHTML = errors.length
+      ? `<div class="panel"><h2>${reference ? `Reference ${escapeHtml(reference)}` : "Most recent"}</h2>${errors.map(renderClientError).join("")}</div>`
+      : `<div class="panel"><p class="page-lede">${reference ? "No report carries that reference." : "No client errors recorded."}</p></div>`;
+  } catch (error) {
+    listMount.innerHTML = `<div class="panel"><p class="page-lede">${escapeHtml(error.message)}</p></div>`;
+  }
+}
+
+function renderClientError(item) {
+  const detail = Object.entries(item.detail || {}).map(([key, value]) => `${escapeHtml(key)}=${escapeHtml(String(value))}`).join(" · ");
+  return `<div class="member-row">
+    <div class="who">
+      <strong>${escapeHtml(item.code || "no code")} · ${escapeHtml(String(item.status ?? "—"))} · ${escapeHtml(item.reference)}</strong>
+      <small>${escapeHtml(item.surface)}${item.appVersion ? ` ${escapeHtml(item.appVersion)}` : ""} · ${escapeHtml(item.path || "no route")} · ${escapeHtml(formatDateTime(item.occurredAt))}</small>
+      <small>${escapeHtml(item.message || "")}</small>
+      ${detail ? `<small>${detail}</small>` : ""}
+    </div>
+  </div>`;
+}
+
 function describeAdminResult(admin) {
   if (!admin) return "No administrator email was given, so nobody can sign into it yet — add one from the workspace page.";
   if (admin.mode === "seated") {

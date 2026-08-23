@@ -57,6 +57,7 @@ database.exec(await readFile("migrations/0003_multi_offer_search.sql", "utf8"));
 database.exec(await readFile("migrations/0004_tenancy_admin.sql", "utf8"));
 database.exec(await readFile("migrations/0005_voice_calls.sql", "utf8"));
 database.exec(await readFile("migrations/0006_care_context.sql", "utf8"));
+database.exec(await readFile("migrations/0007_client_errors.sql", "utf8"));
 
 const env = {
   ASSETS: { fetch: async () => new Response("asset") },
@@ -135,6 +136,30 @@ result = await call("/api/clinic/dashboard", { headers: { "x-demo-role": "clinic
 const clinicView = result.body.requests.find((item) => item.id === medicalIntakeId);
 assert(clinicView?.pet.allergies === "Penicillin — hives last spring", "The clinic must see the allergies the owner recorded");
 assert(clinicView?.pet.medications === "Apoquel 5.4mg twice daily", "The clinic must see the medications the owner recorded");
+
+/* ----------------------------------------------- client error reports --- */
+
+// The counterpart to the one sentence the apps now show. Accepted from anyone,
+// including somebody who could not sign in, and never argued with.
+result = await call("/api/client-errors", {
+  method: "POST",
+  headers: { "content-type": "application/json" },
+  body: JSON.stringify({
+    surface: "customer_ios", appVersion: "1.2.0", path: "/api/intakes/x/status",
+    status: 401, code: "AUTHENTICATION_REQUIRED", message: "Sign in is required to continue.",
+    reference: "K7MQ2B", detail: { route: "tracker" }
+  })
+});
+assert(result.response.status === 202 && result.body.recorded === true, `A client error report must be accepted: ${JSON.stringify(result.body)}`);
+const storedError = database.prepare("SELECT * FROM client_errors WHERE reference = 'K7MQ2B'").get();
+assert(storedError, "The report must be stored where an operator can read it");
+assert(storedError.status === 401 && storedError.code === "AUTHENTICATION_REQUIRED", "The detail must survive intact");
+assert(storedError.fingerprint.includes("AUTHENTICATION_REQUIRED"), "Reports must group by fingerprint, not by message — a message carrying a record id makes every occurrence unique");
+
+// A malformed report is accepted rather than argued with: a client that is
+// already broken must not have to handle an error about its error.
+result = await call("/api/client-errors", { method: "POST", headers: { "content-type": "application/json" }, body: "not json" });
+assert(result.response.status === 202, "A malformed report must not produce an error response");
 
 /* ------------------------------------- veterinary technician staffing --- */
 
@@ -246,4 +271,4 @@ for (const table of tableChecks) {
 }
 
 database.close();
-console.log("D1 end-to-end tests passed: five-offer search, atomic customer selection, clinic release, policy snapshot, deposit, travel, optional medications and allergies, veterinary-technician staffing notices, observation, expiry, and audit.");
+console.log("D1 end-to-end tests passed: five-offer search, atomic customer selection, clinic release, policy snapshot, deposit, travel, optional medications and allergies, veterinary-technician staffing notices, client error reporting, observation, expiry, and audit.");
