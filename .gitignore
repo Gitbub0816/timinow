@@ -39,3 +39,12 @@ apps/*/Project.xcworkspace/xcuserdata/
 apps/*/Project.xcworkspace/xcshareddata/swiftpm/Package.resolved
 **/xcuserdata/
 **/*.xcuserstate
+
+# Isolated git worktrees created for background agents. Each one is a full
+# second checkout of this repository — nineteen megabytes a pair, and a nested
+# repo inside the repo. Committing them would be committing a copy of
+# everything, repeatedly.
+#
+# Scoped to `worktrees/` rather than all of `.claude/`, so project settings or
+# skills placed alongside can still be tracked on purpose.
+.claude/worktrees/
