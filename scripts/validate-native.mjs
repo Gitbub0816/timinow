@@ -1965,6 +1965,36 @@ for (const [path, marker] of [
   }
 }
 
+// A public type declared inside a class is a nested type: TimiGateway.ClientErrorReport,
+// not ClientErrorReport. Swift is happy with that right up until another file
+// in the same module names it unqualified, and then the failure is "cannot
+// find X in scope" at the *use* site — which reads as a missing file rather
+// than as a brace in the wrong place, a hundred lines away in a file nobody
+// was editing. Nothing but a device build was finding it.
+{
+  const swiftSources = new Map();
+  for (const path of swiftFiles) swiftSources.set(path, await read(path));
+
+  for (const [path, source] of swiftSources) {
+    for (const line of source.split("\n")) {
+      // Indented, therefore nested inside something.
+      const declaration = line.match(/^\s+public (?:final )?(?:struct|enum|class|actor|protocol) ([A-Z]\w*)/);
+      if (!declaration) continue;
+      const name = declaration[1];
+      for (const [otherPath, otherSource] of swiftSources) {
+        if (otherPath === path) continue;
+        // Unqualified uses only. `Outer.Inner` from another file is a
+        // deliberately nested type being named properly.
+        const unqualified = new RegExp(`(^|[^\\w.])${name}\\b`, "m");
+        const code = otherSource.split("\n").filter((l) => !l.trim().startsWith("//")).join("\n");
+        if (unqualified.test(code)) {
+          throw new Error(`${path} declares ${name} nested inside another type, but ${otherPath} names it unqualified. Move it to file scope: as written this fails with "cannot find '${name}' in scope" at the use site, which points at the wrong file entirely.`);
+        }
+      }
+    }
+  }
+}
+
 const csharpFiles = await collectFiles("apps/vet-windows", ".cs");
 for (const path of csharpFiles) {
   const problems = bracketProblems(await read(path));

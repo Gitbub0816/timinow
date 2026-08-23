@@ -181,36 +181,7 @@ public final class TimiGateway: @unchecked Sendable {
         let _: ObservationEnvelope = try await send(baseURL.appendingPathComponent("api/observations"), method: "POST", body: ObservationPayload(intakeId: intake.id, locationId: intake.locationId, milestone: milestone))
     }
 
-    /// The terms and safety notice this build accepts against.
-///
-/// The Worker rejects a care request whose `legalVersion` is not exactly its
-/// own — `LEGAL_VERSION` in src/catalog.js — so a version bumped in one place
-/// and not the other is a 422 on the last screen of the flow with no
-/// explanation attached to the notice that changed.
-/// What goes to the Worker when something fails. Never rendered.
-public struct ClientErrorReport: Encodable, Sendable {
-    public var surface: String
-    public var appVersion: String?
-    public var path: String?
-    public var status: Int?
-    public var code: String?
-    public var message: String?
-    public var reference: String?
-    public var clerkUserId: String?
-    public var detail: [String: String]?
-
-    public init(surface: String = "customer_ios", appVersion: String? = nil, path: String? = nil, status: Int? = nil, code: String? = nil, message: String? = nil, reference: String? = nil, clerkUserId: String? = nil, detail: [String: String]? = nil) {
-        self.surface = surface; self.appVersion = appVersion; self.path = path; self.status = status
-        self.code = code; self.message = message; self.reference = reference
-        self.clerkUserId = clerkUserId; self.detail = detail
-    }
-}
-
-public enum TimiLegal {
-    public static let version = "2026-08-22"
-}
-
-/// `GET /api/config` → `map`: the Mapbox public token and the style URL,
+    /// `GET /api/config` → `map`: the Mapbox public token and the style URL,
     /// per docs/PLATFORM-CONTRACT.md. Returns `nil` in demo mode so callers
     /// keep the compiled-in `MapDefaults.styleURL`.
     public func fetchMapConfig() async throws -> MapConfig? {
@@ -313,6 +284,36 @@ public enum TimiLegal {
         catch { throw TimiAPIError.invalidResponse(path: path) }
     }
 }
+
+/// What goes to the Worker when something fails. Never rendered.
+public struct ClientErrorReport: Encodable, Sendable {
+    public var surface: String
+    public var appVersion: String?
+    public var path: String?
+    public var status: Int?
+    public var code: String?
+    public var message: String?
+    public var reference: String?
+    public var clerkUserId: String?
+    public var detail: [String: String]?
+
+    public init(surface: String = "customer_ios", appVersion: String? = nil, path: String? = nil, status: Int? = nil, code: String? = nil, message: String? = nil, reference: String? = nil, clerkUserId: String? = nil, detail: [String: String]? = nil) {
+        self.surface = surface; self.appVersion = appVersion; self.path = path; self.status = status
+        self.code = code; self.message = message; self.reference = reference
+        self.clerkUserId = clerkUserId; self.detail = detail
+    }
+}
+
+/// The terms and safety notice this build accepts against.
+///
+/// The Worker rejects a care request whose `legalVersion` is not exactly its
+/// own — `LEGAL_VERSION` in src/catalog.js — so a version bumped in one place
+/// and not the other is a 422 on the last screen of the flow with no
+/// explanation attached to the notice that changed.
+public enum TimiLegal {
+    public static let version = "2026-08-22"
+}
+
 
 private struct PetPayload: Encodable {
     var name: String; var species: String; var breed: String; var weightLbs: Double?
