@@ -2036,11 +2036,30 @@ for (const [path, marker] of [
   if (!count) throw new Error("apps/vet-windows/src/TimiVet/Assets/timinow.ico contains no images.");
   for (let index = 0; index < count; index += 1) {
     const at = 6 + index * 16;
+    const declared = icon.readUInt8(at) || 256;
     const size = icon.readUInt32LE(at + 8);
     const offset = icon.readUInt32LE(at + 12);
     if (offset + size > icon.length) throw new Error(`apps/vet-windows/src/TimiVet/Assets/timinow.ico: image ${index} points past the end of the file.`);
-    if (icon.subarray(offset, offset + 8).toString("hex") !== "89504e470d0a1a0a") {
-      throw new Error(`apps/vet-windows/src/TimiVet/Assets/timinow.ico: image ${index} is not a PNG.`);
+    const isPNG = icon.subarray(offset, offset + 8).toString("hex") === "89504e470d0a1a0a";
+    // Windows honours a PNG-compressed entry at 256x256 and nowhere else.
+    // Below that it wants a BMP/DIB, and an ICO that is PNG all the way down
+    // loads as nothing: no error, no fallback, a blank square in the taskbar
+    // and on the .exe. That is exactly what shipped, and the file passed every
+    // structural check while it did.
+    if (declared === 256 && !isPNG) {
+      throw new Error("apps/vet-windows/src/TimiVet/Assets/timinow.ico: the 256x256 image is not PNG-compressed, which makes the file far larger than it needs to be.");
+    }
+    if (declared < 256) {
+      if (isPNG) {
+        throw new Error(`apps/vet-windows/src/TimiVet/Assets/timinow.ico: the ${declared}x${declared} image is a PNG. Windows only decodes PNG entries at 256x256, so an icon built this way renders as a blank square with nothing reporting it. Rebuild with scripts/lib/make-ico.mjs.`);
+      }
+      if (icon.readUInt32LE(offset) !== 40) {
+        throw new Error(`apps/vet-windows/src/TimiVet/Assets/timinow.ico: the ${declared}x${declared} image does not begin with a 40-byte BITMAPINFOHEADER.`);
+      }
+      // Height is doubled in an ICO: the colour rows and the AND mask.
+      if (icon.readInt32LE(offset + 8) !== declared * 2) {
+        throw new Error(`apps/vet-windows/src/TimiVet/Assets/timinow.ico: the ${declared}x${declared} image declares a height of ${icon.readInt32LE(offset + 8)} rather than ${declared * 2}. An ICO's DIB height counts the colour rows and the AND mask together; getting it wrong shows the icon squashed into its top half.`);
+      }
     }
   }
 }

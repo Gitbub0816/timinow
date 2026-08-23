@@ -90,6 +90,11 @@ public struct AuthFactorOption: Identifiable, Hashable, Sendable {
     /// Called when the session ends, so device-local data belonging to that
     /// account can go with it.
     public var onSignedOut: () -> Void = { }
+    /// Called when the Keychain refuses to store the credential, with the
+    /// OSStatus it refused with. The app carries on signed in for this launch
+    /// — there is nothing the person can do about it — but the report is what
+    /// turns "it does not stay signed in" into one line naming the reason.
+    public var onCredentialStorageFailed: (Int32) -> Void = { _ in }
 
     private let gateway: TimiGateway
     private let keychain = KeychainStore()
@@ -142,7 +147,22 @@ public struct AuthFactorOption: Identifiable, Hashable, Sendable {
             // claiming the account is at fault.
         }
 
-        guard let host = frontendAPIHost, let stored = loadCredential(), stored.frontendAPIHost == host else {
+        // The stored credential knows which Clerk instance it belongs to, so a
+        // launch that could not reach the Worker can still resume on it.
+        //
+        // This used to require `frontendAPIHost`, which comes only from
+        // `/api/config` — so the `catch` above, whose whole point is that a
+        // network failure says nothing about the account, fell straight
+        // through to the sign-in screen anyway. Opening the app on a cold
+        // cellular connection, in a lift, or in the second before Wi-Fi
+        // associates was enough. Nothing was signed out and nothing was
+        // deleted; it simply asked for a password every time, which from the
+        // outside is indistinguishable from not staying signed in.
+        let stored = loadCredential()
+        if frontendAPIHost == nil, let storedHost = stored?.frontendAPIHost, !storedHost.isEmpty {
+            frontendAPIHost = storedHost
+        }
+        guard let host = frontendAPIHost, let stored, stored.frontendAPIHost == host else {
             stage = .identifier
             return
         }
@@ -867,7 +887,12 @@ public struct AuthFactorOption: Identifiable, Hashable, Sendable {
             workerToken: workerToken, workerTokenExpiresAt: workerTokenExpiresAt
         )
         guard let data = try? JSONEncoder().encode(credential), let text = String(data: data, encoding: .utf8) else { return }
-        keychain.save(text)
+        if !keychain.save(text) {
+            // A refused write is the difference between "signing in does not
+            // stick" and "there is a bug in the sign-in flow", and until now
+            // it looked exactly like the second one.
+            onCredentialStorageFailed(keychain.lastFailure ?? -1)
+        }
     }
 
     private func extractClientCookie(host: String) -> String? {

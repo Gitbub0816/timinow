@@ -49,17 +49,21 @@ public enum TurnByTurn {
 /// Pins both Mapbox Navigation's day and night styles to Tími's single
 /// custom style (docs/PLATFORM-CONTRACT.md: "One style everywhere"),
 /// instead of Mapbox's default streets/dark styles.
+// `mapStyleURL` keeps Mapbox's own default when ours will not parse. It was
+// force-unwrapped, so a style URL that arrived empty or malformed from
+// /api/config took the whole app down at the moment somebody pressed Navigate
+// — the one screen where a crash costs the most.
 final class TimiDayStyle: StandardDayStyle {
     required init() {
         super.init()
-        mapStyleURL = URL(string: TimiNowUIStyleSource.current)!
+        if let url = URL(string: TimiNowUIStyleSource.current) { mapStyleURL = url }
     }
 }
 
 final class TimiNightStyle: StandardNightStyle {
     required init() {
         super.init()
-        mapStyleURL = URL(string: TimiNowUIStyleSource.current)!
+        if let url = URL(string: TimiNowUIStyleSource.current) { mapStyleURL = url }
     }
 }
 
@@ -136,6 +140,16 @@ final class NavigationHostController: UIViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = .white
+        // Mapbox is not given an empty access token. NavigationCoreApiConfiguration
+        // treats one as a programming error and traps, so this crashed the app
+        // rather than failing the route — and the token comes from /api/config,
+        // which means any launch that could not reach the Worker armed it.
+        // ClinicMapView has guarded exactly this since it was written; the
+        // navigation path never did.
+        guard !mapboxAccessToken.isEmpty else {
+            presentFallback()
+            return
+        }
         Task { await requestRouteAndPresent() }
     }
 

@@ -14,22 +14,64 @@ import Security
 /// dictionary otherwise, so TimiNowCore still compiles with the Apple-only
 /// Keychain APIs stripped (e.g. under Skip Fuse on a non-Apple platform).
 public final class KeychainStore: @unchecked Sendable {
-    private let service = "solutions.clearkey.timinow"
-    private let account = "clerk-session-token"
+    private let service: String
+    private let account: String
 
-    public init() { }
+    public init() {
+        service = "solutions.clearkey.timinow"
+        account = "clerk-session-token"
+    }
 
-    public func save(_ token: String) {
+    /// For the self-test, which needs its own key so it never disturbs the
+    /// credential actually in use.
+    init(service: String, account: String) {
+        self.service = service
+        self.account = account
+    }
+
+    /// The last write that failed, as a Keychain OSStatus. `nil` means the
+    /// last write succeeded.
+    ///
+    /// SecItemAdd's status was discarded. A Keychain that refuses the write —
+    /// a provisioning profile without the app's keychain access group is the
+    /// usual reason, and it reports errSecMissingEntitlement (-34018) — then
+    /// produced an app that signed in perfectly, stored nothing, and asked for
+    /// a password again at the next launch, with no message anywhere in the
+    /// app, the console, or the Worker's logs saying why. Every explanation
+    /// for that behaviour is somewhere else in the sign-in code, which is
+    /// where the search goes instead.
+    public private(set) var lastFailure: Int32?
+
+    @discardableResult
+    public func save(_ token: String) -> Bool {
         #if canImport(Security)
-        guard let data = token.data(using: .utf8) else { return }
+        guard let data = token.data(using: .utf8) else { lastFailure = -1; return false }
         let query = baseQuery()
         SecItemDelete(query as CFDictionary)
         var attributes = query
         attributes[kSecValueData as String] = data
         attributes[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
-        SecItemAdd(attributes as CFDictionary, nil)
+        let status = SecItemAdd(attributes as CFDictionary, nil)
+        lastFailure = status == errSecSuccess ? nil : status
+        return status == errSecSuccess
         #else
         InMemoryKeychainFallback.shared.value = token
+        lastFailure = nil
+        return true
+        #endif
+    }
+
+    /// Whether this device can store a credential at all, decided by writing
+    /// one and reading it back rather than by inspecting entitlements — the
+    /// entitlements can be right and the write still refused.
+    public func selfTest() -> Int32? {
+        #if canImport(Security)
+        let probe = KeychainStore(service: service, account: "\(account)-probe")
+        defer { probe.clear() }
+        guard probe.save("probe") else { return probe.lastFailure ?? -1 }
+        return probe.load() == "probe" ? nil : -2
+        #else
+        return nil
         #endif
     }
 

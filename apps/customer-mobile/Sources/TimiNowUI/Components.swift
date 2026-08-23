@@ -296,7 +296,10 @@ struct EmergencyClinicRow: View {
                 // point: an emergency hospital found on a map is still a place
                 // we can drive somebody to, and leaving the app was never a
                 // decision anybody made on purpose.
-                if TurnByTurn.isAvailable, place.navigationDestination != nil {
+                // Also gated on the token: without one there is no route to
+                // draw, and offering Navigate only to land on Apple Maps is a
+                // worse answer than offering Apple Maps.
+                if TurnByTurn.isAvailable, !(store.mapToken ?? "").isEmpty, place.navigationDestination != nil {
                     Button { showNavigation = true } label: {
                         Label("Navigate", systemImage: "arrow.triangle.turn.up.right.diamond.fill")
                     }.buttonStyle(TimiPrimaryButtonStyle(color: TimiColor.blue))
@@ -311,7 +314,7 @@ struct EmergencyClinicRow: View {
             // it keeps working if this app does not. Quiet rather than primary
             // — ours is the offer, this is the escape hatch.
             if let url = directionsURL {
-                if TurnByTurn.isAvailable {
+                if TurnByTurn.isAvailable, !(store.mapToken ?? "").isEmpty {
                     Link(destination: url) { Label("Open in Maps instead", systemImage: "map.fill") }
                         .buttonStyle(TimiQuietButtonStyle())
                 } else {

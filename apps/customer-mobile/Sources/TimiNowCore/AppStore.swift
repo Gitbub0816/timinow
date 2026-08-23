@@ -102,6 +102,26 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
         gateway.tokenProvider = self.auth
         self.auth.onProfileResolved = { [weak self] profile in self?.adoptOwner(profile) }
         self.auth.onSignedOut = { [weak self] in self?.forgetAccountData() }
+        self.auth.onCredentialStorageFailed = { [weak self] status in self?.reportKeychainFailure(status) }
+    }
+
+    /// A Keychain that will not hold the credential, said out loud.
+    ///
+    /// Not shown to the customer: there is nothing they can do about a
+    /// provisioning profile. It goes to the Worker, where it is one row saying
+    /// which build on which device cannot stay signed in and with what
+    /// OSStatus — -34018 is errSecMissingEntitlement, which is the app's
+    /// keychain access group missing from the profile it was signed with.
+    func reportKeychainFailure(_ status: Int32) {
+        let report = ClientErrorReport(
+            surface: "customer_ios",
+            appVersion: TimiEnvironment.appVersion,
+            path: "/keychain/save",
+            code: "KEYCHAIN_WRITE_REFUSED",
+            message: "The Keychain refused to store the sign-in credential (OSStatus \(status)). This device cannot stay signed in.",
+            detail: ["osstatus": String(status)]
+        )
+        Task { [gateway] in await gateway.reportFailure(report) }
     }
 
     /// Everything device-local that belongs to whoever was signed in.
