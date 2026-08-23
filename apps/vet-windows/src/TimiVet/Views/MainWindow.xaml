@@ -1,33 +1,570 @@
-<Window x:Class="TimiVet.Views.MainWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Title="Tími Vet · Live Intake" Width="1440" Height="900" MinWidth="1180" MinHeight="720" WindowStartupLocation="CenterScreen">
+<Window x:Class="TimiVet.Views.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:TimiVet.Views"
+        Style="{StaticResource TimiWindow}"
+        Title="Tími Vet · Live Intake"
+        Width="1440" Height="920"
+        MinWidth="1040" MinHeight="660"
+        WindowStartupLocation="CenterScreen">
+
+    <!--
+        This file was one line of XAML per element — some of them two thousand characters long — which is
+        a large part of why nobody wanted to work on this console. It is written out properly now, and the
+        layout underneath it has been reworked: the queue no longer sits in a hard-coded 520-pixel row that
+        overflowed the moment the window was smaller than the developer's monitor, and every column that
+        holds a form carries a MinWidth so it degrades by scrolling rather than by squeezing its contents
+        into unreadable slivers.
+    -->
+
+    <Window.Resources>
+        <BooleanToVisibilityConverter x:Key="B2V"/>
+        <local:InverseBooleanToVisibilityConverter x:Key="InverseB2V"/>
+        <local:NullToVisibilityConverter x:Key="NotNullVisibility"/>
+        <local:NullToInverseVisibilityConverter x:Key="NullVisibility"/>
+        <local:PendingStatusToVisibilityConverter x:Key="PendingVisibility"/>
+        <local:StringEmptyToVisibilityConverter x:Key="TextVisibility"/>
+        <local:ConnectionHealthToBrushConverter x:Key="ConnectionBrush"/>
+        <local:InitialsConverter x:Key="Initials"/>
+    </Window.Resources>
+
     <Grid>
-        <Grid.ColumnDefinitions><ColumnDefinition Width="230"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-        <Border Grid.Column="0" Background="{StaticResource Ink}" Padding="22">
-            <Grid><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-                <StackPanel><Image Source="/Assets/timinow-wordmark.png" Width="172" Height="60" Stretch="Uniform" HorizontalAlignment="Left"/><TextBlock Text="VETERINARY OPERATIONS" FontSize="10" FontWeight="Bold" Foreground="#AEB6CB" Margin="1,2,0,0"/></StackPanel>
-                <StackPanel Grid.Row="1" Margin="0,42,0,0"><TextBlock Text="LIVE OPERATIONS" Foreground="#8F9AB7" FontSize="10" FontWeight="Bold"/><TextBlock Text="{Binding ClinicName}" TextWrapping="Wrap" Foreground="White" FontSize="17" FontWeight="SemiBold" Margin="0,8,0,0"/><TextBlock Text="{Binding ClinicAddress}" TextWrapping="Wrap" Foreground="#AEB6CB" FontSize="11" Margin="0,5,0,0"/><TextBlock Text="{Binding UserRole}" TextWrapping="Wrap" Foreground="#7C87A6" FontSize="10" FontWeight="Bold" Margin="0,6,0,0"/></StackPanel>
-                <StackPanel Grid.Row="2" Margin="0,45,0,0"><Border Background="#202B50" CornerRadius="9" Padding="12"><StackPanel><TextBlock Text="CURRENT MODE" Foreground="#9DA7C1" FontSize="9" FontWeight="Bold"/><TextBlock Text="{Binding ConnectionMode}" Foreground="{StaticResource Gold}" FontSize="11" FontWeight="Bold" Margin="0,4,0,0"/></StackPanel></Border><Button Content="Open floating console" Style="{StaticResource QuietButton}" Margin="0,14,0,0" Click="OpenMini_Click"/><Button Content="Refresh now" Command="{Binding RefreshCommand}" Style="{StaticResource QuietButton}" Margin="0,8,0,0"/><Button Content="Manage people" Command="{Binding OpenPeopleCommand}" Style="{StaticResource QuietButton}" Margin="0,8,0,0"/><Button Content="Sign out" Command="{Binding SignOutCommand}" Style="{StaticResource QuietButton}" Margin="0,8,0,0"/></StackPanel>
-                <StackPanel Grid.Row="3"><TextBlock Text="Tími routes operational intake. It does not diagnose or replace clinical triage." Foreground="#96A0B9" FontSize="10" TextWrapping="Wrap"/><TextBlock Text="Closing this window keeps alerts running in the tray." Foreground="#69738E" FontSize="9" TextWrapping="Wrap" Margin="0,10,0,0"/></StackPanel>
-            </Grid>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="248" MinWidth="248"/>
+            <ColumnDefinition Width="*" MinWidth="760"/>
+        </Grid.ColumnDefinitions>
+
+        <!-- ======================= Left rail ======================= -->
+        <!--
+            A DockPanel, not a four-row Grid with a star spacer: the disclaimer belongs at the bottom of a
+            tall window and must still be reachable in a short one. The middle scrolls; the notice does not
+            move.
+        -->
+        <Border Grid.Column="0" Background="{StaticResource Ink}" Padding="20,22">
+            <DockPanel LastChildFill="True">
+
+                <StackPanel DockPanel.Dock="Bottom" Margin="0,16,0,0">
+                    <TextBlock Text="Tími routes operational intake. It does not diagnose or replace clinical triage."
+                               Foreground="{StaticResource RailDisclaimer}" FontSize="10" TextWrapping="Wrap"/>
+                    <TextBlock Text="Closing this window keeps alerts running in the tray."
+                               Foreground="{StaticResource RailFootnote}" FontSize="9" TextWrapping="Wrap" Margin="0,10,0,0"/>
+                </StackPanel>
+
+                <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                    <StackPanel>
+                        <Image Source="/Assets/timinow-wordmark.png" Width="172" Height="60"
+                               Stretch="Uniform" HorizontalAlignment="Left"/>
+                        <TextBlock Text="VETERINARY OPERATIONS" FontSize="10" FontWeight="Bold"
+                                   Foreground="{StaticResource RailMutedText}" Margin="1,2,0,0"/>
+
+                        <StackPanel Margin="0,36,0,0">
+                            <TextBlock Text="LIVE OPERATIONS" Foreground="{StaticResource RailFooterText}"
+                                       FontSize="10" FontWeight="Bold"/>
+                            <TextBlock Text="{Binding ClinicName}" TextWrapping="Wrap" Foreground="White"
+                                       FontSize="17" FontWeight="SemiBold" Margin="0,8,0,0"/>
+                            <TextBlock Text="{Binding ClinicAddress}" TextWrapping="Wrap"
+                                       Foreground="{StaticResource RailMutedText}" FontSize="11" Margin="0,5,0,0"
+                                       Visibility="{Binding ClinicAddress, Converter={StaticResource TextVisibility}}"/>
+                            <TextBlock Text="{Binding UserRole}" TextWrapping="Wrap"
+                                       Foreground="{StaticResource RailTag}" FontSize="10" FontWeight="Bold" Margin="0,6,0,0"
+                                       Visibility="{Binding UserRole, Converter={StaticResource TextVisibility}}"/>
+                        </StackPanel>
+
+                        <!--
+                            The connection panel. It used to say LIVE CLOUDFLARE CONNECTION whatever was
+                            actually happening, including while the console had not reached the Worker for
+                            twenty minutes and the queue on screen was from before lunch.
+                        -->
+                        <Border Background="{StaticResource RailDeepInk}" CornerRadius="9" Padding="12" Margin="0,32,0,0">
+                            <StackPanel>
+                                <TextBlock Text="CURRENT MODE" Foreground="{StaticResource RailTag}"
+                                           FontSize="9" FontWeight="Bold"/>
+                                <TextBlock Text="{Binding ConnectionMode}" TextWrapping="Wrap"
+                                           Foreground="{Binding IsConnectionHealthy, Converter={StaticResource ConnectionBrush}}"
+                                           FontSize="11" FontWeight="Bold" Margin="0,4,0,0"/>
+                                <TextBlock Text="{Binding ConnectionDetail}" TextWrapping="Wrap"
+                                           Foreground="{StaticResource RailMutedText}" FontSize="10" Margin="0,6,0,0"/>
+                                <Button Content="Reconnect now" Command="{Binding ReconnectCommand}"
+                                        Style="{StaticResource QuietButton}" Margin="0,10,0,0" MinHeight="30" FontSize="12"
+                                        Visibility="{Binding IsConnectionHealthy, Converter={StaticResource InverseB2V}}"/>
+                            </StackPanel>
+                        </Border>
+
+                        <StackPanel Margin="0,16,0,0">
+                            <Button Content="Open floating console" Style="{StaticResource QuietButton}" Click="OpenMini_Click"/>
+                            <Button Content="Refresh now" Command="{Binding RefreshCommand}" Style="{StaticResource QuietButton}" Margin="0,8,0,0"/>
+                            <Button Content="Manage people" Command="{Binding OpenPeopleCommand}" Style="{StaticResource QuietButton}" Margin="0,8,0,0"/>
+                            <Button Content="Sign out" Command="{Binding SignOutCommand}" Style="{StaticResource QuietButton}" Margin="0,8,0,0"/>
+                        </StackPanel>
+                    </StackPanel>
+                </ScrollViewer>
+            </DockPanel>
         </Border>
-        <Grid Grid.Column="1"><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-            <Border Background="White" BorderBrush="#E0E3EA" BorderThickness="0,0,0,1" Padding="26,20"><DockPanel><StackPanel DockPanel.Dock="Left"><TextBlock Text="IMMEDIATE INTAKE CONTROL" Style="{StaticResource Eyebrow}"/><TextBlock Text="Clinic operations" FontFamily="Georgia" FontSize="31" FontWeight="Bold" Margin="0,3,0,0"/></StackPanel><StackPanel DockPanel.Dock="Right" HorizontalAlignment="Right"><TextBlock Text="{Binding StatusMessage}" Foreground="{StaticResource Muted}" FontSize="11" HorizontalAlignment="Right"/><ProgressBar IsIndeterminate="True" Width="180" Height="3" Margin="0,8,0,0"><ProgressBar.Style><Style TargetType="ProgressBar"><Setter Property="Visibility" Value="Collapsed"/><Style.Triggers><DataTrigger Binding="{Binding IsBusy}" Value="True"><Setter Property="Visibility" Value="Visible"/></DataTrigger></Style.Triggers></Style></ProgressBar.Style></ProgressBar></StackPanel></DockPanel></Border>
-            <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto"><StackPanel Margin="24">
-                <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="1.15*"/><ColumnDefinition Width="18"/><ColumnDefinition Width="1.85*"/></Grid.ColumnDefinitions>
-                    <Border Style="{StaticResource Card}" Grid.Column="0" Background="#FFF9E8"><StackPanel><TextBlock Text="PUBLIC CAPACITY" Style="{StaticResource Eyebrow}"/><TextBlock Text="What pet owners see right now" FontSize="20" FontWeight="SemiBold" Margin="0,5,0,16"/><Grid><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="12"/><ColumnDefinition/></Grid.ColumnDefinitions><StackPanel><TextBlock Text="Intake status" FontWeight="SemiBold"/><ComboBox ItemsSource="{Binding AvailabilityStatuses}" SelectedItem="{Binding AvailabilityStatus}" Margin="0,6,0,12"/><TextBlock Text="Public note" FontWeight="SemiBold"/><TextBox Text="{Binding PublicNote, UpdateSourceTrigger=PropertyChanged}" TextWrapping="Wrap" AcceptsReturn="True" Height="72" Margin="0,6,0,0"/></StackPanel><StackPanel Grid.Column="2"><UniformGrid Columns="2"><StackPanel Margin="0,0,8,8"><TextBlock Text="Wait min"/><TextBox Text="{Binding StableWaitMin}"/></StackPanel><StackPanel Margin="0,0,0,8"><TextBlock Text="Wait max"/><TextBox Text="{Binding StableWaitMax}"/></StackPanel><StackPanel Margin="0,0,8,8"><TextBlock Text="Capacity"/><TextBox Text="{Binding CapacityCount}"/></StackPanel><StackPanel Margin="0,0,0,8"><TextBlock Text="Expires (min)"/><TextBox Text="{Binding TtlMinutes}"/></StackPanel></UniformGrid><CheckBox Content="Accepting critical patients" IsChecked="{Binding AcceptsCritical}" Margin="0,8"/><Button Content="Publish live status" Command="{Binding PublishCommand}" Style="{StaticResource PrimaryButton}" Margin="0,12,0,0"/></StackPanel></Grid></StackPanel></Border>
-                    <Grid Grid.Column="2"><Grid.RowDefinitions><RowDefinition/><RowDefinition/></Grid.RowDefinitions><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition/></Grid.ColumnDefinitions>
-                        <Border Style="{StaticResource Card}" Margin="0,0,10,10"><StackPanel><TextBlock Text="WAITING" Style="{StaticResource Eyebrow}"/><TextBlock Text="{Binding Pending}" Style="{StaticResource MetricValue}"/></StackPanel></Border><Border Grid.Column="1" Style="{StaticResource Card}" Margin="0,0,0,10"><StackPanel><TextBlock Text="ACTIVE ARRIVALS" Style="{StaticResource Eyebrow}"/><TextBlock Text="{Binding ActiveArrivals}" Style="{StaticResource MetricValue}"/></StackPanel></Border><Border Grid.Row="1" Style="{StaticResource Card}" Margin="0,0,10,0"><StackPanel><TextBlock Text="COMPLETED TODAY" Style="{StaticResource Eyebrow}"/><TextBlock Text="{Binding CompletedToday}" Style="{StaticResource MetricValue}"/></StackPanel></Border><Border Grid.Row="1" Grid.Column="1" Style="{StaticResource Card}"><StackPanel><TextBlock Text="DECLINED TODAY" Style="{StaticResource Eyebrow}"/><TextBlock Text="{Binding DeclinedToday}" Style="{StaticResource MetricValue}"/></StackPanel></Border>
+
+        <!-- ======================= Workspace ======================= -->
+        <Grid Grid.Column="1">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+
+            <!-- Header -->
+            <Border Grid.Row="0" Background="{StaticResource Paper}"
+                    BorderBrush="{StaticResource CardBorder}" BorderThickness="0,0,0,1" Padding="24,18">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" MinWidth="240"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                        <TextBlock Text="IMMEDIATE INTAKE CONTROL" Style="{StaticResource Eyebrow}"/>
+                        <TextBlock Text="Clinic operations" FontFamily="Georgia" FontSize="29" FontWeight="Bold" Margin="0,3,0,0"/>
+                    </StackPanel>
+                    <StackPanel Grid.Column="1" HorizontalAlignment="Right" VerticalAlignment="Center" MaxWidth="380">
+                        <TextBlock Text="{Binding StatusMessage}" TextWrapping="Wrap" TextAlignment="Right"
+                                   Foreground="{StaticResource Muted}" FontSize="11"/>
+                        <ProgressBar IsIndeterminate="True" Width="180" HorizontalAlignment="Right" Margin="0,8,0,0">
+                            <ProgressBar.Style>
+                                <Style TargetType="ProgressBar" BasedOn="{StaticResource {x:Type ProgressBar}}">
+                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsBusy}" Value="True">
+                                            <Setter Property="Visibility" Value="Visible"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </ProgressBar.Style>
+                        </ProgressBar>
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+            <!--
+                HorizontalScrollBarVisibility is deliberately Disabled: a ScrollViewer that can scroll
+                horizontally measures its content at infinite width, which quietly turns every star column
+                and every Stretch inside it into Auto. The columns below carry MinWidths instead, and the
+                window's own MinWidth is set so that they all fit.
+            -->
+            <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                <Grid Margin="22,20">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+
+                    <!-- ========== Public capacity + metrics ========== -->
+                    <Grid Grid.Row="0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="1.15*" MinWidth="360"/>
+                            <ColumnDefinition Width="18"/>
+                            <ColumnDefinition Width="1.85*" MinWidth="300"/>
+                        </Grid.ColumnDefinitions>
+
+                        <Border Grid.Column="0" Style="{StaticResource Card}" Background="{StaticResource PublicCapacityBackground}">
+                            <StackPanel>
+                                <TextBlock Text="PUBLIC CAPACITY" Style="{StaticResource Eyebrow}"/>
+                                <TextBlock Text="What pet owners see right now" Style="{StaticResource SectionHeading}" Margin="0,5,0,14"/>
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" MinWidth="150"/>
+                                        <ColumnDefinition Width="14"/>
+                                        <ColumnDefinition Width="*" MinWidth="160"/>
+                                    </Grid.ColumnDefinitions>
+
+                                    <StackPanel Grid.Column="0">
+                                        <TextBlock Text="Intake status" Style="{StaticResource FieldLabel}"/>
+                                        <ComboBox ItemsSource="{Binding AvailabilityStatuses}" SelectedItem="{Binding AvailabilityStatus}" Margin="0,0,0,12"/>
+                                        <TextBlock Text="Public note" Style="{StaticResource FieldLabel}"/>
+                                        <TextBox Text="{Binding PublicNote, UpdateSourceTrigger=PropertyChanged}"
+                                                 TextWrapping="Wrap" AcceptsReturn="True" VerticalContentAlignment="Top" Height="76"/>
+                                    </StackPanel>
+
+                                    <StackPanel Grid.Column="2">
+                                        <UniformGrid Columns="2">
+                                            <StackPanel Margin="0,0,8,8">
+                                                <TextBlock Text="Wait min" Style="{StaticResource FieldLabel}"/>
+                                                <TextBox Text="{Binding StableWaitMin}"/>
+                                            </StackPanel>
+                                            <StackPanel Margin="0,0,0,8">
+                                                <TextBlock Text="Wait max" Style="{StaticResource FieldLabel}"/>
+                                                <TextBox Text="{Binding StableWaitMax}"/>
+                                            </StackPanel>
+                                            <StackPanel Margin="0,0,8,8">
+                                                <TextBlock Text="Capacity" Style="{StaticResource FieldLabel}"/>
+                                                <TextBox Text="{Binding CapacityCount}"/>
+                                            </StackPanel>
+                                            <StackPanel Margin="0,0,0,8">
+                                                <TextBlock Text="Expires (min)" Style="{StaticResource FieldLabel}"/>
+                                                <TextBox Text="{Binding TtlMinutes}"/>
+                                            </StackPanel>
+                                        </UniformGrid>
+                                        <CheckBox Content="Accepting critical patients" IsChecked="{Binding AcceptsCritical}"/>
+                                        <Button Content="Publish live status" Command="{Binding PublishCommand}"
+                                                Style="{StaticResource PrimaryButton}" Margin="0,12,0,0"/>
+                                    </StackPanel>
+                                </Grid>
+                            </StackPanel>
+                        </Border>
+
+                        <Grid Grid.Column="2">
+                            <Grid.RowDefinitions>
+                                <RowDefinition/>
+                                <RowDefinition/>
+                            </Grid.RowDefinitions>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition/>
+                                <ColumnDefinition/>
+                            </Grid.ColumnDefinitions>
+
+                            <Border Grid.Row="0" Grid.Column="0" Style="{StaticResource Card}" Margin="0,0,10,10">
+                                <StackPanel>
+                                    <TextBlock Text="WAITING" Style="{StaticResource Eyebrow}"/>
+                                    <TextBlock Text="{Binding Pending}" Style="{StaticResource MetricValue}"/>
+                                </StackPanel>
+                            </Border>
+                            <Border Grid.Row="0" Grid.Column="1" Style="{StaticResource Card}" Margin="0,0,0,10">
+                                <StackPanel>
+                                    <TextBlock Text="ACTIVE ARRIVALS" Style="{StaticResource Eyebrow}"/>
+                                    <TextBlock Text="{Binding ActiveArrivals}" Style="{StaticResource MetricValue}"/>
+                                </StackPanel>
+                            </Border>
+                            <Border Grid.Row="1" Grid.Column="0" Style="{StaticResource Card}" Margin="0,0,10,0">
+                                <StackPanel>
+                                    <TextBlock Text="COMPLETED TODAY" Style="{StaticResource Eyebrow}"/>
+                                    <TextBlock Text="{Binding CompletedToday}" Style="{StaticResource MetricValue}"/>
+                                </StackPanel>
+                            </Border>
+                            <Border Grid.Row="1" Grid.Column="1" Style="{StaticResource Card}">
+                                <StackPanel>
+                                    <TextBlock Text="DECLINED TODAY" Style="{StaticResource Eyebrow}"/>
+                                    <TextBlock Text="{Binding DeclinedToday}" Style="{StaticResource MetricValue}"/>
+                                </StackPanel>
+                            </Border>
+                        </Grid>
                     </Grid>
+
+                    <!-- ========== Review queue + decision workspace ========== -->
+                    <Grid Grid.Row="1" Margin="0,20,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="1.05*" MinWidth="350"/>
+                            <ColumnDefinition Width="18"/>
+                            <ColumnDefinition Width="1.35*" MinWidth="380"/>
+                        </Grid.ColumnDefinitions>
+
+                        <Border Grid.Column="0" Style="{StaticResource Card}" Padding="0">
+                            <DockPanel LastChildFill="True">
+                                <Grid DockPanel.Dock="Top" Margin="18,16,18,8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0">
+                                        <TextBlock Text="REVIEW QUEUE" Style="{StaticResource Eyebrow}"/>
+                                        <TextBlock Text="Requests awaiting a decision" Style="{StaticResource SectionHeading}"/>
+                                    </StackPanel>
+                                    <Border Grid.Column="1" Background="{StaticResource Coral}" CornerRadius="12"
+                                            Padding="10,4" VerticalAlignment="Center">
+                                        <TextBlock Text="{Binding Pending}" Foreground="White" FontWeight="Bold"/>
+                                    </Border>
+                                </Grid>
+
+                                <TextBlock DockPanel.Dock="Top" Margin="18,0,18,8" Style="{StaticResource Hint}"
+                                           Text="Answer here for the ordinary case. Open the workspace on the right to shape an offer — a later time, a different arrival window, a note."/>
+
+                                <ListBox MinHeight="300" MaxHeight="540"
+                                         ItemsSource="{Binding Requests}" SelectedItem="{Binding SelectedRequest}">
+                                    <ListBox.ItemTemplate>
+                                        <DataTemplate>
+                                            <Border BorderBrush="{StaticResource CardBorderAlt}" BorderThickness="0,1,0,0" Padding="14,12">
+                                                <StackPanel>
+                                                    <Grid>
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="46"/>
+                                                            <ColumnDefinition Width="*" MinWidth="120"/>
+                                                            <ColumnDefinition Width="Auto"/>
+                                                        </Grid.ColumnDefinitions>
+
+                                                        <Border Grid.Column="0" Width="38" Height="38" VerticalAlignment="Top"
+                                                                Background="{StaticResource Blue}" CornerRadius="12">
+                                                            <TextBlock Text="{Binding Pet.Name, Mode=OneWay, Converter={StaticResource Initials}}"
+                                                                       Foreground="White" FontWeight="Bold" FontSize="13"
+                                                                       HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                                        </Border>
+
+                                                        <StackPanel Grid.Column="1" Margin="10,0">
+                                                            <TextBlock Text="{Binding PetLine}" FontWeight="Bold" TextWrapping="Wrap"/>
+                                                            <TextBlock Text="{Binding ConcernSummary}" TextWrapping="Wrap" MaxHeight="38"
+                                                                       Foreground="{StaticResource Muted}" FontSize="11" Margin="0,3,0,0"/>
+                                                            <TextBlock Text="{Binding RequestType}" Foreground="{StaticResource Coral}"
+                                                                       FontSize="9" FontWeight="Bold" Margin="0,5,0,0"/>
+                                                        </StackPanel>
+
+                                                        <StackPanel Grid.Column="2" HorizontalAlignment="Right">
+                                                            <TextBlock Text="{Binding RequestedLabel}" FontSize="10" HorizontalAlignment="Right"/>
+                                                            <TextBlock Text="{Binding TravelLabel}" FontSize="10" HorizontalAlignment="Right"
+                                                                       Foreground="{StaticResource Muted}" Margin="0,4,0,0"/>
+                                                            <TextBlock Text="{Binding Status}" FontSize="10" FontWeight="Bold" HorizontalAlignment="Right"
+                                                                       Foreground="{StaticResource Blue}" Margin="0,5,0,0"/>
+                                                        </StackPanel>
+                                                    </Grid>
+
+                                                    <!--
+                                                        Allergies and medications the owner typed into a phone. Shown so the
+                                                        desk is not hearing it for the first time when the animal walks in,
+                                                        and labelled so nobody treats it as a record.
+                                                    -->
+                                                    <Border Style="{StaticResource OwnerSuppliedCallout}" Margin="48,10,0,0"
+                                                            Visibility="{Binding HasOwnerSuppliedMedical, Converter={StaticResource B2V}}">
+                                                        <TextBlock Text="{Binding OwnerSuppliedMedicalLine}" TextWrapping="Wrap"
+                                                                   FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource Ink}"/>
+                                                    </Border>
+
+                                                    <!--
+                                                        The answer, on the request. Every response used to have to travel
+                                                        through the decision workspace — select the row, read four number
+                                                        fields, press a button — for what is almost always "yes, usual
+                                                        window" or "no, we're full".
+                                                    -->
+                                                    <StackPanel Orientation="Horizontal" Margin="48,10,0,0"
+                                                                Visibility="{Binding Status, Converter={StaticResource PendingVisibility}}">
+                                                        <Button Content="Yes, we can see them"
+                                                                Style="{StaticResource AnswerYesButton}"
+                                                                Command="{Binding DataContext.AcceptRequestCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                                CommandParameter="{Binding}"/>
+                                                        <Button Content="No" Margin="8,0,0,0" MinWidth="70"
+                                                                Style="{StaticResource AnswerNoButton}"
+                                                                Command="{Binding DataContext.DeclineRequestCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                                CommandParameter="{Binding}"/>
+                                                    </StackPanel>
+                                                </StackPanel>
+                                            </Border>
+                                        </DataTemplate>
+                                    </ListBox.ItemTemplate>
+                                </ListBox>
+                            </DockPanel>
+                        </Border>
+
+                        <Border Grid.Column="2" Style="{StaticResource Card}">
+                            <StackPanel>
+                                <TextBlock Text="DECISION WORKSPACE" Style="{StaticResource Eyebrow}"/>
+
+                                <TextBlock Text="Select a request" Style="{StaticResource DisplayHeading}"
+                                           Foreground="{StaticResource Muted}" Margin="0,5,0,0"
+                                           Visibility="{Binding SelectedRequest, Converter={StaticResource NullVisibility}}"/>
+
+                                <StackPanel Visibility="{Binding SelectedRequest, Converter={StaticResource NotNullVisibility}}">
+                                    <TextBlock Text="{Binding SelectedRequest.PetLine}" Style="{StaticResource DisplayHeading}" Margin="0,5,0,5"/>
+                                    <TextBlock Text="{Binding SelectedRequest.ConcernSummary}" TextWrapping="Wrap" FontSize="15"/>
+
+                                    <Border Style="{StaticResource OwnerSuppliedCallout}" Margin="0,12,0,0"
+                                            Visibility="{Binding SelectedRequest.HasOwnerSuppliedMedical, Converter={StaticResource B2V}}">
+                                        <StackPanel>
+                                            <TextBlock Text="REPORTED BY OWNER, UNVERIFIED" FontSize="10" FontWeight="Bold"
+                                                       Foreground="{StaticResource CoralDark}"/>
+                                            <TextBlock Text="{Binding SelectedRequest.OwnerSuppliedMedicalLine}" TextWrapping="Wrap"
+                                                       FontSize="13" FontWeight="SemiBold" Margin="0,4,0,0"/>
+                                        </StackPanel>
+                                    </Border>
+
+                                    <UniformGrid Columns="3" Margin="0,16,0,16">
+                                        <StackPanel>
+                                            <TextBlock Text="OWNER" FontSize="9" FontWeight="Bold" Foreground="{StaticResource Muted}"/>
+                                            <TextBlock Text="{Binding SelectedRequest.Owner.Name}" FontWeight="SemiBold" TextWrapping="Wrap"/>
+                                        </StackPanel>
+                                        <StackPanel>
+                                            <TextBlock Text="PHONE" FontSize="9" FontWeight="Bold" Foreground="{StaticResource Muted}"/>
+                                            <TextBlock Text="{Binding SelectedRequest.Owner.Phone}" FontWeight="SemiBold" TextWrapping="Wrap"/>
+                                        </StackPanel>
+                                        <StackPanel>
+                                            <TextBlock Text="TRAVEL" FontSize="9" FontWeight="Bold" Foreground="{StaticResource Muted}"/>
+                                            <TextBlock Text="{Binding SelectedRequest.TravelLabel}" FontWeight="SemiBold" TextWrapping="Wrap"/>
+                                        </StackPanel>
+                                    </UniformGrid>
+
+                                    <Border Height="1" Background="{StaticResource CardBorder}"/>
+
+                                    <TextBlock Text="Availability response" Style="{StaticResource SectionHeading}" FontSize="17" Margin="0,16,0,10"/>
+
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" MinWidth="170"/>
+                                            <ColumnDefinition Width="14"/>
+                                            <ColumnDefinition Width="*" MinWidth="170"/>
+                                        </Grid.ColumnDefinitions>
+
+                                        <StackPanel Grid.Column="0">
+                                            <TextBlock Text="Response type" Style="{StaticResource FieldLabel}"/>
+                                            <ComboBox ItemsSource="{Binding ResponseTypes}" SelectedItem="{Binding ResponseType}" Margin="0,0,0,10"/>
+                                            <TextBlock Text="Available date" Style="{StaticResource FieldLabel}"/>
+                                            <DatePicker SelectedDate="{Binding AvailableAt}" Margin="0,0,0,10"/>
+                                            <TextBlock Text="Available time" Style="{StaticResource FieldLabel}"/>
+                                            <TextBox Text="{Binding AvailableTimeText, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,10"/>
+                                            <TextBlock Text="Message to pet owner" Style="{StaticResource FieldLabel}"/>
+                                            <TextBox Text="{Binding ClinicNote, UpdateSourceTrigger=PropertyChanged}"
+                                                     AcceptsReturn="True" TextWrapping="Wrap" VerticalContentAlignment="Top" Height="86"/>
+                                        </StackPanel>
+
+                                        <StackPanel Grid.Column="2">
+                                            <UniformGrid Columns="2">
+                                                <StackPanel Margin="0,0,8,8">
+                                                    <TextBlock Text="Arrival window" Style="{StaticResource FieldLabel}"/>
+                                                    <TextBox Text="{Binding ArrivalWindowMinutes}"/>
+                                                </StackPanel>
+                                                <StackPanel Margin="0,0,0,8">
+                                                    <TextBlock Text="Offer hold" Style="{StaticResource FieldLabel}"/>
+                                                    <TextBox Text="{Binding HoldMinutes}"/>
+                                                </StackPanel>
+                                                <StackPanel Margin="0,0,8,8">
+                                                    <TextBlock Text="Wait min" Style="{StaticResource FieldLabel}"/>
+                                                    <TextBox Text="{Binding OfferWaitMin}"/>
+                                                </StackPanel>
+                                                <StackPanel Margin="0,0,0,8">
+                                                    <TextBlock Text="Wait max" Style="{StaticResource FieldLabel}"/>
+                                                    <TextBox Text="{Binding OfferWaitMax}"/>
+                                                </StackPanel>
+                                            </UniformGrid>
+                                            <Border Background="{StaticResource OfferBannerBackground}" CornerRadius="10" Padding="12" Margin="0,8,0,0">
+                                                <TextBlock TextWrapping="Wrap" FontSize="11"
+                                                           Text="An offer does not book the patient. The owner may compare up to five responses. Unselected offers are released automatically."/>
+                                            </Border>
+                                        </StackPanel>
+                                    </Grid>
+
+                                    <Grid Margin="0,18,0,0">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition/>
+                                            <ColumnDefinition Width="12"/>
+                                            <ColumnDefinition/>
+                                        </Grid.ColumnDefinitions>
+                                        <Button Grid.Column="0" Content="Decline request" Command="{Binding DeclineCommand}" Style="{StaticResource QuietButton}"/>
+                                        <Button Grid.Column="2" Content="Send availability offer" Command="{Binding OfferCommand}" Style="{StaticResource CoralButton}"/>
+                                    </Grid>
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
+                    </Grid>
+
+                    <!-- ========== Settings ========== -->
+                    <Expander Grid.Row="2" Header="Connection, calling, alerts, and startup settings" Margin="0,20,0,0">
+                        <Border Style="{StaticResource Card}" Margin="0,10,0,0">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" MinWidth="220"/>
+                                    <ColumnDefinition Width="16"/>
+                                    <ColumnDefinition Width="*" MinWidth="250"/>
+                                    <ColumnDefinition Width="16"/>
+                                    <ColumnDefinition Width="*" MinWidth="230"/>
+                                </Grid.ColumnDefinitions>
+
+                                <!-- Connection -->
+                                <StackPanel Grid.Column="0">
+                                    <TextBlock Text="CONNECTION" Style="{StaticResource Eyebrow}" Margin="0,0,0,10"/>
+                                    <TextBlock Text="Cloudflare Worker HTTPS URL" Style="{StaticResource FieldLabel}"/>
+                                    <TextBox Text="{Binding Settings.ApiBaseUrl, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,4"/>
+                                    <TextBlock Style="{StaticResource Hint}"
+                                               Text="Filled in with Tími NOW's production address. Change it only if your practice was given a different one."/>
+                                    <TextBlock Text="Tenant ID (loopback development only)" Style="{StaticResource FieldLabel}" Margin="0,12,0,5"/>
+                                    <TextBox Text="{Binding Settings.TenantId, UpdateSourceTrigger=PropertyChanged}"/>
+                                    <Border Style="{StaticResource NoticePanel}" Margin="0,12,0,0">
+                                        <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="{StaticResource Muted}"
+                                                   Text="Sign-in is handled by the Tími sign-in window shown at launch. There is no token field here — credentials are encrypted with Windows DPAPI and never written to this settings file."/>
+                                    </Border>
+                                    <TextBlock Text="Polling interval, seconds" Style="{StaticResource FieldLabel}" Margin="0,12,0,5"/>
+                                    <TextBox Text="{Binding Settings.PollSeconds}"/>
+                                    <TextBlock Style="{StaticResource Hint}"
+                                               Text="Between 3 and 60. When the Worker cannot be reached the console backs off on its own and reconnects as soon as Windows says the network is back."/>
+                                    <Button Content="Save settings and reconnect" Command="{Binding SaveSettingsCommand}"
+                                            Style="{StaticResource PrimaryButton}" Margin="0,14,0,0"/>
+                                </StackPanel>
+
+                                <!-- Calling preferences -->
+                                <StackPanel Grid.Column="2">
+                                    <TextBlock Text="PHONE CALLS FROM TÍMI" Style="{StaticResource Eyebrow}" Margin="0,0,0,10"/>
+                                    <CheckBox Content="Call this clinic about new requests" IsChecked="{Binding CallsEnabled}"
+                                              IsEnabled="{Binding IsAdmin}"/>
+                                    <TextBlock Style="{StaticResource Hint}"
+                                               Text="When this is off, requests still arrive in this console and on the floating panel — Tími simply does not ring the phone. Some practices want the call; a single-handed front desk usually does not."/>
+
+                                    <TextBlock Text="Number to call" Style="{StaticResource FieldLabel}" Margin="0,12,0,5"/>
+                                    <TextBox Text="{Binding VoicePhone, UpdateSourceTrigger=PropertyChanged}" IsEnabled="{Binding IsAdmin}"/>
+                                    <TextBlock Style="{StaticResource Hint}"
+                                               Text="Leave blank to use the clinic's listed number. A back line that is not the public one is usually the right answer."/>
+                                    <TextBlock Style="{StaticResource Hint}" Margin="0,2,0,0" FontWeight="SemiBold"
+                                               Text="{Binding ListedPhoneHint}"
+                                               Visibility="{Binding ListedPhoneHint, Converter={StaticResource TextVisibility}}"/>
+
+                                    <Grid Margin="0,12,0,0">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition/>
+                                            <ColumnDefinition Width="10"/>
+                                            <ColumnDefinition/>
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel Grid.Column="0">
+                                            <TextBlock Text="Quiet from" Style="{StaticResource FieldLabel}"/>
+                                            <TextBox Text="{Binding QuietStart, UpdateSourceTrigger=PropertyChanged}" IsEnabled="{Binding IsAdmin}"/>
+                                        </StackPanel>
+                                        <StackPanel Grid.Column="2">
+                                            <TextBlock Text="Quiet until" Style="{StaticResource FieldLabel}"/>
+                                            <TextBox Text="{Binding QuietEnd, UpdateSourceTrigger=PropertyChanged}" IsEnabled="{Binding IsAdmin}"/>
+                                        </StackPanel>
+                                    </Grid>
+                                    <TextBlock Style="{StaticResource Hint}"
+                                               Text="24-hour times, for example 22:00 and 07:00. Fill in both or neither. Requests raised during quiet hours still appear in the console."/>
+
+                                    <Button Content="Save calling preferences" Command="{Binding SaveCallPreferencesCommand}"
+                                            Style="{StaticResource PrimaryButton}" Margin="0,14,0,0"/>
+                                    <TextBlock Style="{StaticResource Hint}" Visibility="{Binding IsAdmin, Converter={StaticResource InverseB2V}}"
+                                               Text="Only a workspace administrator can change these. Ask whoever set this clinic up on Tími."/>
+                                    <TextBlock Style="{StaticResource Hint}" Foreground="{StaticResource CoralDark}"
+                                               Visibility="{Binding CallPreferencesLoaded, Converter={StaticResource InverseB2V}}"
+                                               Text="Current calling preferences could not be read from the Worker. Saving will still write them."/>
+                                </StackPanel>
+
+                                <!-- Alerts and startup -->
+                                <StackPanel Grid.Column="4">
+                                    <TextBlock Text="ALERTS AND STARTUP" Style="{StaticResource Eyebrow}" Margin="0,0,0,10"/>
+                                    <CheckBox Content="Desktop intake alerts" IsChecked="{Binding Settings.AlertsEnabled}"/>
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <CheckBox Grid.Column="0" Content="Play alert sound" IsChecked="{Binding Settings.PlaySound}"/>
+                                        <Button Grid.Column="1" Content="Test" Command="{Binding TestAlertCommand}"
+                                                Style="{StaticResource QuietButton}" MinHeight="28" Padding="14,3" FontSize="12"/>
+                                    </Grid>
+                                    <TextBlock Style="{StaticResource Hint}"
+                                               Text="The alert plays real audio through this app's own output, not the Windows event beep — that follows the separate System sounds channel and is silent under the &quot;No Sounds&quot; scheme most managed machines ship with. Press Test to hear it now."/>
+                                    <CheckBox Content="Floating console stays on top" IsChecked="{Binding Settings.MiniWindowTopmost}" Margin="0,10,0,4"/>
+                                    <CheckBox Content="Open the floating console automatically on a new request" IsChecked="{Binding Settings.AutoShowMiniOnNewRequest}"/>
+                                    <CheckBox Content="Start Tími Vet with Windows" IsChecked="{Binding Settings.StartWithWindows}"/>
+                                    <Border Style="{StaticResource NoticePanel}" Margin="0,12,0,0">
+                                        <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="{StaticResource Muted}"
+                                                   Text="Alert and floating-console settings apply as you change them. Press Save settings and reconnect to write them to disk."/>
+                                    </Border>
+                                </StackPanel>
+                            </Grid>
+                        </Border>
+                    </Expander>
                 </Grid>
-                <Grid Margin="0,22,0,0"><Grid.ColumnDefinitions><ColumnDefinition Width="1.05*"/><ColumnDefinition Width="18"/><ColumnDefinition Width="1.45*"/></Grid.ColumnDefinitions>
-                    <Border Style="{StaticResource Card}" Padding="0"><Grid><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="520"/></Grid.RowDefinitions><DockPanel Margin="18"><StackPanel><TextBlock Text="REVIEW QUEUE" Style="{StaticResource Eyebrow}"/><TextBlock Text="Requests awaiting a decision" FontSize="20" FontWeight="SemiBold"/></StackPanel><Border DockPanel.Dock="Right" Background="{StaticResource Coral}" CornerRadius="12" Padding="10,4" VerticalAlignment="Center"><TextBlock Text="{Binding Pending}" Foreground="White" FontWeight="Bold"/></Border></DockPanel><ListBox Grid.Row="1" ItemsSource="{Binding Requests}" SelectedItem="{Binding SelectedRequest}" BorderThickness="0" Background="Transparent" ScrollViewer.HorizontalScrollBarVisibility="Disabled"><ListBox.ItemTemplate><DataTemplate><Border BorderBrush="#E4E6EC" BorderThickness="0,1,0,0" Padding="16"><Grid><Grid.ColumnDefinitions><ColumnDefinition Width="46"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><Border Width="38" Height="38" Background="{StaticResource Blue}" CornerRadius="12"><TextBlock Text="{Binding Pet.Name, Mode=OneWay}" Foreground="White" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" MaxWidth="28"/></Border><StackPanel Grid.Column="1" Margin="10,0"><TextBlock Text="{Binding PetLine}" FontWeight="Bold"/><TextBlock Text="{Binding ConcernSummary}" TextWrapping="Wrap" MaxHeight="38" Foreground="{StaticResource Muted}" FontSize="11" Margin="0,3,0,0"/><TextBlock Text="{Binding RequestType}" Foreground="{StaticResource Coral}" FontSize="9" FontWeight="Bold" Margin="0,5,0,0"/></StackPanel><StackPanel Grid.Column="2" HorizontalAlignment="Right"><TextBlock Text="{Binding RequestedLabel}" FontSize="10"/><TextBlock Text="{Binding TravelLabel}" FontSize="10" Foreground="{StaticResource Muted}" Margin="0,4,0,0"/><TextBlock Text="{Binding Status}" FontSize="10" FontWeight="Bold" Foreground="{StaticResource Blue}" Margin="0,5,0,0"/></StackPanel></Grid></Border></DataTemplate></ListBox.ItemTemplate></ListBox></Grid></Border>
-                    <Border Grid.Column="2" Style="{StaticResource Card}"><ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel><TextBlock Text="DECISION WORKSPACE" Style="{StaticResource Eyebrow}"/><TextBlock Text="{Binding SelectedRequest.PetLine, TargetNullValue='Select a request'}" FontFamily="Georgia" FontSize="27" FontWeight="Bold" Margin="0,5,0,5"/><TextBlock Text="{Binding SelectedRequest.ConcernSummary}" TextWrapping="Wrap" FontSize="15"/><TextBlock Text="{Binding SelectedRequest.OwnerSuppliedMedicalLine}" TextWrapping="Wrap" FontSize="13" FontWeight="SemiBold" Foreground="{StaticResource Coral}" Margin="0,10,0,0"/><UniformGrid Columns="3" Margin="0,16,0,18"><StackPanel><TextBlock Text="OWNER" FontSize="9" FontWeight="Bold" Foreground="{StaticResource Muted}"/><TextBlock Text="{Binding SelectedRequest.Owner.Name}" FontWeight="SemiBold"/></StackPanel><StackPanel><TextBlock Text="PHONE" FontSize="9" FontWeight="Bold" Foreground="{StaticResource Muted}"/><TextBlock Text="{Binding SelectedRequest.Owner.Phone}" FontWeight="SemiBold"/></StackPanel><StackPanel><TextBlock Text="TRAVEL" FontSize="9" FontWeight="Bold" Foreground="{StaticResource Muted}"/><TextBlock Text="{Binding SelectedRequest.TravelLabel}" FontWeight="SemiBold"/></StackPanel></UniformGrid><Separator/>
-                        <TextBlock Text="Availability response" FontSize="17" FontWeight="SemiBold" Margin="0,16,0,10"/><Grid><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="12"/><ColumnDefinition/></Grid.ColumnDefinitions><StackPanel><TextBlock Text="Response type"/><ComboBox ItemsSource="{Binding ResponseTypes}" SelectedItem="{Binding ResponseType}" Margin="0,5,0,10"/><TextBlock Text="Available date"/><DatePicker SelectedDate="{Binding AvailableAt}" Margin="0,5,0,8"/><TextBlock Text="Available time"/><TextBox Text="{Binding AvailableTimeText, UpdateSourceTrigger=PropertyChanged}" Margin="0,5,0,10"/><TextBlock Text="Message to pet owner"/><TextBox Text="{Binding ClinicNote, UpdateSourceTrigger=PropertyChanged}" AcceptsReturn="True" TextWrapping="Wrap" Height="82" Margin="0,5,0,0"/></StackPanel><StackPanel Grid.Column="2"><UniformGrid Columns="2"><StackPanel Margin="0,0,8,8"><TextBlock Text="Arrival window"/><TextBox Text="{Binding ArrivalWindowMinutes}"/></StackPanel><StackPanel Margin="0,0,0,8"><TextBlock Text="Offer hold"/><TextBox Text="{Binding HoldMinutes}"/></StackPanel><StackPanel Margin="0,0,8,8"><TextBlock Text="Wait min"/><TextBox Text="{Binding OfferWaitMin}"/></StackPanel><StackPanel Margin="0,0,0,8"><TextBlock Text="Wait max"/><TextBox Text="{Binding OfferWaitMax}"/></StackPanel></UniformGrid><Border Background="#FFF1ED" CornerRadius="10" Padding="12" Margin="0,8,0,0"><TextBlock Text="An offer does not book the patient. The owner may compare up to five responses. Unselected offers are released automatically." TextWrapping="Wrap" FontSize="11"/></Border></StackPanel></Grid>
-                        <Grid Margin="0,18,0,0"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="12"/><ColumnDefinition/></Grid.ColumnDefinitions><Button Content="Decline request" Command="{Binding DeclineCommand}" Style="{StaticResource QuietButton}"/><Button Grid.Column="2" Content="Send availability offer" Command="{Binding OfferCommand}" Style="{StaticResource CoralButton}"/></Grid>
-                    </StackPanel></ScrollViewer></Border>
+            </ScrollViewer>
+
+            <!-- Footer -->
+            <Border Grid.Row="2" Background="{StaticResource Paper}"
+                    BorderBrush="{StaticResource CardBorder}" BorderThickness="0,1,0,0" Padding="22,10">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Grid.Column="0" Text="Independent clinical triage controls all treatment priority."
+                               Foreground="{StaticResource Muted}" FontSize="10" TextTrimming="CharacterEllipsis"/>
+                    <TextBlock Grid.Column="1" Text="Tími NOW · ClearKey Solutions, LLC"
+                               Foreground="{StaticResource Muted}" FontSize="10"/>
                 </Grid>
-                <Expander Header="Connection, alerts, and startup settings" Margin="0,22,0,0"><Border Style="{StaticResource Card}" Margin="0,10,0,0"><Grid><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="14"/><ColumnDefinition/></Grid.ColumnDefinitions><StackPanel><TextBlock Text="Cloudflare Worker HTTPS URL" FontWeight="SemiBold"/><TextBox Text="{Binding Settings.ApiBaseUrl, UpdateSourceTrigger=PropertyChanged}" Margin="0,5,0,10"/><TextBlock Text="Tenant ID (loopback development only)" FontWeight="SemiBold"/><TextBox Text="{Binding Settings.TenantId, UpdateSourceTrigger=PropertyChanged}" Margin="0,5,0,10"/><Border Background="#EEF1F8" CornerRadius="10" Padding="12"><TextBlock TextWrapping="Wrap" FontSize="11" Foreground="{StaticResource Muted}" Text="Sign-in is handled by the Tími sign-in window shown at launch. There is no token field here — credentials are never stored in this settings file."/></Border></StackPanel><StackPanel Grid.Column="2"><TextBlock Text="Polling interval, seconds" FontWeight="SemiBold"/><TextBox Text="{Binding Settings.PollSeconds}" Margin="0,5,0,10"/><CheckBox Content="Desktop intake alerts" IsChecked="{Binding Settings.AlertsEnabled}" Margin="0,5"/><CheckBox Content="Play alert sound" IsChecked="{Binding Settings.PlaySound}" Margin="0,5"/><CheckBox Content="Floating console stays on top" IsChecked="{Binding Settings.MiniWindowTopmost}" Margin="0,5"/><CheckBox Content="Auto-show floating console on new requests" IsChecked="{Binding Settings.AutoShowMiniOnNewRequest}" Margin="0,5"/><CheckBox Content="Start Tími Vet with Windows" IsChecked="{Binding Settings.StartWithWindows}" Margin="0,5"/><Button Content="Save settings and reconnect" Command="{Binding SaveSettingsCommand}" Style="{StaticResource PrimaryButton}" Margin="0,14,0,0"/></StackPanel></Grid></Border></Expander>
-            </StackPanel></ScrollViewer>
-            <Border Grid.Row="2" Background="White" BorderBrush="#E0E3EA" BorderThickness="0,1,0,0" Padding="22,10"><DockPanel><TextBlock Text="Independent clinical triage controls all treatment priority." Foreground="{StaticResource Muted}" FontSize="10"/><TextBlock DockPanel.Dock="Right" Text="Tími NOW · ClearKey Solutions, LLC" Foreground="{StaticResource Muted}" FontSize="10" HorizontalAlignment="Right"/></DockPanel></Border>
+            </Border>
         </Grid>
     </Grid>
 </Window>
