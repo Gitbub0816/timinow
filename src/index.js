@@ -13,6 +13,7 @@ import { DEMO_LOCATIONS, LEGAL_VERSION, RED_FLAG_TERMS, TECHNICIAN_NOTICE, VALID
 import {
   clinicEarnings,
   ensureDepositPaymentIntent,
+  getStripeAccountForTenant,
   handleStripeEvent,
   outcomeForIntake,
   settleIntake
@@ -1270,7 +1271,6 @@ async function refreshPayment(env, actor, intakeId) {
  */
 export async function clinicPayouts(env, tenantId) {
   if (!hasDatabase(env)) return json({ earnings: { transferredCents: 0, paidOutCents: 0, awaitingPayoutCents: 0, currency: "usd", transfers: [], payouts: [] }, connect: null });
-  const { getStripeAccountForTenant } = await import("./payments.js");
   const [earnings, account] = await Promise.all([
     clinicEarnings(env, tenantId),
     getStripeAccountForTenant(env, tenantId)

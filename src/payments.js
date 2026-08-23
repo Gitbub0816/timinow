@@ -31,7 +31,7 @@
  * Amounts are integer cents everywhere. There is no float in this file.
  */
 
-import { hasDatabase } from "./db.js";
+import { getIntake, hasDatabase } from "./db.js";
 import {
   accountCapabilities,
   createPaymentIntent,
@@ -465,7 +465,7 @@ export async function ensureDepositPaymentIntent(env, intake) {
     const providerId = newId("demo_payment");
     await env.DB.prepare("UPDATE intake_requests SET payment_status = 'paid', payment_provider_id = ?, transfer_group = ?, updated_at = ? WHERE id = ?")
       .bind(providerId, transferGroup, nowIso(), intake.id).run();
-    return { mode: "demo", intake: await reloadIntake(env, intake.id) };
+    return { mode: "demo", intake: await getIntake(env, intake.id) };
   }
 
   const payment = await createPaymentIntent(env, {
@@ -514,13 +514,8 @@ export async function ensureDepositPaymentIntent(env, intake) {
     mode: "stripe",
     clientSecret: payment.client_secret,
     paymentIntentId: payment.id,
-    intake: await reloadIntake(env, intake.id)
+    intake: await getIntake(env, intake.id)
   };
-}
-
-async function reloadIntake(env, intakeId) {
-  const { getIntake } = await import("./db.js");
-  return getIntake(env, intakeId);
 }
 
 /* ─────────────────────────────────────────────────────── settlement ───── */
@@ -782,7 +777,6 @@ export async function handleStripeEvent(env, event) {
 
 async function applyEvent(env, event) {
   const object = event.data?.object || {};
-  const { getIntake } = await import("./db.js");
 
   switch (event.type) {
     case "payment_intent.succeeded": {
