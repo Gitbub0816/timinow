@@ -62,6 +62,9 @@ public sealed class SignInViewModel : ObservableObject
         BackToIdentifierCommand = new RelayCommand(() => { ErrorText = ""; Step = SignInStep.Identifier; });
         SwitchAccountCommand = new AsyncCommand(SwitchAccountAsync, () => !IsBusy);
         RetryWorkspaceCheckCommand = new AsyncCommand(() => CheckSessionAsync(), () => !IsBusy);
+        // The address step is skipped whenever the default Worker answers, so this is the only way back to
+        // it — for a clinic on a private deployment, or for anyone testing against a loopback Worker.
+        ChangeWorkerAddressCommand = new RelayCommand(() => { ErrorText = ""; Step = SignInStep.WorkerUrl; });
 
         _resendTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
         _resendTimer.Tick += (_, _) =>
@@ -124,6 +127,47 @@ public sealed class SignInViewModel : ObservableObject
     public RelayCommand BackToIdentifierCommand { get; }
     public AsyncCommand SwitchAccountCommand { get; }
     public AsyncCommand RetryWorkspaceCheckCommand { get; }
+    public RelayCommand ChangeWorkerAddressCommand { get; }
+
+    /// <summary>
+    /// Reaches the configured Worker and resolves its Clerk instance before anybody types anything.
+    ///
+    /// The first thing this window used to do was demand a Cloudflare Worker URL — from a receptionist,
+    /// on a machine somebody else set up, before the product would do a single thing. There is a correct
+    /// answer for every clinic Tími runs, it is the same answer, and it is the default; the address step
+    /// now exists only for the deployments where it is not.
+    ///
+    /// When the default cannot be reached the address step still appears, but carrying the reason rather
+    /// than a blank field: which address was tried, and what came back.
+    /// </summary>
+    public async Task StartAsync()
+    {
+        // Only from the opening step. This runs off the window's Loaded event, which also fires when the
+        // shell has already steered this view model somewhere — a restored Clerk session with no clinic
+        // access lands on the "not a veterinary workspace" screen before the window is ever shown, and
+        // bootstrapping over the top of that would drop somebody back at the identifier field with no
+        // account of why they were sent there.
+        if (Step != SignInStep.WorkerUrl) return;
+        // A session restored from disk already knows its Clerk instance; asking the Worker again would
+        // only add a round trip in front of a field that is ready to type into.
+        if (_auth.FrontendApiBase is not null) { Step = SignInStep.Identifier; return; }
+
+        var address = Settings.ApiBaseUrl.Trim();
+        if (string.IsNullOrWhiteSpace(address)) return;
+        IsBusy = true;
+        try
+        {
+            var config = await _api.GetConfigAsync(CancellationToken.None);
+            _auth.UseFrontendApi(config, address);
+            Step = SignInStep.Identifier;
+        }
+        catch (Exception ex)
+        {
+            ErrorText = $"Could not reach {address} — {ex.Message}";
+            Step = SignInStep.WorkerUrl;
+        }
+        finally { IsBusy = false; }
+    }
 
     private async Task ContinueWorkerUrlAsync()
     {
@@ -131,7 +175,7 @@ public sealed class SignInViewModel : ObservableObject
         var url = Settings.ApiBaseUrl.Trim();
         if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) || (uri.Scheme != Uri.UriSchemeHttps && !uri.IsLoopback))
         {
-            ErrorText = "Enter the full HTTPS URL of your Tími Worker (for example https://timinow-vet.example.workers.dev).";
+            ErrorText = $"Enter the full HTTPS URL of your Tími Worker, or leave it as {TimiVetEnvironment.DefaultApiBaseUrl}.";
             return;
         }
         IsBusy = true;
@@ -139,7 +183,10 @@ public sealed class SignInViewModel : ObservableObject
         {
             _settingsStore.Save(Settings);
             _api.UpdateSettings(Settings);
-            await _auth.ResolveFrontendApiBaseAsync(url, CancellationToken.None);
+            // Through the gated client on purpose. /api/config is exempt from the sign-in requirement
+            // there, and routing it that way is what keeps the exemption honest instead of decorative.
+            var config = await _api.GetConfigAsync(CancellationToken.None);
+            _auth.UseFrontendApi(config, url);
             Step = SignInStep.Identifier;
         }
         catch (Exception ex) { ErrorText = ex.Message; }
@@ -351,7 +398,14 @@ public sealed class SignInViewModel : ObservableObject
         try
         {
             _session = await _api.GetSessionAsync(CancellationToken.None);
-            if (_session.Surfaces.Clinic) SignedIn?.Invoke(this, _session);
+            if (_session.Surfaces.Clinic)
+            {
+                // Recorded so a later launch that cannot reach Clerk may resume straight into the console
+                // instead of asking for a sign-in it has no network to complete. Only a credential that
+                // has passed this check ever gets that treatment.
+                _auth.RecordClinicSurfaceVerified();
+                SignedIn?.Invoke(this, _session);
+            }
             else Step = SignInStep.NotClinicWorkspace;
         }
         catch (Exception ex) { ErrorText = ex.Message; Step = SignInStep.NotClinicWorkspace; }

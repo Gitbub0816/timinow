@@ -88,6 +88,13 @@ public sealed class ClinicRequest
         }
     }
 
+    /// <summary>
+    /// Whether there is anything owner-supplied to show. The console binds a whole bordered callout to
+    /// this rather than to the string: an empty band the colour of a warning, sitting under every request
+    /// that has no allergies recorded, teaches the desk to stop looking at that part of the screen.
+    /// </summary>
+    [JsonIgnore] public bool HasOwnerSuppliedMedical => OwnerSuppliedMedicalLine.Length > 0;
+
     private static string Display(string value) => value.Replace('_', ' ').ToUpperInvariant();
 }
 
@@ -153,9 +160,38 @@ public sealed class ClinicDecision
     public string Note { get; set; } = "";
 }
 
+/// <summary>
+/// Fixed facts about the deployment this build talks to. Mirrors
+/// <c>TimiVetEnvironment.defaultAPIBaseURL</c> in apps/vet-desktop/Sources/TimiVetCore/ClinicModels.swift —
+/// the two consoles must point at the same Worker out of the box or a clinic running one on the front desk
+/// and the other in the back office sees two different queues.
+/// </summary>
+public static class TimiVetEnvironment
+{
+    /// <summary>
+    /// Where a fresh install talks to, with nothing typed in anywhere.
+    ///
+    /// This was "", and an empty address is not a neutral starting point: the console cannot reach
+    /// /api/config, so it never learns the Clerk publishable key, so there is no sign-in service to reach
+    /// and it says so — which sends whoever is holding the laptop to look at Clerk and at DNS rather than
+    /// at a blank field on the first screen. Making a receptionist type a Cloudflare Worker URL before the
+    /// product does anything at all was the single worst thing about this client.
+    ///
+    /// Settings still overrides it; this is only the starting point.
+    /// </summary>
+    public const string DefaultApiBaseUrl = "https://providers.timinow.pet";
+}
+
 public sealed class AppSettings
 {
-    public string ApiBaseUrl { get; set; } = "";
+    /// <summary>
+    /// A property initializer, unlike the Swift original's, genuinely applies to <c>new AppSettings()</c> —
+    /// C# has no separate memberwise initializer to assign over it. What does overwrite it is
+    /// <see cref="System.Text.Json.JsonSerializer"/>: a settings.json written by an older build carries
+    /// <c>"ApiBaseUrl": ""</c>, and deserializing that puts the blank back. SettingsStore.Load normalizes
+    /// it on the way in for exactly that reason — see the comment there.
+    /// </summary>
+    public string ApiBaseUrl { get; set; } = TimiVetEnvironment.DefaultApiBaseUrl;
     public string TenantId { get; set; } = "tenant_hearth";
     public int PollSeconds { get; set; } = 6;
     public bool AlertsEnabled { get; set; } = true;
@@ -254,4 +290,76 @@ public sealed class TenantInvitation
     public DateTimeOffset? CreatedAt { get; set; }
 
     [JsonIgnore] public string CreatedLabel => CreatedAt is null ? "" : CreatedAt.Value.LocalDateTime.ToString("MMM d, yyyy");
+}
+
+/// <summary>
+/// GET /api/config. Reachable without a session on purpose: it is where the Clerk publishable key comes
+/// from, which is the one thing the console must have before anybody can sign in.
+/// </summary>
+public sealed class AppConfig
+{
+    public string? AppName { get; set; }
+    public bool? SignInRequired { get; set; }
+    public string? ClerkPublishableKey { get; set; }
+
+    /// <summary>
+    /// Present only if the Worker ever starts returning the Clerk Frontend API host outright. Preferred
+    /// over decoding the publishable key when it is there, since a key we cannot decode is a dead end and
+    /// an explicit host is not.
+    /// </summary>
+    public string? ClerkFrontendApi { get; set; }
+    public bool? DemoMode { get; set; }
+    public string? Surface { get; set; }
+}
+
+/// <summary>
+/// Whether Tími may ring this clinic, and on what number — GET/PATCH /api/clinic/call-preferences.
+///
+/// A practice with one person at the desk and a phone that is already ringing has a real reason to say no
+/// to an automated call, and until these controls existed had no way to say it: every participating clinic
+/// ran on the default whether or not that was what it wanted.
+/// </summary>
+public sealed class CallPreferences
+{
+    /// <summary>Both the practice-level and site-level flags have to be on; the Worker reports the AND.</summary>
+    public bool CallsEnabled { get; set; } = true;
+    public bool TenantCallsEnabled { get; set; } = true;
+    public bool LocationCallsEnabled { get; set; } = true;
+
+    /// <summary>The number Tími dials. Null means the location's listed phone below.</summary>
+    public string? VoicePhone { get; set; }
+    public string? LocationPhone { get; set; }
+
+    /// <summary>Absent, or an object with both ends null, means no quiet hours — never half a window.</summary>
+    public QuietHours? QuietHours { get; set; }
+
+    [JsonIgnore]
+    public string DialledNumberLabel =>
+        !string.IsNullOrWhiteSpace(VoicePhone) ? VoicePhone!
+        : !string.IsNullOrWhiteSpace(LocationPhone) ? $"{LocationPhone} (clinic's listed number)"
+        : "No number on file";
+}
+
+public sealed class QuietHours
+{
+    public string? Start { get; set; }
+    public string? End { get; set; }
+}
+
+public sealed class CallPreferencesEnvelope
+{
+    public CallPreferences Preferences { get; set; } = new();
+}
+
+/// <summary>
+/// Body of PATCH /api/clinic/call-preferences. Every property is nullable and omitted when null so that
+/// two administrators editing different settings do not overwrite each other's work — and, more sharply,
+/// because the Worker reads an explicitly-sent <c>null</c> as a value rather than as an absence:
+/// <c>callsEnabled: null</c> is stored as "off", not as "leave it alone".
+/// </summary>
+public sealed class CallPreferencesUpdate
+{
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public bool? CallsEnabled { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public string? VoicePhone { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public QuietHours? QuietHours { get; set; }
 }
