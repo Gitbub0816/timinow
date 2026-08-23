@@ -52,15 +52,50 @@ struct OfferSearchView: View {
             Text("Asking nearby clinics now.").font(.system(size: 40, weight: .bold, design: .serif)).multilineTextAlignment(.center)
             Text("You can choose as soon as an offer arrives. Tími stops after five responses or when the collection window closes.").font(.title3).foregroundStyle(TimiColor.muted).multilineTextAlignment(.center)
             HStack { MetricChip(title: "Contacted", value: "\(store.currentSearch?.progress?.contacted ?? 0)"); MetricChip(title: "Awaiting", value: "\(store.currentSearch?.progress?.awaiting ?? 0)", color: TimiColor.goldSoft) }
-            SafetyBanner(compact: true)
+            SafetyBanner(compact: true, store: store)
         }.padding(.top, 18)
+    }
+
+    /// True while the Worker is still collecting answers, as distinct from
+    /// having finished with however many it got.
+    var stillCollecting: Bool { store.currentSearch?.status == "collecting" }
+    var awaitingCount: Int { max(0, store.currentSearch?.progress?.awaiting ?? 0) }
+
+    var headline: String {
+        if stillCollecting { return "\(store.draft.pet.name) has an answer." }
+        return offers.count == 1 ? "\(store.draft.pet.name) has one option." : "\(store.draft.pet.name) has options."
     }
 
     var offersView: some View {
         VStack(alignment: .leading, spacing: 17) {
             Eyebrow(text: "\(offers.count) OF \(store.currentSearch?.maxOffers ?? 5) OFFERS", color: TimiColor.blue)
-            Text("\(store.draft.pet.name) has options.").font(.system(size: 40, weight: .bold, design: .serif))
+            Text(headline).font(.system(size: 40, weight: .bold, design: .serif))
             Text("Compare the clinics below. Nothing is confirmed until you choose.").foregroundStyle(TimiColor.muted)
+            // Offers appear the moment a clinic says yes, so the first one is
+            // choosable while the rest are still being asked. Without saying
+            // so, one offer on screen looks like the final answer — and
+            // waiting for a second that may never come is exactly the delay
+            // this app exists to remove.
+            if stillCollecting {
+                HStack(spacing: 10) {
+                    ProgressView().tint(TimiColor.blue)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Still asking \(awaitingCount) more clinic\(awaitingCount == 1 ? "" : "s")")
+                            .font(.callout).fontWeight(.black)
+                        Text("You can take one of these now — the rest are released the moment you do.")
+                            .font(.caption).foregroundStyle(TimiColor.muted)
+                    }
+                    Spacer()
+                }
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(TimiColor.blueSoft, in: RoundedRectangle(cornerRadius: 15))
+            } else {
+                Text(offers.count == 1
+                    ? "One clinic answered. That is the whole answer for now — the rest declined or did not respond in time."
+                    : "\(offers.count) clinics answered. Asking has finished.")
+                    .font(.caption).fontWeight(.semibold).foregroundStyle(TimiColor.muted)
+            }
             ClinicMapView(
                 clinics: offers.compactMap(\.location),
                 selectedClinicId: nil,
@@ -91,6 +126,7 @@ struct OfferCard: View {
                 Text("\(rank)").font(.system(size: 21, weight: .black, design: .serif)).frame(width: 44, height: 44).background(rank == 1 ? TimiColor.gold : TimiColor.blueSoft, in: Circle()).overlay(Circle().stroke(TimiColor.ink, lineWidth: 2))
                 VStack(alignment: .leading, spacing: 4) { Eyebrow(text: isEmergency ? "EMERGENCY INTAKE OPEN" : "AVAILABLE NOW", color: isEmergency ? TimiColor.coral : TimiColor.blue); Text(clinic.name).font(.title3).fontWeight(.black); Text(clinic.address ?? "Address shown on confirmation").font(.caption).foregroundStyle(TimiColor.muted) }
             }
+            StaffingNotice(notice: clinic.staffingNotice)
             HStack(spacing: 8) { MetricChip(title: "Travel", value: clinic.distanceMiles.map { String(format: "%.1f mi", $0) } ?? "—"); MetricChip(title: "Reported wait", value: TimiFormat.wait(offer.waitMin, offer.waitMax), color: TimiColor.goldSoft) }
             HStack(spacing: 8) { MetricChip(title: "Deposit", value: TimiFormat.money(offer.depositAmountCents)); MetricChip(title: "Exam fee", value: (offer.baseExamFeeCents ?? 0) > 0 ? "From \(TimiFormat.money(offer.baseExamFeeCents))" : "Not supplied", color: TimiColor.coralSoft) }
             if details { VStack(alignment: .leading, spacing: 8) { Label(offer.clinicNote ?? "The clinic reports capacity for this arrival window.", systemImage: "quote.bubble.fill"); Label("Held temporarily while you compare", systemImage: "timer"); if isEmergency { Label("Examination priority is determined by clinical triage", systemImage: "cross.case.fill") } }.font(.caption).foregroundStyle(TimiColor.muted).transition(.opacity.combined(with: .move(edge: .top))) }
@@ -167,6 +203,7 @@ struct TrackerView: View {
     var clinicCard: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack { Image(systemName: "building.2.fill").font(.title).foregroundStyle(.white).frame(width: 54, height: 54).background(TimiColor.blue, in: RoundedRectangle(cornerRadius: 16)); VStack(alignment: .leading) { Text(clinic?.name ?? "Veterinary clinic").font(.title3).fontWeight(.black); Text(clinic?.address ?? "Address unavailable").font(.caption).foregroundStyle(TimiColor.muted) } }
+            StaffingNotice(notice: clinic?.staffingNotice)
             Divider(); Text(intake?.clinicNote ?? "The clinic is expecting your arrival. Capacity and clinical priority can still change.").font(.callout)
             HStack { if let phone = clinic?.phone, let url = URL(string: "tel:\(phone.filter { $0.isNumber || $0 == "+" })") { Link(destination: url) { Label("Call", systemImage: "phone.fill") } }; Spacer(); Button { showNavigation = true } label: { Label("Navigate", systemImage: "arrow.triangle.turn.up.right.diamond.fill") }.disabled(navigationDestination == nil) }.fontWeight(.bold).foregroundStyle(TimiColor.blue)
         }.timiCard(Color.white)

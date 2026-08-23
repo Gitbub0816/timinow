@@ -40,6 +40,8 @@ const requiredFiles = [
   "src/voice.js",
   "apps/voice-gateway/src/index.js",
   "migrations/0005_voice_calls.sql",
+  "migrations/0006_care_context.sql",
+  "migrations/0007_client_errors.sql",
   "scripts/voice-test.mjs",
   ".env.example",
   "docs/PRODUCTION-SETUP.md",

@@ -5,6 +5,7 @@
  * others. Nothing secret belongs in here: this response is readable by anyone.
  */
 
+import { LEGAL_VERSION } from "./catalog.js";
 import { hasDatabase } from "./db.js";
 import { signInRequired } from "./auth.js";
 
@@ -38,6 +39,12 @@ export function publicConfig(env) {
     clerkTokenTemplate: env.CLERK_TOKEN_TEMPLATE || "timinow",
     stripePublishableKey: env.STRIPE_PUBLISHABLE_KEY || null,
     demoMode: env.DEMO_MODE === "true",
+    /**
+     * The terms and safety notice a care request is accepted against. Served
+     * so a browser client never has to carry its own copy of the string the
+     * Worker rejects everything else against.
+     */
+    legalVersion: LEGAL_VERSION,
     database: hasDatabase(env) ? "d1" : "fixtures",
     map: {
       /** Public Mapbox token only. A secret (sk.) token must never appear here. */

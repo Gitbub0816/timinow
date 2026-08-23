@@ -75,6 +75,45 @@ struct TimiQuietButtonStyle: ButtonStyle {
 }
 
 extension View {
+    /// Text entry in the same hand as the buttons and the cards: a solid
+    /// plate, a full-weight ink border, and the same hard offset shadow.
+    ///
+    /// Every field in the app was a 1pt hairline at 18% ink on white — the
+    /// default a form gets when nobody styles it. Next to a coral button with
+    /// a 2pt border and a five-point drop, it reads as a different app's
+    /// screen bolted onto this one.
+    ///
+    /// The shadow is on the shape, not the field: `.shadow` on a view applies
+    /// to what the view has drawn, which for a text field is the text.
+    func timiField() -> some View {
+        let shape = RoundedRectangle(cornerRadius: 16)
+        return self
+            .font(.system(size: 17, weight: .semibold))
+            .foregroundStyle(TimiColor.ink)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 15)
+            .background(
+                shape.fill(Color.white)
+                    .overlay(shape.stroke(TimiColor.ink, lineWidth: 2))
+                    .shadow(color: TimiColor.ink.faded(0.9), radius: 0, x: 3, y: 4)
+            )
+    }
+
+    /// The multi-line version. Same plate, no fixed vertical padding, because
+    /// a TextEditor supplies its own and doubling it leaves the caret floating.
+    func timiFieldMultiline() -> some View {
+        let shape = RoundedRectangle(cornerRadius: 16)
+        return self
+            .font(.system(size: 17, weight: .semibold))
+            .foregroundStyle(TimiColor.ink)
+            .padding(10)
+            .background(
+                shape.fill(Color.white)
+                    .overlay(shape.stroke(TimiColor.ink, lineWidth: 2))
+                    .shadow(color: TimiColor.ink.faded(0.9), radius: 0, x: 3, y: 4)
+            )
+    }
+
     /// The card's border and drop shadow belong to the card, not to what is
     /// written on it — see TimiPrimaryButtonStyle.plate for why that matters.
     func timiCard(_ color: Color = .white) -> some View {

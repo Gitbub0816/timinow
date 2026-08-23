@@ -165,6 +165,23 @@ import Observation
     public func offer() async { await respond(decline: false) }
     public func decline() async { await respond(decline: true) }
 
+    /// Answer one request without opening the workspace first.
+    ///
+    /// Every response used to go through the decision workspace: select the
+    /// row, read four number fields, press a button. That is the right screen
+    /// for shaping an offer and the wrong one for the ordinary case, which is
+    /// "yes, usual window" or "no, we're full" — and it is the only thing the
+    /// floating panel could offer at all, which is why a queue alert led to
+    /// "Open decision workspace" rather than to an answer.
+    ///
+    /// The workspace's current values are used as they stand, which is what
+    /// makes this one press: they are the clinic's own defaults until somebody
+    /// changes them.
+    public func answer(_ request: ClinicRequest, decline: Bool) async {
+        selectedRequest = request
+        await respond(decline: decline)
+    }
+
     private func respond(decline: Bool) async {
         guard let request = selectedRequest else { return }
         if !decline && offerWaitMin > offerWaitMax { statusMessage = "Offer minimum wait cannot exceed maximum wait."; return }
@@ -183,6 +200,40 @@ import Observation
             selectedRequest = nil
             clinicNote = ""
             await refresh(initial: true)
+        } catch let error as ClinicAPIError { statusMessage = error.message }
+        catch { statusMessage = error.localizedDescription }
+    }
+
+    // MARK: - Calling preferences
+
+    public var callPreferences = CallPreferences()
+    public var callPreferencesLoaded = false
+
+    public func loadCallPreferences() async {
+        do {
+            callPreferences = try await api.getCallPreferences()
+            callPreferencesLoaded = true
+        } catch let error as ClinicAPIError { statusMessage = error.message }
+        catch { statusMessage = error.localizedDescription }
+    }
+
+    public func saveCallPreferences(callsEnabled: Bool, voicePhone: String, quietStart: String, quietEnd: String) async {
+        isBusy = true
+        defer { isBusy = false }
+        let trimmedPhone = voicePhone.trimmingCharacters(in: .whitespaces)
+        let start = quietStart.trimmingCharacters(in: .whitespaces)
+        let end = quietEnd.trimmingCharacters(in: .whitespaces)
+        // Both or neither: half a quiet-hours window is not a window, and the
+        // Worker refuses it rather than storing something it will ignore at
+        // three in the morning.
+        let quiet = (start.isEmpty && end.isEmpty) ? QuietHours(start: "", end: "") : QuietHours(start: start, end: end)
+        do {
+            callPreferences = try await api.updateCallPreferences(
+                CallPreferencesUpdate(callsEnabled: callsEnabled, voicePhone: trimmedPhone, quietHours: quiet)
+            )
+            statusMessage = callsEnabled
+                ? "Tími will call this clinic about new requests."
+                : "Tími will not call this clinic. Requests still arrive in the console."
         } catch let error as ClinicAPIError { statusMessage = error.message }
         catch { statusMessage = error.localizedDescription }
     }

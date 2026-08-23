@@ -1,3 +1,4 @@
+import { LEGAL_VERSION } from "../src/catalog.js";
 import { readFile } from "node:fs/promises";
 import { DatabaseSync } from "node:sqlite";
 import worker from "../src/index.js";
@@ -55,6 +56,8 @@ database.exec(await readFile("migrations/0002_seed.sql", "utf8"));
 database.exec(await readFile("migrations/0003_multi_offer_search.sql", "utf8"));
 database.exec(await readFile("migrations/0004_tenancy_admin.sql", "utf8"));
 database.exec(await readFile("migrations/0005_voice_calls.sql", "utf8"));
+database.exec(await readFile("migrations/0006_care_context.sql", "utf8"));
+database.exec(await readFile("migrations/0007_client_errors.sql", "utf8"));
 
 const env = {
   ASSETS: { fetch: async () => new Response("asset") },
@@ -84,7 +87,7 @@ const intakePayload = {
   travelMinutes: 12,
   consentToContact: true,
   legalConsent: true,
-  legalVersion: "2026-08-21"
+  legalVersion: LEGAL_VERSION
 };
 
 let result = await call("/api/locations?lat=37.6688&lng=-122.0808&species=dog&care=urgent");
@@ -110,6 +113,97 @@ assert(result.response.status === 201, "Arrival observation must be stored");
 
 result = await call("/api/clinic/dashboard", { headers: { "x-demo-role": "clinic", "x-demo-tenant-id": "tenant_hearth" } });
 assert(result.response.status === 200 && result.body.requests.some((item) => item.id === acceptedId), "Clinic dashboard must contain its intake");
+
+/* ------------------------------ optional medications and allergies --- */
+
+// Optional means optional: the intake above carried neither and was accepted.
+// When they are given they must reach the clinic unchanged, because a
+// paraphrased allergy is worse than none.
+result = await call("/api/intakes", {
+  method: "POST",
+  headers: { "content-type": "application/json" },
+  body: JSON.stringify({
+    ...intakePayload,
+    pet: { ...intakePayload.pet, medications: "Apoquel 5.4mg twice daily", allergies: "Penicillin — hives last spring" }
+  })
+});
+assert(result.response.status === 201, `Medications and allergies must not block an intake: ${JSON.stringify(result.body)}`);
+const medicalIntakeId = result.body.intake.id;
+assert(result.body.intake.pet.medications === "Apoquel 5.4mg twice daily", "Medications must round-trip verbatim");
+assert(result.body.intake.pet.allergies === "Penicillin — hives last spring", "Allergies must round-trip verbatim");
+
+result = await call("/api/clinic/dashboard", { headers: { "x-demo-role": "clinic", "x-demo-tenant-id": "tenant_hearth" } });
+const clinicView = result.body.requests.find((item) => item.id === medicalIntakeId);
+assert(clinicView?.pet.allergies === "Penicillin — hives last spring", "The clinic must see the allergies the owner recorded");
+assert(clinicView?.pet.medications === "Apoquel 5.4mg twice daily", "The clinic must see the medications the owner recorded");
+
+/* -------------------------------------------- clinic call preferences --- */
+
+// The columns have existed since the voice gateway shipped, with a note saying
+// a console would expose them. None did, so every clinic has been on the
+// default whether or not that is what they wanted.
+const clinicHeaders = { "content-type": "application/json", "x-demo-role": "clinic", "x-demo-tenant-id": "tenant_hearth" };
+// Changing them is an administrator's call; reading them is not.
+const clinicAdminHeaders = { ...clinicHeaders, "x-demo-role": "org:admin" };
+result = await call("/api/clinic/call-preferences", { headers: clinicHeaders });
+assert(result.response.status === 200 && result.body.preferences.callsEnabled === true, "Calling defaults to on, as every clinic has been");
+
+result = await call("/api/clinic/call-preferences", { method: "PATCH", headers: clinicAdminHeaders, body: JSON.stringify({ callsEnabled: false }) });
+assert(result.body.preferences.callsEnabled === false, "A clinic must be able to say no to the phone call");
+const tenantRow = database.prepare("SELECT voice_calls_enabled FROM tenants WHERE id = 'tenant_hearth'").get();
+const locationRow = database.prepare("SELECT voice_calls_enabled FROM locations WHERE tenant_id = 'tenant_hearth'").get();
+assert(tenantRow.voice_calls_enabled === 0 && locationRow.voice_calls_enabled === 0, "Both levels must be set, since the gateway requires both to be on");
+
+result = await call("/api/clinic/call-preferences", { method: "PATCH", headers: clinicAdminHeaders, body: JSON.stringify({ callsEnabled: true, voicePhone: "(510) 555-0199", quietHours: { start: "22:00", end: "07:00" } }) });
+assert(result.body.preferences.voicePhone === "(510) 555-0199", "A back line must be dialable instead of the public number");
+assert(result.body.preferences.quietHours.start === "22:00", "Quiet hours must round-trip");
+
+// Half a window is not a window, and storing one means ignoring it at 3am.
+result = await call("/api/clinic/call-preferences", { method: "PATCH", headers: clinicAdminHeaders, body: JSON.stringify({ quietHours: { start: "22:00", end: "" } }) });
+assert(result.response.status === 422 && result.body.error.code === "INVALID_QUIET_HOURS", "A malformed quiet-hours window must be refused, not stored");
+
+result = await call("/api/clinic/call-preferences", { method: "PATCH", headers: clinicAdminHeaders, body: JSON.stringify({ voicePhone: "nope" }) });
+assert(result.response.status === 422 && result.body.error.code === "INVALID_PHONE", "A number Tími cannot dial must be refused at the door");
+
+/* ----------------------------------------------- client error reports --- */
+
+// The counterpart to the one sentence the apps now show. Accepted from anyone,
+// including somebody who could not sign in, and never argued with.
+result = await call("/api/client-errors", {
+  method: "POST",
+  headers: { "content-type": "application/json" },
+  body: JSON.stringify({
+    surface: "customer_ios", appVersion: "1.2.0", path: "/api/intakes/x/status",
+    status: 401, code: "AUTHENTICATION_REQUIRED", message: "Sign in is required to continue.",
+    reference: "K7MQ2B", detail: { route: "tracker" }
+  })
+});
+assert(result.response.status === 202 && result.body.recorded === true, `A client error report must be accepted: ${JSON.stringify(result.body)}`);
+const storedError = database.prepare("SELECT * FROM client_errors WHERE reference = 'K7MQ2B'").get();
+assert(storedError, "The report must be stored where an operator can read it");
+assert(storedError.status === 401 && storedError.code === "AUTHENTICATION_REQUIRED", "The detail must survive intact");
+assert(storedError.fingerprint.includes("AUTHENTICATION_REQUIRED"), "Reports must group by fingerprint, not by message — a message carrying a record id makes every occurrence unique");
+
+// A malformed report is accepted rather than argued with: a client that is
+// already broken must not have to handle an error about its error.
+result = await call("/api/client-errors", { method: "POST", headers: { "content-type": "application/json" }, body: "not json" });
+assert(result.response.status === 202, "A malformed report must not produce an error response");
+
+/* ------------------------------------- veterinary technician staffing --- */
+
+// A provider a platform operator has marked technician-staffed must carry the
+// scope-of-practice notice everywhere it is listed, worded by the Worker so no
+// client can reword it.
+database.prepare("UPDATE locations SET staffing_level = 'veterinary_technician', staffing_note = ? WHERE id = 'loc_juniper'")
+  .run("A veterinarian is on call weekday evenings.");
+result = await call("/api/locations?lat=37.6688&lng=-122.0808&species=dog&care=urgent");
+const technicianRun = result.body.locations.find((item) => item.id === "loc_juniper");
+const veterinarianRun = result.body.locations.find((item) => item.id === "loc_hearth");
+assert(technicianRun?.staffingLevel === "veterinary_technician", "The staffing level must reach the client");
+assert(/cannot diagnose, prognose, prescribe, or perform surgery/.test(technicianRun?.staffingNotice || ""), "A technician-staffed provider must carry the scope-of-practice notice");
+assert(/on call weekday evenings/.test(technicianRun?.staffingNotice || ""), "The operator's own note must appear alongside the standard notice, not instead of it");
+assert(veterinarianRun?.staffingNotice === null, "A veterinarian-staffed provider must carry no notice — a row written before the column existed is not 'unknown'");
+database.prepare("UPDATE locations SET staffing_level = 'veterinarian', staffing_note = NULL WHERE id = 'loc_juniper'").run();
 
 result = await call("/api/clinic/availability", {
   method: "POST",
@@ -205,4 +299,4 @@ for (const table of tableChecks) {
 }
 
 database.close();
-console.log("D1 end-to-end tests passed: five-offer search, atomic customer selection, clinic release, policy snapshot, deposit, travel, observation, expiry, and audit.");
+console.log("D1 end-to-end tests passed: five-offer search, atomic customer selection, clinic release, policy snapshot, deposit, travel, optional medications and allergies, veterinary-technician staffing notices, client error reporting, clinic calling preferences, observation, expiry, and audit.");

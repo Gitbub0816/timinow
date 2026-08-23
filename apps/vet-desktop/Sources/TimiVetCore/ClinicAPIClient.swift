@@ -118,6 +118,20 @@ public final class ClinicAPIClient: @unchecked Sendable {
         try await send("GET", "/api/config")
     }
 
+    // MARK: - Calling preferences
+
+    public func getCallPreferences() async throws -> CallPreferences {
+        if isDemo { return CallPreferences(callsEnabled: true, voicePhone: nil, locationPhone: "(510) 555-0194", quietHours: nil) }
+        let envelope: CallPreferencesEnvelope = try await send("GET", "/api/clinic/call-preferences")
+        return envelope.preferences
+    }
+
+    public func updateCallPreferences(_ update: CallPreferencesUpdate) async throws -> CallPreferences {
+        if isDemo { return CallPreferences(callsEnabled: update.callsEnabled ?? true, voicePhone: update.voicePhone, locationPhone: "(510) 555-0194") }
+        let envelope: CallPreferencesEnvelope = try await send("PATCH", "/api/clinic/call-preferences", body: update)
+        return envelope.preferences
+    }
+
     // MARK: - Tenant people management
 
     public func getMembers() async throws -> TenantRoster {
@@ -218,7 +232,7 @@ public final class ClinicAPIClient: @unchecked Sendable {
         } else if Self.isLoopback(url) {
             request.setValue("clinic", forHTTPHeaderField: "x-demo-role")
             request.setValue(settings.tenantId, forHTTPHeaderField: "x-demo-tenant-id")
-        } else {
+        } else if !Self.isPublic(url) {
             throw ClinicAPIError.signInRequired
         }
 
@@ -227,6 +241,21 @@ public final class ClinicAPIClient: @unchecked Sendable {
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         }
         return request
+    }
+
+    /// Endpoints the Worker answers to anyone, and that the console must reach
+    /// *before* it can sign in.
+    ///
+    /// `/api/config` is where the Clerk publishable key comes from, so
+    /// requiring a session to fetch it is a deadlock: no config, no Clerk host,
+    /// no sign-in, no session, no config. The console reported it as "Could not
+    /// read https://providers.timinow.pet/api/config — Sign in to Tími before
+    /// contacting a production Worker", which reads as a Worker or a Clerk
+    /// problem and is neither; the request was never sent. The Windows client
+    /// never hit this only because its ClerkAuthService fetches /api/config
+    /// with its own HttpClient instead of going through the gated one.
+    private static func isPublic(_ url: URL) -> Bool {
+        url.path.hasSuffix("/api/config")
     }
 
     private static func isLoopback(_ url: URL) -> Bool {
@@ -248,6 +277,17 @@ public final class ClinicAPIClient: @unchecked Sendable {
 }
 
 // MARK: - Wire payloads (private: never leaves the public bridge surface)
+
+/// Only the fields being changed are sent — an absent one is left alone, so
+/// two administrators editing different settings do not overwrite each other.
+public struct CallPreferencesUpdate: Encodable, Sendable {
+    public var callsEnabled: Bool?
+    public var voicePhone: String?
+    public var quietHours: QuietHours?
+    public init(callsEnabled: Bool? = nil, voicePhone: String? = nil, quietHours: QuietHours? = nil) {
+        self.callsEnabled = callsEnabled; self.voicePhone = voicePhone; self.quietHours = quietHours
+    }
+}
 
 private struct SearchDecisionPayload: Encodable {
     var decision: String

@@ -57,7 +57,10 @@ import SwiftUI
             onMinimize: { [weak self] in self?.miniaturize(nil) },
             onHide: { [weak self] in self?.orderOut(nil) },
             onTopmostChanged: { [weak self] in self?.applyLevel() }
-        ))
+        ).preferredColorScheme(.light))
+        // Hosted in its own AppKit window, so it does not inherit the main
+        // window's scheme and has to say so itself.
+        appearance = NSAppearance(named: .aqua)
         contentView = hosting
         applyLevel()
     }

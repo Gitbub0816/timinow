@@ -1,3 +1,4 @@
+import { LEGAL_VERSION } from "../src/catalog.js";
 import worker from "../src/index.js";
 
 const assets = { fetch: async () => new Response("asset", { status: 200 }) };
@@ -44,7 +45,7 @@ response = await call("/api/intakes", {
     travelMinutes: 12,
     consentToContact: true,
     legalConsent: true,
-    legalVersion: "2026-08-21"
+    legalVersion: LEGAL_VERSION
   })
 });
 body = await response.json();
@@ -69,7 +70,7 @@ response = await call("/api/searches", {
     customerLongitude: -122.0808,
     consentToContact: true,
     legalConsent: true,
-    legalVersion: "2026-08-21"
+    legalVersion: LEGAL_VERSION
   })
 });
 body = await response.json();

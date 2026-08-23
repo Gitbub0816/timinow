@@ -159,13 +159,203 @@ struct MetricChip: View {
     var body: some View { VStack(alignment: .leading, spacing: 5) { Text(title.uppercased()).font(.system(size: 9, weight: .black)).foregroundStyle(TimiColor.muted); Text(value).font(.system(size: 17, weight: .black)).foregroundStyle(TimiColor.ink) }.frame(maxWidth: .infinity, alignment: .leading).padding(12).background(color, in: RoundedRectangle(cornerRadius: 14)) }
 }
 
+/// "Do not wait for an app response" — and then nothing to press.
+///
+/// The notice was right and useless: it told somebody whose animal may be
+/// dying to go to an emergency hospital, on a screen that knew where they
+/// were and which hospitals take emergencies, and made them find one
+/// themselves. Given a store it now offers the list.
+///
+/// Without one — the onboarding screen, which runs before location
+/// permission exists — it stays the notice it was.
 struct SafetyBanner: View {
     var compact = false
+    var store: AppStore?
+
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            Image(systemName: "cross.case.fill").foregroundStyle(.white).frame(width: 34, height: 34).background(TimiColor.coral, in: Circle())
-            VStack(alignment: .leading, spacing: 3) { Text("Possible emergency?").font(.headline); Text(compact ? "Do not wait for an app response." : "If your pet may be in immediate danger, leave for the nearest emergency-capable hospital while someone calls ahead.").font(.caption).foregroundStyle(TimiColor.muted) }
-        }.padding(14).background(TimiColor.coralSoft, in: RoundedRectangle(cornerRadius: 18)).overlay(RoundedRectangle(cornerRadius: 18).stroke(TimiColor.coral.faded(0.45)))
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: "cross.case.fill").foregroundStyle(.white).frame(width: 34, height: 34).background(TimiColor.coral, in: Circle())
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Possible emergency?").font(.headline)
+                    Text(message).font(.caption).foregroundStyle(TimiColor.muted)
+                }
+            }
+            if let store {
+                Button { Task { await store.findEmergencyCare() } } label: {
+                    HStack(spacing: 8) {
+                        if store.isFindingEmergency { ProgressView().tint(.white) }
+                        // Short, and allowed to shrink rather than clip: the
+                        // first label was long enough to overflow the button
+                        // and render with both ends cut off.
+                        Text(store.isFindingEmergency ? "Finding hospitals…" : "Emergency care now")
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.75)
+                        Image(systemName: "arrow.right")
+                    }
+                }
+                .buttonStyle(TimiPrimaryButtonStyle())
+                .disabled(store.isFindingEmergency)
+            }
+        }
+        .padding(14)
+        .background(TimiColor.coralSoft, in: RoundedRectangle(cornerRadius: 18))
+        .overlay(RoundedRectangle(cornerRadius: 18).stroke(TimiColor.coral.faded(0.45)))
+    }
+
+    private var message: String {
+        if store != nil {
+            return compact
+                ? "Don't wait for a clinic to answer — go straight to an emergency hospital."
+                : "If your pet may be in immediate danger, go straight to an emergency hospital and have someone call ahead."
+        }
+        return compact
+            ? "Do not wait for an app response."
+            : "If your pet may be in immediate danger, leave for the nearest emergency-capable hospital while someone calls ahead."
+    }
+}
+
+/// The answer to that button: the nearest emergency-capable hospitals, with a
+/// phone number and directions on each. No request is sent, no clinic is asked
+/// to accept, and nothing here waits for anybody — it is a list of places to
+/// drive to.
+struct EmergencyCareSheet: View {
+    @Bindable var store: AppStore
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    Text("Go now. Call from the car if you can — most emergency hospitals want to know an animal is on the way.")
+                        .font(.callout).foregroundStyle(TimiColor.muted)
+
+                    if store.isFindingEmergency {
+                        HStack(spacing: 10) { ProgressView(); Text("Finding the nearest emergency hospitals…").font(.callout).fontWeight(.semibold) }
+                            .frame(maxWidth: .infinity).padding(.vertical, 30)
+                    }
+
+                    if let error = store.emergencyError {
+                        Label(error, systemImage: "exclamationmark.triangle.fill")
+                            .font(.callout).foregroundStyle(TimiColor.coral)
+                            .padding(12).frame(maxWidth: .infinity, alignment: .leading)
+                            .background(TimiColor.coralSoft, in: RoundedRectangle(cornerRadius: 14))
+                    }
+
+                    ForEach(store.emergencyLocations) { place in
+                        EmergencyClinicRow(place: place)
+                    }
+
+                    // The Worker's words, not a restatement: most of this list
+                    // is third-party map data and the caveat has to be the same
+                    // on every surface.
+                    if let notice = store.emergencyNotice, !notice.isEmpty {
+                        Text(notice).font(.caption).foregroundStyle(TimiColor.muted)
+                    }
+                    Text("Tími does not diagnose or triage. This is a list of the emergency-capable hospitals nearest to you; it is not advice about whether to go.")
+                        .font(.caption).foregroundStyle(TimiColor.muted)
+                }.padding(20)
+            }
+            .background(TimiColor.canvas)
+            .navigationTitle("Emergency care")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Close") { store.showEmergencyList = false } }
+            }
+        }
+    }
+}
+
+struct EmergencyClinicRow: View {
+    var place: EmergencyPlace
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(place.name).font(.title3).fontWeight(.black)
+                Spacer()
+                // Worth marking: a partner is the only kind Tími can actually
+                // send a request to.
+                if place.partner {
+                    Text("TÍMI").font(.system(size: 9, weight: .black)).foregroundStyle(.white)
+                        .padding(.horizontal, 7).padding(.vertical, 4)
+                        .background(TimiColor.blue, in: Capsule())
+                }
+            }
+            Text(subtitle).font(.caption).fontWeight(.bold).foregroundStyle(TimiColor.coral)
+            if let address = place.address, !address.isEmpty {
+                Text(address).font(.callout).foregroundStyle(TimiColor.muted)
+            }
+            StaffingNotice(notice: place.staffingNotice)
+            HStack(spacing: 10) {
+                if let url = telephoneURL {
+                    Link(destination: url) { Label("Call", systemImage: "phone.fill") }
+                        .buttonStyle(TimiPrimaryButtonStyle())
+                }
+                if let url = directionsURL {
+                    Link(destination: url) { Label("Directions", systemImage: "map.fill") }
+                        .buttonStyle(TimiPrimaryButtonStyle(color: TimiColor.blue))
+                }
+            }
+            if place.phone == nil {
+                Text("No phone number is listed for this hospital.")
+                    .font(.caption).foregroundStyle(TimiColor.muted)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .timiCard(Color.white)
+    }
+
+    private var subtitle: String {
+        var parts: [String] = []
+        if let miles = place.distanceMiles { parts.append(String(format: "%.1f mi away", miles)) }
+        if let label = place.availabilityLabel, !label.isEmpty {
+            parts.append(label)
+        } else if place.emergencyNamed == true {
+            parts.append("Listed as emergency care")
+        } else {
+            // Padding the list with a day clinic is better than an empty
+            // screen, but calling it an emergency hospital would not be.
+            parts.append("Veterinary clinic — call to ask about emergencies")
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    private var telephoneURL: URL? {
+        guard let phone = place.phone else { return nil }
+        let digits = phone.filter { $0.isNumber || $0 == "+" }
+        return digits.isEmpty ? nil : URL(string: "tel:\(digits)")
+    }
+
+    private var directionsURL: URL? {
+        guard let latitude = place.latitude, let longitude = place.longitude else { return nil }
+        var components = URLComponents(string: "https://maps.apple.com/")
+        components?.queryItems = [
+            URLQueryItem(name: "daddr", value: "\(latitude),\(longitude)"),
+            URLQueryItem(name: "q", value: place.name)
+        ]
+        return components?.url
+    }
+}
+
+/// Shown wherever a technician-staffed provider appears — an offer, an
+/// emergency result, a confirmed clinic.
+///
+/// A veterinary technician works under a veterinarian's supervision and cannot
+/// diagnose, prognose, prescribe, or perform surgery, so which one is on the
+/// floor changes what an offer can mean. The wording comes from the Worker so
+/// it is identical everywhere and cannot be edited per screen.
+struct StaffingNotice: View {
+    var notice: String?
+    var body: some View {
+        if let notice, !notice.isEmpty {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: "stethoscope").foregroundStyle(TimiColor.ink)
+                Text(notice).font(.caption).fontWeight(.semibold).foregroundStyle(TimiColor.ink)
+            }
+            .padding(11)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(TimiColor.goldSoft, in: RoundedRectangle(cornerRadius: 13))
+            .overlay(RoundedRectangle(cornerRadius: 13).stroke(TimiColor.gold))
+        }
     }
 }
 

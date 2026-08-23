@@ -94,11 +94,12 @@ function parseHash() {
   const detailMatch = raw.match(/^tenants\/([^/]+)$/);
   if (detailMatch) return { screen: "tenant-detail", id: decodeURIComponent(detailMatch[1]) };
   if (raw === "audit") return { screen: "audit" };
+  if (raw === "errors") return { screen: "errors" };
   return { screen: "tenants" };
 }
 
 function updateNavActive() {
-  const top = state.route.screen === "audit" ? "audit" : "tenants";
+  const top = ["audit", "errors"].includes(state.route.screen) ? state.route.screen : "tenants";
   document.querySelectorAll("[data-nav]").forEach((a) => a.classList.toggle("active", a.dataset.nav === top));
 }
 
@@ -146,6 +147,11 @@ async function renderRoute() {
   if (state.route.screen === "audit") {
     showScreen("audit");
     await loadAudit();
+    return;
+  }
+  if (state.route.screen === "errors") {
+    showScreen("errors");
+    await loadClientErrors();
     return;
   }
   showScreen("tenants");
@@ -394,6 +400,9 @@ function renderLocationCard(loc) {
     <h3>${escapeHtml(loc.name)} <span class="pill role-member">${escapeHtml(loc.kind)}</span></h3>
     <p>${escapeHtml(loc.addressLine1)}, ${escapeHtml(loc.city)}, ${escapeHtml(loc.region)} ${escapeHtml(loc.postalCode)} · ${escapeHtml(loc.phone)}</p>
     <p>${loc.species.map(escapeHtml).join(", ")}${loc.capabilities.length ? " · " + loc.capabilities.map(escapeHtml).join(", ") : ""}</p>
+    ${loc.staffingLevel === "veterinary_technician"
+      ? `<p class="hint"><strong>Veterinary technician staffed.</strong> Customers see the standard scope-of-practice notice before choosing this provider.${loc.staffingNote ? " " + escapeHtml(loc.staffingNote) : ""}</p>`
+      : ""}
   </div>`;
 }
 
@@ -758,6 +767,8 @@ function wireStaticHandlers() {
         arrivalWindowMinutes: Number(form.loc_arrival.value) || 20,
         species,
         capabilities,
+        staffingLevel: form.loc_techstaffed.checked ? "veterinary_technician" : "veterinarian",
+        staffingNote: form.loc_staffingnote.value.trim() || undefined,
         baseExamFeeCents: form.loc_examfee.value ? Math.round(Number(form.loc_examfee.value) * 100) : undefined
       },
       policy: {
@@ -773,7 +784,10 @@ function wireStaticHandlers() {
 
     try {
       const result = await apiFetch("/api/admin/tenants", { method: "POST", body: JSON.stringify(payload) });
-      toast(`${payload.name} was created.`);
+      // Seated, invited, failed and never-attempted all used to produce the
+      // same green toast, so a workspace nobody could sign into looked exactly
+      // like one that worked.
+      toast(`${payload.name} was created. ${describeAdminResult(result.admin)}`);
       location.hash = `#tenants/${encodeURIComponent(result.tenant.id)}`;
     } catch (error) {
       if (Array.isArray(error.details) && error.details.length) {
@@ -788,10 +802,76 @@ function wireStaticHandlers() {
     }
   });
 
+  document.querySelector('form[data-form="error-lookup"]')?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    loadClientErrors(event.target.reference.value.trim().toUpperCase());
+  });
+
   window.addEventListener("hashchange", route);
 }
 
 /* ----------------------------------------------------------------- boot --- */
+
+/**
+ * What actually happened to the first administrator. The Worker has always
+ * returned this; nothing read it.
+ */
+/**
+ * The other half of the app's one-sentence failure message.
+ *
+ * Grouped first — the same failure forty-seven times is one problem, not
+ * forty-seven — then the raw rows underneath, newest first.
+ */
+async function loadClientErrors(reference = "") {
+  const groupsMount = document.querySelector("[data-error-groups]");
+  const listMount = document.querySelector("[data-error-list]");
+  listMount.innerHTML = '<p class="page-lede">Loading…</p>';
+  try {
+    const query = reference ? `?reference=${encodeURIComponent(reference)}` : "";
+    const { errors = [], groups = [] } = await apiFetch(`/api/admin/client-errors${query}`);
+    groupsMount.innerHTML = groups.length
+      ? `<div class="panel"><h2>Most frequent, last 7 days</h2>${groups.map((group) => `
+          <div class="member-row">
+            <div class="who"><strong>${escapeHtml(group.code || "no code")} · ${escapeHtml(String(group.status ?? "—"))}</strong><small>${escapeHtml(group.surface)} · ${escapeHtml(group.path || "no route")}</small></div>
+            <div><strong>${group.total}</strong> <small>last ${escapeHtml(formatDateTime(group.lastSeen))}</small></div>
+          </div>`).join("")}</div>`
+      : "";
+    listMount.innerHTML = errors.length
+      ? `<div class="panel"><h2>${reference ? `Reference ${escapeHtml(reference)}` : "Most recent"}</h2>${errors.map(renderClientError).join("")}</div>`
+      : `<div class="panel"><p class="page-lede">${reference ? "No report carries that reference." : "No client errors recorded."}</p></div>`;
+  } catch (error) {
+    listMount.innerHTML = `<div class="panel"><p class="page-lede">${escapeHtml(error.message)}</p></div>`;
+  }
+}
+
+function renderClientError(item) {
+  const detail = Object.entries(item.detail || {}).map(([key, value]) => `${escapeHtml(key)}=${escapeHtml(String(value))}`).join(" · ");
+  return `<div class="member-row">
+    <div class="who">
+      <strong>${escapeHtml(item.code || "no code")} · ${escapeHtml(String(item.status ?? "—"))} · ${escapeHtml(item.reference)}</strong>
+      <small>${escapeHtml(item.surface)}${item.appVersion ? ` ${escapeHtml(item.appVersion)}` : ""} · ${escapeHtml(item.path || "no route")} · ${escapeHtml(formatDateTime(item.occurredAt))}</small>
+      <small>${escapeHtml(item.message || "")}</small>
+      ${detail ? `<small>${detail}</small>` : ""}
+    </div>
+  </div>`;
+}
+
+function describeAdminResult(admin) {
+  if (!admin) return "No administrator email was given, so nobody can sign into it yet — add one from the workspace page.";
+  if (admin.mode === "seated") {
+    return admin.accountCreated
+      ? `${admin.email} was created and seated as administrator. They sign in with an emailed code.`
+      : `${admin.email} was seated as administrator.`;
+  }
+  if (admin.mode === "invited") {
+    const why = admin.reason ? ` (${admin.reason})` : "";
+    return `${admin.email} was invited${why}. No account exists until they accept.`;
+  }
+  if (admin.mode === "failed") {
+    return `ADMINISTRATOR NOT SEATED — ${admin.error || "Clerk refused the request"}. Add one from the workspace page.`;
+  }
+  return "";
+}
 
 async function boot() {
   try {

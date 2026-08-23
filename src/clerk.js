@@ -74,6 +74,66 @@ export async function findUserByEmail(env, email) {
 }
 
 /**
+ * Create a Clerk user from an email address alone.
+ *
+ * `skip_password_requirement` is what makes this possible on an instance that
+ * requires a password at sign-up: the Backend API would otherwise refuse, and
+ * inventing a password for somebody is not a thing to do. The address is
+ * created unverified; the first email code they sign in with verifies it.
+ *
+ * This exists because seating a clinic administrator used to depend on them
+ * already having a Tími account. Nothing creates one for a clinic — they are
+ * invited, not customers — so "seat the first administrator" quietly became
+ * "email them an invitation and hope", with no user, no membership and no
+ * roster row until somebody accepted.
+ */
+export function createUser(env, { email, firstName, lastName, publicMetadata }) {
+  return clerkFetch(env, "/users", {
+    method: "POST",
+    body: {
+      email_address: [email],
+      first_name: firstName || undefined,
+      last_name: lastName || undefined,
+      public_metadata: publicMetadata || {},
+      skip_password_requirement: true,
+      skip_password_checks: true
+    }
+  });
+}
+
+/**
+ * The user with this address, creating one if Clerk has never seen it.
+ *
+ * Returns `{ user, created }`, or `{ user: null, reason }` when Clerk refuses
+ * to create it — the caller then falls back to an invitation rather than
+ * failing outright, because an invitation still gets somebody in.
+ */
+export async function findOrCreateUserByEmail(env, email, { firstName, lastName, publicMetadata } = {}) {
+  const existing = await findUserByEmail(env, email);
+  if (existing) return { user: existing, created: false };
+  try {
+    const user = await createUser(env, { email, firstName, lastName, publicMetadata });
+    return { user, created: true };
+  } catch (error) {
+    if (error instanceof ClerkError) return { user: null, created: false, reason: error.message };
+    throw error;
+  }
+}
+
+/**
+ * The organizations a user belongs to. Needed at first sign-in: a user seated
+ * by an operator has a membership but no *active* organization, so their
+ * session token carries no `org_id` and every tenant lookup keyed on it comes
+ * back empty.
+ */
+export async function listUserOrganizationMemberships(env, userId, { limit = 20 } = {}) {
+  const payload = await clerkFetch(env, `/users/${encodeURIComponent(userId)}/organization_memberships`, {
+    query: { limit }
+  });
+  return Array.isArray(payload) ? payload : payload.data || [];
+}
+
+/**
  * Merge-patch a user's public metadata. Clerk replaces the whole object, so the
  * caller's keys are merged over whatever is already stored.
  */

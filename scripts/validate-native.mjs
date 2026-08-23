@@ -67,7 +67,9 @@ const nativeWorkflow = await read(".github/workflows/native-clients.yml");
 
 const expectations = [
   [validator, "not acting like", "deterministic vague-concern rule"],
-  [validator, "words.count < 8", "concern detail threshold"],
+  // The Worker's threshold, not a second opinion: it measures characters as
+  // well as words, and this asked for eight words and counted no characters.
+  [validator, "trimmed.count < 30 || words.count < 6", "concern detail threshold"],
   [gateway, "targetLimit: 30", "30-clinic fan-out contract"],
   [tracker, "sorted.prefix(5)", "five-offer comparison"],
   [onboarding, "completeOnboarding", "guided onboarding completion"],
@@ -808,7 +810,11 @@ for (const app of ["customer-mobile", "vet-desktop"]) {
     throw new Error("apps/customer-mobile/Sources/TimiNowCore/AuthController.swift no longer persists the credential in the Keychain — the session would not survive a relaunch.");
   }
   // A long-lived Clerk cookie in UserDefaults is a plist any backup can read.
-  if (/defaults\.set\([^)]*(clientCookie|workerToken)/.test(store) || /UserDefaults/.test(auth)) {
+  // Comments stripped first: the rule is about what the code does, and a
+  // doc comment explaining why the credential is not in UserDefaults was
+  // enough to trip it.
+  const authCode = auth.split("\n").filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line)).join("\n");
+  if (/defaults\.set\([^)]*(clientCookie|workerToken)/.test(store) || /UserDefaults/.test(authCode)) {
     throw new Error("The Clerk credential must stay in the Keychain, not UserDefaults.");
   }
   if (!/looksLikeUnknownAccount/.test(auth)) {
@@ -902,6 +908,605 @@ for (const root of ["apps/customer-mobile/Sources", "apps/customer-mobile/Watch"
         }
       }
     });
+  }
+}
+
+// A stored-property default is dead the moment an explicit initializer assigns
+// the same parameter over it. AppSettings declared
+// `apiBaseUrl = TimiVetEnvironment.defaultAPIBaseURL` and then took
+// `apiBaseUrl: String = ""` in its init, so `AppSettings()` — every first
+// launch — produced a blank address. The console then reported "Could not read
+// no Worker address/api/config", which reads as a Clerk or a DNS fault and is
+// neither, with the correct default sitting two lines above in the same file.
+{
+  const path = "apps/vet-desktop/Sources/TimiVetCore/ClinicModels.swift";
+  const source = await read(path);
+  const body = source.match(/public struct AppSettings[^{]*\{([\s\S]*?)\n\}/);
+  if (!body) throw new Error(`${path} no longer declares AppSettings.`);
+  const stored = new Map();
+  for (const match of body[1].matchAll(/^\s*public var (\w+):\s*[^=\n]+=\s*(.+?)\s*$/gm)) {
+    stored.set(match[1], match[2]);
+  }
+  const init = body[1].match(/public init\(([\s\S]*?)\)\s*\{/);
+  if (!init) throw new Error(`${path}: AppSettings no longer declares an explicit init.`);
+  for (const match of init[1].matchAll(/(\w+):\s*[^=,]+=\s*("(?:[^"\\]|\\.)*"|[^,)]+?)\s*(?:,|$)/g)) {
+    const declared = stored.get(match[1]);
+    if (declared === undefined) continue;
+    if (declared !== match[2].trim()) {
+      throw new Error(`${path}: AppSettings.${match[1]} defaults to ${declared} as a property but to ${match[2].trim()} in init. The init wins, so the property default never applies — make them the same or drop one.`);
+    }
+  }
+}
+
+// Both Apple clients talk to Clerk's Frontend API as native clients
+// (`_is_native=true`, client JWT in the Authorization header) rather than as
+// browsers. It is not a preference: Clerk guards `/v1/client/sign_ups` with a
+// Turnstile CAPTCHA that only a web page can render, so a web-mode sign-up is
+// answered with `captcha_missing_token` and nobody without an account can ever
+// make one. Each seam below is a way to have the query parameter and still not
+// be a native client.
+for (const path of [
+  "apps/customer-mobile/Sources/TimiNowCore/AuthController.swift",
+  "apps/vet-desktop/Sources/TimiVetCore/AuthController.swift"
+]) {
+  const source = await read(path);
+  const seams = [
+    [/URLQueryItem\(name: "_is_native", value: "true"\)/, 'never sends _is_native=true, so Clerk treats it as a browser and sign-up is rejected with captcha_missing_token.'],
+    [/request\.setValue\(token, forHTTPHeaderField: "Authorization"\)/, 'never puts the Clerk device token in the Authorization header, so every native request arrives as a brand-new anonymous client.'],
+    [/request\.httpShouldHandleCookies = !clerkNativeMode/, 'leaves the cookie jar on in native mode. Clerk refuses a request carrying both Origin and Authorization.'],
+    [/if clerkNativeMode \{ absorbDeviceToken\(http\) \}\n\s*guard \(200\.\.<300\)/, 'absorbs the device token after the status check rather than before it. Clerk issues the client JWT on failure responses too, and the sign-up flow is reached only through the 422 that /sign_ins returns for an unknown address — the following request would go out unauthenticated.'],
+    [/var clerkDeviceToken: String\?/, 'does not persist the device token, so the session cannot be resumed and sign-in greets the user at every launch.'],
+    [/native_api_disabled/, 'does not recognise native_api_disabled, so an instance without the Native API toggle cannot fall back to the cookie path and sign-in breaks entirely.']
+  ];
+  for (const [pattern, complaint] of seams) {
+    if (!pattern.test(source)) throw new Error(`${path} ${complaint}`);
+  }
+}
+
+// Clerk reports two different things about an incomplete sign-up:
+// `unverified_fields`, which is just the code about to be sent, and
+// `missing_fields`, which is what the instance requires and this app never
+// asks for. Reading only the status leads a new customer through a code that
+// is accepted and then leaves them with no account and "another step" as the
+// explanation.
+{
+  const path = "apps/customer-mobile/Sources/TimiNowCore/AuthController.swift";
+  const source = await read(path);
+  if (!/var missingFields: \[String\]\?/.test(source)) {
+    throw new Error(`${path}: ClerkWireSignUp does not decode missing_fields, so nothing can tell a new customer what the sign-up still needs.`);
+  }
+  if (!/signUpBlocker\(signUp\.missingFields \?\? \[\]\)/.test(source)) {
+    throw new Error(`${path}: the sign-up path does not check missing_fields before sending a verification code. On an instance that requires a password, the code arrives, is accepted, and the account still does not exist.`);
+  }
+}
+
+// /api/config is where the Clerk publishable key comes from, so a client that
+// demands a session before it will send the request has locked itself out: no
+// config, no Clerk host, no sign-in, no session, no config. The console
+// reported it as "Could not read https://providers.timinow.pet/api/config —
+// Sign in to Tími before contacting a production Worker", which names the
+// Worker and Clerk and blames neither correctly — the request was never sent.
+{
+  const path = "apps/vet-desktop/Sources/TimiVetCore/ClinicAPIClient.swift";
+  const source = await read(path);
+  if (!/isPublic\(url\)/.test(source) || !/api\/config/.test(source.slice(source.indexOf("isPublic")))) {
+    throw new Error(`${path} throws signInRequired for every unauthenticated request, /api/config included. Sign-in can then never start, because the Clerk key lives behind exactly that request.`);
+  }
+}
+
+// A pet profile you can create and never correct is a bug report waiting to
+// happen: the editor was hardcoded to "Add a pet", so a typo in a name was
+// permanent and a pet that died stayed on the list forever.
+{
+  const store = await read("apps/customer-mobile/Sources/TimiNowCore/AppStore.swift");
+  if (!/func deletePet\(/.test(store)) {
+    throw new Error("apps/customer-mobile/Sources/TimiNowCore/AppStore.swift has no deletePet, so a pet profile can be added and never removed.");
+  }
+  // selectedPet, the draft and the launch path all index pets[0]; an empty
+  // list is a crash on next open, not an empty screen.
+  if (!/pets\.first \?\? Self\.placeholderPet/.test(store)) {
+    throw new Error("apps/customer-mobile/Sources/TimiNowCore/AppStore.swift: selectedPet falls back to pets[0], which traps on an empty list. An account with no pets is an ordinary state.");
+  }
+  // No sample animal on a fresh install. A seeded pet is how a stranger's
+  // "Otis" ended up greeting a brand-new customer on a shared device.
+  if (/DemoData\.pet/.test(store)) {
+    throw new Error("apps/customer-mobile/Sources/TimiNowCore/AppStore.swift seeds a demo pet. A new account must start with none.");
+  }
+  if (!/func forgetAccountData\(\)/.test(store) || !/timi\.accountId/.test(store)) {
+    throw new Error("apps/customer-mobile/Sources/TimiNowCore/AppStore.swift does not scope device-local data to an account. Pets, history and contact details live in UserDefaults, so signing in as somebody else shows them the previous person's animal.");
+  }
+  const auth = await read("apps/customer-mobile/Sources/TimiNowCore/AuthController.swift");
+  if (!/onSignedOut\(\)/.test(auth)) {
+    throw new Error("apps/customer-mobile/Sources/TimiNowCore/AuthController.swift no longer tells the store to forget account data on sign-out.");
+  }
+  const view = await read("apps/customer-mobile/Sources/TimiNowUI/SupportViews.swift");
+  if (!/var editing: PetProfile\?/.test(view)) {
+    throw new Error("apps/customer-mobile/Sources/TimiNowUI/SupportViews.swift: PetEditor does not take a pet to edit, so every save creates a new profile.");
+  }
+  if (!/id: existing\?\.id \?\? UUID\(\)\.uuidString/.test(view)) {
+    throw new Error("apps/customer-mobile/Sources/TimiNowUI/SupportViews.swift: PetEditor saves without carrying the edited pet's id, so editing adds a duplicate instead of updating.");
+  }
+}
+
+// Sign-up collects the name, email and phone the intake form asks for, and
+// hands them to the store. Without the handover the account knows who you are
+// and the care request still asks, which is the complaint that started this.
+{
+  const path = "apps/customer-mobile/Sources/TimiNowCore/AuthController.swift";
+  const source = await read(path);
+  for (const [pattern, complaint] of [
+    [/case profile/, "has no profile stage, so sign-up sends one address and Clerk never gets the phone number it requires."],
+    [/\("phone_number", phone\)/, "creates the sign-up without a phone number."],
+    [/\("first_name", first\)/, "creates the sign-up without a name, so clinics have nobody to expect."],
+    [/onProfileResolved\(profile\)/, "never hands the profile back, so the intake form keeps asking for details the account already holds."],
+    [/hasPrefix\("reset_password"\)/, "offers Clerk's password-reset strategies as sign-in choices. A phone-only account then shows a two-item picker — \"Text me a code\" and \"Reset password by text\" — instead of going straight to the code screen."],
+    [/unverifiedFields/, "does not read unverified_fields, so a sign-up needing a second code stops with \"another step\" instead of sending it."]
+  ]) {
+    if (!pattern.test(source)) throw new Error(`${path} ${complaint}`);
+  }
+  const store = await read("apps/customer-mobile/Sources/TimiNowCore/AppStore.swift");
+  if (!/auth\.onProfileResolved = /.test(store)) {
+    throw new Error("apps/customer-mobile/Sources/TimiNowCore/AppStore.swift never subscribes to onProfileResolved, so nothing sign-in learns reaches the intake form.");
+  }
+}
+
+// Every closed set the Worker validates, checked against what the phone app
+// actually sends. This is the class of bug that made the app unusable rather
+// than merely broken: `startedWhen` was a free-text field — placeholder
+// "Example: around 7 AM today" — and the Worker takes one of five tokens, so
+// no care request the app has ever sent could be accepted. The web form
+// (public/index.html) had the right dropdown all along, which is exactly why
+// nobody caught it: the surface being exercised was not the surface shipping.
+{
+  const worker = await read("src/index.js");
+  const catalog = await read("src/catalog.js");
+  const setFrom = (source, name) => {
+    const match = source.match(new RegExp(`${name} = new Set\\(\\[([^\\]]*)\\]`));
+    if (!match) throw new Error(`Could not read ${name} from the Worker.`);
+    return new Set([...match[1].matchAll(/"([^"]+)"/g)].map((hit) => hit[1]));
+  };
+  const rawValues = (source, enumName) => {
+    const body = source.match(new RegExp(`enum ${enumName}[^{]*\\{([\\s\\S]*?)\\n\\}`));
+    if (!body) throw new Error(`Could not read ${enumName} from the Swift sources.`);
+    const values = new Set();
+    for (const line of body[1].split("\n")) {
+      const explicit = line.match(/^\s*case\s+(\w+)\s*=\s*"([^"]+)"/);
+      if (explicit) { values.add(explicit[2]); continue; }
+      const implicit = line.match(/^\s*case\s+([\w,\s]+)$/);
+      // `case dog, cat, rabbit` — a bare case's raw value is its own name.
+      if (implicit) for (const name of implicit[1].split(",")) {
+        const trimmed = name.trim();
+        if (trimmed) values.add(trimmed);
+      }
+    }
+    return values;
+  };
+  const models = await read("apps/customer-mobile/Sources/TimiNowCore/Models.swift");
+  const validator = await read("apps/customer-mobile/Sources/TimiNowCore/ConcernValidator.swift");
+  const intake = await read("apps/customer-mobile/Sources/TimiNowUI/IntakeFlowView.swift");
+
+  const symptomList = intake.match(/let symptoms = \[([\s\S]*?)\n\s*\]/);
+  if (!symptomList) throw new Error("apps/customer-mobile/Sources/TimiNowUI/IntakeFlowView.swift no longer declares the symptom option list.");
+  const symptomKeys = new Set([...symptomList[1].matchAll(/\("([a-z_]+)",/g)].map((hit) => hit[1]));
+
+  const comparisons = [
+    ["startedWhen", rawValues(validator, "ConcernOnset"), setFrom(worker, "VALID_ONSETS"), "src/index.js VALID_ONSETS", "ConcernOnset"],
+    ["symptoms", symptomKeys, setFrom(worker, "VALID_SYMPTOMS"), "src/index.js VALID_SYMPTOMS", "IntakeFlowView's symptom list"],
+    ["pet.species", rawValues(models, "PetSpecies"), setFrom(catalog, "VALID_SPECIES"), "src/catalog.js VALID_SPECIES", "PetSpecies"],
+    ["urgency", rawValues(models, "CareUrgency"), setFrom(catalog, "VALID_URGENCY"), "src/catalog.js VALID_URGENCY", "CareUrgency"]
+  ];
+  for (const [field, sent, accepted, workerName, swiftName] of comparisons) {
+    const rejected = [...sent].filter((value) => !accepted.has(value));
+    if (rejected.length) {
+      throw new Error(`${swiftName} can send ${field} = ${rejected.join(", ")}, which ${workerName} does not accept. Every care request choosing one is refused with 422 VALIDATION_FAILED on the last screen of the flow.`);
+    }
+  }
+  // Onsets are the one set that must match in both directions: a token the
+  // Worker takes and the app never offers is a choice a customer cannot make.
+  const onsets = rawValues(validator, "ConcernOnset");
+  const missing = [...setFrom(worker, "VALID_ONSETS")].filter((value) => !onsets.has(value));
+  if (missing.length) {
+    throw new Error(`ConcernOnset does not offer ${missing.join(", ")}, which src/index.js accepts. Nobody can choose them.`);
+  }
+  // And it has to be a choice, not typed.
+  if (/TextField\([^)]*text: \$store\.draft\.startedWhen/.test(intake)) {
+    throw new Error("apps/customer-mobile/Sources/TimiNowUI/IntakeFlowView.swift binds startedWhen to a TextField. Free text cannot match the Worker's five tokens, so every request is rejected.");
+  }
+
+  // The two closed sets the tracker screen posts into, which live as bare
+  // string literals scattered across the UI rather than as a type.
+  const literalsIn = (sources, pattern) => {
+    const found = new Set();
+    for (const source of sources) for (const hit of source.matchAll(pattern)) found.add(hit[1]);
+    return found;
+  };
+  const uiSources = [];
+  for (const path of await collectFiles("apps/customer-mobile/Sources/TimiNowUI", ".swift")) {
+    uiSources.push(await read(path));
+  }
+  const setLiteral = (name) => {
+    const match = worker.match(new RegExp(`const ${name} = new Set\\(\\[([^\\]]*)\\]`));
+    return match ? new Set([...match[1].matchAll(/"([^"]+)"/g)].map((hit) => hit[1])) : null;
+  };
+  // These are declared inline in their handlers, so read them by their message.
+  const milestones = new Set(["arrived", "triaged", "seen", "departed", "staff_wait_quote"]);
+  const customerStatuses = new Set(["cancelled", "en_route", "arrived"]);
+  if (!worker.includes('new Set(["arrived", "triaged", "seen", "departed", "staff_wait_quote"])')) {
+    throw new Error("src/index.js no longer declares the observation milestone set this check compares against — update scripts/validate-native.mjs alongside it.");
+  }
+  if (!worker.includes('new Set(["cancelled", "en_route", "arrived"])')) {
+    throw new Error("src/index.js no longer declares the customer intake-status set this check compares against — update scripts/validate-native.mjs alongside it.");
+  }
+  void setLiteral;
+  for (const [label, sent, accepted, endpoint] of [
+    ["milestone", literalsIn(uiSources, /store\.record\("([a-z_]+)"\)/g), milestones, "POST /api/observations"],
+    ["status", literalsIn(uiSources, /updateIntake\(status: "([a-z_]+)"\)/g), customerStatuses, "POST /api/intakes/{id}/status"]
+  ]) {
+    const rejected = [...sent].filter((value) => !accepted.has(value));
+    if (rejected.length) {
+      throw new Error(`The tracker screen posts ${label} = ${rejected.join(", ")} to ${endpoint}, which the Worker rejects with 422.`);
+    }
+  }
+}
+
+// Query strings drift the same way request bodies do, and just as silently.
+// The phone app asked /api/locations for `latitude`, `longitude` and
+// `radiusMiles`; handleLocationSearch reads `lat`, `lng` and `radius`. It got
+// a 200 every time, with no coordinates — so no distance on any clinic, no
+// radius filter, and the list sorted alphabetically by name. The app has never
+// once shown the nearest hospital, and nothing anywhere said so.
+{
+  const worker = await read("src/index.js");
+  const handler = worker.match(/async function handleLocationSearch[\s\S]*?\n\}/);
+  if (!handler) throw new Error("src/index.js no longer declares handleLocationSearch.");
+  const understood = new Set([...handler[0].matchAll(/searchParams\.get\("([^"]+)"\)/g)].map((hit) => hit[1]));
+  const client = await read("apps/customer-mobile/Sources/TimiNowCore/APIClient.swift");
+  const call = client.match(/public func locations\([\s\S]*?\n    \}/);
+  if (!call) throw new Error("apps/customer-mobile/Sources/TimiNowCore/APIClient.swift no longer declares locations(latitude:longitude:species:...).");
+  const sent = [...call[0].matchAll(/URLQueryItem\(name: "([^"]+)"/g)].map((hit) => hit[1]);
+  const ignored = sent.filter((name) => !understood.has(name));
+  if (ignored.length) {
+    throw new Error(`apps/customer-mobile/Sources/TimiNowCore/APIClient.swift sends /api/locations?${ignored.join("&")}, which handleLocationSearch never reads. The request succeeds and the parameters are dropped — no distances, no radius, alphabetical order.`);
+  }
+  for (const required of ["lat", "lng"]) {
+    if (!sent.includes(required)) {
+      throw new Error(`apps/customer-mobile/Sources/TimiNowCore/APIClient.swift does not send ${required} to /api/locations, so the Worker cannot sort clinics by distance.`);
+    }
+  }
+}
+
+// "Do not wait for an app response", and nothing to press. The notice told
+// somebody whose animal may be dying to get to an emergency hospital, on a
+// screen that knew where they were and which hospitals take emergencies.
+{
+  const components = await read("apps/customer-mobile/Sources/TimiNowUI/Components.swift");
+  if (!/Button \{ Task \{ await store\.findEmergencyCare\(\) \} \}/.test(components)) {
+    throw new Error("apps/customer-mobile/Sources/TimiNowUI/Components.swift: SafetyBanner no longer offers the emergency-care action, so the notice is advice with nothing to act on.");
+  }
+  const store = await read("apps/customer-mobile/Sources/TimiNowCore/AppStore.swift");
+  if (!/gateway\.emergencyPlaces\(/.test(store)) {
+    throw new Error("apps/customer-mobile/Sources/TimiNowCore/AppStore.swift no longer asks for emergency places, so the button has nothing to show.");
+  }
+  const client = await read("apps/customer-mobile/Sources/TimiNowCore/APIClient.swift");
+  // The Tími network is not the answer to "where is the nearest emergency
+  // hospital". /api/emergency-nearby merges map data; /api/locations does not.
+  if (!/api\/emergency-nearby/.test(client)) {
+    throw new Error("apps/customer-mobile/Sources/TimiNowCore/APIClient.swift asks /api/locations for emergency care, which returns only enrolled providers. In a city with three partners that is a list of three, and the nearest real emergency hospital is not on it.");
+  }
+  const worker = await read("src/index.js");
+  if (!/findEmergencyVeterinaryPlaces\(/.test(worker)) {
+    throw new Error("src/index.js no longer merges map data into /api/emergency-nearby, so the list is the Tími network again.");
+  }
+  if (!/notice:/.test(worker.slice(worker.indexOf("handleEmergencyNearby")))) {
+    throw new Error("src/index.js serves emergency places without the notice saying they are unverified map listings. A POI listing presented as a triaged recommendation is the worst kind of wrong.");
+  }
+  // The root mounts the sheet, not each banner: the button is on three
+  // screens and a list that disappears with the screen under it is worse
+  // than not offering one.
+  const root = await read("apps/customer-mobile/Sources/TimiNowUI/CustomerRootView.swift");
+  if (!/sheet\(isPresented: \$store\.showEmergencyList\)/.test(root)) {
+    throw new Error("apps/customer-mobile/Sources/TimiNowUI/CustomerRootView.swift does not present the emergency list, so the button loads results nothing shows.");
+  }
+}
+
+// Text entry in the app's own hand. `.roundedBorder` and a 1pt hairline at 18%
+// ink are the defaults a form gets when nobody styles it, and next to a coral
+// button with a 2pt border and a five-point drop they read as another app.
+for (const path of [
+  "apps/customer-mobile/Sources/TimiNowUI/SignInView.swift",
+  "apps/customer-mobile/Sources/TimiNowUI/IntakeFlowView.swift"
+]) {
+  const source = await read(path);
+  if (/textFieldStyle\(\.roundedBorder\)/.test(source)) {
+    throw new Error(`${path} uses .roundedBorder — the system's grey hairline — on a screen built from 2pt ink borders and hard offset shadows. Use .timiField().`);
+  }
+  if (/RoundedRectangle\(cornerRadius: 15\)\.stroke\(TimiColor\.ink\.faded\(0\.18\)\)/.test(source)) {
+    throw new Error(`${path} still draws a hairline field border by hand. Use .timiField() so every field matches.`);
+  }
+}
+
+// The terms version a client sends must be the one the Worker accepts. It
+// rejects anything else outright, so a bump applied in one place and not the
+// other is a 422 on the last screen of the flow with nothing pointing at the
+// notice that changed. The string used to be a literal in eight files.
+{
+  const catalog = await read("src/catalog.js");
+  const declared = catalog.match(/export const LEGAL_VERSION = "([^"]+)"/);
+  if (!declared) throw new Error("src/catalog.js no longer declares LEGAL_VERSION.");
+  const client = await read("apps/customer-mobile/Sources/TimiNowCore/APIClient.swift");
+  const sent = client.match(/enum TimiLegal \{[\s\S]*?static let version = "([^"]+)"/);
+  if (!sent) throw new Error("apps/customer-mobile/Sources/TimiNowCore/APIClient.swift no longer declares TimiLegal.version.");
+  if (sent[1] !== declared[1]) {
+    throw new Error(`The phone app accepts terms version ${sent[1]}; the Worker accepts ${declared[1]}. Every care request is refused with 422 VALIDATION_FAILED.`);
+  }
+  // And nowhere else may carry its own copy.
+  for (const path of ["apps/customer-mobile/Sources/TimiNowCore/APIClient.swift", "public/app.js", "src/index.js"]) {
+    const source = await read(path);
+    const strays = [...source.matchAll(/legalVersion: "(\d{4}-\d{2}-\d{2})"/g)].map((hit) => hit[1]);
+    if (strays.length) {
+      throw new Error(`${path} hardcodes legalVersion ${strays.join(", ")}. Read it from LEGAL_VERSION (or /api/config) so it cannot drift from the Worker that validates it.`);
+    }
+  }
+}
+
+// Which credential staffs a provider is an operator's field, and the two Sets
+// that police it live in different Workers.
+{
+  const catalog = await read("src/catalog.js");
+  const admin = await read("apps/admin-console/src/index.js");
+  const values = (source) => {
+    const match = source.match(/VALID_STAFFING = new Set\(\[([^\]]*)\]/);
+    if (!match) return null;
+    return [...match[1].matchAll(/"([^"]+)"/g)].map((hit) => hit[1]).sort().join(",");
+  };
+  const expected = values(catalog);
+  const actual = values(admin);
+  if (!expected) throw new Error("src/catalog.js no longer declares VALID_STAFFING.");
+  if (!actual) throw new Error("apps/admin-console/src/index.js no longer declares VALID_STAFFING, so any string could be stored as a staffing level.");
+  if (expected !== actual) {
+    throw new Error(`apps/admin-console/src/index.js accepts staffing levels [${actual}] but src/catalog.js recognises [${expected}]. A level the customer Worker does not know reads as veterinarian-staffed, which is the wrong direction to be wrong in.`);
+  }
+  // The notice is composed once, server-side, so it cannot be reworded per
+  // screen. A client that builds its own would drift from the legal text.
+  const worker = await read("src/index.js");
+  if (!/staffingNotice:/.test(worker)) {
+    throw new Error("src/index.js no longer composes staffingNotice, so each client would have to word the scope-of-practice notice itself.");
+  }
+  // Both places somebody meets a clinic: the offer they choose between, and
+  // the one they were confirmed with. Counted rather than merely present,
+  // because dropping one leaves the other matching.
+  for (const [path, required] of [
+    ["apps/customer-mobile/Sources/TimiNowUI/OfferAndTrackerViews.swift", 2],
+    ["apps/customer-mobile/Sources/TimiNowUI/Components.swift", 1]
+  ]) {
+    const source = await read(path);
+    const shown = [...source.matchAll(/StaffingNotice\(notice:/g)].length;
+    if (shown < required) {
+      throw new Error(`${path} shows the staffing notice in ${shown} of ${required} places. Wherever it is missing, a technician-staffed provider is indistinguishable from a veterinarian-staffed one at the moment somebody chooses.`);
+    }
+  }
+}
+
+// Cancelling is not failing. SwiftUI cancels the search screen's polling task
+// when that screen goes away, which cancels the request in flight; URLSession
+// reports it as an error whose description is the single word "cancelled", so
+// pressing Cancel put "Could not reach …/api/searches/search_7af97a9e:
+// cancelled" on screen as though something had broken.
+{
+  const client = await read("apps/customer-mobile/Sources/TimiNowCore/APIClient.swift");
+  if (!/if Task\.isCancelled \{ throw CancellationError\(\) \}/.test(client)) {
+    throw new Error("apps/customer-mobile/Sources/TimiNowCore/APIClient.swift reports a cancelled request as a transport failure. Pressing Cancel then shows an error toast.");
+  }
+  const store = await read("apps/customer-mobile/Sources/TimiNowCore/AppStore.swift");
+  const reportBody = store.match(/func report\(_ error: Error\) \{[\s\S]*?\n    \}/);
+  if (!reportBody) {
+    throw new Error("apps/customer-mobile/Sources/TimiNowCore/AppStore.swift no longer has report(_:), so a cancelled poll surfaces as a failure.");
+  }
+  if (!/error is CancellationError/.test(reportBody[0])) {
+    throw new Error("apps/customer-mobile/Sources/TimiNowCore/AppStore.swift: report(_:) no longer drops cancellations, which is the only reason it exists.");
+  }
+  // Nothing outside report(_:) may turn a caught error into screen text: a
+  // catch that writes errorMessage directly is both a cancellation toast and
+  // a raw diagnostic — a route, a status and a record id — in front of a
+  // customer.
+  const raw = [...store.matchAll(/errorMessage = Self\.describe\(error\)/g)].length
+    + [...store.matchAll(/errorMessage = error\.(message|localizedDescription)/g)].length;
+  if (raw !== 0) {
+    throw new Error(`apps/customer-mobile/Sources/TimiNowCore/AppStore.swift renders a caught error directly in ${raw} places. Everything goes through report(_:), which shows a sentence and sends the detail to the Worker.`);
+  }
+  if (!/ErrorPresenter\.present\(error\)/.test(store) || !/gateway\.reportFailure\(report\)/.test(store)) {
+    throw new Error("apps/customer-mobile/Sources/TimiNowCore/AppStore.swift: report(_:) must present a public sentence and send the diagnostics to /api/client-errors, not put the diagnostics on screen.");
+  }
+}
+
+// Optional medical context is optional the whole way down: never required to
+// make a request, and never presented as anything but what the owner typed.
+{
+  const worker = await read("src/index.js");
+  if (!/cleanString\(pet\.medications, 500\)/.test(worker) || !/cleanString\(pet\.allergies, 500\)/.test(worker)) {
+    throw new Error("src/index.js no longer reads pet.medications and pet.allergies, so anything an owner records is dropped before it reaches a clinic.");
+  }
+  const errorsBlock = worker.slice(worker.indexOf("function validateIntake"), worker.indexOf("clinicConcernSummary ="));
+  if (/errors\.push\([^)]*(medication|allerg)/i.test(errorsBlock)) {
+    throw new Error("src/index.js validates medications or allergies as required. They are optional, and a care request must never depend on them.");
+  }
+  const legal = await read("apps/customer-mobile/Sources/TimiNowUI/SupportViews.swift");
+  for (const [needle, what] of [
+    ["veterinary technician", "the scope-of-practice notice for technician-staffed providers"],
+    ["Medications and allergies you record", "the notice covering optional medical information"]
+  ]) {
+    if (!legal.includes(needle)) {
+      throw new Error(`apps/customer-mobile/Sources/TimiNowUI/SupportViews.swift is missing ${what}. Both are shipped behaviour and both need a notice.`);
+    }
+  }
+  if (!legal.includes("Finding emergency hospitals")) {
+    throw new Error("apps/customer-mobile/Sources/TimiNowUI/SupportViews.swift is missing the notice covering emergency listings taken from third-party map data. Most of that list is not a Tími provider and none of it is verified.");
+  }
+  const web = await read("public/index.html");
+  for (const needle of ["veterinary technician", "Medications and allergies you record", "medications or allergies you choose to record", "Finding emergency hospitals"]) {
+    if (!web.includes(needle)) {
+      throw new Error(`public/index.html is missing the legal text for "${needle}". The web and the phone must carry the same notices.`);
+    }
+  }
+}
+
+// A network blip at launch is not a sign-out. `catch { signOutLocally() }`
+// treated "Clerk says this session is gone" and "the phone had no network for
+// a second while the app opened" as the same thing — and signOutLocally
+// deletes the Keychain item, so one blip signed somebody out permanently and,
+// once the store began clearing account data on sign-out, took their pets and
+// their history with it.
+for (const [path, marker] of [
+  ["apps/customer-mobile/Sources/TimiNowCore/AuthController.swift", "isCredentialRejected"],
+  ["apps/vet-desktop/Sources/TimiVetCore/AuthController.swift", "isCredentialRejected"]
+]) {
+  const source = await read(path);
+  if (!source.includes(marker) || !/func resumeWithoutChecking\(\)/.test(source)) {
+    throw new Error(`${path} signs out on any failure while restoring a session. Only Clerk rejecting the credential is a sign-out; a timeout or a 5xx says nothing about the account, and the Keychain item is deleted either way.`);
+  }
+  // The restore path must not have a bare catch-all that reaches signOutLocally.
+  const restore = source.slice(source.indexOf("let client = try await getClient()"));
+  const firstCatchAll = restore.indexOf("} catch {");
+  const body = restore.slice(firstCatchAll, firstCatchAll + 140);
+  if (firstCatchAll !== -1 && /signOutLocally\(\)/.test(body)) {
+    throw new Error(`${path}: the catch-all while restoring a session still calls signOutLocally(). That is the blip-signs-you-out bug.`);
+  }
+}
+
+// The console paints a light palette by hand; AppKit's own controls follow the
+// system appearance. On a Mac in dark mode that put dark text boxes inside
+// light cards with their labels black on black, and nothing in the decision
+// workspace could be read. The phone app pins itself light the same way.
+{
+  const delegate = await read("apps/vet-desktop/Sources/TimiVetApp/AppDelegate.swift");
+  if (!/NSApp\.appearance = NSAppearance\(named: \.aqua\)/.test(delegate)) {
+    throw new Error("apps/vet-desktop/Sources/TimiVetApp/AppDelegate.swift does not pin the console to the light appearance. Every system control in the workspace renders dark against hand-painted light cards.");
+  }
+  for (const path of [
+    "apps/vet-desktop/Sources/TimiVetApp/TimiVetApp.swift",
+    "apps/vet-desktop/Sources/TimiVetUI/FloatingPanel.swift"
+  ]) {
+    const source = await read(path);
+    if (!/preferredColorScheme\(\.light\)/.test(source)) {
+      throw new Error(`${path} hosts a SwiftUI hierarchy in an AppKit window without pinning its colour scheme, so it follows the system into dark mode on its own.`);
+    }
+  }
+}
+
+// A queue alert has to lead to an answer. It led to "Open decision workspace":
+// find the window, read four number fields, press a button — for what is
+// almost always "yes, usual window" or "no, we're full".
+{
+  const store = await read("apps/vet-desktop/Sources/TimiVetCore/ClinicStore.swift");
+  if (!/func answer\(_ request: ClinicRequest, decline: Bool\)/.test(store)) {
+    throw new Error("apps/vet-desktop/Sources/TimiVetCore/ClinicStore.swift has no one-press answer, so every response has to go through the decision workspace.");
+  }
+  for (const path of [
+    "apps/vet-desktop/Sources/TimiVetUI/MiniConsoleView.swift",
+    "apps/vet-desktop/Sources/TimiVetUI/ConsoleView.swift"
+  ]) {
+    const source = await read(path);
+    if (!/store\.answer\(request, decline: false\)/.test(source) || !/store\.answer\(request, decline: true\)/.test(source)) {
+      throw new Error(`${path} does not offer accept and decline on the request itself. The floating panel raising an alert whose only action is "open another window" is what this replaced.`);
+    }
+  }
+  const alerts = await read("apps/vet-desktop/Sources/TimiVetUI/AlertCenter.swift");
+  const alertCode = alerts.split("\n").filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line)).join("\n");
+  if (/NSSound\.beep\(\)/.test(alertCode)) {
+    throw new Error("apps/vet-desktop/Sources/TimiVetUI/AlertCenter.swift uses NSSound.beep(), which follows the separate Alert Volume slider and is routinely silent. Play a named sound through normal output.");
+  }
+  if (!/func playAlert\(emergency: Bool\)/.test(alerts) || !/private var alertSound: NSSound\?/.test(alerts)) {
+    throw new Error("apps/vet-desktop/Sources/TimiVetUI/AlertCenter.swift must hold the NSSound while it plays — one released mid-sound simply stops, which is its own silent-alert bug.");
+  }
+}
+
+// One offer on screen with no sign that more are coming reads as the final
+// answer, and waiting for a second that may never arrive is the delay this
+// app exists to remove.
+{
+  const offers = await read("apps/customer-mobile/Sources/TimiNowUI/OfferAndTrackerViews.swift");
+  if (!/var stillCollecting: Bool/.test(offers) || !/Still asking/.test(offers)) {
+    throw new Error("apps/customer-mobile/Sources/TimiNowUI/OfferAndTrackerViews.swift does not say whether more clinics are still being asked, so the first offer looks like the last one.");
+  }
+}
+
+// A Clerk session token lives about a minute. Two callers out of seven
+// refreshed it, so anything done more than sixty seconds after signing in
+// went out with a dead token and came back 401 AUTHENTICATION_REQUIRED —
+// which reads as being signed out, and was not.
+{
+  const client = await read("apps/customer-mobile/Sources/TimiNowCore/APIClient.swift");
+  if (!/weak var tokenProvider: TimiSessionTokenProviding\?/.test(client)) {
+    throw new Error("apps/customer-mobile/Sources/TimiNowCore/APIClient.swift has no token provider, so every caller has to remember to refresh — and five of seven did not.");
+  }
+  if (!/tokenProvider\.ensureFreshToken\(\)/.test(client)) {
+    throw new Error("apps/customer-mobile/Sources/TimiNowCore/APIClient.swift does not mint a token per request. A token minted at sign-in is dead a minute later.");
+  }
+  if (!/forceRefreshToken\(\)/.test(client) || !/http\.statusCode == 401, !retried/.test(client)) {
+    throw new Error("apps/customer-mobile/Sources/TimiNowCore/APIClient.swift does not retry once on a 401 with a freshly minted token, so a token that expired in flight signs somebody out.");
+  }
+  const store = await read("apps/customer-mobile/Sources/TimiNowCore/AppStore.swift");
+  if (!/gateway\.tokenProvider = self\.auth/.test(store)) {
+    throw new Error("apps/customer-mobile/Sources/TimiNowCore/AppStore.swift never gives the gateway a token provider, so it falls back to whatever token was last set by hand.");
+  }
+}
+
+// Diagnostics are for operators. "Sign in is required to continue. (401
+// [AUTHENTICATION_REQUIRED] from /api/intakes/intake_be49b8c2…/status)" names
+// an internal route and a record id, tells somebody to do what they have
+// already done, and was not even true.
+{
+  const presenter = await read("apps/customer-mobile/Sources/TimiNowCore/ErrorPresenter.swift");
+  if (!/static let vague/.test(presenter) || !/func diagnostics\(/.test(presenter)) {
+    throw new Error("apps/customer-mobile/Sources/TimiNowCore/ErrorPresenter.swift must separate what a person is shown from what an operator is sent.");
+  }
+  const auth = await read("apps/customer-mobile/Sources/TimiNowCore/AuthController.swift");
+  if (/errorMessage = error\.message/.test(auth)) {
+    throw new Error("apps/customer-mobile/Sources/TimiNowCore/AuthController.swift renders TimiAPIError.message directly, which appends \"(422 [code] from /v1/client/…)\" to every sign-in error.");
+  }
+  const worker = await read("src/index.js");
+  if (!/path === "\/api\/client-errors"/.test(worker) || !/function recordClientError/.test(worker)) {
+    throw new Error("src/index.js has no /api/client-errors ingest, so the detail the apps stopped showing has nowhere to go.");
+  }
+  const adminWorker = await read("apps/admin-console/src/index.js");
+  if (!/handleClientErrors/.test(adminWorker)) {
+    throw new Error("apps/admin-console/src/index.js does not serve client errors, so nothing an app reports can be read.");
+  }
+  const adminApp = await read("apps/admin-console/public/app.js");
+  if (!/loadClientErrors/.test(adminApp)) {
+    throw new Error("apps/admin-console/public/app.js has no client-errors screen, so a customer reading out a reference has nowhere to be looked up.");
+  }
+}
+
+// The pet sheet is the one screen a customer reaches from a coral button with
+// a 2pt ink border, so a grouped system Form makes the join obvious.
+{
+  const support = await read("apps/customer-mobile/Sources/TimiNowUI/SupportViews.swift");
+  const editor = support.slice(support.indexOf("struct PetEditor: View {"), support.indexOf("struct ActivityView: View {"));
+  if (/\bForm\s*\{/.test(editor) || /NavigationStack/.test(editor)) {
+    throw new Error("apps/customer-mobile/Sources/TimiNowUI/SupportViews.swift: PetEditor is back to a system Form. Every other screen in this app is painted by hand.");
+  }
+  if (!/timiField\(\)/.test(editor)) {
+    throw new Error("apps/customer-mobile/Sources/TimiNowUI/SupportViews.swift: PetEditor's fields are not Tími fields.");
+  }
+}
+
+// A practice with one person at the desk and a phone already ringing has a
+// real reason to say no to an automated call. The columns for it shipped with
+// the voice gateway, carrying a note that a console was expected to expose
+// them; none did, so every clinic ran on the default.
+{
+  const worker = await read("src/index.js");
+  if (!/path === "\/api\/clinic\/call-preferences"/.test(worker)) {
+    throw new Error("src/index.js exposes no calling preferences, so a clinic cannot turn the phone call off.");
+  }
+  const client = await read("apps/vet-desktop/Sources/TimiVetCore/ClinicAPIClient.swift");
+  if (!/updateCallPreferences\(/.test(client)) {
+    throw new Error("apps/vet-desktop/Sources/TimiVetCore/ClinicAPIClient.swift cannot change calling preferences, so the console has nothing to save.");
+  }
+  const console_ = await read("apps/vet-desktop/Sources/TimiVetUI/ConsoleView.swift");
+  if (!/Call this clinic about new requests/.test(console_)) {
+    throw new Error("apps/vet-desktop/Sources/TimiVetUI/ConsoleView.swift has no calling-preferences control.");
   }
 }
 

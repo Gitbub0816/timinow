@@ -60,9 +60,15 @@ public struct PetSummary: Codable, Hashable, Sendable {
     public var breed: String?
     public var ageYears: Double?
     public var weightLbs: Double?
+    /// Optional, owner-supplied, unverified. Shown so the desk is not hearing
+    /// it for the first time when the animal walks in — not as a record, and
+    /// never as something to act on without confirming.
+    public var medications: String?
+    public var allergies: String?
 
-    public init(name: String = "Pet", species: String = "other", breed: String? = nil, ageYears: Double? = nil, weightLbs: Double? = nil) {
+    public init(name: String = "Pet", species: String = "other", breed: String? = nil, ageYears: Double? = nil, weightLbs: Double? = nil, medications: String? = nil, allergies: String? = nil) {
         self.name = name; self.species = species; self.breed = breed; self.ageYears = ageYears; self.weightLbs = weightLbs
+        self.medications = medications; self.allergies = allergies
     }
 }
 
@@ -179,6 +185,34 @@ public enum TimiVetEnvironment {
     public static let defaultAPIBaseURL = "https://providers.timinow.pet"
 }
 
+/// Whether Tími may ring this clinic, and on what number.
+///
+/// A practice with one person at the desk and a phone already ringing has a
+/// real reason to say no to an automated call, and until now had no way to.
+public struct CallPreferences: Codable, Hashable, Sendable {
+    public var callsEnabled: Bool
+    public var voicePhone: String?
+    /// The location's listed number, shown as the fallback when no dedicated
+    /// voice line is set.
+    public var locationPhone: String?
+    public var quietHours: QuietHours?
+
+    public init(callsEnabled: Bool = true, voicePhone: String? = nil, locationPhone: String? = nil, quietHours: QuietHours? = nil) {
+        self.callsEnabled = callsEnabled; self.voicePhone = voicePhone
+        self.locationPhone = locationPhone; self.quietHours = quietHours
+    }
+}
+
+public struct QuietHours: Codable, Hashable, Sendable {
+    public var start: String?
+    public var end: String?
+    public init(start: String? = nil, end: String? = nil) { self.start = start; self.end = end }
+}
+
+public struct CallPreferencesEnvelope: Codable, Sendable {
+    public var preferences: CallPreferences
+}
+
 public struct AppSettings: Codable, Sendable {
     public var apiBaseUrl: String = TimiVetEnvironment.defaultAPIBaseURL
     public var tenantId: String = "tenant_hearth"
@@ -197,7 +231,13 @@ public struct AppSettings: Codable, Sendable {
     public var miniWindowWidth: Double?
     public var miniWindowHeight: Double?
 
-    public init(apiBaseUrl: String = "", tenantId: String = "tenant_hearth", pollSeconds: Int = 6, alertsEnabled: Bool = true, playSound: Bool = true, miniWindowTopmost: Bool = true, stayAboveEverything: Bool = false, startAtLogin: Bool = false, autoShowMiniOnNewRequest: Bool = false, miniWindowLeft: Double? = nil, miniWindowTop: Double? = nil, miniWindowWidth: Double? = nil, miniWindowHeight: Double? = nil) {
+    // `apiBaseUrl` defaults to the same address as the stored property above,
+    // and not to "". A property default is dead the moment an explicit
+    // initializer assigns the parameter over it, so `AppSettings()` handed back
+    // a blank address no matter what the property said — which is how a fresh
+    // install reported "Could not read no Worker address/api/config" while the
+    // default sat right there in the source.
+    public init(apiBaseUrl: String = TimiVetEnvironment.defaultAPIBaseURL, tenantId: String = "tenant_hearth", pollSeconds: Int = 6, alertsEnabled: Bool = true, playSound: Bool = true, miniWindowTopmost: Bool = true, stayAboveEverything: Bool = false, startAtLogin: Bool = false, autoShowMiniOnNewRequest: Bool = false, miniWindowLeft: Double? = nil, miniWindowTop: Double? = nil, miniWindowWidth: Double? = nil, miniWindowHeight: Double? = nil) {
         self.apiBaseUrl = apiBaseUrl; self.tenantId = tenantId; self.pollSeconds = pollSeconds; self.alertsEnabled = alertsEnabled
         self.playSound = playSound; self.miniWindowTopmost = miniWindowTopmost; self.stayAboveEverything = stayAboveEverything
         self.startAtLogin = startAtLogin; self.autoShowMiniOnNewRequest = autoShowMiniOnNewRequest

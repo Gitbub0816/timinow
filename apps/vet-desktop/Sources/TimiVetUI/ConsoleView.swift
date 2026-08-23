@@ -8,12 +8,21 @@ public struct ConsoleView: View {
     var onOpenMini: () -> Void
     var onManagePeople: () -> Void
     var onSignOut: () -> Void
+    /// Plays the intake alert on demand. "No sound fires" is not something
+    /// anybody should have to wait for a real patient to test.
+    var onTestAlert: () -> Void
 
-    public init(store: ClinicStore, onOpenMini: @escaping () -> Void, onManagePeople: @escaping () -> Void, onSignOut: @escaping () -> Void) {
+    @State var callsEnabled = true
+    @State var voicePhone = ""
+    @State var quietStart = ""
+    @State var quietEnd = ""
+
+    public init(store: ClinicStore, onOpenMini: @escaping () -> Void, onManagePeople: @escaping () -> Void, onSignOut: @escaping () -> Void, onTestAlert: @escaping () -> Void = { }) {
         self.store = store
         self.onOpenMini = onOpenMini
         self.onManagePeople = onManagePeople
         self.onSignOut = onSignOut
+        self.onTestAlert = onTestAlert
     }
 
     public var body: some View {
@@ -35,6 +44,15 @@ public struct ConsoleView: View {
         }
         .background(TimiVetColor.canvas)
         .task { await store.start() }
+        .task {
+            await store.loadCallPreferences()
+            // Copied into local state once, so typing in the field does not
+            // fight the next poll.
+            callsEnabled = store.callPreferences.callsEnabled
+            voicePhone = store.callPreferences.voicePhone ?? ""
+            quietStart = store.callPreferences.quietHours?.start ?? ""
+            quietEnd = store.callPreferences.quietHours?.end ?? ""
+        }
     }
 
     // MARK: Sidebar
@@ -203,8 +221,26 @@ public struct ConsoleView: View {
             ScrollView {
                 VStack(spacing: 0) {
                     ForEach(store.requests) { request in
-                        Button { store.select(request) } label: { requestRow(request) }
-                            .buttonStyle(.plain)
+                        VStack(spacing: 0) {
+                            Button { store.select(request) } label: { requestRow(request) }
+                                .buttonStyle(.plain)
+                            // Answering is the ordinary case, so it happens
+                            // here. Opening the workspace is for shaping an
+                            // offer — a later time, a different window, a note.
+                            if request.status == "pending" {
+                                HStack(spacing: 8) {
+                                    Button("Yes, we can see them") { Task { await store.answer(request, decline: false) } }
+                                        .buttonStyle(TimiVetPrimaryButtonStyle(color: TimiVetColor.blue))
+                                        .disabled(store.isBusy)
+                                    Button("No") { Task { await store.answer(request, decline: true) } }
+                                        .buttonStyle(TimiVetQuietButtonStyle())
+                                        .disabled(store.isBusy)
+                                }
+                                .padding(.horizontal, 16)
+                                .padding(.bottom, 14)
+                                .background(request.id == store.selectedRequest?.id ? TimiVetColor.blueSoft : Color.clear)
+                            }
+                        }
                         Divider().foregroundStyle(TimiVetColor.cardBorderAlt)
                     }
                 }
@@ -237,6 +273,19 @@ public struct ConsoleView: View {
         .background(request.id == store.selectedRequest?.id ? TimiVetColor.blueSoft : Color.clear)
     }
 
+    @ViewBuilder
+    private func ownerSuppliedRow(_ label: String, _ value: String?) -> some View {
+        if let value, !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("\(label) — REPORTED BY OWNER, UNVERIFIED").timiVetEyebrow()
+                Text(value).font(TimiVetFont.ui(14, weight: .semibold))
+            }
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(TimiVetColor.goldSoft, in: RoundedRectangle(cornerRadius: 8))
+        }
+    }
+
     private var decisionWorkspace: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
@@ -244,6 +293,11 @@ public struct ConsoleView: View {
                 if let request = store.selectedRequest {
                     Text(request.petLine).font(TimiVetFont.display(27))
                     Text(request.concernSummary).font(TimiVetFont.ui(15))
+                    // Owner-supplied and unverified, and labelled as such: it
+                    // arrives so the desk is not hearing it for the first time
+                    // at the door, not as a record to act on.
+                    ownerSuppliedRow("ALLERGIES", request.pet.allergies)
+                    ownerSuppliedRow("MEDICATIONS", request.pet.medications)
                     HStack(spacing: 18) {
                         ownerField("OWNER", request.owner.name)
                         ownerField("PHONE", request.owner.phone)
@@ -310,10 +364,47 @@ public struct ConsoleView: View {
                         .font(TimiVetFont.ui(10)).foregroundStyle(TimiVetColor.muted)
                 }
                 VStack(alignment: .leading, spacing: 10) {
+                    Text("Phone calls from Tími").font(TimiVetFont.ui(13, weight: .semibold))
+                    Toggle("Call this clinic about new requests", isOn: $callsEnabled)
+                    Text("When this is off, requests still arrive in this console and on the floating panel — Tími simply does not ring the phone. Some practices want the call; a single-handed front desk usually does not.")
+                        .font(TimiVetFont.ui(10)).foregroundStyle(TimiVetColor.muted)
+                    Text("Number to call").font(TimiVetFont.ui(12, weight: .semibold))
+                    TextField(store.callPreferences.locationPhone ?? "Clinic's listed number", text: $voicePhone)
+                        .textFieldStyle(.roundedBorder)
+                        .disabled(!callsEnabled)
+                    Text("Leave blank to use the clinic's listed number. A back line that is not the public one is usually the right answer.")
+                        .font(TimiVetFont.ui(10)).foregroundStyle(TimiVetColor.muted)
+                    HStack(spacing: 10) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Quiet from").font(TimiVetFont.ui(12, weight: .semibold))
+                            TextField("22:00", text: $quietStart).textFieldStyle(.roundedBorder).disabled(!callsEnabled)
+                        }
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Quiet until").font(TimiVetFont.ui(12, weight: .semibold))
+                            TextField("07:00", text: $quietEnd).textFieldStyle(.roundedBorder).disabled(!callsEnabled)
+                        }
+                    }
+                    Text("24-hour times. Leave both blank for no quiet hours. Requests raised during quiet hours still appear in the console.")
+                        .font(TimiVetFont.ui(10)).foregroundStyle(TimiVetColor.muted)
+                    Button("Save calling preferences") {
+                        Task { await store.saveCallPreferences(callsEnabled: callsEnabled, voicePhone: voicePhone, quietStart: quietStart, quietEnd: quietEnd) }
+                    }.buttonStyle(TimiVetPrimaryButtonStyle()).disabled(store.isBusy || !store.isAdmin)
+                    if !store.isAdmin {
+                        Text("Only a workspace administrator can change these. Ask whoever set up this clinic on Tími.")
+                            .font(TimiVetFont.ui(10)).foregroundStyle(TimiVetColor.muted)
+                    }
+                }
+                VStack(alignment: .leading, spacing: 10) {
                     Text("Polling interval, seconds").font(TimiVetFont.ui(13, weight: .semibold))
                     Stepper("\(store.settings.pollSeconds) sec", value: $store.settings.pollSeconds, in: 3...60)
                     Toggle("Desktop intake alerts", isOn: $store.settings.alertsEnabled)
-                    Toggle("Play alert sound", isOn: $store.settings.playSound)
+                    HStack {
+                        Toggle("Play alert sound", isOn: $store.settings.playSound)
+                        Spacer()
+                        Button("Test", action: onTestAlert).buttonStyle(TimiVetQuietButtonStyle())
+                    }
+                    Text("The alert plays through normal output, not the system alert beep — that follows a separate Alert Volume slider, and macOS silences a notification's own sound while this window is frontmost.")
+                        .font(TimiVetFont.ui(10)).foregroundStyle(TimiVetColor.muted)
                     Toggle("Floating console stays on top", isOn: $store.settings.miniWindowTopmost)
                     Toggle("Floating console stays above everything (screen saver level)", isOn: $store.settings.stayAboveEverything)
                     Toggle("Open floating console automatically on a new request", isOn: $store.settings.autoShowMiniOnNewRequest)

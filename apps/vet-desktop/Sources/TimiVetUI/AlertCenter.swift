@@ -18,6 +18,10 @@ import ServiceManagement
 /// Also owns launch-at-login through `SMAppService`, the modern replacement
 /// for the Windows Run-key autostart.
 @MainActor public final class AlertCenter: NSObject {
+    #if canImport(AppKit)
+    /// Strong reference for the duration of a sound; see `playAlert`.
+    private var alertSound: NSSound?
+    #endif
     public var onOpenMain: (() -> Void)?
     public var onOpenMini: (() -> Void)?
     public var onManagePeople: (() -> Void)?
@@ -50,7 +54,7 @@ import ServiceManagement
     public func newRequest(_ request: ClinicRequest) {
         guard settings.alertsEnabled else { return }
         #if canImport(AppKit)
-        if settings.playSound { NSSound.beep() }
+        if settings.playSound { playAlert(emergency: request.isEmergency) }
         #endif
         #if canImport(UserNotifications)
         let content = UNMutableNotificationContent()
@@ -62,6 +66,41 @@ import ServiceManagement
         UNUserNotificationCenter.current().add(notificationRequest)
         #endif
     }
+
+    #if canImport(AppKit)
+    /// A sound that actually plays.
+    ///
+    /// Two reasons nothing was ever heard. `NSSound.beep()` is the system
+    /// alert beep, which follows the Alert Volume slider in Sound settings —
+    /// a separate control from output volume, and frequently at zero. And the
+    /// notification's own sound is suppressed by macOS while the app is
+    /// frontmost, which is exactly when somebody is watching the queue.
+    ///
+    /// A named system sound goes through normal output and plays whether or
+    /// not the console has focus.
+    private func playAlert(emergency: Bool) {
+        // Sosumi is sharp and short; Submarine is lower and easy to live with
+        // when the queue is busy. Ping is the fallback if a system ever ships
+        // without them.
+        let candidates = emergency ? ["Sosumi", "Ping", "Funk"] : ["Submarine", "Ping", "Funk"]
+        var sound: NSSound?
+        for name in candidates {
+            sound = NSSound(named: NSSound.Name(name))
+            if sound != nil { break }
+        }
+        guard let sound else { return }
+        // Held for the length of the sound: an NSSound released while playing
+        // stops playing, which is its own silent-alert bug.
+        alertSound?.stop()
+        alertSound = sound
+        sound.stop()
+        sound.play()
+    }
+
+    /// Plays the alert on demand, so "no sound fires" can be checked without
+    /// waiting for a real request to arrive.
+    public func previewAlert() { playAlert(emergency: false) }
+    #endif
 
     // MARK: - Menu bar
 

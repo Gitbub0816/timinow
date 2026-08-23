@@ -9,7 +9,8 @@ import {
   requireTenantAdmin,
   revokeInvitation
 } from "./tenant-admin.js";
-import { DEMO_LOCATIONS, RED_FLAG_TERMS, VALID_INTAKE_STATUS, VALID_SPECIES, VALID_URGENCY } from "./catalog.js";
+import { DEMO_LOCATIONS, LEGAL_VERSION, RED_FLAG_TERMS, TECHNICIAN_NOTICE, VALID_INTAKE_STATUS, VALID_SPECIES, VALID_URGENCY } from "./catalog.js";
+import { findEmergencyVeterinaryPlaces, phoneKey } from "./mapbox-places.js";
 import {
   getCareOffer,
   getCareSearch,
@@ -123,6 +124,12 @@ function availabilityLabel(status) {
 function enrichLocation(location) {
   return {
     ...location,
+    // Composed here rather than in each client, so the wording cannot drift
+    // between the phone, the web page and the console. Null when a
+    // veterinarian staffs the place, which is the ordinary case.
+    staffingNotice: location.staffingLevel === "veterinary_technician"
+      ? [TECHNICIAN_NOTICE, location.staffingNote].filter(Boolean).join(" ")
+      : null,
     availability: {
       ...location.availability,
       label: availabilityLabel(location.availability.intakeStatus),
@@ -163,6 +170,151 @@ async function handleLocationSearch(url, env) {
     query: { latitude, longitude, radiusMiles, species, care },
     locations: locations.map(enrichLocation)
   });
+}
+
+/**
+ * The nearest emergency-capable veterinary hospitals: Tími's own, and every
+ * other one the map knows about.
+ *
+ * Two sources, one list, each row saying which it came from. A partner can
+ * actually be sent an intake, so partners sort first among equals; everything
+ * else is a name, an address and a phone number from map data, offered as
+ * somewhere to drive rather than as a recommendation.
+ *
+ * Cached per rounded coordinate. Hospitals do not move, the Mapbox calls are
+ * billed, and seven forward searches per tap would be seven per tap.
+ */
+async function handleEmergencyNearby(url, env, ctx) {
+  const latitude = numberInRange(url.searchParams.get("lat"), -90, 90);
+  const longitude = numberInRange(url.searchParams.get("lng"), -180, 180);
+  const radiusMiles = numberInRange(url.searchParams.get("radius"), 5, 200, 60);
+  const species = cleanString(url.searchParams.get("species"), 30).toLowerCase() || null;
+  if (latitude === null || longitude === null) {
+    return apiError(400, "INVALID_LOCATION", "Latitude and longitude are required to find emergency care.");
+  }
+  if (species && !VALID_SPECIES.has(species)) return apiError(400, "INVALID_SPECIES", "Choose a supported species.");
+
+  // Three decimals is about 110 metres: close enough that two people on the
+  // same street share a cache entry, fine enough that the distances stay right.
+  const cacheKey = new Request(
+    `https://timi.internal/emergency-nearby?lat=${latitude.toFixed(3)}&lng=${longitude.toFixed(3)}&radius=${radiusMiles}&species=${species || "any"}`
+  );
+  const cache = caches.default;
+  const cached = await cache.match(cacheKey);
+  if (cached) return cached;
+
+  const partners = (await listLocations(env, { latitude, longitude, radiusMiles, species, care: "emergency" }))
+    .map((location) => {
+      const enriched = enrichLocation(location);
+      return {
+        id: enriched.id,
+        source: "timi",
+        partner: true,
+        name: enriched.name,
+        address: enriched.address,
+        phone: enriched.phone,
+        latitude: enriched.latitude,
+        longitude: enriched.longitude,
+        distanceMiles: enriched.distanceMiles,
+        emergencyNamed: true,
+        staffingNotice: enriched.staffingNotice,
+        availabilityLabel: enriched.availability?.label || null
+      };
+    });
+
+  const partnerKeys = new Set(partners.map((place) => phoneKey(place.phone)).filter(Boolean));
+  const mapped = (await findEmergencyVeterinaryPlaces(env, { latitude, longitude, radiusMiles, limit: 12 }))
+    // A partner listed in map data too is one hospital, and the Tími row is
+    // the useful one: it is the only one that can be sent a request.
+    .filter((place) => !partnerKeys.has(phoneKey(place.phone)))
+    .map((place) => ({ ...place, staffingNotice: null, availabilityLabel: null }));
+
+  const places = [...partners, ...mapped]
+    .sort((a, b) => Number(b.partner) - Number(a.partner) || (a.distanceMiles ?? 999) - (b.distanceMiles ?? 999))
+    .slice(0, 8);
+
+  const response = json({
+    generatedAt: new Date().toISOString(),
+    query: { latitude, longitude, radiusMiles, species },
+    /**
+     * Repeated by every client, because a list of buildings is not a triage
+     * decision and this one is assembled from third-party map data.
+     */
+    notice: "Listings outside the Tími network come from map data. Tími has not verified that they are open, equipped for your animal, or accepting patients — call before you drive if you can.",
+    places
+  });
+  // Six hours: long enough that a street's worth of taps costs one lookup,
+  // short enough that a hospital closing down leaves within a day.
+  const cacheable = new Response(response.body, response);
+  cacheable.headers.set("cache-control", "public, max-age=21600");
+  ctx?.waitUntil(cache.put(cacheKey, cacheable.clone()));
+  return cacheable;
+}
+
+/**
+ * Take a client failure so it does not have to be shown to a customer.
+ *
+ * The apps render one short sentence and a reference code; everything that
+ * would actually help — the route, the status, the Worker's request id, the
+ * app version — arrives here. Nothing is trusted: every field is clamped,
+ * the body is size-limited, and a malformed report is accepted rather than
+ * argued with, because a client that is already broken should not be made to
+ * handle an error about its error.
+ */
+async function recordClientError(request, env) {
+  const body = await readJson(request).catch(() => null);
+  if (!body || typeof body !== "object") return json({ recorded: false }, { status: 202 });
+
+  const reference = cleanString(body.reference, 16) || newReference();
+  const surface = cleanString(body.surface, 40) || "unknown";
+  const path = cleanString(body.path, 160) || null;
+  const code = cleanString(body.code, 80) || null;
+  const message = cleanString(body.message, 500) || null;
+  const status = numberInRange(body.status, 0, 599, null);
+  // Same failure, same row group: route and code, not the message, because a
+  // message often carries an id and would make every occurrence unique.
+  const fingerprint = [surface, status ?? "-", code ?? "-", path ?? "-"].join("|").slice(0, 200);
+
+  if (!hasDatabase(env)) {
+    console.warn(JSON.stringify({ event: "client_error", reference, surface, status, code, path, message }));
+    return json({ recorded: false, reference }, { status: 202 });
+  }
+
+  let detail = {};
+  try {
+    detail = body.detail && typeof body.detail === "object" ? body.detail : {};
+  } catch { detail = {}; }
+  const detailJson = JSON.stringify(detail).slice(0, 4000);
+
+  await env.DB.prepare(`
+    INSERT INTO client_errors (
+      id, occurred_at, surface, app_version, path, status, code, message,
+      detail_json, clerk_user_id, tenant_id, request_id, reference, fingerprint
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).bind(
+    newId("clienterr"), new Date().toISOString(), surface,
+    cleanString(body.appVersion, 40) || null, path, status, code, message,
+    detailJson, cleanString(body.clerkUserId, 100) || null,
+    cleanString(body.tenantId, 100) || null, cleanString(body.requestId, 100) || null,
+    reference, fingerprint
+  ).run();
+
+  // Logged as well as stored: a Worker tail is where somebody looks first.
+  console.warn(JSON.stringify({ event: "client_error", reference, surface, status, code, path }));
+  return json({ recorded: true, reference }, { status: 202 });
+}
+
+/**
+ * The code a customer is shown. Short, unambiguous out loud, and unique
+ * enough to find one row: no vowels, so it cannot spell anything, and no
+ * characters that are read back wrong over a phone.
+ */
+function newReference() {
+  const alphabet = "23456789BCDFGHJKLMNPQRSTVWXZ";
+  let out = "";
+  const random = crypto.getRandomValues(new Uint8Array(6));
+  for (const byte of random) out += alphabet[byte % alphabet.length];
+  return out;
 }
 
 function humanizeOnset(value) {
@@ -214,6 +366,11 @@ function validateIntake(body, { requireLocation = true } = {}) {
   const concernSummary = cleanString(body.concernSummary, 1200);
   const symptoms = Array.isArray(body.symptoms) ? [...new Set(body.symptoms.map((value) => cleanString(value, 50)).filter((value) => VALID_SYMPTOMS.has(value)))].slice(0, 9) : [];
   const startedWhen = cleanString(body.startedWhen, 40);
+  // Optional, always. Free text an owner chose to type, passed to the clinic
+  // verbatim; not a medical record, not received from any veterinarian, and
+  // never required to make a request.
+  const medications = cleanString(pet.medications, 500) || null;
+  const allergies = cleanString(pet.allergies, 500) || null;
   const redFlags = redFlagsFrom(concernSummary, body.redFlags);
   const urgency = redFlags.length ? "emergency" : requestedUrgency;
   const errors = [];
@@ -227,9 +384,9 @@ function validateIntake(body, { requireLocation = true } = {}) {
   if (specificityError) errors.push(specificityError);
   if (!VALID_URGENCY.has(urgency)) errors.push("urgency is invalid");
   if (body.consentToContact !== true) errors.push("consentToContact is required");
-  if (body.legalConsent !== true || cleanString(body.legalVersion, 20) !== "2026-08-21") errors.push("current terms and safety notice must be accepted");
+  if (body.legalConsent !== true || cleanString(body.legalVersion, 20) !== LEGAL_VERSION) errors.push("current terms and safety notice must be accepted");
   const clinicConcernSummary = `${humanizeOnset(startedWhen)} · ${symptoms.map(humanizeSymptom).join(", ")} · ${concernSummary}`;
-  return { errors, pet, owner, species, urgency, concernSummary, clinicConcernSummary, symptoms, startedWhen, redFlags, legalVersion: "2026-08-21" };
+  return { errors, pet, owner, species, urgency, concernSummary, clinicConcernSummary, symptoms, startedWhen, redFlags, medications, allergies, legalVersion: LEGAL_VERSION };
 }
 
 /**
@@ -346,8 +503,9 @@ async function createIntake(request, env, actor) {
         age_years, weight_lbs, owner_name, owner_phone, owner_email, concern_category,
         concern_summary, urgency, red_flags_json, customer_latitude, customer_longitude,
         travel_minutes, status, requested_at, decision_at, request_expires_at, arrival_by,
-        policy_snapshot_json, deposit_amount_cents, payment_status, consent_to_contact
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+        policy_snapshot_json, deposit_amount_cents, payment_status, consent_to_contact,
+        medications, allergies
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
     `).bind(
       intakeId, code, location.id, location.tenantId, actor?.userId || null,
       cleanString(validated.pet.name, 80), validated.species, cleanString(validated.pet.breed, 120) || null,
@@ -355,7 +513,8 @@ async function createIntake(request, env, actor) {
       cleanString(validated.owner.email, 160) || null, cleanString(body.concernCategory, 80),
       validated.clinicConcernSummary, validated.urgency, JSON.stringify(validated.redFlags), customerLatitude,
       customerLongitude, travelMinutes, status, now, decisionAt, isoAfter(requestTtl), arrivalBy,
-      JSON.stringify(policy), policy.depositAmountCents || 0, paymentStatus
+      JSON.stringify(policy), policy.depositAmountCents || 0, paymentStatus,
+      validated.medications, validated.allergies
     ),
     env.DB.prepare(`
       INSERT INTO intake_events (id, intake_id, event_type, actor_type, actor_id, detail_json)
@@ -471,15 +630,16 @@ async function createCareSearch(request, env, actor) {
       owner_name, owner_phone, owner_email, concern_category, concern_summary, urgency,
       red_flags_json, customer_latitude, customer_longitude, radius_miles, status,
       max_offers, target_limit, legal_version, legal_accepted_at, requested_at,
-      collection_expires_at, search_expires_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'collecting', 5, ?, ?, ?, ?, ?, ?)
+      collection_expires_at, search_expires_at, medications, allergies
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'collecting', 5, ?, ?, ?, ?, ?, ?, ?, ?)
   `).bind(
     searchId, publicCode(), actor?.userId || null, cleanString(validated.pet.name, 80), validated.species,
     cleanString(validated.pet.breed, 120) || null, ageYears, weightLbs, cleanString(validated.owner.name, 120),
     cleanString(validated.owner.phone, 30), cleanString(validated.owner.email, 160) || null,
     cleanString(body.concernCategory, 80), validated.clinicConcernSummary, validated.urgency,
     JSON.stringify(validated.redFlags), latitude, longitude, radiusMiles, targetLimit,
-    validated.legalVersion, now, now, collectionExpiresAt, searchExpiresAt
+    validated.legalVersion, now, now, collectionExpiresAt, searchExpiresAt,
+    validated.medications, validated.allergies
   )];
 
   candidates.forEach((location, rank) => {
@@ -699,12 +859,12 @@ async function selectCareOffer(request, env, actor, searchId) {
         concern_summary, urgency, red_flags_json, customer_latitude, customer_longitude,
         travel_minutes, status, requested_at, decision_at, request_expires_at, arrival_by,
         clinic_note, policy_snapshot_json, deposit_amount_cents, payment_status, consent_to_contact,
-        source_search_id, selected_offer_id
+        source_search_id, selected_offer_id, medications, allergies
       )
       SELECT ?, ?, ?, ?, customer_user_id, pet_name, species, breed, age_years, weight_lbs,
              owner_name, owner_phone, owner_email, concern_category, concern_summary, urgency,
              red_flags_json, customer_latitude, customer_longitude, ?, 'accepted', requested_at,
-             ?, ?, ?, ?, ?, ?, ?, 1, id, ?
+             ?, ?, ?, ?, ?, ?, ?, 1, id, ?, medications, allergies
       FROM care_searches
       WHERE id = ? AND selected_offer_id = ? AND selected_intake_id IS NULL
     `).bind(
@@ -818,6 +978,88 @@ async function recordObservation(request, env, actor) {
       .bind(newId("event"), intake.id, milestone, actor?.userId || null).run();
   }
   return json({ recorded: true, observedAt: now }, { status: 201 });
+}
+
+/**
+ * Whether Tími may ring this clinic, and on what number.
+ *
+ * The columns have existed since the voice gateway shipped, with a note saying
+ * a clinic console was expected to expose them. None ever did, so every
+ * participating clinic has been on the default — calls on, main line, no quiet
+ * hours — whether or not that is what they wanted. A practice with one person
+ * at the desk and a phone that is already ringing has a real reason to say no,
+ * and had no way to.
+ */
+async function getCallPreferences(env, tenantId) {
+  if (!hasDatabase(env)) {
+    return json({ preferences: { callsEnabled: true, voicePhone: null, quietHours: {}, locationPhone: null } });
+  }
+  const [tenant, location] = await Promise.all([
+    env.DB.prepare("SELECT voice_calls_enabled, voice_quiet_hours_json FROM tenants WHERE id = ?").bind(tenantId).first(),
+    env.DB.prepare("SELECT phone, voice_phone, voice_calls_enabled FROM locations WHERE tenant_id = ? AND active = 1 ORDER BY created_at LIMIT 1").bind(tenantId).first()
+  ]);
+  let quietHours = {};
+  try { quietHours = JSON.parse(tenant?.voice_quiet_hours_json || "{}"); } catch { quietHours = {}; }
+  return json({
+    preferences: {
+      // Both have to be on. A tenant-level "no" is the practice's decision and
+      // a location-level "no" is this site's; either one is a no.
+      callsEnabled: Boolean(tenant?.voice_calls_enabled) && Boolean(location?.voice_calls_enabled),
+      tenantCallsEnabled: Boolean(tenant?.voice_calls_enabled),
+      locationCallsEnabled: Boolean(location?.voice_calls_enabled),
+      /** The number Tími dials. Null means the location's listed phone. */
+      voicePhone: location?.voice_phone || null,
+      locationPhone: location?.phone || null,
+      quietHours
+    }
+  });
+}
+
+async function setCallPreferences(request, env, actor, tenantId) {
+  if (!hasDatabase(env)) return apiError(503, "DATABASE_REQUIRED", "D1 is required to change calling preferences.");
+  if (!isOrgAdmin(actor)) return apiError(403, "ADMIN_REQUIRED", "Only a workspace administrator can change calling preferences.");
+  const body = await readJson(request).catch(() => null);
+  if (!body || typeof body !== "object") return apiError(400, "JSON_REQUIRED", "A valid JSON request body is required.");
+
+  const callsEnabled = body.callsEnabled === undefined ? null : body.callsEnabled === true;
+  const rawPhone = body.voicePhone === undefined ? undefined : cleanString(body.voicePhone, 30);
+  if (rawPhone !== undefined && rawPhone !== "" && !/^\+?[0-9().\-\s]{7,24}$/.test(rawPhone)) {
+    return apiError(422, "INVALID_PHONE", "Enter a phone number Tími can dial, or leave it blank to use the clinic's listed number.");
+  }
+  // Quiet hours as "HH:MM"; anything else is refused rather than stored and
+  // silently ignored at 3am.
+  let quietHours;
+  if (body.quietHours !== undefined) {
+    const start = cleanString(body.quietHours?.start, 5);
+    const end = cleanString(body.quietHours?.end, 5);
+    const wellFormed = (value) => /^([01][0-9]|2[0-3]):[0-5][0-9]$/.test(value);
+    if (start === "" && end === "") {
+      quietHours = {};
+    } else if (wellFormed(start) && wellFormed(end)) {
+      quietHours = { start, end };
+    } else {
+      return apiError(422, "INVALID_QUIET_HOURS", "Quiet hours must be a start and end time in 24-hour HH:MM form.");
+    }
+  }
+
+  const statements = [];
+  if (callsEnabled !== null) {
+    statements.push(env.DB.prepare("UPDATE tenants SET voice_calls_enabled = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
+      .bind(callsEnabled ? 1 : 0, tenantId));
+    statements.push(env.DB.prepare("UPDATE locations SET voice_calls_enabled = ?, updated_at = CURRENT_TIMESTAMP WHERE tenant_id = ?")
+      .bind(callsEnabled ? 1 : 0, tenantId));
+  }
+  if (rawPhone !== undefined) {
+    statements.push(env.DB.prepare("UPDATE locations SET voice_phone = ?, updated_at = CURRENT_TIMESTAMP WHERE tenant_id = ?")
+      .bind(rawPhone === "" ? null : rawPhone, tenantId));
+  }
+  if (quietHours !== undefined) {
+    statements.push(env.DB.prepare("UPDATE tenants SET voice_quiet_hours_json = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
+      .bind(JSON.stringify(quietHours), tenantId));
+  }
+  if (!statements.length) return apiError(422, "NO_CHANGES", "Provide at least one calling preference to change.");
+  await env.DB.batch(statements);
+  return getCallPreferences(env, tenantId);
 }
 
 export async function clinicDashboard(env, tenantId) {
@@ -1103,6 +1345,12 @@ async function handleApi(request, env, ctx) {
   if (method === "GET" && path === "/api/health") return json({ ok: true, service: "timinow", version: "1.1.0-multi-offer", database: hasDatabase(env) });
   if (method === "GET" && path === "/api/config") return handleConfig(env);
   if (method === "GET" && path === "/api/locations") return handleLocationSearch(url, env);
+  // Public, and deliberately above the sign-in gate. Somebody whose animal may
+  // be dying does not get asked to sign in first.
+  if (method === "GET" && path === "/api/emergency-nearby") return handleEmergencyNearby(url, env, ctx);
+  // Public on purpose: the reports worth having most are from somebody who
+  // could not sign in.
+  if (method === "POST" && path === "/api/client-errors") return recordClientError(request, env);
   if (method === "GET" && path.startsWith("/api/locations/")) {
     const location = await getLocation(env, decodeURIComponent(path.slice("/api/locations/".length)));
     return location ? json({ location: enrichLocation(location) }) : apiError(404, "LOCATION_NOT_FOUND", "The hospital was not found.");
@@ -1169,6 +1417,10 @@ async function handleApi(request, env, ctx) {
     if (!tenantId) return apiError(403, "TENANT_REQUIRED", "Choose an active Clerk organization mapped to a Tími tenant.");
     if (method === "GET" && path === "/api/clinic/dashboard") return clinicDashboard(env, tenantId);
     if (method === "POST" && path === "/api/clinic/availability") return setClinicAvailability(request, env, actor, tenantId);
+    if (path === "/api/clinic/call-preferences") {
+      if (method === "GET") return getCallPreferences(env, tenantId);
+      if (method === "PATCH" || method === "POST") return setCallPreferences(request, env, actor, tenantId);
+    }
     const decisionMatch = path.match(/^\/api\/clinic\/intakes\/([^/]+)\/decision$/);
     if (method === "POST" && decisionMatch) return decideIntake(request, env, actor, tenantId, decodeURIComponent(decisionMatch[1]));
     const searchDecisionMatch = path.match(/^\/api\/clinic\/search-targets\/([^/]+)\/decision$/);

@@ -912,7 +912,7 @@ async function startCareSearch() {
         customerLongitude: draft.position.longitude,
         consentToContact: draft.contactConsent === true,
         legalConsent: draft.legalConsent === true,
-        legalVersion: "2026-08-21"
+        legalVersion: state.config?.legalVersion || "2026-08-22"
       })
     });
     state.currentSearch = data.search;
@@ -952,7 +952,7 @@ async function submitIntake(locationId) {
         travelMinutes: Math.max(5, Math.round((location.distanceMiles || 2) * 4)),
         consentToContact: draft.contactConsent === true,
         legalConsent: draft.legalConsent === true,
-        legalVersion: "2026-08-21"
+        legalVersion: state.config?.legalVersion || "2026-08-22"
       })
     });
     state.currentIntake = { ...data.intake, location: data.location };

@@ -935,6 +935,74 @@ if ! $DRY; then
       warn "  a deleted or renamed Clerk application decodes to a host that no"
       warn "  longer exists, and looks exactly like this."
     fi
+
+    # The iPhone and macOS apps talk to Clerk as native clients, which is the
+    # only way an app can create an account: web-mode /v1/client/sign_ups is
+    # guarded by a Turnstile CAPTCHA that a native app has no way to render,
+    # and Clerk answers it with captcha_missing_token. Nothing about that error
+    # names the toggle that fixes it, so this asks Clerk directly.
+    printf '  %-26s ' "native API"
+    NATIVE="$(curl -fsS --max-time 10 -X POST "https://$CLERK_HOST/v1/client?_is_native=true" 2>/dev/null || curl -sS --max-time 10 -X POST "https://$CLERK_HOST/v1/client?_is_native=true" 2>/dev/null || true)"
+    case "$NATIVE" in
+      *native_api_disabled*)
+        echo "DISABLED"
+        warn "  The Apple apps can sign existing people in, but nobody can create"
+        warn "  an account: Clerk rejects the sign-up with captcha_missing_token."
+        dim  "  Clerk dashboard -> Configure -> Native applications: enable it."
+        ;;
+      "")
+        warn "could not be checked (no answer)"
+        ;;
+      *)
+        echo "enabled"
+        ;;
+    esac
+
+    # What the instance requires before a sign-up can complete. The apps sign
+    # people in with a code and never ask for a password, so a required
+    # password means nobody can ever create an account — the sign-up is made,
+    # the code is accepted, and the account still does not exist. Clerk states
+    # this plainly at /v1/environment, and nowhere the apps can show it.
+    printf '  %-26s ' "sign-up requirements"
+    ENVJSON="$(curl -fsS --max-time 10 "https://$CLERK_HOST/v1/environment?_is_native=true" 2>/dev/null || true)"
+    REQUIRED="$(printf '%s' "$ENVJSON" | node -e '
+      let raw = "";
+      process.stdin.on("data", (chunk) => { raw += chunk; });
+      process.stdin.on("end", () => {
+        let attributes;
+        try { const body = JSON.parse(raw); attributes = (body.response || body).user_settings.attributes; }
+        catch { return; }
+        const required = Object.entries(attributes)
+          .filter(([, value]) => value && value.enabled && value.required)
+          .map(([name]) => name);
+        process.stdout.write(required.join(" "));
+      });
+    ' 2>/dev/null || true)"
+    if [ -z "$ENVJSON" ]; then
+      warn "could not be checked (no answer)"
+    else
+      echo "${REQUIRED:-none}"
+      case " $REQUIRED " in
+        *" password "*)
+          warn "  A password is required, and neither app asks for one, so nobody"
+          warn "  can create an account: the code is accepted and the sign-up"
+          warn "  still ends at missing_requirements."
+          dim  "  Clerk dashboard -> Configure -> Email, phone, username:"
+          dim  "  set Password to optional (or off)."
+          ;;
+      esac
+      case " $REQUIRED " in
+        *" phone_number "*)
+          case " $REQUIRED " in
+            *" email_address "*) ;;
+            *)
+              dim  "  Only a mobile number can create an account here — an email"
+              dim  "  address alone will never satisfy phone_number."
+              ;;
+          esac
+          ;;
+      esac
+    fi
   fi
 fi
 echo

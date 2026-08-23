@@ -31,7 +31,7 @@ import {
   createOrganizationMembership,
   deleteOrganization,
   displayName,
-  findUserByEmail,
+  findOrCreateUserByEmail,
   mergeMembershipPublicMetadata,
   mergeOrganizationPublicMetadata,
   mergeUserPublicMetadata,
@@ -61,6 +61,9 @@ const SECURITY_HEADERS = {
 };
 
 const VALID_SPECIES = new Set(["dog", "cat", "bird", "rabbit", "reptile", "small_mammal", "other"]);
+// Set by an operator here, never by the clinic: a provider cannot declare its
+// own supervision level. See VALID_STAFFING in src/catalog.js.
+const VALID_STAFFING = new Set(["veterinarian", "veterinary_technician"]);
 const VALID_LOCATION_KINDS = new Set(["general", "urgent", "emergency", "specialty"]);
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 
@@ -168,6 +171,15 @@ function validateLocationInput(input, { requireAll = true } = {}) {
   const capabilities = Array.isArray(input?.capabilities)
     ? [...new Set(input.capabilities.map((value) => cleanString(value, 40).toLowerCase()).filter(Boolean))].slice(0, 20)
     : [];
+  // Absent means veterinarian, which is what every provider was before this
+  // field existed. An unrecognised value is rejected rather than defaulted:
+  // getting this wrong in the permissive direction would show a technician-run
+  // location as veterinarian-staffed.
+  const staffingLevel = cleanString(input?.staffingLevel, 40).toLowerCase() || "veterinarian";
+  const staffingNote = cleanString(input?.staffingNote, 300) || null;
+  if (!VALID_STAFFING.has(staffingLevel)) {
+    errors.push("location.staffingLevel must be veterinarian or veterinary_technician");
+  }
 
   if (requireAll) {
     if (!name) errors.push("location.name is required");
@@ -199,6 +211,8 @@ function validateLocationInput(input, { requireAll = true } = {}) {
     arrivalWindowMinutes: numberInRange(input?.arrivalWindowMinutes, 5, 180, 20),
     species,
     capabilities,
+    staffingLevel,
+    staffingNote,
     baseExamFeeCents: numberInRange(input?.baseExamFeeCents, 0, 10_000_00, null)
   };
 }
@@ -232,14 +246,16 @@ function insertLocationStatement(env, { id, tenantId, slug, location }) {
     INSERT INTO locations (
       id, tenant_id, name, slug, kind, address_line1, city, region, postal_code, phone,
       latitude, longitude, timezone, open_24_hours, accepts_walk_ins, auto_accept,
-      arrival_window_minutes, species_json, capabilities_json, base_exam_fee_cents, active
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+      arrival_window_minutes, species_json, capabilities_json, base_exam_fee_cents,
+      staffing_level, staffing_note, active
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
   `).bind(
     id, tenantId, location.name, slug, location.kind, location.addressLine1, location.city,
     location.region, location.postalCode, location.phone, location.latitude, location.longitude,
     location.timezone, location.open24Hours ? 1 : 0, location.acceptsWalkIns ? 1 : 0,
     location.autoAccept ? 1 : 0, location.arrivalWindowMinutes,
-    JSON.stringify(location.species), JSON.stringify(location.capabilities), location.baseExamFeeCents
+    JSON.stringify(location.species), JSON.stringify(location.capabilities), location.baseExamFeeCents,
+    location.staffingLevel, location.staffingNote
   );
 }
 
@@ -360,7 +376,13 @@ async function createTenant(request, env, actor) {
   let adminResult = null;
   if (adminEmail) {
     try {
-      const existing = await findUserByEmail(env, adminEmail);
+      // Create the account rather than only inviting into one. Until this
+      // did, "first administrator" meant a pending invitation: no Clerk user,
+      // no membership, and a tenant page reading "No active members" whether
+      // the invite was sent, still pending, or had failed.
+      const { user: existing, created, reason } = await findOrCreateUserByEmail(env, adminEmail, {
+        publicMetadata: { tenantId, tenantSlug: slug, locationId }
+      });
       if (existing) {
         const membership = await createOrganizationMembership(env, organization.id, { userId: existing.id, role: "org:admin" });
         await upsertTenantMember(env, {
@@ -374,8 +396,9 @@ async function createTenant(request, env, actor) {
         });
         await mergeMembershipPublicMetadata(env, organization.id, existing.id, { tenantId, tenantSlug: slug, locationId });
         await mergeUserPublicMetadata(env, existing.id, { tenantId, tenantSlug: slug, locationId, lastTenantId: tenantId });
-        adminResult = { mode: "seated", clerkUserId: existing.id, email: adminEmail };
+        adminResult = { mode: "seated", clerkUserId: existing.id, email: adminEmail, accountCreated: created };
       } else {
+        console.warn(JSON.stringify({ event: "tenant_admin_account_create_failed", tenantId, email: adminEmail, reason }));
         const invitation = await createOrganizationInvitation(env, organization.id, {
           email: adminEmail,
           role: "org:admin",
@@ -383,7 +406,7 @@ async function createTenant(request, env, actor) {
           publicMetadata: { tenantId, tenantSlug: slug, locationId }
         });
         await insertTenantInvitation(env, { tenantId, clerkInvitationId: invitation.id, email: adminEmail, role: "org:admin", invitedBy: actor.userId });
-        adminResult = { mode: "invited", email: adminEmail };
+        adminResult = { mode: "invited", email: adminEmail, reason: reason || null };
       }
     } catch (error) {
       console.warn(JSON.stringify({ event: "tenant_admin_seat_failed", tenantId, message: error.message }));
@@ -425,6 +448,8 @@ function adminLocationFromRow(row) {
     arrivalWindowMinutes: row.arrival_window_minutes,
     species: JSON.parse(row.species_json || "[]"),
     capabilities: JSON.parse(row.capabilities_json || "[]"),
+    staffingLevel: row.staffing_level || "veterinarian",
+    staffingNote: row.staffing_note || null,
     baseExamFeeCents: row.base_exam_fee_cents,
     active: Boolean(row.active),
     createdAt: row.created_at
@@ -578,6 +603,73 @@ async function seatAdmin(request, env, actor, tenantId) {
   return json(result.body, { status: result.status });
 }
 
+/**
+ * Recent client failures, newest first, grouped by fingerprint.
+ *
+ * The counterpart to the one-sentence message the apps now show. An operator
+ * gets the route, the status, the code, the app version and the reference the
+ * customer was given; the customer gets "That didn't work, give it a moment".
+ */
+async function handleClientErrors(url, env) {
+  if (!hasDatabase(env)) return json({ errors: [], groups: [] });
+  const limit = Math.min(500, Math.max(1, Number(url.searchParams.get("limit")) || 200));
+  const reference = cleanString(url.searchParams.get("reference"), 16).toUpperCase();
+
+  // Looking up a reference somebody read out is the single most common thing
+  // this screen is for, so it is a first-class query rather than a filter.
+  if (reference) {
+    const row = await env.DB.prepare("SELECT * FROM client_errors WHERE reference = ? ORDER BY occurred_at DESC LIMIT 1")
+      .bind(reference).first();
+    return json({ errors: row ? [clientErrorFromRow(row)] : [], groups: [] });
+  }
+
+  const [rows, groups] = await Promise.all([
+    env.DB.prepare("SELECT * FROM client_errors ORDER BY occurred_at DESC LIMIT ?").bind(limit).all(),
+    env.DB.prepare(`
+      SELECT fingerprint, COUNT(*) AS total, MAX(occurred_at) AS last_seen,
+             MAX(surface) AS surface, MAX(status) AS status, MAX(code) AS code, MAX(path) AS path
+      FROM client_errors
+      WHERE occurred_at > datetime('now', '-7 days')
+      GROUP BY fingerprint
+      ORDER BY total DESC
+      LIMIT 50
+    `).all()
+  ]);
+  return json({
+    errors: rows.results.map(clientErrorFromRow),
+    groups: groups.results.map((row) => ({
+      fingerprint: row.fingerprint,
+      total: Number(row.total),
+      lastSeen: row.last_seen,
+      surface: row.surface,
+      status: row.status,
+      code: row.code,
+      path: row.path
+    }))
+  });
+}
+
+function clientErrorFromRow(row) {
+  let detail = {};
+  try { detail = JSON.parse(row.detail_json || "{}"); } catch { detail = {}; }
+  return {
+    id: row.id,
+    occurredAt: row.occurred_at,
+    surface: row.surface,
+    appVersion: row.app_version,
+    path: row.path,
+    status: row.status,
+    code: row.code,
+    message: row.message,
+    detail,
+    clerkUserId: row.clerk_user_id,
+    tenantId: row.tenant_id,
+    requestId: row.request_id,
+    reference: row.reference,
+    fingerprint: row.fingerprint
+  };
+}
+
 async function handleAudit(url, env) {
   const limit = Math.min(200, Math.max(1, Number(url.searchParams.get("limit")) || 100));
   const result = await env.DB.prepare(`
@@ -680,6 +772,7 @@ async function handleApi(request, env) {
     const locationsMatch = path.match(/^\/api\/admin\/tenants\/([^/]+)\/locations$/);
     if (method === "POST" && locationsMatch) return addLocation(request, env, actor, decodeURIComponent(locationsMatch[1]));
 
+    if (method === "GET" && path === "/api/admin/client-errors") return handleClientErrors(url, env);
     const adminsMatch = path.match(/^\/api\/admin\/tenants\/([^/]+)\/admins$/);
     if (method === "POST" && adminsMatch) return seatAdmin(request, env, actor, decodeURIComponent(adminsMatch[1]));
 

@@ -71,6 +71,23 @@ public sealed class ClinicRequest
     [JsonIgnore] public string TravelLabel => TravelMinutes is null ? "Travel unknown" : $"{TravelMinutes} min away";
     [JsonIgnore] public string RequestedLabel => RequestedAt is null ? "Just now" : RequestedAt.Value.LocalDateTime.ToString("h:mm tt");
     [JsonIgnore] public bool IsEmergency => Urgency == "emergency" || RedFlags.Count > 0;
+
+    /// <summary>
+    /// Allergies and medications the owner recorded, labelled as unverified. Empty when there are none,
+    /// so the console needs no visibility converter to hide an empty row.
+    /// </summary>
+    [JsonIgnore]
+    public string OwnerSuppliedMedicalLine
+    {
+        get
+        {
+            var parts = new List<string>();
+            if (!string.IsNullOrWhiteSpace(Pet.Allergies)) parts.Add($"Allergies: {Pet.Allergies!.Trim()}");
+            if (!string.IsNullOrWhiteSpace(Pet.Medications)) parts.Add($"Medications: {Pet.Medications!.Trim()}");
+            return parts.Count == 0 ? "" : $"Reported by owner, unverified — {string.Join(" · ", parts)}";
+        }
+    }
+
     private static string Display(string value) => value.Replace('_', ' ').ToUpperInvariant();
 }
 
@@ -81,6 +98,13 @@ public sealed class PetSummary
     public string? Breed { get; set; }
     public double? AgeYears { get; set; }
     public double? WeightLbs { get; set; }
+
+    /// <summary>
+    /// Optional, owner-supplied, unverified. Carried so the desk is not hearing it for the first time
+    /// when the animal walks in — not a medical record, and never something to act on without confirming.
+    /// </summary>
+    public string? Medications { get; set; }
+    public string? Allergies { get; set; }
 }
 
 public sealed class OwnerSummary

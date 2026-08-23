@@ -70,6 +70,13 @@ public struct AuthWorkspaceOption: Identifiable, Hashable, Sendable {
     private var activeSessionId: String?
     private var workerToken: String?
     private var workerTokenExpiresAt: Date?
+    /// Clerk's native client JWT, handed back in the `Authorization` response
+    /// header and replayed in the request header — the native equivalent of
+    /// the `__client` cookie a browser would carry.
+    private var clerkDeviceToken: String?
+    /// Native Frontend API mode (`_is_native=true`). Flipped off for the rest
+    /// of the launch if the instance answers `native_api_disabled`.
+    private var clerkNativeMode = true
 
     #if canImport(AuthenticationServices) && canImport(AppKit)
     private var webAuthSession: ASWebAuthenticationSession?
@@ -127,7 +134,16 @@ public struct AuthWorkspaceOption: Identifiable, Hashable, Sendable {
             return
         }
         errorMessage = nil
-        restoreCookie(stored.clientCookie, host: host)
+        if let token = stored.clerkDeviceToken, !token.isEmpty {
+            clerkDeviceToken = token
+        } else if let cookie = stored.clientCookie, !cookie.isEmpty {
+            // Saved before native mode existed. Resume it the way it was
+            // written — a native `/v1/client` with no device token would be
+            // handed a brand-new empty client and sign this console out for no
+            // reason. `signOutLocally()` puts native mode back.
+            clerkNativeMode = false
+            restoreCookie(cookie, host: host)
+        }
         activeSessionId = stored.activeSessionId
         workerToken = stored.workerToken
         workerTokenExpiresAt = stored.workerTokenExpiresAt
@@ -140,15 +156,46 @@ public struct AuthWorkspaceOption: Identifiable, Hashable, Sendable {
             }
             _ = try await ensureFreshToken()
             await refreshSession()
+        } catch let error as ClinicAPIError {
+            if Self.isCredentialRejected(error) { signOutLocally(); return }
+            resumeWithoutChecking()
         } catch {
-            signOutLocally()
+            resumeWithoutChecking()
         }
+    }
+
+    /// Stay signed in when the check could not be made.
+    ///
+    /// `catch { signOutLocally() }` treated "Clerk says this session is gone"
+    /// and "the network was not up yet when the console launched" as the same
+    /// thing, and signOutLocally deletes the Keychain item — so a console
+    /// opened before the Wi-Fi reconnected asked the clinic to sign in again,
+    /// permanently.
+    private func resumeWithoutChecking() {
+        if workerToken != nil && activeSessionId != nil {
+            stage = .signedIn
+            Task { await refreshSession() }
+        } else {
+            stage = .identifier
+        }
+    }
+
+    /// Clerk refusing the credential, as distinct from not being reachable.
+    /// A timeout or a 5xx says nothing about the account.
+    private static func isCredentialRejected(_ error: ClinicAPIError) -> Bool {
+        if case .server(let message) = error {
+            let lowered = message.lowercased()
+            return lowered.contains("unauthenticated") || lowered.contains("unauthorized")
+                || lowered.contains("session") && lowered.contains("expired")
+        }
+        if case .signInRequired = error { return true }
+        return false
     }
 
     // MARK: - Identifier -> first factor
 
     public func submitIdentifier() async {
-        let identifier = identifierText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let identifier = Self.normalizeIdentifier(identifierText)
         guard !identifier.isEmpty else { errorMessage = "Enter your work email or phone number."; return }
         guard frontendAPIHost != nil else {
             errorMessage = errorMessage ?? "No Clerk instance resolved from \(apiClient.configuredAddress). Check the Worker address in Settings."
@@ -343,6 +390,8 @@ public struct AuthWorkspaceOption: Identifiable, Hashable, Sendable {
 
     private func signOutLocally() {
         activeSessionId = nil; workerToken = nil; workerTokenExpiresAt = nil
+        clerkDeviceToken = nil
+        clerkNativeMode = true
         pendingSignInId = nil; pendingFactors = []
         keychain.clear()
         session = nil
@@ -417,14 +466,43 @@ public struct AuthWorkspaceOption: Identifiable, Hashable, Sendable {
         return try Self.clerkDecoder.decode(ClerkWireToken.self, from: data)
     }
 
-    /// One request against the Clerk Frontend API. Every call carries
-    /// `_clerk_js_version=5` (matching the headless `@clerk/clerk-js@5` the
-    /// web surfaces load) and unwraps FAPI's `{ "response": ... }` envelope.
+    /// Raised only inside `clerkRequest`, to drive the one retry below. It
+    /// never escapes, so it needs no user-facing message.
+    private struct ClerkNativeAPIDisabled: Error {}
+
+    /// One request against the Clerk Frontend API, in native mode.
+    ///
+    /// Native mode is what Clerk's own iOS SDK does: `_is_native=true` on every
+    /// URL and the client JWT carried in the `Authorization` header rather than
+    /// a `__client` cookie. The console is a signed desktop app, not a browser,
+    /// and this is the path Clerk means it to use — it also skips the bot
+    /// protection that a native client has no way to satisfy.
+    ///
+    /// If the instance has not enabled the Native API this falls back to the
+    /// cookie path once and stays there for the launch.
     private func clerkRequest(path: String, method: String = "GET", form: [(String, String?)]? = nil) async throws -> Data {
+        do {
+            return try await performClerkRequest(path: path, method: method, form: form)
+        } catch is ClerkNativeAPIDisabled {
+            // Clerk rejects the request outright, before touching any state, so
+            // replaying it web-style cannot double up a sign-in or a code.
+            clerkNativeMode = false
+            clerkDeviceToken = nil
+            return try await performClerkRequest(path: path, method: method, form: form)
+        }
+    }
+
+    private func performClerkRequest(path: String, method: String, form: [(String, String?)]?) async throws -> Data {
         guard let host = frontendAPIHost else { throw ClinicAPIError.invalidConfiguration }
         guard var components = URLComponents(string: "https://\(host)\(path)") else { throw ClinicAPIError.invalidResponse }
         var query = components.queryItems ?? []
-        query.append(URLQueryItem(name: "_clerk_js_version", value: "5"))
+        if clerkNativeMode {
+            query.append(URLQueryItem(name: "_is_native", value: "true"))
+        } else {
+            // `_clerk_js_version=5` matches the headless `@clerk/clerk-js@5`
+            // the web surfaces load.
+            query.append(URLQueryItem(name: "_clerk_js_version", value: "5"))
+        }
         components.queryItems = query
         guard let url = components.url else { throw ClinicAPIError.invalidResponse }
 
@@ -432,7 +510,13 @@ public struct AuthWorkspaceOption: Identifiable, Hashable, Sendable {
         request.httpMethod = method
         request.timeoutInterval = 20
         request.setValue("application/json", forHTTPHeaderField: "Accept")
-        request.httpShouldHandleCookies = true
+        // Clerk refuses a request carrying both `Origin` and `Authorization`,
+        // and treats the cookie jar as the browser path. Native mode is one or
+        // the other, never a mix.
+        request.httpShouldHandleCookies = !clerkNativeMode
+        if clerkNativeMode, let token = clerkDeviceToken, !token.isEmpty {
+            request.setValue(token, forHTTPHeaderField: "Authorization")
+        }
         if let form {
             request.httpBody = Self.encodeForm(form)
             request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
@@ -440,10 +524,49 @@ public struct AuthWorkspaceOption: Identifiable, Hashable, Sendable {
 
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw ClinicAPIError.invalidResponse }
+        // Before the status check, not after: Clerk issues the client JWT on
+        // failure responses too, and a flow that steps through a rejection
+        // would otherwise continue unauthenticated.
+        if clerkNativeMode { absorbDeviceToken(http) }
         guard (200..<300).contains(http.statusCode) else {
+            if clerkNativeMode, Self.extractClerkCode(data).contains("native_api_disabled") {
+                throw ClerkNativeAPIDisabled()
+            }
             throw ClinicAPIError.server(Self.extractClerkError(data))
         }
         return Self.unwrapResponse(data)
+    }
+
+    /// An absent header means "unchanged"; an empty one, or a bare `Bearer`,
+    /// means Clerk dropped the client and we must too.
+    private func absorbDeviceToken(_ response: HTTPURLResponse) {
+        guard let header = response.value(forHTTPHeaderField: "Authorization") else { return }
+        let trimmed = header.trimmingCharacters(in: .whitespacesAndNewlines)
+        clerkDeviceToken = (trimmed.isEmpty || trimmed.lowercased() == "bearer") ? nil : trimmed
+    }
+
+    /// Clerk wants a phone number in E.164. Typed the way anybody says it —
+    /// "4152123721", "(415) 212-3721" — it is rejected as not a valid phone
+    /// number, and the message describes a format rather than the fix. Email
+    /// addresses and numbers already written with a country code pass through.
+    private static func normalizeIdentifier(_ raw: String) -> String {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.contains("@") { return trimmed }
+        let punctuation = "+()-. "
+        guard trimmed.allSatisfy({ $0.isNumber || punctuation.contains($0) }) else { return trimmed }
+        let digits = trimmed.filter { $0.isNumber }
+        if digits.isEmpty { return trimmed }
+        if trimmed.hasPrefix("+") { return "+" + digits }
+        if digits.count == 10 { return "+1" + digits }
+        if digits.count == 11 && digits.hasPrefix("1") { return "+" + digits }
+        return trimmed
+    }
+
+    private static func extractClerkCode(_ data: Data) -> String {
+        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let errors = object["errors"] as? [[String: Any]], let first = errors.first,
+              let code = first["code"] as? String else { return "" }
+        return code
     }
 
     private static func unwrapResponse(_ data: Data) -> Data {
@@ -530,7 +653,12 @@ public struct AuthWorkspaceOption: Identifiable, Hashable, Sendable {
     /// single Keychain item — never in settings.json.
     private struct StoredAuthCredential: Codable {
         var frontendAPIHost: String
-        var clientCookie: String
+        /// Web-mode credential. Optional because a native sign-in never
+        /// produces one, and because blobs written before native mode existed
+        /// carry nothing else.
+        var clientCookie: String?
+        /// Native-mode credential — Clerk's client JWT.
+        var clerkDeviceToken: String?
         var activeSessionId: String?
         var workerToken: String?
         var workerTokenExpiresAt: Date?
@@ -542,9 +670,14 @@ public struct AuthWorkspaceOption: Identifiable, Hashable, Sendable {
     }
 
     private func saveCredential() {
-        guard let host = frontendAPIHost, let cookie = extractClientCookie(host: host) else { return }
+        guard let host = frontendAPIHost else { return }
+        let cookie = clerkNativeMode ? nil : extractClientCookie(host: host)
+        // Nothing to resume from is worse than no Keychain item at all: it
+        // would restore a host and a session id that no credential can renew.
+        guard cookie != nil || clerkDeviceToken != nil else { return }
         let credential = StoredAuthCredential(
-            frontendAPIHost: host, clientCookie: cookie, activeSessionId: activeSessionId,
+            frontendAPIHost: host, clientCookie: cookie, clerkDeviceToken: clerkDeviceToken,
+            activeSessionId: activeSessionId,
             workerToken: workerToken, workerTokenExpiresAt: workerTokenExpiresAt
         )
         guard let data = try? JSONEncoder().encode(credential), let text = String(data: data, encoding: .utf8) else { return }

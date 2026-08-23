@@ -293,6 +293,10 @@ public enum MapDefaults {
 }
 
 public enum TimiEnvironment {
+    /// Shipped in every failure report, so "which build was that" is never a
+    /// question. Bumped alongside the Worker's own version string.
+    public static let appVersion = "1.2.0"
+
     /// Where a fresh install talks to.
     ///
     /// This used to be empty, and an empty address is what puts the gateway in

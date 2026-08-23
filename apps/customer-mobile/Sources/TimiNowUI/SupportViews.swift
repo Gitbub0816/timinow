@@ -10,54 +10,255 @@ import SwiftUI
 struct PetsView: View {
     @Bindable var store: AppStore
     @State var showEditor = false
+    /// nil means the sheet is adding; a pet means it is editing that one. Both
+    /// used the same "Add a pet" sheet before, which is why a profile could be
+    /// created and then never corrected.
+    @State var editing: PetProfile?
+    @State var note = ""
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                HStack { VStack(alignment: .leading) { Eyebrow(text: "CARE COMPANIONS"); Text("Your pets").font(.system(size: 40, weight: .bold, design: .serif)) }; Spacer(); Button { showEditor = true } label: { Image(systemName: "plus").font(.title3).frame(width: 44, height: 44).background(TimiColor.coral, in: Circle()).foregroundStyle(.white).overlay(Circle().stroke(TimiColor.ink, lineWidth: 2)) } }
-                ForEach(store.pets) { pet in
-                    Button { store.choosePet(pet.id) } label: {
-                        HStack(spacing: 15) { Image(systemName: pet.species.icon).font(.title).foregroundStyle(.white).frame(width: 62, height: 62).background(pet.colorToken % 2 == 0 ? TimiColor.blue : TimiColor.coral, in: RoundedRectangle(cornerRadius: 19)); VStack(alignment: .leading, spacing: 4) { Text(pet.name).font(.title3).fontWeight(.black); Text([pet.breed, pet.weightLbs.map { String(format: "%.0f lb", $0) }].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · ")).font(.caption).foregroundStyle(TimiColor.muted) }; Spacer(); Image(systemName: store.selectedPetId == pet.id ? "checkmark.circle.fill" : "circle").font(.title2).foregroundStyle(TimiColor.blue) }.timiCard(store.selectedPetId == pet.id ? TimiColor.blueSoft : .white)
-                    }.buttonStyle(.plain)
+                HStack {
+                    VStack(alignment: .leading) {
+                        Eyebrow(text: "CARE COMPANIONS")
+                        Text("Your pets").font(.system(size: 40, weight: .bold, design: .serif))
+                    }
+                    Spacer()
+                    Button {
+                        editing = nil
+                        showEditor = true
+                    } label: {
+                        Image(systemName: "plus").font(.title3).frame(width: 44, height: 44)
+                            .background(TimiColor.coral, in: Circle()).foregroundStyle(.white)
+                            .overlay(Circle().stroke(TimiColor.ink, lineWidth: 2))
+                    }
                 }
-                Text("Pet profiles speed operational intake. Medical records are never sent unless you explicitly include them in a future supported flow.").font(.caption).foregroundStyle(TimiColor.muted)
+                if !note.isEmpty {
+                    Text(note).font(.callout).foregroundStyle(TimiColor.coral)
+                        .padding(12).frame(maxWidth: .infinity, alignment: .leading)
+                        .background(TimiColor.coralSoft, in: RoundedRectangle(cornerRadius: 14))
+                }
+                if store.pets.isEmpty {
+                    VStack(spacing: 12) {
+                        Image(systemName: "pawprint.circle.fill").font(.system(size: 44)).foregroundStyle(TimiColor.blue)
+                        Text("No pets yet").font(.title3).fontWeight(.black)
+                        Text("Add the animal you would be asking clinics about. Tími keeps them with your account, so this is the last time you type it.")
+                            .font(.caption).foregroundStyle(TimiColor.muted).multilineTextAlignment(.center)
+                        Button { editing = nil; showEditor = true } label: { Label("Add a pet", systemImage: "plus") }
+                            .buttonStyle(TimiPrimaryButtonStyle())
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 34)
+                    .timiCard(Color.white)
+                }
+                ForEach(store.pets) { pet in
+                    HStack(spacing: 0) {
+                        Button {
+                            store.choosePet(pet.id)
+                            note = ""
+                        } label: {
+                            HStack(spacing: 15) {
+                                Image(systemName: pet.species.icon).font(.title).foregroundStyle(.white)
+                                    .frame(width: 62, height: 62)
+                                    .background(pet.colorToken % 2 == 0 ? TimiColor.blue : TimiColor.coral, in: RoundedRectangle(cornerRadius: 19))
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(pet.name).font(.title3).fontWeight(.black)
+                                    Text(Self.detail(pet)).font(.caption).foregroundStyle(TimiColor.muted)
+                                }
+                                Spacer()
+                                Image(systemName: store.selectedPetId == pet.id ? "checkmark.circle.fill" : "circle")
+                                    .font(.title2).foregroundStyle(TimiColor.blue)
+                            }
+                        }.buttonStyle(.plain)
+                        // A separate hit target rather than a swipe: a swipe
+                        // needs a List, and there is no affordance telling
+                        // anyone it is there.
+                        Button {
+                            editing = pet
+                            note = ""
+                            showEditor = true
+                        } label: {
+                            Image(systemName: "pencil").font(.title3).foregroundStyle(TimiColor.blue)
+                                .frame(width: 44, height: 44)
+                        }.buttonStyle(.plain)
+                    }
+                    .timiCard(store.selectedPetId == pet.id ? TimiColor.blueSoft : .white)
+                }
+                Text("Pet profiles speed operational intake. Medical records are never sent unless you explicitly include them in a future supported flow.")
+                    .font(.caption).foregroundStyle(TimiColor.muted)
             }.padding(20)
-        }.background(TimiColor.canvas).navigationTitle("Pets").sheet(isPresented: $showEditor) { PetEditor(store: store, isPresented: $showEditor) }
+        }
+        .background(TimiColor.canvas)
+        .navigationTitle("Pets")
+        .sheet(isPresented: $showEditor) {
+            PetEditor(store: store, isPresented: $showEditor, editing: editing, note: $note)
+        }
+    }
+
+    static func detail(_ pet: PetProfile) -> String {
+        var parts: [String] = [pet.species.title]
+        if !pet.breed.isEmpty { parts.append(pet.breed) }
+        if let weight = pet.weightLbs { parts.append(String(format: "%.0f lb", weight)) }
+        if !pet.allergies.isEmpty { parts.append("Allergies noted") }
+        if !pet.medications.isEmpty { parts.append("On medication") }
+        return parts.joined(separator: " · ")
     }
 }
 
+/// The pet sheet, in Tími's own hand.
+///
+/// It was a `Form`: grouped grey sections, hairline separators, a system
+/// header in small caps. That is what every settings screen on the phone looks
+/// like, and it is the one screen in this app that looked like all of them —
+/// opened straight from a coral button with a 2pt ink border and a hard drop
+/// shadow, which made the join obvious.
 struct PetEditor: View {
     @Bindable var store: AppStore
     @Binding var isPresented: Bool
+    /// nil adds, non-nil edits that pet — the id is carried through so saving
+    /// updates the profile instead of adding a second one with the same name.
+    var editing: PetProfile?
+    @Binding var note: String
+
     @State var name = ""
     @State var species: PetSpecies = .dog
     @State var breed = ""
     @State var weight = ""
+    @State var medications = ""
+    @State var allergies = ""
+    @State var confirmingDelete = false
+    @State var loaded = false
+
     var body: some View {
-        NavigationStack {
-            Form {
-                Section("Pet") {
-                    TextField("Name", text: $name)
-                    Picker("Species", selection: $species) {
-                        ForEach(PetSpecies.allCases, id: \.self) { Text($0.title).tag($0) }
+        ZStack {
+            TimiColor.canvas.ignoresSafeArea()
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    HStack {
+                        Button { isPresented = false } label: {
+                            Image(systemName: "xmark").frame(width: 42, height: 42).background(.white, in: Circle())
+                                .overlay(Circle().stroke(TimiColor.ink.faded(0.25)))
+                        }.buttonStyle(.plain)
+                        Spacer()
                     }
-                    TextField("Breed", text: $breed)
-                    TextField("Weight in pounds", text: $weight)
+                    Eyebrow(text: editing == nil ? "NEW CARE COMPANION" : "EDIT PROFILE")
+                    Text(editing == nil ? "Who are we\nlooking after?" : "Edit \(editing?.name ?? "this pet")")
+                        .font(.system(size: 38, weight: .bold, design: .serif)).foregroundStyle(TimiColor.ink)
+
+                    field("Name") {
+                        TextField("Otis", text: $name).textContentType(.name).timiField()
+                    }
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Species").font(.headline)
+                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 104))], spacing: 10) {
+                            ForEach(PetSpecies.allCases, id: \.self) { option in
+                                let selected = species == option
+                                Button { species = option } label: {
+                                    HStack(spacing: 7) {
+                                        Image(systemName: option.icon)
+                                        Text(option.title).font(.caption).fontWeight(.bold)
+                                        Spacer()
+                                    }
+                                    .padding(11)
+                                    .frame(minHeight: 48)
+                                    .background(selected ? TimiColor.blueSoft : .white, in: RoundedRectangle(cornerRadius: 14))
+                                    .overlay(RoundedRectangle(cornerRadius: 14).stroke(selected ? TimiColor.blue : TimiColor.ink.faded(0.14), lineWidth: CGFloat(selected ? 2 : 1)))
+                                }.buttonStyle(.plain)
+                            }
+                        }
+                    }
+
+                    field("Breed") {
+                        TextField("Optional", text: $breed).timiField()
+                    }
+                    field("Weight in pounds") {
+                        TextField("Optional", text: $weight).keyboardType(.decimalPad).timiField()
+                    }
+
+                    VStack(alignment: .leading, spacing: 10) {
+                        Eyebrow(text: "OPTIONAL — MEDICATIONS AND ALLERGIES")
+                        TextField("Medications", text: $medications).timiField()
+                        TextField("Allergies", text: $allergies).timiField()
+                        Text("Shared with the clinics your care request reaches, exactly as you write it. Tími is not a medical record: nothing here comes from a veterinarian, none of it is verified, and a clinic will confirm everything with you on arrival. Leave it blank if you would rather not.")
+                            .font(.caption).foregroundStyle(TimiColor.muted)
+                    }.timiCard(TimiColor.paper)
+
+                    Button { save() } label: {
+                        Label(editing == nil ? "Add \(displayName)" : "Save changes", systemImage: "checkmark")
+                    }
+                    .buttonStyle(TimiPrimaryButtonStyle())
+                    .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
+
+                    if let pet = editing {
+                        VStack(alignment: .leading, spacing: 10) {
+                            if confirmingDelete {
+                                Text("Remove \(pet.name)? Past requests stay in your activity.")
+                                    .font(.callout).fontWeight(.semibold).foregroundStyle(TimiColor.ink)
+                                Button("Yes, remove \(pet.name)") {
+                                    store.deletePet(pet.id)
+                                    note = ""
+                                    isPresented = false
+                                }.buttonStyle(TimiPrimaryButtonStyle())
+                                Button("Keep \(pet.name)") { confirmingDelete = false }.buttonStyle(TimiQuietButtonStyle())
+                            } else {
+                                Button("Remove this pet") { confirmingDelete = true }.buttonStyle(TimiQuietButtonStyle())
+                            }
+                        }.timiCard(TimiColor.coralSoft)
+                    }
+
+                    Text("Profiles are kept with your account, so they follow you to a new phone.")
+                        .font(.caption).foregroundStyle(TimiColor.muted)
+                    Spacer(minLength: 20)
                 }
-                Section {
-                    Text("Profiles are stored on this device while accounts are disabled.").font(.caption).foregroundStyle(TimiColor.muted)
-                }
-            }
-            .navigationTitle("Add a pet")
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { isPresented = false } }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") {
-                        store.savePet(PetProfile(name: name, species: species, breed: breed, weightLbs: Double(weight), colorToken: store.pets.count))
-                        isPresented = false
-                    }.disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
-                }
+                .padding(22)
             }
         }
+        // A sheet's @State survives between presentations, so without this the
+        // second pet opened still shows the first one's details.
+        .onAppear {
+            guard !loaded else { return }
+            loaded = true
+            if let pet = editing {
+                name = pet.name
+                species = pet.species
+                breed = pet.breed
+                weight = pet.weightLbs.map { String(format: "%.0f", $0) } ?? ""
+                medications = pet.medications
+                allergies = pet.allergies
+            }
+        }
+    }
+
+    var displayName: String {
+        let trimmed = name.trimmingCharacters(in: .whitespaces)
+        return trimmed.isEmpty ? "this pet" : trimmed
+    }
+
+    @ViewBuilder
+    func field(_ title: String, @ViewBuilder content: () -> some View) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title).font(.headline)
+            content()
+        }
+    }
+
+    func save() {
+        let trimmed = name.trimmingCharacters(in: .whitespaces)
+        let existing = editing
+        store.savePet(PetProfile(
+            id: existing?.id ?? UUID().uuidString,
+            name: trimmed,
+            species: species,
+            breed: breed.trimmingCharacters(in: .whitespaces),
+            weightLbs: Double(weight),
+            birthYear: existing?.birthYear,
+            colorToken: existing?.colorToken ?? store.pets.count,
+            medications: medications.trimmingCharacters(in: .whitespacesAndNewlines),
+            allergies: allergies.trimmingCharacters(in: .whitespacesAndNewlines)
+        ))
+        isPresented = false
     }
 }
 
@@ -94,6 +295,15 @@ struct SettingsView: View {
 
             if store.auth.isSignedIn {
                 Section("Account") {
+                    // Naming the account is the whole point of having one. Not
+                    // saying which one is signed in is why "we have sign-ins
+                    // and it doesn't save anything" was a reasonable reading.
+                    HStack {
+                        Text("Signed in as")
+                        Spacer()
+                        Text(store.ownerEmail.isEmpty ? (store.ownerPhone.isEmpty ? store.ownerName : store.ownerPhone) : store.ownerEmail)
+                            .foregroundStyle(TimiColor.muted)
+                    }
                     Button("Sign out", role: .destructive) { Task { await store.auth.signOut() } }
                 }
             }
@@ -183,11 +393,14 @@ struct SettingsView: View {
 struct LegalView: View {
     var body: some View {
         ScrollView { VStack(alignment: .leading, spacing: 22) {
-            Eyebrow(text: "EFFECTIVE AUGUST 21, 2026"); Text("Legal and safety").font(.system(size: 40, weight: .bold, design: .serif))
+            Eyebrow(text: "EFFECTIVE AUGUST 22, 2026"); Text("Legal and safety").font(.system(size: 40, weight: .bold, design: .serif))
             legalSection("Tími is not veterinary care", "Tími provides technology for locating participating veterinary facilities, displaying reported intake capacity, sharing structured operational intake, and comparing availability offers. Tími does not diagnose, prescribe, recommend treatment, create a veterinarian-client-patient relationship, guarantee care, or replace clinical triage.")
             legalSection("No promise of care or priority", "A listing, reported status, offer, estimated wait, or arrival window is not a guaranteed appointment or examination time. Capacity can change. The independent clinic decides whether and when to examine or treat an animal, and critical patients may be seen first.")
-            legalSection("Information sharing", "Your structured intake may be shared with up to 30 matching participating clinics, including clinics you do not select, so they can evaluate current capacity. Tími displays up to five active offers. Only the clinic you choose is confirmed. Service providers may process data for hosting, authentication, communications, security, analytics, and payments.")
+            legalSection("Information sharing", "Your structured intake — including any medications or allergies you chose to record — may be shared with up to 30 matching participating clinics, including clinics you do not select, so they can evaluate current capacity. Tími displays up to five active offers. Only the clinic you choose is confirmed. Service providers may process data for hosting, authentication, communications, security, analytics, and payments.")
             legalSection("Deposits and veterinary charges", "When a clinic requires a deposit, its amount, policy version, cancellation, refund, and no-show rules are shown before payment. Unless that displayed policy says otherwise, the deposit is credited to the clinic invoice. The clinic bills remaining veterinary charges and handles insurance. Tími does not submit insurance claims.")
+            legalSection("Providers staffed by a veterinary technician", "Some participating providers are staffed by a registered, licensed, or certified veterinary technician rather than a veterinarian, and Tími labels them before you choose. A veterinary technician works under a veterinarian's supervision and, under state practice acts, may not diagnose, prognose, prescribe, or perform surgery. Those providers are listed for minor concerns; anything that may need a diagnosis or a treatment decision should go to a veterinarian. The label is set by Tími from what the provider supplies at onboarding and is not a verification of any individual's credential, licence status, or scope of practice.")
+            legalSection("Medications and allergies you record", "Anything you add to a pet profile is optional, stored as you type it, and shared with the clinics your care request reaches. Tími is not a medical record system: nothing in that field comes from a veterinarian, none of it is verified, and no clinic may rely on it in place of its own history-taking. Keep it current, confirm it with the treating clinic, and do not record anything you would not want shared with the clinics contacted for a request.")
+            legalSection("Finding emergency hospitals", "The emergency list is not limited to Tími's participating clinics, because the nearest emergency hospital often is not one. Listings outside the network come from third-party map data, including their names, addresses and phone numbers. Tími has not verified that they exist as listed, are open, are equipped for your animal, or will accept a patient, and no request is sent to them — the list is somewhere to drive, not a booking and not a recommendation. Call before you travel where you can.")
             legalSection("Emergency safety", "Do not wait for Tími if your animal may be in immediate danger. Travel to the nearest appropriate emergency-capable veterinary facility while someone calls ahead. For suspected poisoning, contact a veterinarian or recognized animal poison-control service immediately.")
             legalSection("Operator and contact", "Tími NOW is operated by ClearKey Solutions, LLC in Hayward, California. California law governs the service to the extent permitted. Contact legal@clearkey.solutions or privacy@clearkey.solutions for applicable requests.")
         }.padding(20).padding(.bottom, 40) }.background(TimiColor.paper).navigationTitle("Legal")

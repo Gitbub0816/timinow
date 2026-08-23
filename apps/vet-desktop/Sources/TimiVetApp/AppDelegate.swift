@@ -49,6 +49,17 @@ import TimiVetUI
     }
 
     public func applicationDidFinishLaunching(_ notification: Notification) {
+        // The console's palette is a light one — cards on a pale canvas, ink
+        // text — and it is drawn by hand. AppKit's own controls are not: a
+        // TextField, a TextEditor, a Toggle and a DatePicker follow the system
+        // appearance, so on a Mac in dark mode the console rendered dark text
+        // boxes inside light cards, with their labels black on black. Nothing
+        // in the workspace could be read.
+        //
+        // The phone app pins itself light the same way (preferredColorScheme
+        // plus UIUserInterfaceStyle); this is the macOS half of that, and it
+        // was never applied.
+        NSApp.appearance = NSAppearance(named: .aqua)
         Task { @MainActor in await authController.start() }
     }
 
@@ -106,8 +117,9 @@ import TimiVetUI
             NSApp.activate(ignoringOtherApps: true)
             return
         }
-        let hosting = NSHostingController(rootView: PeopleView(api: apiClient, isAdmin: clinicStore.isAdmin))
+        let hosting = NSHostingController(rootView: PeopleView(api: apiClient, isAdmin: clinicStore.isAdmin).preferredColorScheme(.light))
         let window = NSWindow(contentViewController: hosting)
+        window.appearance = NSAppearance(named: .aqua)
         window.title = "Manage People · Tími Vet"
         window.setContentSize(NSSize(width: 560, height: 640))
         window.styleMask = [.titled, .closable, .resizable, .miniaturizable]

@@ -88,16 +88,29 @@ public struct MiniConsoleView: View {
     }
 
     private func row(_ request: ClinicRequest) -> some View {
-        HStack(spacing: 8) {
-            Text(String(request.pet.name.prefix(2)))
-                .font(TimiVetFont.ui(11, weight: .bold)).foregroundStyle(.white)
-                .frame(width: 32, height: 32).background(TimiVetColor.blue, in: RoundedRectangle(cornerRadius: 10))
-            VStack(alignment: .leading, spacing: 2) {
-                Text(request.petLine).font(TimiVetFont.ui(12, weight: .bold))
-                Text(request.concernSummary).font(TimiVetFont.ui(9)).foregroundStyle(TimiVetColor.muted).lineLimit(1)
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Text(String(request.pet.name.prefix(2)))
+                    .font(TimiVetFont.ui(11, weight: .bold)).foregroundStyle(.white)
+                    .frame(width: 32, height: 32).background(TimiVetColor.blue, in: RoundedRectangle(cornerRadius: 10))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(request.petLine).font(TimiVetFont.ui(12, weight: .bold))
+                    Text(request.concernSummary).font(TimiVetFont.ui(9)).foregroundStyle(TimiVetColor.muted).lineLimit(2)
+                }
+                Spacer()
+                Text(request.travelLabel).font(TimiVetFont.ui(9))
             }
-            Spacer()
-            Text(request.travelLabel).font(TimiVetFont.ui(9))
+            // The answer, on the panel that raised the alert. "Open decision
+            // workspace" was the only thing here, which turned a yes/no into
+            // find-the-window-read-four-fields-press-a-button.
+            HStack(spacing: 6) {
+                Button("Yes") { Task { await store.answer(request, decline: false) } }
+                    .buttonStyle(TimiVetPrimaryButtonStyle(color: TimiVetColor.blue))
+                    .disabled(store.isBusy)
+                Button("No") { Task { await store.answer(request, decline: true) } }
+                    .buttonStyle(TimiVetQuietButtonStyle())
+                    .disabled(store.isBusy)
+            }
         }
         .padding(9)
     }
@@ -111,7 +124,10 @@ public struct MiniConsoleView: View {
             .toggleStyle(.checkbox)
             .font(TimiVetFont.ui(11))
             Spacer()
-            Button("Open decision workspace", action: onOpenMain).buttonStyle(TimiVetPrimaryButtonStyle())
+            // Demoted: answering is the common case and now happens on the
+            // row above. This is for shaping an offer — a different arrival
+            // window, a note, a time later today.
+            Button("Open decision workspace", action: onOpenMain).buttonStyle(TimiVetQuietButtonStyle())
         }
         .padding(12)
     }

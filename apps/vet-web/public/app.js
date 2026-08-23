@@ -98,6 +98,21 @@ function travelLabel(request) {
   return request.travelMinutes == null ? "Travel unknown" : `${request.travelMinutes} min away`;
 }
 
+/**
+ * Allergies and medications the owner recorded, labelled for what they are.
+ *
+ * Optional, unverified, and never a substitute for the clinic's own
+ * history-taking — but a receptionist should not learn about a penicillin
+ * reaction from the owner at the door when it was typed into the request.
+ */
+function ownerSuppliedMedical(request) {
+  const parts = [];
+  if (request.pet?.allergies) parts.push(`<strong>Allergies:</strong> ${escapeHtml(request.pet.allergies)}`);
+  if (request.pet?.medications) parts.push(`<strong>Medications:</strong> ${escapeHtml(request.pet.medications)}`);
+  if (!parts.length) return "";
+  return `<p class="owner-supplied-medical"><small>REPORTED BY OWNER, UNVERIFIED</small><br>${parts.join(" · ")}</p>`;
+}
+
 function isEmergency(request) {
   return request.urgency === "emergency" || (Array.isArray(request.redFlags) && request.redFlags.length > 0);
 }
@@ -628,6 +643,7 @@ function renderDecisionWorkspace() {
   mount.innerHTML = `
     <h2>${escapeHtml(petLine(request))}</h2>
     <p style="font-size:.85rem">${escapeHtml(request.concernSummary)}</p>
+    ${ownerSuppliedMedical(request)}
     <div class="workspace-facts">
       <div><small>OWNER</small><strong>${escapeHtml(request.owner?.name || "—")}</strong></div>
       <div><small>PHONE</small><strong>${escapeHtml(request.owner?.phone || "—")}</strong></div>

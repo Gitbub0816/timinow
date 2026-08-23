@@ -1,3 +1,4 @@
+import { LEGAL_VERSION } from "../src/catalog.js";
 import { readFile } from "node:fs/promises";
 import { DatabaseSync } from "node:sqlite";
 import worker from "../apps/voice-gateway/src/index.js";
@@ -212,6 +213,8 @@ database.exec(await readFile("migrations/0002_seed.sql", "utf8"));
 database.exec(await readFile("migrations/0003_multi_offer_search.sql", "utf8"));
 database.exec(await readFile("migrations/0004_tenancy_admin.sql", "utf8"));
 database.exec(await readFile("migrations/0005_voice_calls.sql", "utf8"));
+database.exec(await readFile("migrations/0006_care_context.sql", "utf8"));
+database.exec(await readFile("migrations/0007_client_errors.sql", "utf8"));
 
 // Shaped like the real thing — 32 hex characters — because placeCall now
 // checks that shape before it calls Twilio, and a fixture that could never be
@@ -243,8 +246,8 @@ function insertSearchAndTarget({ searchId, targetId, tenantId, locationId, phone
       collection_expires_at, search_expires_at
     ) VALUES (?, ?, NULL, 'Milo', 'dog', NULL, NULL, NULL, 'Avery Cole', '(510) 555-0100', NULL,
       'illness_or_injury', 'Vomiting today, started this morning.', ?, '[]', 37.67, -122.08, 50,
-      'collecting', ?, 5, '2026-08-21', ?, ?, ?, ?)
-  `).run(searchId, `PUB_${searchId}`, urgency, maxOffers, now, now, future, future);
+      'collecting', ?, 5, ?, ?, ?, ?, ?)
+  `).run(searchId, `PUB_${searchId}`, urgency, maxOffers, LEGAL_VERSION, now, now, future, future);
 
   database.prepare(`
     INSERT INTO care_search_targets (id, search_id, location_id, tenant_id, rank, travel_minutes, status, contacted_at)

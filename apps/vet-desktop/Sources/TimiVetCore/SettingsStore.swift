@@ -18,11 +18,15 @@ public final class SettingsStore: @unchecked Sendable {
     }
 
     public func load() -> AppSettings {
-        guard let data = try? Data(contentsOf: fileURL) else { return AppSettings() }
-        var settings = (try? JSONDecoder().decode(AppSettings.self, from: data)) ?? AppSettings()
+        var settings = AppSettings()
+        if let data = try? Data(contentsOf: fileURL), let decoded = try? JSONDecoder().decode(AppSettings.self, from: data) {
+            settings = decoded
+        }
         // An address saved as empty pins the console on nothing at all, and
         // every settings file written before there was a default holds exactly
-        // that.
+        // that. The repair runs on the no-file and unreadable-file paths too:
+        // when it did not, a first launch returned an `AppSettings()` that
+        // never passed through here.
         if settings.apiBaseUrl.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             settings.apiBaseUrl = TimiVetEnvironment.defaultAPIBaseURL
         }

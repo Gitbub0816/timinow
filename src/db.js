@@ -107,6 +107,11 @@ function locationFromRow(row, coordinates) {
     capabilities: parseJson(row.capabilities_json, []),
     hours: parseJson(row.hours_json, {}),
     baseExamFeeCents: row.base_exam_fee_cents,
+    // Defaulted rather than assumed: a row written before the column existed
+    // reads as null, and null must mean "a veterinarian", not "unknown", or
+    // every existing provider silently acquires a technician notice.
+    staffingLevel: row.staffing_level || "veterinarian",
+    staffingNote: row.staffing_note || null,
     distanceMiles: distanceMiles === null ? null : Number(distanceMiles.toFixed(1)),
     availability: availabilityFromRow(row),
     policy: policyFromRow(row)
@@ -221,7 +226,11 @@ function normalizeCareSearchRow(row) {
       species: row.species,
       breed: row.breed,
       ageYears: row.age_years,
-      weightLbs: row.weight_lbs
+      weightLbs: row.weight_lbs,
+      // Optional, owner-supplied, and null on every row written before the
+      // column existed.
+      medications: row.medications || null,
+      allergies: row.allergies || null
     },
     owner: {
       name: row.owner_name,
@@ -328,7 +337,11 @@ function normalizeClinicSearchTarget(row) {
       species: row.species,
       breed: row.breed,
       ageYears: row.age_years,
-      weightLbs: row.weight_lbs
+      weightLbs: row.weight_lbs,
+      // Optional, owner-supplied, and null on every row written before the
+      // column existed.
+      medications: row.medications || null,
+      allergies: row.allergies || null
     },
     owner: {
       name: row.owner_name,
@@ -403,7 +416,11 @@ export function normalizeIntakeRow(row) {
       species: row.species,
       breed: row.breed,
       ageYears: row.age_years,
-      weightLbs: row.weight_lbs
+      weightLbs: row.weight_lbs,
+      // Optional, owner-supplied, and null on every row written before the
+      // column existed.
+      medications: row.medications || null,
+      allergies: row.allergies || null
     },
     owner: {
       name: row.owner_name,
