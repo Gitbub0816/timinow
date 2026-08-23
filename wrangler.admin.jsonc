@@ -42,6 +42,11 @@
     "MAPBOX_STYLE_URL": "mapbox://styles/calebowen2019/cmt3nci25004d01sya8qxcb4u",
     "MAPBOX_NAVIGATION_STYLE_URL": "",
     "STRIPE_PUBLISHABLE_KEY": "",
+    // Which Accounts API new clinics are created with: "v1" (controller
+    // properties, generally available) or "v2" (configuration.recipient, still
+    // a preview). Only affects accounts created from here on — an existing
+    // clinic keeps whichever minted it, recorded on its stripe_accounts row.
+    "STRIPE_ACCOUNTS_API": "v1",
     "PLATFORM_ADMIN_USER_IDS": "",
     "PLATFORM_ADMIN_EMAILS": ""
   },

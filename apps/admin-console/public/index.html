@@ -25,6 +25,7 @@
     <nav class="admin-nav" data-operator-nav hidden aria-label="Platform console navigation">
       <a href="#tenants" data-nav="tenants">Tenants</a>
       <a href="#audit" data-nav="audit">Audit log</a>
+      <a href="#ledger" data-nav="ledger">Ledger</a>
       <a href="#errors" data-nav="errors">Client errors</a>
     </nav>
     <div class="account-menu" data-account-menu hidden>
@@ -274,6 +275,53 @@
           </div>
         </div>
         <div data-audit-list></div>
+      </div>
+    </section>
+
+    <!-- ---------------------------------------------------------- ledger --- -->
+    <!--
+      Every Stripe object Tími has touched. The screen is built for one job:
+      sitting beside a Stripe payout report and explaining the difference. So
+      the ids are on screen rather than behind a disclosure, the totals cover
+      the whole filtered set and not the visible page, and what is
+      unreconciled is called out separately from what is merely recent.
+    -->
+    <section class="screen" data-screen="ledger" aria-labelledby="ledger-title">
+      <div class="shell">
+        <div class="page-head">
+          <div>
+            <p class="eyebrow">Money</p>
+            <h1 class="page-title" id="ledger-title">Payment ledger</h1>
+            <p class="page-lede">Every deposit, transfer, fee, refund and payout, with the Stripe ids to reconcile against. Tími charges the deposit as merchant of record and pays each clinic by a separate transfer; the fee is the difference.</p>
+          </div>
+        </div>
+        <form data-form="ledger-filter" class="form-grid two-col" style="margin-bottom: 1.25rem;">
+          <label class="field"><span>Clinic</span><select name="tenantId" data-ledger-tenants><option value="">All clinics</option></select></label>
+          <label class="field"><span>Kind</span><select name="kind">
+            <option value="">Everything</option>
+            <option value="deposit_captured">Deposit captured</option>
+            <option value="deposit_pending">Deposit pending</option>
+            <option value="deposit_failed">Deposit failed</option>
+            <option value="clinic_transfer">Transfer to clinic</option>
+            <option value="platform_fee">Tími fee</option>
+            <option value="customer_refund">Customer refund</option>
+            <option value="clinic_payout">Clinic payout</option>
+            <option value="transfer_reversed">Transfer reversed</option>
+            <option value="dispute">Dispute</option>
+          </select></label>
+          <label class="field"><span>From<span class="hint"> — inclusive</span></span><input type="date" name="from"></label>
+          <label class="field"><span>To<span class="hint"> — inclusive</span></span><input type="date" name="to"></label>
+          <label class="field"><span>Intake<span class="hint"> — optional, exact id</span></span><input type="text" name="intakeId" maxlength="80" placeholder="intake_…" autocomplete="off"></label>
+          <div class="field">
+            <span>&nbsp;</span>
+            <div style="display: flex; gap: 0.75rem; align-items: center;">
+              <label style="display: flex; gap: 0.4rem; align-items: center; font-size: 0.9rem;"><input type="checkbox" name="unreconciled"> Unreconciled only</label>
+              <button class="button" type="submit">Apply</button>
+            </div>
+          </div>
+        </form>
+        <div data-ledger-totals></div>
+        <div data-ledger-list></div>
       </div>
     </section>
 

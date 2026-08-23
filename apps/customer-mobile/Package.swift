@@ -20,6 +20,27 @@ import PackageDescription
 // compile against the non-Mapbox fallback path in that configuration.
 let enableMapbox = ProcessInfo.processInfo.environment["TIMI_MAPBOX"] == "1"
 
+// The Stripe iOS SDK is gated the same way, for the same reason and one more.
+//
+// It is Apple-only: StripePaymentSheet imports UIKit, so a `swift test` on the
+// macOS host — which is how CI runs ConcernValidatorTests — cannot build it,
+// and skipstone cannot transpile it to Kotlin for the Android build. Keeping
+// it out of the dependency graph entirely when the flag is unset is what makes
+// `swift package resolve` and the core unit tests work on a machine that has
+// never heard of Stripe.
+//
+// Unlike Mapbox this needs no credential to download, so the flag is not about
+// access. It is about the Android target: Skip transpiles TimiNowUI, and a
+// target that links an Apple-only product fails that transpile whatever the
+// `#if` guards say, because the *manifest* is what decides which products the
+// Kotlin build has to account for.
+//
+// Every Stripe import in the source is additionally guarded with
+// `#if canImport(StripePaymentSheet) && !SKIP && os(iOS)`, so with the flag
+// unset DepositView compiles to the hosted fallback — which is also what the
+// Android build gets until the Stripe Android SDK is wired up the same way.
+let enableStripe = ProcessInfo.processInfo.environment["TIMI_STRIPE"] == "1"
+
 var packageDependencies: [Package.Dependency] = [
     .package(url: "https://source.skip.tools/skip.git", from: "1.7.0"),
     .package(url: "https://source.skip.tools/skip-ui.git", from: "1.29.3"),
@@ -58,6 +79,20 @@ if enableMapbox {
         .product(name: "MapboxNavigationUIKit", package: "mapbox-navigation-ios", condition: .when(platforms: [.iOS])),
         .product(name: "MapboxDirections", package: "mapbox-navigation-ios", condition: .when(platforms: [.iOS]))
     ])
+}
+
+if enableStripe {
+    // stripe-ios-spm is Stripe's Swift-Package-Manager mirror; the main
+    // stripe-ios repository is not consumable as a package.
+    packageDependencies.append(
+        .package(url: "https://github.com/stripe/stripe-ios-spm.git", from: "24.0.0")
+    )
+    // Conditioned on iOS for the same reason the Mapbox products are: `swift
+    // test` builds the whole package for the host, and this module imports
+    // UIKit, which does not exist on macOS.
+    timiNowUIDependencies.append(
+        .product(name: "StripePaymentSheet", package: "stripe-ios-spm", condition: .when(platforms: [.iOS]))
+    )
 }
 
 let package = Package(

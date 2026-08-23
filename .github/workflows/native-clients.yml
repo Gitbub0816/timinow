@@ -259,7 +259,10 @@ jobs:
       - uses: actions/checkout@v5
       - uses: actions/setup-dotnet@v5
         with:
-          dotnet-version: "8.0.x"
+          # Tracks apps/vet-windows/src/TimiVet/TimiVet.csproj's TargetFramework. A build against an older
+          # SDK than the project targets fails with NETSDK1045, which reads as a broken project rather
+          # than as a runner that needs a newer toolchain.
+          dotnet-version: "10.0.x"
       - name: Restore
         run: dotnet restore TimiVet.sln
       - name: Compile release build

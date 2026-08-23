@@ -2,7 +2,11 @@
   <PropertyGroup>
     <ApplicationIcon Condition="Exists('Assets\timinow.ico')">Assets\timinow.ico</ApplicationIcon>
     <OutputType>WinExe</OutputType>
-    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <!-- The current .NET long-term-support release. .NET 8's support window closes in November 2026, and
+         a clinic front-desk machine is exactly where an unsupported runtime lingers for years. The Windows
+         SDK floor stays at 10.0.19041 (Windows 10 2004), which is what the oldest supported Windows 10
+         build in the field reports. -->
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
     <UseWPF>true</UseWPF>
     <UseWindowsForms>true</UseWindowsForms>
     <Nullable>enable</Nullable>
@@ -21,6 +25,6 @@
   <ItemGroup>
     <!-- DPAPI (ProtectedData) is not part of the net8.0-windows shared framework; CredentialStore needs it
          to encrypt the Clerk credential file instead of writing tokens to settings.json in plaintext. -->
-    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="8.0.0" />
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="10.0.0" />
   </ItemGroup>
 </Project>

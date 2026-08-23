@@ -1,7 +1,8 @@
 <Window x:Class="TimiVet.Views.PeopleWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Tími Vet · People" Width="720" Height="640" MinWidth="560" MinHeight="440"
+        Style="{StaticResource TimiWindow}"
+        Title="Tími Vet · People" Width="760" Height="660" MinWidth="600" MinHeight="460"
         WindowStartupLocation="CenterScreen" Loaded="Window_Loaded">
     <Window.Resources>
         <BooleanToVisibilityConverter x:Key="B2V"/>

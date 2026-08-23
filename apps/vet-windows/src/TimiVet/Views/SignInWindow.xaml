@@ -2,8 +2,9 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:local="clr-namespace:TimiVet.Views"
-        Title="Sign in to Tími Vet" Width="480" SizeToContent="Height" MinHeight="360"
-        WindowStartupLocation="CenterScreen" ResizeMode="NoResize" Background="{StaticResource Canvas}">
+        Style="{StaticResource TimiWindow}"
+        Title="Sign in to Tími Vet" Width="480" SizeToContent="Height" MinHeight="360" MaxHeight="880"
+        WindowStartupLocation="CenterScreen" ResizeMode="NoResize">
     <Window.Resources>
         <BooleanToVisibilityConverter x:Key="B2V"/>
         <local:InverseBooleanToVisibilityConverter x:Key="InverseB2V"/>
@@ -27,7 +28,7 @@
             <!-- Step 1: Worker URL -->
             <StackPanel Visibility="{Binding IsWorkerUrlStep, Converter={StaticResource B2V}}">
                 <TextBlock Text="Clinic Worker address" FontWeight="SemiBold"/>
-                <TextBlock Text="The HTTPS address your practice was given for Tími NOW." Foreground="{StaticResource Muted}" FontSize="11" Margin="0,2,0,8" TextWrapping="Wrap"/>
+                <TextBlock Text="Tími NOW's production address is already filled in. Change it only if your practice was given a different one." Foreground="{StaticResource Muted}" FontSize="11" Margin="0,2,0,8" TextWrapping="Wrap"/>
                 <TextBox Text="{Binding Settings.ApiBaseUrl, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,14"/>
                 <Button Content="Continue" Command="{Binding ContinueWorkerUrlCommand}" Style="{StaticResource PrimaryButton}"/>
             </StackPanel>
@@ -42,6 +43,10 @@
                 <Button Content="Continue with Google" Command="{Binding GoogleCommand}" Style="{StaticResource QuietButton}" Margin="0,0,0,8"/>
                 <Button Content="Continue with Apple" Command="{Binding AppleCommand}" Style="{StaticResource QuietButton}" Margin="0,0,0,8"/>
                 <TextBlock Text="Passkeys need a WebAuthn authenticator, which this desktop build does not host. Sign in with a passkey in the Tími web console instead." TextWrapping="Wrap" Foreground="{StaticResource Muted}" FontSize="12" Margin="0,4,0,0"/>
+                <!-- The address step is skipped whenever the default Worker answers. This is the way back
+                     to it for a private deployment or a loopback development Worker. -->
+                <Button Content="Connect to a different Tími Worker" Command="{Binding ChangeWorkerAddressCommand}" Style="{StaticResource QuietButton}"
+                        Margin="0,12,0,0" BorderThickness="0" Background="Transparent" FontWeight="Normal" FontSize="11" Foreground="{StaticResource Muted}"/>
             </StackPanel>
 
             <!-- Step 3: Strategy picker -->

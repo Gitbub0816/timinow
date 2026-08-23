@@ -105,6 +105,31 @@ struct TimiVetQuietButtonStyle: ButtonStyle {
     }
 }
 
+/// Money and dates for the payouts view.
+///
+/// The formatting is integer arithmetic on purpose. Every amount that reaches
+/// this console is already a whole number of cents, and passing one through a
+/// Double to divide by 100 is how $30.00 becomes $29.999999 on somebody's
+/// screen — a number a practice manager would be entirely right to distrust.
+/// `NumberFormatter` is avoided for a second reason: Skip cannot translate its
+/// currency configuration, and this file is transpiled for Android.
+enum TimiVetMoney {
+    static func dollars(_ cents: Int) -> String {
+        let negative = cents < 0
+        let value = abs(cents)
+        let fraction = value % 100
+        return "\(negative ? "-" : "")$\(value / 100).\(fraction < 10 ? "0" : "")\(fraction)"
+    }
+
+    /// A ledger row's timestamp, short enough to sit beside an amount.
+    static func short(_ iso: String) -> String {
+        guard let date = ISO8601DateFormatter().date(from: iso) else { return iso }
+        let formatter = DateFormatter()
+        formatter.dateFormat = "d MMM, h:mm a"
+        return formatter.string(from: date)
+    }
+}
+
 extension View {
     func timiVetCard(_ background: Color = .white, radius: CGFloat = TimiVetMetrics.cardRadius) -> some View {
         self

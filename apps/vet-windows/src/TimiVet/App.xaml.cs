@@ -57,6 +57,9 @@ public partial class App : System.Windows.Application
             _alerts.NewRequest(request);
             if (_settings.AutoShowMiniOnNewRequest) ShowMini();
         };
+        // "Nothing happens when a request comes in" is impossible to diagnose by waiting for a real
+        // patient, so the Test button in Settings plays the same sound the same way.
+        _viewModel.TestAlertRequested += (_, _) => _alerts.PreviewAlert();
         _viewModel.SignedOut += (_, _) => ExitApplication();
         _alerts.ShowMainRequested += (_, _) => ShowMain();
         _alerts.ShowMiniRequested += (_, _) => ShowMini();
@@ -68,25 +71,45 @@ public partial class App : System.Windows.Application
     }
 
     /// <summary>
-    /// Restores a previously persisted Clerk session where possible; otherwise shows the custom sign-in
-    /// window, looping through workspace/no-clinic-access outcomes until either a clinic session is
-    /// established or the user cancels. The console never appears without a tenant-bearing session.
+    /// Gets to a usable console with as little asked of the operator as the situation allows.
+    ///
+    /// In order: resume the stored Clerk session silently; if the network is down but this machine has
+    /// previously been confirmed as belonging to a veterinary workspace, open the console anyway and let
+    /// it reconnect in the background; otherwise show the sign-in window, which now starts at "email,
+    /// username, or phone" rather than at a Cloudflare Worker URL.
+    ///
+    /// The one thing that never happens here is a network failure erasing a credential. It used to: a
+    /// blanket catch around the restore dropped straight through to interactive sign-in, so a console
+    /// opened before the Wi-Fi associated asked a clinic to sign in again — and signing in again is what
+    /// replaced the credential, permanently, for a problem that had fixed itself thirty seconds later.
     /// </summary>
     private async Task<SessionDescriptor?> EstablishSessionAsync()
     {
         if (_settings is null || _auth is null || _api is null) return null;
 
         var restoredButNotClinic = false;
-        if (!string.IsNullOrWhiteSpace(_settings.ApiBaseUrl))
+        SessionRestoreOutcome outcome;
+        try { outcome = await _auth.RestoreAsync(CancellationToken.None); }
+        catch { outcome = SessionRestoreOutcome.Unreachable; }
+
+        if (outcome is SessionRestoreOutcome.Restored or SessionRestoreOutcome.ResumedUnverified)
         {
             try
             {
-                if (await _auth.TryRestoreAsync(_settings.ApiBaseUrl, CancellationToken.None))
+                var restoredSession = await _api.GetSessionAsync(CancellationToken.None);
+                if (restoredSession.Surfaces.Clinic)
                 {
-                    var restoredSession = await _api.GetSessionAsync(CancellationToken.None);
-                    if (restoredSession.Surfaces.Clinic) return restoredSession;
-                    restoredButNotClinic = true;
+                    _auth.RecordClinicSurfaceVerified();
+                    return restoredSession;
                 }
+                restoredButNotClinic = true;
+            }
+            catch (ClinicApiException ex) when (!ex.IsAuthenticationFailure && _auth.CanResumeClinicSessionOffline)
+            {
+                // The Worker could not be reached, and this credential has already passed the clinic check
+                // on this machine. Sending somebody to a sign-in screen they cannot complete without a
+                // network, in order to prove something already proven, helps nobody at a front desk.
+                return OfflineClinicSession();
             }
             catch { /* fall through to interactive sign-in */ }
         }
@@ -105,6 +128,17 @@ public partial class App : System.Windows.Application
             if (window.Session is not null) return window.Session;
         }
     }
+
+    /// <summary>
+    /// A placeholder descriptor for a resumed-but-unverified launch. It asserts only what the stored
+    /// credential already established; the clinic's name, address and role arrive with the first
+    /// successful poll, and until then the console says OFFLINE rather than pretending otherwise.
+    /// </summary>
+    private static SessionDescriptor OfflineClinicSession() => new()
+    {
+        Authenticated = true,
+        Surfaces = new SessionSurfaces { Clinic = true }
+    };
 
     public void ShowMain()
     {

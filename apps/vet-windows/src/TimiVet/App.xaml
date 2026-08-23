@@ -1,3 +1,18 @@
-<Application x:Class="TimiVet.App" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
-    <Application.Resources><ResourceDictionary><ResourceDictionary.MergedDictionaries><ResourceDictionary Source="Theme/Theme.xaml"/></ResourceDictionary.MergedDictionaries></ResourceDictionary></Application.Resources>
+<Application x:Class="TimiVet.App"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Application.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <!--
+                    Merged at the application level rather than per window, because Theme.xaml also
+                    overrides the SystemColors brush keys the stock control templates resolve through.
+                    Those lookups are dynamic and walk up to Application.Resources; a per-window merge
+                    would leave every popup, tooltip and drop-down following Windows into dark mode on
+                    its own.
+                -->
+                <ResourceDictionary Source="Theme/Theme.xaml"/>
+            </ResourceDictionary.MergedDictionaries>
+        </ResourceDictionary>
+    </Application.Resources>
 </Application>

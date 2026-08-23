@@ -13,12 +13,37 @@ public sealed class SettingsStore
 
     public AppSettings Load()
     {
-        try { return File.Exists(FilePath) ? JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(FilePath), Json) ?? new() : new(); }
-        catch { return new(); }
+        AppSettings settings;
+        try { settings = (File.Exists(FilePath) ? JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(FilePath), Json) : null) ?? new(); }
+        catch { settings = new(); }
+        return Normalize(settings);
+    }
+
+    /// <summary>
+    /// Puts the production Worker back whenever the stored address is blank.
+    ///
+    /// <see cref="AppSettings.ApiBaseUrl"/> defaults to it, and for a genuinely fresh machine that is
+    /// enough. It is not enough for an upgrade: every settings.json this app has ever written carries
+    /// <c>"ApiBaseUrl": ""</c> unless somebody typed one in, and deserialization assigns that blank
+    /// straight over the initializer. The result looked exactly like a fresh install that had ignored its
+    /// own default — the console reported that it could not read "/api/config" with nothing in front of
+    /// the path, which reads as a Worker or a Clerk fault and is neither.
+    ///
+    /// A deliberately-chosen address is never touched; only an empty one, which cannot have been chosen.
+    /// The polling interval is clamped here too, because a zero read from an older or hand-edited file
+    /// turns the poll loop into a spin.
+    /// </summary>
+    private static AppSettings Normalize(AppSettings settings)
+    {
+        if (string.IsNullOrWhiteSpace(settings.ApiBaseUrl)) settings.ApiBaseUrl = TimiVetEnvironment.DefaultApiBaseUrl;
+        settings.ApiBaseUrl = settings.ApiBaseUrl.Trim();
+        settings.PollSeconds = Math.Clamp(settings.PollSeconds, 3, 60);
+        return settings;
     }
 
     public void Save(AppSettings settings)
     {
+        Normalize(settings);
         Directory.CreateDirectory(_directory);
         File.WriteAllText(FilePath, JsonSerializer.Serialize(settings, Json));
         SetStartup(settings.StartWithWindows);
@@ -54,10 +79,19 @@ public sealed class SettingsStore
         }
     }
 
+    /// <summary>
+    /// Best effort, and deliberately so. The Run key can be locked down by policy on a managed clinic
+    /// machine; an UnauthorizedAccessException raised here used to take the whole Save with it, so a
+    /// checkbox nobody could honour cost the operator the Worker address they had just typed.
+    /// </summary>
     private static void SetStartup(bool enabled)
     {
-        using var key = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run", writable: true);
-        if (key is null) return;
-        if (enabled) key.SetValue("TimiVet", $"\"{Environment.ProcessPath}\""); else key.DeleteValue("TimiVet", throwOnMissingValue: false);
+        try
+        {
+            using var key = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run", writable: true);
+            if (key is null) return;
+            if (enabled) key.SetValue("TimiVet", $"\"{Environment.ProcessPath}\""); else key.DeleteValue("TimiVet", throwOnMissingValue: false);
+        }
+        catch { /* the console still runs; it just will not start itself */ }
     }
 }

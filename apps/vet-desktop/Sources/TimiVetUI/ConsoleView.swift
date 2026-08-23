@@ -34,6 +34,7 @@ public struct ConsoleView: View {
                     VStack(alignment: .leading, spacing: 22) {
                         topRow
                         queueAndWorkspace
+                        payoutsSection
                         settingsSection
                     }
                     .padding(24)
@@ -53,6 +54,84 @@ public struct ConsoleView: View {
             quietStart = store.callPreferences.quietHours?.start ?? ""
             quietEnd = store.callPreferences.quietHours?.end ?? ""
         }
+        .task { await store.loadPayouts() }
+    }
+
+    // MARK: Payouts
+
+    /// What the clinic is owed and what it has been paid — a list and a total,
+    /// and nothing else.
+    ///
+    /// Small on purpose. The clinic's own Express dashboard is the place for
+    /// bank details, payout schedules and tax documents; duplicating any of
+    /// that here would mean two screens that can disagree. This answers the
+    /// one question a practice manager actually asks the console: has the
+    /// money for last week's arrivals gone out yet.
+    private var payoutsSection: some View {
+        DisclosureGroup("Payouts from Tími") {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(spacing: 10) {
+                    moneyCard("TRANSFERRED TO YOU", store.payouts.earnings.transferredCents)
+                    moneyCard("PAID OUT BY STRIPE", store.payouts.earnings.paidOutCents)
+                    moneyCard("ON ITS WAY", store.payouts.earnings.awaitingPayoutCents)
+                }
+
+                // A clinic that cannot receive transfers does not fail loudly
+                // anywhere else: deposits are still collected and its share
+                // simply accumulates on Tími's side. Saying so here is the
+                // only place a practice would ever find out.
+                if let connect = store.payouts.connect, !connect.transfersEnabled {
+                    Text(connect.disabledReason.map { "Stripe has restricted this clinic's account (\($0)). Nothing can be paid out until that is resolved." }
+                        ?? "This clinic's Stripe account is not finished, so Tími cannot pay it yet. Your Tími contact can send the onboarding form again.")
+                        .font(TimiVetFont.ui(11)).foregroundStyle(TimiVetColor.muted)
+                }
+
+                if store.payouts.earnings.transfers.isEmpty && store.payouts.earnings.payouts.isEmpty {
+                    Text(store.payoutsLoaded ? "Nothing has been settled yet. A deposit is paid out after the visit is recorded as completed, a no-show, or a late cancellation." : "Loading…")
+                        .font(TimiVetFont.ui(11)).foregroundStyle(TimiVetColor.muted)
+                } else {
+                    payoutList("SENT TO YOU BY TÍMI", store.payouts.earnings.transfers)
+                    payoutList("PAID TO YOUR BANK BY STRIPE", store.payouts.earnings.payouts)
+                }
+
+                Text("Each amount is one arrival deposit less the Tími fee agreed in your workspace policy. The clinic bills the customer directly for veterinary charges; Tími never handles those.")
+                    .font(TimiVetFont.ui(10)).foregroundStyle(TimiVetColor.muted)
+            }
+            .padding(.top, 10)
+        }
+        .timiVetCard()
+    }
+
+    private func payoutList(_ title: String, _ entries: [ClinicLedgerEntry]) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title).timiVetEyebrow()
+            if entries.isEmpty {
+                Text("None yet.").font(TimiVetFont.ui(11)).foregroundStyle(TimiVetColor.muted)
+            } else {
+                ForEach(entries) { entry in
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(TimiVetMoney.short(entry.occurredAt)).font(TimiVetFont.ui(12, weight: .semibold))
+                            // The Stripe id, so a line here can be matched to
+                            // a line in the clinic's own Express dashboard.
+                            Text(entry.stripeObjectId ?? "—").font(TimiVetFont.ui(10)).foregroundStyle(TimiVetColor.muted)
+                        }
+                        Spacer()
+                        Text(TimiVetMoney.dollars(entry.amountCents)).font(TimiVetFont.ui(13, weight: .semibold))
+                        Text(entry.status).font(TimiVetFont.ui(10)).foregroundStyle(TimiVetColor.muted)
+                    }
+                }
+            }
+        }
+    }
+
+    private func moneyCard(_ title: String, _ cents: Int) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title).timiVetEyebrow()
+            Text(TimiVetMoney.dollars(cents)).font(TimiVetFont.display(26))
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .timiVetCard()
     }
 
     // MARK: Sidebar

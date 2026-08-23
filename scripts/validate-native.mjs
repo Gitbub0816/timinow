@@ -1510,6 +1510,393 @@ for (const [path, marker] of [
   }
 }
 
+/**
+ * The payment seams.
+ *
+ * Everything here is a rule that, when broken, breaks *silently* — the tests
+ * still pass, the app still works, and the failure is money in the wrong place
+ * discovered weeks later by somebody reading a Stripe report. That is what
+ * makes them worth a build failure rather than a code review.
+ */
+{
+  // Comments stripped first. These files explain the very rules being
+  // checked — "the fee is never an application_fee_amount" is written out in
+  // prose at the top of src/payments.js — and a guard that fires on its own
+  // explanation can never be satisfied. Same trap the Skip/LocalizedError
+  // check above already had to be taught.
+  const executable = (source) => source
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .split("\n")
+    .filter((line) => !/^\s*\/\//.test(line))
+    .join("\n");
+
+  const workerSource = await read("src/index.js");
+  const stripeSource = await read("src/stripe.js");
+  const paymentsSource = await read("src/payments.js");
+  const adminSource = await read("apps/admin-console/src/index.js");
+  const worker = executable(workerSource);
+  const stripe = executable(stripeSource);
+  const payments = executable(paymentsSource);
+  const adminWorker = executable(adminSource);
+
+  /* 1. The webhook must verify its signature. */
+
+  // A webhook endpoint that skips verification is a public URL where anybody
+  // who can guess an intake id can post a payment_intent.succeeded: the
+  // deposit is marked paid, real money is transferred to a clinic, and the
+  // customer is told their care is confirmed. There is no Stripe SDK in a
+  // Worker to do this for us, so the check is ours and it is the entire
+  // security boundary of the endpoint.
+  if (!worker.includes('path === "/api/stripe/webhook"')) {
+    throw new Error("src/index.js no longer serves the Stripe webhook, so nothing moves payment state.");
+  }
+  {
+    const start = worker.indexOf("async function handleStripeWebhook");
+    if (start < 0) throw new Error("src/index.js has no handleStripeWebhook; the webhook route must have a handler that verifies signatures.");
+    const handler = worker.slice(start, worker.indexOf("\n}", start));
+    if (!handler.includes("verifyWebhookSignature")) {
+      throw new Error("The Stripe webhook handler does not call verifyWebhookSignature. Without it the endpoint is a public URL that marks deposits paid.");
+    }
+    // Verification must come before anything reads the event. Parsing first
+    // and verifying later is the same hole with more steps.
+    if (handler.indexOf("verifyWebhookSignature") > handler.indexOf("JSON.parse")) {
+      throw new Error("The Stripe webhook handler parses the body before verifying the signature. Verify first.");
+    }
+    if (!handler.includes("request.text()")) {
+      throw new Error("The Stripe webhook handler must read the raw request body. Re-serialized JSON does not hash to the signature Stripe sent.");
+    }
+    if (!/handleStripeEvent/.test(handler)) {
+      throw new Error("The Stripe webhook handler must dispatch through handleStripeEvent, which is where the idempotency claim lives.");
+    }
+  }
+  {
+    // Scoped to the verifier's own body, not the file. A
+    // `constantTimeEquals` that is defined and never called is the same bug
+    // with better documentation.
+    const start = stripe.indexOf("export async function verifyWebhookSignature");
+    if (start < 0) throw new Error("src/stripe.js no longer exports verifyWebhookSignature.");
+    const verifier = stripe.slice(start, stripe.indexOf("\n}", start));
+    for (const [needle, why] of [
+      ["SHA-256", "Stripe signs webhooks with HMAC-SHA256; another hash verifies nothing"],
+      ["constantTimeEquals", "signature comparison must be constant time, or the endpoint leaks the expected signature a byte at a time"],
+      ["toleranceSeconds", "a captured request stays cryptographically valid forever; only a timestamp tolerance makes it stale"]
+    ]) {
+      if (!verifier.includes(needle)) throw new Error(`verifyWebhookSignature does not use ${needle}: ${why}.`);
+    }
+  }
+  // Only v1. Stripe sends a fake v0 scheme on test events, and accepting any
+  // scheme that is not v1 is the downgrade attack its own docs warn about.
+  if (!/prefix === "v1"/.test(stripe)) {
+    throw new Error('src/stripe.js must accept only the v1 signature scheme. Any other scheme is a downgrade attack.');
+  }
+
+  /* 2. The client is never trusted to mark a payment paid. */
+
+  // `payment-status` used to reach into Stripe and write `payment_status`
+  // from whatever it found, which made a client-triggered GET the thing that
+  // marked a deposit paid. Payment state changes belong to the webhook.
+  {
+    const start = worker.indexOf("async function refreshPayment");
+    if (start < 0) throw new Error("src/index.js no longer has refreshPayment; GET /api/intakes/{id}/payment-status must keep working.");
+    const handler = worker.slice(start, worker.indexOf("\n}", start));
+    if (/UPDATE\s+intake_requests/i.test(handler)) {
+      throw new Error("refreshPayment writes to intake_requests. A GET a client can trigger must never change payment state — that is what the webhook is for.");
+    }
+  }
+  // Nowhere in a request-handling Worker may set a deposit paid. The one
+  // legitimate writer is src/payments.js: from the webhook, or from the demo
+  // path when there is no Stripe at all.
+  for (const [label, source] of [["src/index.js", worker], ["apps/admin-console/src/index.js", adminWorker]]) {
+    if (/payment_status\s*=\s*'paid'/.test(source)) {
+      throw new Error(`${label} marks a deposit paid directly. Only src/payments.js may do that, and only from a verified webhook or the demo path.`);
+    }
+  }
+
+  /* 3. The ledger is written from webhook handling, not from a request. */
+
+  // A ledger row written when a request handler *asks* for something records
+  // an intention, not a fact. Refunds fail, transfers are refused, cards
+  // decline — and a row written optimistically claims money moved that never
+  // did, which is exactly the discrepancy the ledger exists to catch.
+  for (const [label, source] of [["src/index.js", worker], ["apps/admin-console/src/index.js", adminWorker]]) {
+    if (/recordLedgerEntry\s*\(/.test(source)) {
+      throw new Error(`${label} writes ledger rows directly. Ledger writes belong in src/payments.js, driven by a verified Stripe event.`);
+    }
+    if (/INSERT\s+(?:OR\s+IGNORE\s+)?INTO\s+payment_ledger/i.test(source)) {
+      throw new Error(`${label} inserts into payment_ledger directly. That table is written only by src/payments.js.`);
+    }
+  }
+  if (!payments.includes("INSERT OR IGNORE INTO payment_ledger")) {
+    throw new Error("src/payments.js must insert ledger rows with INSERT OR IGNORE, so a webhook redelivered mid-flight cannot write a second row.");
+  }
+  if (!payments.includes("INSERT INTO stripe_events")) {
+    throw new Error("src/payments.js must claim an event id in stripe_events before processing it. Stripe redelivers, and a charge.refunded applied twice halves the ledger's credibility and doubles its refund total.");
+  }
+
+  /* 4. Separate charges and transfers, not destination charges. */
+
+  // The split is not knowable at charge time — see the funds-flow note at the
+  // top of src/payments.js. Either of these parameters would move the money
+  // when the card is authorized, before the intake outcome exists.
+  for (const [label, source] of [["src/stripe.js", stripe], ["src/payments.js", payments]]) {
+    if (/application_fee_amount/.test(source)) {
+      throw new Error(`${label} uses application_fee_amount. Tími's fee is collected by transferring less: the clinic does not own this charge, so it cannot pay a fee out of it.`);
+    }
+    if (/transfer_data/.test(source)) {
+      throw new Error(`${label} sets transfer_data, which makes this a destination charge. The destination and the amount are not known at charge time.`);
+    }
+  }
+  // A transfer with no source_transaction fails whenever the platform's
+  // available balance has not caught up with the charge — which, for a
+  // deposit taken hours ago, is most of the time.
+  if (!/sourceTransaction/.test(payments) || !/source_transaction/.test(stripe)) {
+    throw new Error("A clinic transfer must name the charge that funded it (source_transaction), or it fails until the deposit settles.");
+  }
+  // The legacy account type is mutually exclusive with controller properties
+  // and quietly hands Stripe a bundle of defaults we then cannot change.
+  // `controller.stripe_dashboard.type` is a different `type` and a legitimate
+  // one — it is how an account gets the Express dashboard without being an
+  // Express account — so that hash is removed before the check.
+  if (/["']?type["']?\s*:\s*["'](?:standard|express|custom)["']/.test(stripe.replace(/stripe_dashboard\s*:\s*\{[^}]*\}/g, ""))) {
+    throw new Error("src/stripe.js sends the legacy connected-account type parameter. Use controller properties (v1) or configuration.recipient (v2).");
+  }
+  // Transferring to an account whose capability is not active fails at Stripe
+  // with an error nobody sees, and the customer's money then sits in the
+  // platform balance indefinitely with nothing recording why.
+  if (!/transferEligibility/.test(payments) || !worker.includes("settleOutstandingIntakes")) {
+    throw new Error("Settlement must check transfer eligibility before paying a clinic, and an unsettled intake must be retried by a sweep.");
+  }
+
+  /* 5. Nothing logs a secret. */
+
+  for (const [label, source] of [["src/stripe.js", stripe], ["src/payments.js", payments], ["src/index.js", worker]]) {
+    for (const line of source.split("\n")) {
+      if (/^\s*\/\//.test(line) || /^\s*\*/.test(line)) continue;
+      if (/console\.(log|warn|error|info)/.test(line) && /client_secret|clientSecret|STRIPE_SECRET_KEY|STRIPE_WEBHOOK_SECRET/.test(line)) {
+        throw new Error(`${label} logs a secret or a client secret. Anyone who can read that log can complete the payment.`);
+      }
+    }
+  }
+
+  // A webhook event that failed while being applied has to be retryable.
+  //
+  // Claiming an event id with a bare INSERT and reading any existing row as
+  // "already handled" means one transient fault drops the event permanently:
+  // Stripe retries, we answer "duplicate", and a customer stays charged with
+  // an intake that never reaches paid. The re-claim must therefore be
+  // conditional on the previous attempt having ended in `failed` — unconditional
+  // would let it steal an event from a delivery still in flight, and absent
+  // brings the original bug back.
+  if (!/UPDATE stripe_events SET status = 'received'[^"]*WHERE id = \? AND status = 'failed'/.test(payments)) {
+    throw new Error("src/payments.js does not re-claim a failed webhook event. Stripe's retry is the only chance that event will ever get, and answering it \"duplicate\" leaves the customer charged and the intake unpaid forever.");
+  }
+
+  // The ledger records what Stripe said, including what it could not match.
+  const ledgerMigration = await read("migrations/0008_payments_ledger.sql");
+  const ledgerTable = ledgerMigration.slice(
+    ledgerMigration.indexOf("CREATE TABLE IF NOT EXISTS payment_ledger"),
+    ledgerMigration.indexOf("CREATE INDEX IF NOT EXISTS idx_payment_ledger")
+  );
+  if (/REFERENCES/.test(ledgerTable)) {
+    throw new Error("migrations/0008_payments_ledger.sql: payment_ledger carries a foreign key. Its ids come from Stripe metadata, which can name an intake that was deleted or never existed — a constraint there makes the INSERT fail and the ledger silently refuse to record money that moved.");
+  }
+}
+
+// ---------------------------------------------------------------------------
+// The Windows veterinary console. Every seam below is one that would fail
+// silently: the app still builds, still starts, still shows a queue, and is
+// wrong in a way nobody discovers until a clinic is holding it.
+// ---------------------------------------------------------------------------
+{
+  const windowsRoot = "apps/vet-windows/src/TimiVet";
+  const [models, settingsSource, clerkAuth, apiSource, alertSource, mainViewModel, mainWindow, miniWindow, appShell] =
+    await Promise.all([
+      read(`${windowsRoot}/Models/ClinicModels.cs`),
+      read(`${windowsRoot}/Services/SettingsStore.cs`),
+      read(`${windowsRoot}/Services/ClerkAuthService.cs`),
+      read(`${windowsRoot}/Services/ClinicApiClient.cs`),
+      read(`${windowsRoot}/Services/AlertService.cs`),
+      read(`${windowsRoot}/ViewModels/MainViewModel.cs`),
+      read(`${windowsRoot}/Views/MainWindow.xaml`),
+      read(`${windowsRoot}/Views/MiniWindow.xaml`),
+      read(`${windowsRoot}/App.xaml.cs`)
+    ]);
+
+  /** The body of one C# member, so an ordering check cannot be satisfied by a match elsewhere in the file. */
+  const memberBody = (source, signature) => {
+    const start = source.indexOf(signature);
+    if (start === -1) return "";
+    const rest = source.slice(start + signature.length);
+    const next = rest.search(/\n {4}(?:\/\/\/|\[|private|public|internal|protected|static)/);
+    return next === -1 ? rest : rest.slice(0, next);
+  };
+
+  /** Comments stripped, for a check whose own explanation would otherwise satisfy or trip it. */
+  const executable = (source) => source.split("\n").filter((line) => !/^\s*(\/\/|\/\*|\*)/.test(line)).join("\n");
+
+  // A console that makes a receptionist type a Cloudflare Worker URL before it will do anything is a
+  // console nobody gets to use. The address has one correct answer for every clinic Tími runs.
+  if (!/DefaultApiBaseUrl = "https:\/\/providers\.timinow\.pet"/.test(models)) {
+    throw new Error(`${windowsRoot}/Models/ClinicModels.cs does not name the production Worker, so a fresh install has no address to talk to and reports it as a Clerk failure.`);
+  }
+  if (!/public string ApiBaseUrl \{ get; set; \} = TimiVetEnvironment\.DefaultApiBaseUrl;/.test(models)) {
+    throw new Error(`${windowsRoot}/Models/ClinicModels.cs: AppSettings.ApiBaseUrl does not default to the production Worker. A blank default is not neutral — it is a first launch that cannot reach /api/config.`);
+  }
+  // The C# equivalent of the initializer-versus-init bug the Swift side had: deserializing an older
+  // settings.json assigns its empty string straight over the property default.
+  if (!/IsNullOrWhiteSpace\(settings\.ApiBaseUrl\)/.test(settingsSource) || !/settings\.ApiBaseUrl = TimiVetEnvironment\.DefaultApiBaseUrl/.test(settingsSource)) {
+    throw new Error(`${windowsRoot}/Services/SettingsStore.cs does not restore the default address when the stored one is blank. Every settings.json written by an older build carries "ApiBaseUrl": "", and deserialization overwrites the property default with it.`);
+  }
+
+  // Native Clerk mode. Each seam is a way to send `_is_native=true` and still not be a native client.
+  const nativeSeams = [
+    [/_is_native=true/, "never sends _is_native=true, so Clerk treats a signed desktop app as a browser and guards sign-in with a Turnstile challenge it cannot render."],
+    [/TryAddWithoutValidation\("Authorization", _deviceToken\)/, "never puts the Clerk client JWT in the Authorization header, so every request arrives as a brand-new anonymous client and the session can never be resumed."],
+    [/UseCookies = false/, "sends native requests through a client with a cookie jar. Clerk refuses a request carrying both an Authorization header and browser cookies, and HttpClientHandler.UseCookies cannot be changed per request."],
+    [/_nativeMode \? _nativeHttp : _webHttp/, "does not pick its HttpClient by mode, so native and cookie requests share one cookie policy."],
+    [/ClerkDeviceToken = _deviceToken/, "never writes the device token to the credential store, so the session cannot be resumed and sign-in greets the clinic again at every launch."],
+    [/native_api_disabled/, "does not recognise native_api_disabled, so an instance without the Native API toggle cannot fall back to the cookie path and sign-in breaks outright."]
+  ];
+  const clerkAuthCode = executable(clerkAuth);
+  for (const [pattern, complaint] of nativeSeams) {
+    if (!pattern.test(clerkAuthCode)) {
+      throw new Error(`${windowsRoot}/Services/ClerkAuthService.cs ${complaint}`);
+    }
+  }
+  const credentialSource = await read(`${windowsRoot}/Services/CredentialStore.cs`);
+  if (!/public string\? ClerkDeviceToken \{ get; set; \}/.test(credentialSource)) {
+    throw new Error(`${windowsRoot}/Services/CredentialStore.cs has nowhere to keep Clerk's native client JWT, so the only credential a native sign-in produces is thrown away at exit.`);
+  }
+
+  // The device token has to be absorbed before the status check. Clerk issues the client JWT on failure
+  // responses too, and ordinary steps of this flow run straight through one — an unknown identifier is a
+  // 422 — so taking it only on success leaves the next request unauthenticated.
+  {
+    const perform = memberBody(clerkAuth, "private async Task<ClerkResponse> PerformClerkRequestAsync");
+    if (!perform) throw new Error(`${windowsRoot}/Services/ClerkAuthService.cs no longer routes Clerk calls through one place, so nothing can guarantee the device token is read from every response.`);
+    const absorbAt = perform.indexOf("AbsorbDeviceToken(response)");
+    const statusAt = perform.search(/IsSuccessStatusCode|IsSuccess\b/);
+    if (absorbAt === -1) {
+      throw new Error(`${windowsRoot}/Services/ClerkAuthService.cs does not absorb the Clerk device token from the response at all.`);
+    }
+    if (statusAt !== -1 && statusAt < absorbAt) {
+      throw new Error(`${windowsRoot}/Services/ClerkAuthService.cs absorbs the Clerk device token after the status check. Clerk issues it on failure responses too, and the request after a rejection would go out unauthenticated.`);
+    }
+  }
+
+  // A network blip at launch is not a sign-out. The old shape returned false on any failure, which sent
+  // the operator to a sign-in window — and signing in again is what replaced a perfectly good credential.
+  if (!/IsCredentialRejected/.test(clerkAuth) || !/private SessionRestoreOutcome ResumeWithoutChecking\(\)/.test(clerkAuth)) {
+    throw new Error(`${windowsRoot}/Services/ClerkAuthService.cs treats every restore failure alike. Only Clerk refusing the credential (401/403/404) is a sign-out; a timeout or a 5xx says nothing about the account.`);
+  }
+  {
+    const restore = clerkAuth.slice(clerkAuth.indexOf("var client = await GetClientAsync(ct);"));
+    const bareCatch = restore.match(/\n\s*catch\s*\n\s*\{([\s\S]{0,240}?)\n\s*\}/);
+    if (!bareCatch) {
+      throw new Error(`${windowsRoot}/Services/ClerkAuthService.cs: the restore path has no catch-all, so an unexpected failure escapes into the launch sequence rather than resuming quietly.`);
+    }
+    if (/SignOutLocally\(\)/.test(bareCatch[1]) || /_credentials\.Clear\(\)/.test(bareCatch[1])) {
+      throw new Error(`${windowsRoot}/Services/ClerkAuthService.cs: the catch-all while restoring a session erases the credential. That is the blip-signs-you-out bug.`);
+    }
+    // And it has to actually resume. The two checks above are satisfied by a
+    // ResumeWithoutChecking that returns Rejected — the method is present, the
+    // catch-all deletes nothing itself, and the caller signs out one frame
+    // later on the outcome it was handed. Verified by making exactly that
+    // change and watching the validator pass.
+    const resumeBody = memberBody(clerkAuth, "private SessionRestoreOutcome ResumeWithoutChecking()");
+    if (!resumeBody) {
+      throw new Error(`${windowsRoot}/Services/ClerkAuthService.cs no longer declares ResumeWithoutChecking, so an unreachable Clerk has no outcome that means "try again later".`);
+    }
+    if (/SessionRestoreOutcome\.Rejected/.test(resumeBody)) {
+      throw new Error(`${windowsRoot}/Services/ClerkAuthService.cs: ResumeWithoutChecking returns Rejected. Being unable to reach Clerk is not Clerk refusing the credential, and Rejected is the outcome that erases it — one blip on a clinic's morning Wi-Fi would sign them out permanently.`);
+    }
+    if (!/SessionRestoreOutcome\.(ResumedUnverified|Unreachable)/.test(resumeBody)) {
+      throw new Error(`${windowsRoot}/Services/ClerkAuthService.cs: ResumeWithoutChecking returns neither ResumedUnverified nor Unreachable, so there is no path that keeps a credential through a network failure.`);
+    }
+    // Erasing is allowed in exactly one place: the handler for a credential
+    // Clerk actually refused.
+    const erasingCatches = [...clerkAuth.matchAll(/catch[^\n]*\n\s*\{[\s\S]{0,300}?SignOutLocally\(\)/g)];
+    for (const hit of erasingCatches) {
+      if (!/IsCredentialRejected/.test(hit[0])) {
+        throw new Error(`${windowsRoot}/Services/ClerkAuthService.cs erases the credential from a catch that is not filtered on IsCredentialRejected. Only Clerk saying no is a sign-out.`);
+      }
+    }
+  }
+  if (!/CanResumeClinicSessionOffline/.test(appShell)) {
+    throw new Error(`${windowsRoot}/App.xaml.cs drops to the sign-in window whenever /api/session cannot be reached, so a console opened before the network is up asks a clinic to complete a sign-in it has no connection for.`);
+  }
+
+  // /api/config carries the Clerk publishable key, so a client that demands a session before sending it
+  // has locked sign-in out of itself: no config, no Clerk host, no sign-in, no session, no config.
+  if (!/IsPublic\(url\)/.test(apiSource) || !/api\/config/.test(apiSource.slice(apiSource.indexOf("private static bool IsPublic")))) {
+    throw new Error(`${windowsRoot}/Services/ClinicApiClient.cs refuses every unauthenticated request, /api/config included. Sign-in can then never start, because the Clerk key lives behind exactly that request.`);
+  }
+
+  // A queue alert has to lead to an answer, not to another window.
+  if (!/private async Task AnswerAsync\(ClinicRequest request, bool decline\)/.test(mainViewModel)) {
+    throw new Error(`${windowsRoot}/ViewModels/MainViewModel.cs has no one-press answer, so every response has to go through the decision workspace: find the row, read four number fields, press a button.`);
+  }
+  for (const [path, source] of [["Views/MainWindow.xaml", mainWindow], ["Views/MiniWindow.xaml", miniWindow]]) {
+    if (!/AcceptRequestCommand/.test(source) || !/DeclineRequestCommand/.test(source)) {
+      throw new Error(`${windowsRoot}/${path} does not offer accept and decline on the request itself. A floating panel that raises an alert whose only action is "open another window" is what this replaced.`);
+    }
+  }
+
+  // The alert sound. SystemSounds routes to the Windows "System sounds" channel, a slider separate from
+  // output volume that the "No Sounds" scheme most managed clinic images ship with mutes outright.
+  if (/SystemSounds\./.test(executable(alertSource))) {
+    throw new Error(`${windowsRoot}/Services/AlertService.cs plays the Windows event beep, which follows the separate System sounds channel and is routinely silent. Play real audio through the app's own output.`);
+  }
+  if (!/private SoundPlayer\? _alertPlayer/.test(alertSource) || !/public void PreviewAlert\(\)/.test(alertSource)) {
+    throw new Error(`${windowsRoot}/Services/AlertService.cs must hold the player for the length of the sound — one collected mid-sound simply stops — and must expose a preview, because "no sound fires" cannot be diagnosed by waiting for a real patient.`);
+  }
+  if (!/TestAlertCommand/.test(mainWindow)) {
+    throw new Error(`${windowsRoot}/Views/MainWindow.xaml has no Test button for the intake alert.`);
+  }
+
+  // Calling preferences: a practice with one person at the desk and a phone already ringing has a real
+  // reason to say no to an automated call.
+  if (!/UpdateCallPreferencesAsync\(/.test(apiSource)) {
+    throw new Error(`${windowsRoot}/Services/ClinicApiClient.cs cannot change calling preferences, so the console has nothing to save.`);
+  }
+  if (!/Call this clinic about new requests/.test(mainWindow)) {
+    throw new Error(`${windowsRoot}/Views/MainWindow.xaml has no calling-preferences control.`);
+  }
+
+  // Owner-recorded medications and allergies, labelled as unverified, on the request itself.
+  if (!/OwnerSuppliedMedicalLine/.test(mainWindow) || !/REPORTED BY OWNER, UNVERIFIED/.test(mainWindow)) {
+    throw new Error(`${windowsRoot}/Views/MainWindow.xaml does not render the owner-recorded medications and allergies, or does not label them unverified. ClinicModels carries them either way, so the omission is invisible.`);
+  }
+
+  // The console must not stop updating in silence. A stale queue that still says LIVE reads as an empty
+  // waiting room from across the room.
+  if (!/ConsoleConnectionState/.test(mainViewModel) || !/private static readonly int\[\] BackoffSeconds/.test(mainViewModel)) {
+    throw new Error(`${windowsRoot}/ViewModels/MainViewModel.cs has no connection state and no backoff, so a Worker it cannot reach is retried every few seconds forever while the screen claims to be live.`);
+  }
+  // The subscription, not the unsubscription in Dispose — which is what a bare name match finds.
+  if (!/NetworkChange\.NetworkAvailabilityChanged \+=/.test(mainViewModel)) {
+    throw new Error(`${windowsRoot}/ViewModels/MainViewModel.cs ignores the network coming back, so the console waits out a full backoff after Windows already knows it is connected.`);
+  }
+
+  // WPF resolves control colours through SystemColors, which follow Windows. The console's palette is
+  // painted by hand and light; the macOS console was unreadable in dark mode for exactly this reason.
+  const themeSource = await read(`${windowsRoot}/Theme/Theme.xaml`);
+  for (const key of ["SystemColors.WindowBrushKey", "SystemColors.ControlTextBrushKey", "SystemColors.HighlightBrushKey"]) {
+    if (!themeSource.includes(key)) {
+      throw new Error(`${windowsRoot}/Theme/Theme.xaml does not pin ${key}. Stock control templates look it up dynamically, so on a machine in dark mode or high contrast the console renders dark fields inside hand-painted light cards.`);
+    }
+  }
+
+  // CI has to build what the project actually targets; an SDK older than the TargetFramework fails as
+  // NETSDK1045, which reads as a broken project rather than as a stale runner.
+  const csproj = await read("apps/vet-windows/src/TimiVet/TimiVet.csproj");
+  const framework = csproj.match(/<TargetFramework>net(\d+)\.0-windows/);
+  if (!framework) throw new Error("apps/vet-windows/src/TimiVet/TimiVet.csproj no longer declares a Windows target framework.");
+  if (!nativeWorkflow.includes(`dotnet-version: "${framework[1]}.0.x"`)) {
+    throw new Error(`.github/workflows/native-clients.yml installs a .NET SDK that does not match apps/vet-windows/src/TimiVet/TimiVet.csproj's net${framework[1]}.0 target, so the Windows job fails with NETSDK1045.`);
+  }
+}
+
 const csharpFiles = await collectFiles("apps/vet-windows", ".cs");
 for (const path of csharpFiles) {
   const problems = bracketProblems(await read(path));
