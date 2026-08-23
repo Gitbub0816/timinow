@@ -29,6 +29,6 @@
     "build:voice": "wrangler deploy --dry-run --config wrangler.voice.jsonc --outdir .wrangler/build-voice"
   },
   "devDependencies": {
-    "wrangler": "^4.32.0"
+    "wrangler": "^4.125.0"
   }
 }
