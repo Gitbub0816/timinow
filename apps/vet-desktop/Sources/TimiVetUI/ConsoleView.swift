@@ -12,6 +12,11 @@ public struct ConsoleView: View {
     /// anybody should have to wait for a real patient to test.
     var onTestAlert: () -> Void
 
+    @State var callsEnabled = true
+    @State var voicePhone = ""
+    @State var quietStart = ""
+    @State var quietEnd = ""
+
     public init(store: ClinicStore, onOpenMini: @escaping () -> Void, onManagePeople: @escaping () -> Void, onSignOut: @escaping () -> Void, onTestAlert: @escaping () -> Void = { }) {
         self.store = store
         self.onOpenMini = onOpenMini
@@ -39,6 +44,15 @@ public struct ConsoleView: View {
         }
         .background(TimiVetColor.canvas)
         .task { await store.start() }
+        .task {
+            await store.loadCallPreferences()
+            // Copied into local state once, so typing in the field does not
+            // fight the next poll.
+            callsEnabled = store.callPreferences.callsEnabled
+            voicePhone = store.callPreferences.voicePhone ?? ""
+            quietStart = store.callPreferences.quietHours?.start ?? ""
+            quietEnd = store.callPreferences.quietHours?.end ?? ""
+        }
     }
 
     // MARK: Sidebar
@@ -348,6 +362,37 @@ public struct ConsoleView: View {
                     TextField("tenant_hearth", text: $store.settings.tenantId).textFieldStyle(.roundedBorder)
                     Text("Sign in above establishes the real Clerk session; this field only matters against a loopback dev Worker with no session.")
                         .font(TimiVetFont.ui(10)).foregroundStyle(TimiVetColor.muted)
+                }
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Phone calls from Tími").font(TimiVetFont.ui(13, weight: .semibold))
+                    Toggle("Call this clinic about new requests", isOn: $callsEnabled)
+                    Text("When this is off, requests still arrive in this console and on the floating panel — Tími simply does not ring the phone. Some practices want the call; a single-handed front desk usually does not.")
+                        .font(TimiVetFont.ui(10)).foregroundStyle(TimiVetColor.muted)
+                    Text("Number to call").font(TimiVetFont.ui(12, weight: .semibold))
+                    TextField(store.callPreferences.locationPhone ?? "Clinic's listed number", text: $voicePhone)
+                        .textFieldStyle(.roundedBorder)
+                        .disabled(!callsEnabled)
+                    Text("Leave blank to use the clinic's listed number. A back line that is not the public one is usually the right answer.")
+                        .font(TimiVetFont.ui(10)).foregroundStyle(TimiVetColor.muted)
+                    HStack(spacing: 10) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Quiet from").font(TimiVetFont.ui(12, weight: .semibold))
+                            TextField("22:00", text: $quietStart).textFieldStyle(.roundedBorder).disabled(!callsEnabled)
+                        }
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Quiet until").font(TimiVetFont.ui(12, weight: .semibold))
+                            TextField("07:00", text: $quietEnd).textFieldStyle(.roundedBorder).disabled(!callsEnabled)
+                        }
+                    }
+                    Text("24-hour times. Leave both blank for no quiet hours. Requests raised during quiet hours still appear in the console.")
+                        .font(TimiVetFont.ui(10)).foregroundStyle(TimiVetColor.muted)
+                    Button("Save calling preferences") {
+                        Task { await store.saveCallPreferences(callsEnabled: callsEnabled, voicePhone: voicePhone, quietStart: quietStart, quietEnd: quietEnd) }
+                    }.buttonStyle(TimiVetPrimaryButtonStyle()).disabled(store.isBusy || !store.isAdmin)
+                    if !store.isAdmin {
+                        Text("Only a workspace administrator can change these. Ask whoever set up this clinic on Tími.")
+                            .font(TimiVetFont.ui(10)).foregroundStyle(TimiVetColor.muted)
+                    }
                 }
                 VStack(alignment: .leading, spacing: 10) {
                     Text("Polling interval, seconds").font(TimiVetFont.ui(13, weight: .semibold))

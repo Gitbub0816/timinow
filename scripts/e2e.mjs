@@ -137,6 +137,34 @@ const clinicView = result.body.requests.find((item) => item.id === medicalIntake
 assert(clinicView?.pet.allergies === "Penicillin — hives last spring", "The clinic must see the allergies the owner recorded");
 assert(clinicView?.pet.medications === "Apoquel 5.4mg twice daily", "The clinic must see the medications the owner recorded");
 
+/* -------------------------------------------- clinic call preferences --- */
+
+// The columns have existed since the voice gateway shipped, with a note saying
+// a console would expose them. None did, so every clinic has been on the
+// default whether or not that is what they wanted.
+const clinicHeaders = { "content-type": "application/json", "x-demo-role": "clinic", "x-demo-tenant-id": "tenant_hearth" };
+// Changing them is an administrator's call; reading them is not.
+const clinicAdminHeaders = { ...clinicHeaders, "x-demo-role": "org:admin" };
+result = await call("/api/clinic/call-preferences", { headers: clinicHeaders });
+assert(result.response.status === 200 && result.body.preferences.callsEnabled === true, "Calling defaults to on, as every clinic has been");
+
+result = await call("/api/clinic/call-preferences", { method: "PATCH", headers: clinicAdminHeaders, body: JSON.stringify({ callsEnabled: false }) });
+assert(result.body.preferences.callsEnabled === false, "A clinic must be able to say no to the phone call");
+const tenantRow = database.prepare("SELECT voice_calls_enabled FROM tenants WHERE id = 'tenant_hearth'").get();
+const locationRow = database.prepare("SELECT voice_calls_enabled FROM locations WHERE tenant_id = 'tenant_hearth'").get();
+assert(tenantRow.voice_calls_enabled === 0 && locationRow.voice_calls_enabled === 0, "Both levels must be set, since the gateway requires both to be on");
+
+result = await call("/api/clinic/call-preferences", { method: "PATCH", headers: clinicAdminHeaders, body: JSON.stringify({ callsEnabled: true, voicePhone: "(510) 555-0199", quietHours: { start: "22:00", end: "07:00" } }) });
+assert(result.body.preferences.voicePhone === "(510) 555-0199", "A back line must be dialable instead of the public number");
+assert(result.body.preferences.quietHours.start === "22:00", "Quiet hours must round-trip");
+
+// Half a window is not a window, and storing one means ignoring it at 3am.
+result = await call("/api/clinic/call-preferences", { method: "PATCH", headers: clinicAdminHeaders, body: JSON.stringify({ quietHours: { start: "22:00", end: "" } }) });
+assert(result.response.status === 422 && result.body.error.code === "INVALID_QUIET_HOURS", "A malformed quiet-hours window must be refused, not stored");
+
+result = await call("/api/clinic/call-preferences", { method: "PATCH", headers: clinicAdminHeaders, body: JSON.stringify({ voicePhone: "nope" }) });
+assert(result.response.status === 422 && result.body.error.code === "INVALID_PHONE", "A number Tími cannot dial must be refused at the door");
+
 /* ----------------------------------------------- client error reports --- */
 
 // The counterpart to the one sentence the apps now show. Accepted from anyone,
@@ -271,4 +299,4 @@ for (const table of tableChecks) {
 }
 
 database.close();
-console.log("D1 end-to-end tests passed: five-offer search, atomic customer selection, clinic release, policy snapshot, deposit, travel, optional medications and allergies, veterinary-technician staffing notices, client error reporting, observation, expiry, and audit.");
+console.log("D1 end-to-end tests passed: five-offer search, atomic customer selection, clinic release, policy snapshot, deposit, travel, optional medications and allergies, veterinary-technician staffing notices, client error reporting, clinic calling preferences, observation, expiry, and audit.");

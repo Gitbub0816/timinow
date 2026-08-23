@@ -118,6 +118,20 @@ public final class ClinicAPIClient: @unchecked Sendable {
         try await send("GET", "/api/config")
     }
 
+    // MARK: - Calling preferences
+
+    public func getCallPreferences() async throws -> CallPreferences {
+        if isDemo { return CallPreferences(callsEnabled: true, voicePhone: nil, locationPhone: "(510) 555-0194", quietHours: nil) }
+        let envelope: CallPreferencesEnvelope = try await send("GET", "/api/clinic/call-preferences")
+        return envelope.preferences
+    }
+
+    public func updateCallPreferences(_ update: CallPreferencesUpdate) async throws -> CallPreferences {
+        if isDemo { return CallPreferences(callsEnabled: update.callsEnabled ?? true, voicePhone: update.voicePhone, locationPhone: "(510) 555-0194") }
+        let envelope: CallPreferencesEnvelope = try await send("PATCH", "/api/clinic/call-preferences", body: update)
+        return envelope.preferences
+    }
+
     // MARK: - Tenant people management
 
     public func getMembers() async throws -> TenantRoster {
@@ -263,6 +277,17 @@ public final class ClinicAPIClient: @unchecked Sendable {
 }
 
 // MARK: - Wire payloads (private: never leaves the public bridge surface)
+
+/// Only the fields being changed are sent — an absent one is left alone, so
+/// two administrators editing different settings do not overwrite each other.
+public struct CallPreferencesUpdate: Encodable, Sendable {
+    public var callsEnabled: Bool?
+    public var voicePhone: String?
+    public var quietHours: QuietHours?
+    public init(callsEnabled: Bool? = nil, voicePhone: String? = nil, quietHours: QuietHours? = nil) {
+        self.callsEnabled = callsEnabled; self.voicePhone = voicePhone; self.quietHours = quietHours
+    }
+}
 
 private struct SearchDecisionPayload: Encodable {
     var decision: String

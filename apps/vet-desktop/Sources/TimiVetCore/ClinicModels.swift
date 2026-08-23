@@ -185,6 +185,34 @@ public enum TimiVetEnvironment {
     public static let defaultAPIBaseURL = "https://providers.timinow.pet"
 }
 
+/// Whether Tími may ring this clinic, and on what number.
+///
+/// A practice with one person at the desk and a phone already ringing has a
+/// real reason to say no to an automated call, and until now had no way to.
+public struct CallPreferences: Codable, Hashable, Sendable {
+    public var callsEnabled: Bool
+    public var voicePhone: String?
+    /// The location's listed number, shown as the fallback when no dedicated
+    /// voice line is set.
+    public var locationPhone: String?
+    public var quietHours: QuietHours?
+
+    public init(callsEnabled: Bool = true, voicePhone: String? = nil, locationPhone: String? = nil, quietHours: QuietHours? = nil) {
+        self.callsEnabled = callsEnabled; self.voicePhone = voicePhone
+        self.locationPhone = locationPhone; self.quietHours = quietHours
+    }
+}
+
+public struct QuietHours: Codable, Hashable, Sendable {
+    public var start: String?
+    public var end: String?
+    public init(start: String? = nil, end: String? = nil) { self.start = start; self.end = end }
+}
+
+public struct CallPreferencesEnvelope: Codable, Sendable {
+    public var preferences: CallPreferences
+}
+
 public struct AppSettings: Codable, Sendable {
     public var apiBaseUrl: String = TimiVetEnvironment.defaultAPIBaseURL
     public var tenantId: String = "tenant_hearth"

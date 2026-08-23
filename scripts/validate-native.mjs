@@ -1491,6 +1491,25 @@ for (const [path, marker] of [
   }
 }
 
+// A practice with one person at the desk and a phone already ringing has a
+// real reason to say no to an automated call. The columns for it shipped with
+// the voice gateway, carrying a note that a console was expected to expose
+// them; none did, so every clinic ran on the default.
+{
+  const worker = await read("src/index.js");
+  if (!/path === "\/api\/clinic\/call-preferences"/.test(worker)) {
+    throw new Error("src/index.js exposes no calling preferences, so a clinic cannot turn the phone call off.");
+  }
+  const client = await read("apps/vet-desktop/Sources/TimiVetCore/ClinicAPIClient.swift");
+  if (!/updateCallPreferences\(/.test(client)) {
+    throw new Error("apps/vet-desktop/Sources/TimiVetCore/ClinicAPIClient.swift cannot change calling preferences, so the console has nothing to save.");
+  }
+  const console_ = await read("apps/vet-desktop/Sources/TimiVetUI/ConsoleView.swift");
+  if (!/Call this clinic about new requests/.test(console_)) {
+    throw new Error("apps/vet-desktop/Sources/TimiVetUI/ConsoleView.swift has no calling-preferences control.");
+  }
+}
+
 const csharpFiles = await collectFiles("apps/vet-windows", ".cs");
 for (const path of csharpFiles) {
   const problems = bracketProblems(await read(path));

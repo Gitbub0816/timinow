@@ -980,6 +980,88 @@ async function recordObservation(request, env, actor) {
   return json({ recorded: true, observedAt: now }, { status: 201 });
 }
 
+/**
+ * Whether Tími may ring this clinic, and on what number.
+ *
+ * The columns have existed since the voice gateway shipped, with a note saying
+ * a clinic console was expected to expose them. None ever did, so every
+ * participating clinic has been on the default — calls on, main line, no quiet
+ * hours — whether or not that is what they wanted. A practice with one person
+ * at the desk and a phone that is already ringing has a real reason to say no,
+ * and had no way to.
+ */
+async function getCallPreferences(env, tenantId) {
+  if (!hasDatabase(env)) {
+    return json({ preferences: { callsEnabled: true, voicePhone: null, quietHours: {}, locationPhone: null } });
+  }
+  const [tenant, location] = await Promise.all([
+    env.DB.prepare("SELECT voice_calls_enabled, voice_quiet_hours_json FROM tenants WHERE id = ?").bind(tenantId).first(),
+    env.DB.prepare("SELECT phone, voice_phone, voice_calls_enabled FROM locations WHERE tenant_id = ? AND active = 1 ORDER BY created_at LIMIT 1").bind(tenantId).first()
+  ]);
+  let quietHours = {};
+  try { quietHours = JSON.parse(tenant?.voice_quiet_hours_json || "{}"); } catch { quietHours = {}; }
+  return json({
+    preferences: {
+      // Both have to be on. A tenant-level "no" is the practice's decision and
+      // a location-level "no" is this site's; either one is a no.
+      callsEnabled: Boolean(tenant?.voice_calls_enabled) && Boolean(location?.voice_calls_enabled),
+      tenantCallsEnabled: Boolean(tenant?.voice_calls_enabled),
+      locationCallsEnabled: Boolean(location?.voice_calls_enabled),
+      /** The number Tími dials. Null means the location's listed phone. */
+      voicePhone: location?.voice_phone || null,
+      locationPhone: location?.phone || null,
+      quietHours
+    }
+  });
+}
+
+async function setCallPreferences(request, env, actor, tenantId) {
+  if (!hasDatabase(env)) return apiError(503, "DATABASE_REQUIRED", "D1 is required to change calling preferences.");
+  if (!isOrgAdmin(actor)) return apiError(403, "ADMIN_REQUIRED", "Only a workspace administrator can change calling preferences.");
+  const body = await readJson(request).catch(() => null);
+  if (!body || typeof body !== "object") return apiError(400, "JSON_REQUIRED", "A valid JSON request body is required.");
+
+  const callsEnabled = body.callsEnabled === undefined ? null : body.callsEnabled === true;
+  const rawPhone = body.voicePhone === undefined ? undefined : cleanString(body.voicePhone, 30);
+  if (rawPhone !== undefined && rawPhone !== "" && !/^\+?[0-9().\-\s]{7,24}$/.test(rawPhone)) {
+    return apiError(422, "INVALID_PHONE", "Enter a phone number Tími can dial, or leave it blank to use the clinic's listed number.");
+  }
+  // Quiet hours as "HH:MM"; anything else is refused rather than stored and
+  // silently ignored at 3am.
+  let quietHours;
+  if (body.quietHours !== undefined) {
+    const start = cleanString(body.quietHours?.start, 5);
+    const end = cleanString(body.quietHours?.end, 5);
+    const wellFormed = (value) => /^([01][0-9]|2[0-3]):[0-5][0-9]$/.test(value);
+    if (start === "" && end === "") {
+      quietHours = {};
+    } else if (wellFormed(start) && wellFormed(end)) {
+      quietHours = { start, end };
+    } else {
+      return apiError(422, "INVALID_QUIET_HOURS", "Quiet hours must be a start and end time in 24-hour HH:MM form.");
+    }
+  }
+
+  const statements = [];
+  if (callsEnabled !== null) {
+    statements.push(env.DB.prepare("UPDATE tenants SET voice_calls_enabled = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
+      .bind(callsEnabled ? 1 : 0, tenantId));
+    statements.push(env.DB.prepare("UPDATE locations SET voice_calls_enabled = ?, updated_at = CURRENT_TIMESTAMP WHERE tenant_id = ?")
+      .bind(callsEnabled ? 1 : 0, tenantId));
+  }
+  if (rawPhone !== undefined) {
+    statements.push(env.DB.prepare("UPDATE locations SET voice_phone = ?, updated_at = CURRENT_TIMESTAMP WHERE tenant_id = ?")
+      .bind(rawPhone === "" ? null : rawPhone, tenantId));
+  }
+  if (quietHours !== undefined) {
+    statements.push(env.DB.prepare("UPDATE tenants SET voice_quiet_hours_json = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
+      .bind(JSON.stringify(quietHours), tenantId));
+  }
+  if (!statements.length) return apiError(422, "NO_CHANGES", "Provide at least one calling preference to change.");
+  await env.DB.batch(statements);
+  return getCallPreferences(env, tenantId);
+}
+
 export async function clinicDashboard(env, tenantId) {
   const location = await getClinicLocation(env, tenantId);
   if (!location) return apiError(404, "CLINIC_NOT_FOUND", "No clinic is mapped to the active Clerk organization.");
@@ -1335,6 +1417,10 @@ async function handleApi(request, env, ctx) {
     if (!tenantId) return apiError(403, "TENANT_REQUIRED", "Choose an active Clerk organization mapped to a Tími tenant.");
     if (method === "GET" && path === "/api/clinic/dashboard") return clinicDashboard(env, tenantId);
     if (method === "POST" && path === "/api/clinic/availability") return setClinicAvailability(request, env, actor, tenantId);
+    if (path === "/api/clinic/call-preferences") {
+      if (method === "GET") return getCallPreferences(env, tenantId);
+      if (method === "PATCH" || method === "POST") return setCallPreferences(request, env, actor, tenantId);
+    }
     const decisionMatch = path.match(/^\/api\/clinic\/intakes\/([^/]+)\/decision$/);
     if (method === "POST" && decisionMatch) return decideIntake(request, env, actor, tenantId, decodeURIComponent(decisionMatch[1]));
     const searchDecisionMatch = path.match(/^\/api\/clinic\/search-targets\/([^/]+)\/decision$/);

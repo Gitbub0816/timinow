@@ -204,6 +204,40 @@ import Observation
         catch { statusMessage = error.localizedDescription }
     }
 
+    // MARK: - Calling preferences
+
+    public var callPreferences = CallPreferences()
+    public var callPreferencesLoaded = false
+
+    public func loadCallPreferences() async {
+        do {
+            callPreferences = try await api.getCallPreferences()
+            callPreferencesLoaded = true
+        } catch let error as ClinicAPIError { statusMessage = error.message }
+        catch { statusMessage = error.localizedDescription }
+    }
+
+    public func saveCallPreferences(callsEnabled: Bool, voicePhone: String, quietStart: String, quietEnd: String) async {
+        isBusy = true
+        defer { isBusy = false }
+        let trimmedPhone = voicePhone.trimmingCharacters(in: .whitespaces)
+        let start = quietStart.trimmingCharacters(in: .whitespaces)
+        let end = quietEnd.trimmingCharacters(in: .whitespaces)
+        // Both or neither: half a quiet-hours window is not a window, and the
+        // Worker refuses it rather than storing something it will ignore at
+        // three in the morning.
+        let quiet = (start.isEmpty && end.isEmpty) ? QuietHours(start: "", end: "") : QuietHours(start: start, end: end)
+        do {
+            callPreferences = try await api.updateCallPreferences(
+                CallPreferencesUpdate(callsEnabled: callsEnabled, voicePhone: trimmedPhone, quietHours: quiet)
+            )
+            statusMessage = callsEnabled
+                ? "Tími will call this clinic about new requests."
+                : "Tími will not call this clinic. Requests still arrive in the console."
+        } catch let error as ClinicAPIError { statusMessage = error.message }
+        catch { statusMessage = error.localizedDescription }
+    }
+
     public func saveSettings() async {
         isBusy = true
         defer { isBusy = false }
