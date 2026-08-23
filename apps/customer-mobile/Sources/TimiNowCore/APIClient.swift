@@ -75,15 +75,26 @@ public final class TimiGateway: @unchecked Sendable {
         return envelope.locations
     }
 
-    /// Emergency-capable hospitals only, nearest first.
+    /// Emergency-capable hospitals near a point — Tími's own and everyone
+    /// else's.
     ///
-    /// `care=emergency` narrows the Worker's list to locations whose kind is
-    /// `emergency` or that carry the `emergency` capability — not the wider
-    /// urgent-or-general set an ordinary search returns. The radius is wider
-    /// than a normal search on purpose: when the answer is "drive now", the
-    /// nearest one that exists beats none at all.
-    public func emergencyLocations(latitude: Double, longitude: Double, species: PetSpecies) async throws -> [ClinicLocation] {
-        try await locations(latitude: latitude, longitude: longitude, species: species, care: "emergency", radiusMiles: 120)
+    /// This asked `/api/locations?care=emergency`, which is the Tími network
+    /// and only the Tími network. In a city with three partners that is a list
+    /// of three, and the nearest actual emergency hospital is not on it. The
+    /// Worker now merges map data, so the answer is the hospitals that exist
+    /// rather than the ones we have signed.
+    public func emergencyPlaces(latitude: Double, longitude: Double, species: PetSpecies) async throws -> EmergencyPlacesEnvelope {
+        guard let baseURL else {
+            return EmergencyPlacesEnvelope(notice: nil, places: DemoData.clinics.prefix(3).map { clinic in
+                EmergencyPlace(id: clinic.id, source: "timi", partner: true, name: clinic.name, address: clinic.address, phone: clinic.phone, latitude: clinic.latitude, longitude: clinic.longitude, distanceMiles: clinic.distanceMiles, emergencyNamed: true)
+            })
+        }
+        var components = URLComponents(url: baseURL.appendingPathComponent("api/emergency-nearby"), resolvingAgainstBaseURL: false)!
+        components.queryItems = [
+            URLQueryItem(name: "lat", value: String(latitude)), URLQueryItem(name: "lng", value: String(longitude)),
+            URLQueryItem(name: "radius", value: "60"), URLQueryItem(name: "species", value: species.rawValue)
+        ]
+        return try await send(components.url!)
     }
 
     public func startSearch(_ draft: CareDraft, locationIds: [String]) async throws -> CareSearch {

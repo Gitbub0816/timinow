@@ -241,11 +241,17 @@ struct EmergencyCareSheet: View {
                             .background(TimiColor.coralSoft, in: RoundedRectangle(cornerRadius: 14))
                     }
 
-                    ForEach(store.emergencyLocations) { clinic in
-                        EmergencyClinicRow(clinic: clinic)
+                    ForEach(store.emergencyLocations) { place in
+                        EmergencyClinicRow(place: place)
                     }
 
-                    Text("Tími does not diagnose or triage. This list is the emergency-capable hospitals nearest to you; it is not advice about whether to go.")
+                    // The Worker's words, not a restatement: most of this list
+                    // is third-party map data and the caveat has to be the same
+                    // on every surface.
+                    if let notice = store.emergencyNotice, !notice.isEmpty {
+                        Text(notice).font(.caption).foregroundStyle(TimiColor.muted)
+                    }
+                    Text("Tími does not diagnose or triage. This is a list of the emergency-capable hospitals nearest to you; it is not advice about whether to go.")
                         .font(.caption).foregroundStyle(TimiColor.muted)
                 }.padding(20)
             }
@@ -259,16 +265,26 @@ struct EmergencyCareSheet: View {
 }
 
 struct EmergencyClinicRow: View {
-    var clinic: ClinicLocation
+    var place: EmergencyPlace
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text(clinic.name).font(.title3).fontWeight(.black)
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(place.name).font(.title3).fontWeight(.black)
+                Spacer()
+                // Worth marking: a partner is the only kind Tími can actually
+                // send a request to.
+                if place.partner {
+                    Text("TÍMI").font(.system(size: 9, weight: .black)).foregroundStyle(.white)
+                        .padding(.horizontal, 7).padding(.vertical, 4)
+                        .background(TimiColor.blue, in: Capsule())
+                }
+            }
             Text(subtitle).font(.caption).fontWeight(.bold).foregroundStyle(TimiColor.coral)
-            if let address = clinic.address, !address.isEmpty {
+            if let address = place.address, !address.isEmpty {
                 Text(address).font(.callout).foregroundStyle(TimiColor.muted)
             }
-            StaffingNotice(notice: clinic.staffingNotice)
+            StaffingNotice(notice: place.staffingNotice)
             HStack(spacing: 10) {
                 if let url = telephoneURL {
                     Link(destination: url) { Label("Call", systemImage: "phone.fill") }
@@ -279,6 +295,10 @@ struct EmergencyClinicRow: View {
                         .buttonStyle(TimiPrimaryButtonStyle(color: TimiColor.blue))
                 }
             }
+            if place.phone == nil {
+                Text("No phone number is listed for this hospital.")
+                    .font(.caption).foregroundStyle(TimiColor.muted)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .timiCard(Color.white)
@@ -286,26 +306,31 @@ struct EmergencyClinicRow: View {
 
     private var subtitle: String {
         var parts: [String] = []
-        if let miles = clinic.distanceMiles { parts.append(String(format: "%.1f mi away", miles)) }
-        // A clinic with the emergency capability but a different kind is still
-        // an answer; saying "Emergency hospital" of a general practice that
-        // happens to take emergencies would be overstating it.
-        parts.append(clinic.kind == "emergency" ? "Emergency hospital" : "Takes emergencies")
+        if let miles = place.distanceMiles { parts.append(String(format: "%.1f mi away", miles)) }
+        if let label = place.availabilityLabel, !label.isEmpty {
+            parts.append(label)
+        } else if place.emergencyNamed == true {
+            parts.append("Listed as emergency care")
+        } else {
+            // Padding the list with a day clinic is better than an empty
+            // screen, but calling it an emergency hospital would not be.
+            parts.append("Veterinary clinic — call to ask about emergencies")
+        }
         return parts.joined(separator: " · ")
     }
 
     private var telephoneURL: URL? {
-        guard let phone = clinic.phone else { return nil }
+        guard let phone = place.phone else { return nil }
         let digits = phone.filter { $0.isNumber || $0 == "+" }
         return digits.isEmpty ? nil : URL(string: "tel:\(digits)")
     }
 
     private var directionsURL: URL? {
-        guard let latitude = clinic.latitude, let longitude = clinic.longitude else { return nil }
+        guard let latitude = place.latitude, let longitude = place.longitude else { return nil }
         var components = URLComponents(string: "https://maps.apple.com/")
         components?.queryItems = [
             URLQueryItem(name: "daddr", value: "\(latitude),\(longitude)"),
-            URLQueryItem(name: "q", value: clinic.name)
+            URLQueryItem(name: "q", value: place.name)
         ]
         return components?.url
     }

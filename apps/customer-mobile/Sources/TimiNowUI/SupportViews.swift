@@ -39,6 +39,19 @@ struct PetsView: View {
                         .padding(12).frame(maxWidth: .infinity, alignment: .leading)
                         .background(TimiColor.coralSoft, in: RoundedRectangle(cornerRadius: 14))
                 }
+                if store.pets.isEmpty {
+                    VStack(spacing: 12) {
+                        Image(systemName: "pawprint.circle.fill").font(.system(size: 44)).foregroundStyle(TimiColor.blue)
+                        Text("No pets yet").font(.title3).fontWeight(.black)
+                        Text("Add the animal you would be asking clinics about. Tími keeps them with your account, so this is the last time you type it.")
+                            .font(.caption).foregroundStyle(TimiColor.muted).multilineTextAlignment(.center)
+                        Button { editing = nil; showEditor = true } label: { Label("Add a pet", systemImage: "plus") }
+                            .buttonStyle(TimiPrimaryButtonStyle())
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 34)
+                    .timiCard(Color.white)
+                }
                 ForEach(store.pets) { pet in
                     HStack(spacing: 0) {
                         Button {
@@ -137,13 +150,9 @@ struct PetEditor: View {
                             Text("Remove \(pet.name)? Past requests stay in your activity.")
                                 .font(.caption).foregroundStyle(TimiColor.muted)
                             Button("Remove \(pet.name)", role: .destructive) {
-                                if store.deletePet(pet.id) {
-                                    note = ""
-                                    isPresented = false
-                                } else {
-                                    note = "Tími keeps at least one pet profile. Add another first, then remove this one."
-                                    isPresented = false
-                                }
+                                store.deletePet(pet.id)
+                                note = ""
+                                isPresented = false
                             }
                         } else {
                             Button("Remove this pet", role: .destructive) { confirmingDelete = true }
@@ -333,6 +342,7 @@ struct LegalView: View {
             legalSection("Deposits and veterinary charges", "When a clinic requires a deposit, its amount, policy version, cancellation, refund, and no-show rules are shown before payment. Unless that displayed policy says otherwise, the deposit is credited to the clinic invoice. The clinic bills remaining veterinary charges and handles insurance. Tími does not submit insurance claims.")
             legalSection("Providers staffed by a veterinary technician", "Some participating providers are staffed by a registered, licensed, or certified veterinary technician rather than a veterinarian, and Tími labels them before you choose. A veterinary technician works under a veterinarian's supervision and, under state practice acts, may not diagnose, prognose, prescribe, or perform surgery. Those providers are listed for minor concerns; anything that may need a diagnosis or a treatment decision should go to a veterinarian. The label is set by Tími from what the provider supplies at onboarding and is not a verification of any individual's credential, licence status, or scope of practice.")
             legalSection("Medications and allergies you record", "Anything you add to a pet profile is optional, stored as you type it, and shared with the clinics your care request reaches. Tími is not a medical record system: nothing in that field comes from a veterinarian, none of it is verified, and no clinic may rely on it in place of its own history-taking. Keep it current, confirm it with the treating clinic, and do not record anything you would not want shared with the clinics contacted for a request.")
+            legalSection("Finding emergency hospitals", "The emergency list is not limited to Tími's participating clinics, because the nearest emergency hospital often is not one. Listings outside the network come from third-party map data, including their names, addresses and phone numbers. Tími has not verified that they exist as listed, are open, are equipped for your animal, or will accept a patient, and no request is sent to them — the list is somewhere to drive, not a booking and not a recommendation. Call before you travel where you can.")
             legalSection("Emergency safety", "Do not wait for Tími if your animal may be in immediate danger. Travel to the nearest appropriate emergency-capable veterinary facility while someone calls ahead. For suspected poisoning, contact a veterinarian or recognized animal poison-control service immediately.")
             legalSection("Operator and contact", "Tími NOW is operated by ClearKey Solutions, LLC in Hayward, California. California law governs the service to the extent permitted. Contact legal@clearkey.solutions or privacy@clearkey.solutions for applicable requests.")
         }.padding(20).padding(.bottom, 40) }.background(TimiColor.paper).navigationTitle("Legal")

@@ -810,7 +810,11 @@ for (const app of ["customer-mobile", "vet-desktop"]) {
     throw new Error("apps/customer-mobile/Sources/TimiNowCore/AuthController.swift no longer persists the credential in the Keychain — the session would not survive a relaunch.");
   }
   // A long-lived Clerk cookie in UserDefaults is a plist any backup can read.
-  if (/defaults\.set\([^)]*(clientCookie|workerToken)/.test(store) || /UserDefaults/.test(auth)) {
+  // Comments stripped first: the rule is about what the code does, and a
+  // doc comment explaining why the credential is not in UserDefaults was
+  // enough to trip it.
+  const authCode = auth.split("\n").filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line)).join("\n");
+  if (/defaults\.set\([^)]*(clientCookie|workerToken)/.test(store) || /UserDefaults/.test(authCode)) {
     throw new Error("The Clerk credential must stay in the Keychain, not UserDefaults.");
   }
   if (!/looksLikeUnknownAccount/.test(auth)) {
@@ -1000,11 +1004,20 @@ for (const path of [
   }
   // selectedPet, the draft and the launch path all index pets[0]; an empty
   // list is a crash on next open, not an empty screen.
-  if (!/pets\.first \?\? DemoData\.pet/.test(store)) {
-    throw new Error("apps/customer-mobile/Sources/TimiNowCore/AppStore.swift: selectedPet falls back to pets[0], which traps on an empty list. Now that pets can be deleted, that is reachable.");
+  if (!/pets\.first \?\? Self\.placeholderPet/.test(store)) {
+    throw new Error("apps/customer-mobile/Sources/TimiNowCore/AppStore.swift: selectedPet falls back to pets[0], which traps on an empty list. An account with no pets is an ordinary state.");
   }
-  if (!/decodedPets\.isEmpty \? \[DemoData\.pet\] : decodedPets/.test(store)) {
-    throw new Error("apps/customer-mobile/Sources/TimiNowCore/AppStore.swift: a stored pet list that decodes to [] is used as-is, and storedPets[0] is read two lines later. That is a crash on launch, not an empty screen.");
+  // No sample animal on a fresh install. A seeded pet is how a stranger's
+  // "Otis" ended up greeting a brand-new customer on a shared device.
+  if (/DemoData\.pet/.test(store)) {
+    throw new Error("apps/customer-mobile/Sources/TimiNowCore/AppStore.swift seeds a demo pet. A new account must start with none.");
+  }
+  if (!/func forgetAccountData\(\)/.test(store) || !/timi\.accountId/.test(store)) {
+    throw new Error("apps/customer-mobile/Sources/TimiNowCore/AppStore.swift does not scope device-local data to an account. Pets, history and contact details live in UserDefaults, so signing in as somebody else shows them the previous person's animal.");
+  }
+  const auth = await read("apps/customer-mobile/Sources/TimiNowCore/AuthController.swift");
+  if (!/onSignedOut\(\)/.test(auth)) {
+    throw new Error("apps/customer-mobile/Sources/TimiNowCore/AuthController.swift no longer tells the store to forget account data on sign-out.");
   }
   const view = await read("apps/customer-mobile/Sources/TimiNowUI/SupportViews.swift");
   if (!/var editing: PetProfile\?/.test(view)) {
@@ -1171,12 +1184,21 @@ for (const path of [
     throw new Error("apps/customer-mobile/Sources/TimiNowUI/Components.swift: SafetyBanner no longer offers the emergency-care action, so the notice is advice with nothing to act on.");
   }
   const store = await read("apps/customer-mobile/Sources/TimiNowCore/AppStore.swift");
-  if (!/gateway\.emergencyLocations\(/.test(store)) {
-    throw new Error("apps/customer-mobile/Sources/TimiNowCore/AppStore.swift no longer asks for emergency-capable locations, so the button has nothing to show.");
+  if (!/gateway\.emergencyPlaces\(/.test(store)) {
+    throw new Error("apps/customer-mobile/Sources/TimiNowCore/AppStore.swift no longer asks for emergency places, so the button has nothing to show.");
   }
   const client = await read("apps/customer-mobile/Sources/TimiNowCore/APIClient.swift");
-  if (!/care: "emergency"/.test(client)) {
-    throw new Error("apps/customer-mobile/Sources/TimiNowCore/APIClient.swift asks for emergency care without care=emergency, so the list is every urgent and general practice rather than emergency hospitals.");
+  // The Tími network is not the answer to "where is the nearest emergency
+  // hospital". /api/emergency-nearby merges map data; /api/locations does not.
+  if (!/api\/emergency-nearby/.test(client)) {
+    throw new Error("apps/customer-mobile/Sources/TimiNowCore/APIClient.swift asks /api/locations for emergency care, which returns only enrolled providers. In a city with three partners that is a list of three, and the nearest real emergency hospital is not on it.");
+  }
+  const worker = await read("src/index.js");
+  if (!/findEmergencyVeterinaryPlaces\(/.test(worker)) {
+    throw new Error("src/index.js no longer merges map data into /api/emergency-nearby, so the list is the Tími network again.");
+  }
+  if (!/notice:/.test(worker.slice(worker.indexOf("handleEmergencyNearby")))) {
+    throw new Error("src/index.js serves emergency places without the notice saying they are unverified map listings. A POI listing presented as a triaged recommendation is the worst kind of wrong.");
   }
   // The root mounts the sheet, not each banner: the button is on three
   // screens and a list that disappears with the screen under it is worse
@@ -1311,8 +1333,11 @@ for (const path of [
       throw new Error(`apps/customer-mobile/Sources/TimiNowUI/SupportViews.swift is missing ${what}. Both are shipped behaviour and both need a notice.`);
     }
   }
+  if (!legal.includes("Finding emergency hospitals")) {
+    throw new Error("apps/customer-mobile/Sources/TimiNowUI/SupportViews.swift is missing the notice covering emergency listings taken from third-party map data. Most of that list is not a Tími provider and none of it is verified.");
+  }
   const web = await read("public/index.html");
-  for (const needle of ["veterinary technician", "Medications and allergies you record", "medications or allergies you choose to record"]) {
+  for (const needle of ["veterinary technician", "Medications and allergies you record", "medications or allergies you choose to record", "Finding emergency hospitals"]) {
     if (!web.includes(needle)) {
       throw new Error(`public/index.html is missing the legal text for "${needle}". The web and the phone must carry the same notices.`);
     }

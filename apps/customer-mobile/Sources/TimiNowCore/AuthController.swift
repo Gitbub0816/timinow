@@ -33,11 +33,16 @@ public enum AuthStage: String, Sendable {
 /// What sign-in learned about the person, for the rest of the app to stop
 /// asking. Handed over the moment a session exists.
 public struct AuthProfile: Sendable, Equatable {
+    /// Clerk's user id. Carried so the store can tell one account from another
+    /// on the same device — pets, history and contact details live in
+    /// UserDefaults, and without this they follow the phone rather than the
+    /// person.
+    public var userId: String
     public var name: String
     public var email: String
     public var phone: String
-    public init(name: String, email: String, phone: String) {
-        self.name = name; self.email = email; self.phone = phone
+    public init(userId: String, name: String, email: String, phone: String) {
+        self.userId = userId; self.name = name; self.email = email; self.phone = phone
     }
     public var isEmpty: Bool { name.isEmpty && email.isEmpty && phone.isEmpty }
 }
@@ -82,6 +87,9 @@ public struct AuthFactorOption: Identifiable, Hashable, Sendable {
     /// Non-optional with a no-op default: an optional closure on a
     /// Skip-bridged type generates a bridge that does not compile.
     public var onProfileResolved: (AuthProfile) -> Void = { _ in }
+    /// Called when the session ends, so device-local data belonging to that
+    /// account can go with it.
+    public var onSignedOut: () -> Void = { }
 
     private let gateway: TimiGateway
     private let keychain = KeychainStore()
@@ -447,17 +455,21 @@ public struct AuthFactorOption: Identifiable, Hashable, Sendable {
     /// existing one they come from Clerk, which is the only way somebody who
     /// signed up before this screen existed ever gets a prefilled intake form.
     private func publishProfile() async {
+        var userId = ""
         var profile = AuthProfile(
+            userId: "",
             name: signUpName.trimmingCharacters(in: .whitespacesAndNewlines),
             email: signUpEmail.trimmingCharacters(in: .whitespacesAndNewlines),
             phone: signUpPhone.trimmingCharacters(in: .whitespacesAndNewlines)
         )
         if let user = try? await currentUser() {
+            userId = user.id ?? ""
             let full = [user.firstName ?? "", user.lastName ?? ""].filter { !$0.isEmpty }.joined(separator: " ")
             if !full.isEmpty { profile.name = full }
             if let email = (user.emailAddresses ?? []).first?.emailAddress, !email.isEmpty { profile.email = email }
             if let phone = (user.phoneNumbers ?? []).first?.phoneNumber, !phone.isEmpty { profile.phone = phone }
         }
+        profile.userId = userId
         guard !profile.isEmpty else { return }
         onProfileResolved(profile)
     }
@@ -488,6 +500,7 @@ public struct AuthFactorOption: Identifiable, Hashable, Sendable {
     }
 
     private func signOutLocally() {
+        onSignedOut()
         activeSessionId = nil; workerToken = nil; workerTokenExpiresAt = nil
         clerkDeviceToken = nil
         // Back to native for the next attempt, so a session resumed the old
@@ -846,6 +859,7 @@ private struct ClerkWireEmailAddress: Decodable { var emailAddress: String? }
 private struct ClerkWirePhoneNumber: Decodable { var phoneNumber: String? }
 
 private struct ClerkWireUser: Decodable {
+    var id: String?
     var firstName: String?
     var lastName: String?
     var emailAddresses: [ClerkWireEmailAddress]?

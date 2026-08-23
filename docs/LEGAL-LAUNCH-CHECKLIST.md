@@ -14,11 +14,12 @@ Product copy and acceptance points are implemented in `public/index.html`. This 
 - California privacy request contact and Global Privacy Control commitment; no sale or cross-context behavioral advertising.
 - Clinic responsibilities for licensure, independent medical judgment, accurate capacity, data handling, billing, and Stripe onboarding.
 - Scope-of-practice disclosure for providers staffed by a veterinary technician rather than a veterinarian. The flag is set by a platform operator at onboarding (never self-declared), stored on the location, and rendered from one server-composed string (`TECHNICIAN_NOTICE` in `src/catalog.js`) so no client can reword it. It states that a technician works under veterinarian supervision and may not diagnose, prognose, prescribe, or perform surgery, and that the label is not a verification of any individual's credential or licence status.
+- A disclosure for the emergency-hospital list, which deliberately reaches past the Tími network: listings outside it come from third-party map data (Mapbox), Tími has not verified that they exist as listed, are open, are equipped, or will accept a patient, no care request is sent to them, and the list is somewhere to drive rather than a booking or a recommendation.
 - Optional owner-recorded medications and allergies, with a notice that they are unverified, are not a medical record, come from no veterinarian, are shared with every clinic a request reaches, and do not replace the treating clinic's own history-taking. The intake screen names them specifically when a profile has them, rather than covering them under "your structured intake".
 
 ## Required before accepting real deposits
 
-0. Have counsel review the two notices added in version `2026-08-22`: the veterinary-technician scope-of-practice disclosure and the owner-recorded medications/allergies notice. State practice acts differ on what a technician may do and on how a non-veterinarian provider may be advertised, so the wording and the labelling obligation are worth a specific read in every state Tími lists providers in.
+0. Have counsel review the three notices added in version `2026-08-22`: the third-party emergency-listing disclosure, the veterinary-technician scope-of-practice disclosure and the owner-recorded medications/allergies notice. State practice acts differ on what a technician may do and on how a non-veterinarian provider may be advertised, so the wording and the labelling obligation are worth a specific read in every state Tími lists providers in.
 
 
 1. Confirm the operating company name, address, support emails, and any registered DBA/trademark.

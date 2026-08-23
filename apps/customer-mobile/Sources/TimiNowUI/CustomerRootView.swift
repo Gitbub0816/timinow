@@ -54,10 +54,24 @@ struct HomeView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
-                HStack { TimiWordmark(compact: true); Spacer(); Button { store.selectedTab = 1 } label: { Image(systemName: store.selectedPet.species.icon).font(.title3).foregroundStyle(.white).frame(width: 44, height: 44).background(TimiColor.blue, in: Circle()).overlay(Circle().stroke(TimiColor.ink, lineWidth: 2)) } }
-                VStack(alignment: .leading, spacing: 8) { Eyebrow(text: store.isDemoMode ? "INTERACTIVE DEMO" : "LIVE NETWORK", color: TimiColor.blue); Text("Who can see\n\(store.selectedPet.name) now?").font(.system(size: 45, weight: .bold, design: .serif)).foregroundStyle(TimiColor.ink); Text("Tell us what's happening once. Compare current responses before you leave home.").font(.title3).foregroundStyle(TimiColor.muted) }
-                CareLaunchPanel(petName: store.selectedPet.name).timiCard(TimiColor.paper)
-                Button { withAnimation(.spring(response: 0.42)) { store.beginCare() } } label: { Label("Find care for \(store.selectedPet.name)", systemImage: "arrow.right") }.buttonStyle(TimiPrimaryButtonStyle())
+                HStack { TimiWordmark(compact: true); Spacer(); Button { store.selectedTab = 1 } label: { Image(systemName: store.hasPet ? store.selectedPet.species.icon : "plus").font(.title3).foregroundStyle(.white).frame(width: 44, height: 44).background(TimiColor.blue, in: Circle()).overlay(Circle().stroke(TimiColor.ink, lineWidth: 2)) } }
+                VStack(alignment: .leading, spacing: 8) {
+                    Eyebrow(text: store.isDemoMode ? "INTERACTIVE DEMO" : "LIVE NETWORK", color: TimiColor.blue)
+                    // No pet yet is a real state, not something to paper over
+                    // with a sample animal's name.
+                    Text(store.hasPet ? "Who can see\n\(store.selectedPet.name) now?" : "Who are we\nfinding care for?")
+                        .font(.system(size: 45, weight: .bold, design: .serif)).foregroundStyle(TimiColor.ink)
+                    Text(store.hasPet
+                        ? "Tell us what's happening once. Compare current responses before you leave home."
+                        : "Add your pet once and Tími keeps them with your account. It takes about twenty seconds.")
+                        .font(.title3).foregroundStyle(TimiColor.muted)
+                }
+                if store.hasPet {
+                    CareLaunchPanel(petName: store.selectedPet.name).timiCard(TimiColor.paper)
+                    Button { withAnimation(.spring(response: 0.42)) { store.beginCare() } } label: { Label("Find care for \(store.selectedPet.name)", systemImage: "arrow.right") }.buttonStyle(TimiPrimaryButtonStyle())
+                } else {
+                    Button { store.selectedTab = 1 } label: { Label("Add your pet", systemImage: "plus") }.buttonStyle(TimiPrimaryButtonStyle())
+                }
                 HStack(spacing: 12) { MetricChip(title: "One intake", value: "Up to 30 clinics"); MetricChip(title: "Your choice", value: "Up to 5 offers", color: TimiColor.goldSoft) }
                 SafetyBanner(compact: true, store: store)
                 VStack(alignment: .leading, spacing: 12) { Eyebrow(text: "HOW TÍMI WORKS"); processRow(1, "Describe what you observe", "Rules prevent vague requests before anything is shared."); processRow(2, "Clinics answer with live capacity", "Each response includes timing, wait, deposit, and offer hold."); processRow(3, "Choose the best fit", "Only your selected clinic is confirmed; every other offer is released.") }.timiCard(TimiColor.paper)

@@ -135,6 +135,39 @@ public struct ClinicLocation: Identifiable, Codable, Hashable, Sendable {
     }
 }
 
+/// One place to drive to in an emergency.
+///
+/// Not a `ClinicLocation`: most of these are not Tími providers at all. They
+/// come from map data — a name, an address, a phone number and a point — and
+/// nothing about them says a hospital is open, equipped, or accepting
+/// patients. `partner` marks the ones Tími can actually send a request to.
+public struct EmergencyPlace: Identifiable, Codable, Hashable, Sendable {
+    public var id: String
+    public var source: String
+    public var partner: Bool
+    public var name: String
+    public var address: String?
+    public var phone: String?
+    public var latitude: Double?
+    public var longitude: Double?
+    public var distanceMiles: Double?
+    /// Whether the name says it takes emergencies. A label, never a claim.
+    public var emergencyNamed: Bool?
+    public var staffingNotice: String?
+    public var availabilityLabel: String?
+
+    public init(id: String, source: String = "map", partner: Bool = false, name: String, address: String? = nil, phone: String? = nil, latitude: Double? = nil, longitude: Double? = nil, distanceMiles: Double? = nil, emergencyNamed: Bool? = nil, staffingNotice: String? = nil, availabilityLabel: String? = nil) {
+        self.id = id; self.source = source; self.partner = partner; self.name = name; self.address = address
+        self.phone = phone; self.latitude = latitude; self.longitude = longitude; self.distanceMiles = distanceMiles
+        self.emergencyNamed = emergencyNamed; self.staffingNotice = staffingNotice; self.availabilityLabel = availabilityLabel
+    }
+}
+
+public struct EmergencyPlacesEnvelope: Codable, Sendable {
+    public var notice: String?
+    public var places: [EmergencyPlace]
+}
+
 public struct CareOffer: Identifiable, Codable, Hashable, Sendable {
     public var id: String
     public var searchId: String?

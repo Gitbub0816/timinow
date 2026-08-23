@@ -10,6 +10,7 @@ import {
   revokeInvitation
 } from "./tenant-admin.js";
 import { DEMO_LOCATIONS, LEGAL_VERSION, RED_FLAG_TERMS, TECHNICIAN_NOTICE, VALID_INTAKE_STATUS, VALID_SPECIES, VALID_URGENCY } from "./catalog.js";
+import { findEmergencyVeterinaryPlaces, phoneKey } from "./mapbox-places.js";
 import {
   getCareOffer,
   getCareSearch,
@@ -169,6 +170,85 @@ async function handleLocationSearch(url, env) {
     query: { latitude, longitude, radiusMiles, species, care },
     locations: locations.map(enrichLocation)
   });
+}
+
+/**
+ * The nearest emergency-capable veterinary hospitals: Tími's own, and every
+ * other one the map knows about.
+ *
+ * Two sources, one list, each row saying which it came from. A partner can
+ * actually be sent an intake, so partners sort first among equals; everything
+ * else is a name, an address and a phone number from map data, offered as
+ * somewhere to drive rather than as a recommendation.
+ *
+ * Cached per rounded coordinate. Hospitals do not move, the Mapbox calls are
+ * billed, and seven forward searches per tap would be seven per tap.
+ */
+async function handleEmergencyNearby(url, env, ctx) {
+  const latitude = numberInRange(url.searchParams.get("lat"), -90, 90);
+  const longitude = numberInRange(url.searchParams.get("lng"), -180, 180);
+  const radiusMiles = numberInRange(url.searchParams.get("radius"), 5, 200, 60);
+  const species = cleanString(url.searchParams.get("species"), 30).toLowerCase() || null;
+  if (latitude === null || longitude === null) {
+    return apiError(400, "INVALID_LOCATION", "Latitude and longitude are required to find emergency care.");
+  }
+  if (species && !VALID_SPECIES.has(species)) return apiError(400, "INVALID_SPECIES", "Choose a supported species.");
+
+  // Three decimals is about 110 metres: close enough that two people on the
+  // same street share a cache entry, fine enough that the distances stay right.
+  const cacheKey = new Request(
+    `https://timi.internal/emergency-nearby?lat=${latitude.toFixed(3)}&lng=${longitude.toFixed(3)}&radius=${radiusMiles}&species=${species || "any"}`
+  );
+  const cache = caches.default;
+  const cached = await cache.match(cacheKey);
+  if (cached) return cached;
+
+  const partners = (await listLocations(env, { latitude, longitude, radiusMiles, species, care: "emergency" }))
+    .map((location) => {
+      const enriched = enrichLocation(location);
+      return {
+        id: enriched.id,
+        source: "timi",
+        partner: true,
+        name: enriched.name,
+        address: enriched.address,
+        phone: enriched.phone,
+        latitude: enriched.latitude,
+        longitude: enriched.longitude,
+        distanceMiles: enriched.distanceMiles,
+        emergencyNamed: true,
+        staffingNotice: enriched.staffingNotice,
+        availabilityLabel: enriched.availability?.label || null
+      };
+    });
+
+  const partnerKeys = new Set(partners.map((place) => phoneKey(place.phone)).filter(Boolean));
+  const mapped = (await findEmergencyVeterinaryPlaces(env, { latitude, longitude, radiusMiles, limit: 12 }))
+    // A partner listed in map data too is one hospital, and the Tími row is
+    // the useful one: it is the only one that can be sent a request.
+    .filter((place) => !partnerKeys.has(phoneKey(place.phone)))
+    .map((place) => ({ ...place, staffingNotice: null, availabilityLabel: null }));
+
+  const places = [...partners, ...mapped]
+    .sort((a, b) => Number(b.partner) - Number(a.partner) || (a.distanceMiles ?? 999) - (b.distanceMiles ?? 999))
+    .slice(0, 8);
+
+  const response = json({
+    generatedAt: new Date().toISOString(),
+    query: { latitude, longitude, radiusMiles, species },
+    /**
+     * Repeated by every client, because a list of buildings is not a triage
+     * decision and this one is assembled from third-party map data.
+     */
+    notice: "Listings outside the Tími network come from map data. Tími has not verified that they are open, equipped for your animal, or accepting patients — call before you drive if you can.",
+    places
+  });
+  // Six hours: long enough that a street's worth of taps costs one lookup,
+  // short enough that a hospital closing down leaves within a day.
+  const cacheable = new Response(response.body, response);
+  cacheable.headers.set("cache-control", "public, max-age=21600");
+  ctx?.waitUntil(cache.put(cacheKey, cacheable.clone()));
+  return cacheable;
 }
 
 function humanizeOnset(value) {
@@ -1117,6 +1197,9 @@ async function handleApi(request, env, ctx) {
   if (method === "GET" && path === "/api/health") return json({ ok: true, service: "timinow", version: "1.1.0-multi-offer", database: hasDatabase(env) });
   if (method === "GET" && path === "/api/config") return handleConfig(env);
   if (method === "GET" && path === "/api/locations") return handleLocationSearch(url, env);
+  // Public, and deliberately above the sign-in gate. Somebody whose animal may
+  // be dying does not get asked to sign in first.
+  if (method === "GET" && path === "/api/emergency-nearby") return handleEmergencyNearby(url, env, ctx);
   if (method === "GET" && path.startsWith("/api/locations/")) {
     const location = await getLocation(env, decodeURIComponent(path.slice("/api/locations/".length)));
     return location ? json({ location: enrichLocation(location) }) : apiError(404, "LOCATION_NOT_FOUND", "The hospital was not found.");

@@ -49,8 +49,8 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
 
     public init() {
         #if os(Android)
-        let storedPets = [DemoData.pet]
-        let selectedPetId = storedPets[0].id
+        let storedPets: [PetProfile] = []
+        let selectedPetId = ""
         let storedHistory: [CareHistoryItem] = []
         let completedOnboarding = false
         let apiBaseURLText = TimiEnvironment.defaultAPIBaseURL
@@ -60,12 +60,12 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
         #else
         let defaults = UserDefaults.standard
         self.defaults = defaults
-        // Empty as well as absent: `storedPets[0]` is read three lines down and
-        // again on every launch, so an array that decodes to [] is a crash on
-        // open, not a blank screen.
-        let decodedPets = Self.decode([PetProfile].self, from: defaults.data(forKey: "timi.pets")) ?? []
-        let storedPets = decodedPets.isEmpty ? [DemoData.pet] : decodedPets
-        let selectedPetId = defaults.string(forKey: "timi.selectedPet") ?? storedPets[0].id
+        // No sample pet. A fresh install used to be handed one — Milo, and
+        // then whatever the previous person on this device had named theirs,
+        // because none of this was ever scoped to an account. Signing in as
+        // somebody new showed them a stranger's pet.
+        let storedPets = Self.decode([PetProfile].self, from: defaults.data(forKey: "timi.pets")) ?? []
+        let selectedPetId = defaults.string(forKey: "timi.selectedPet") ?? storedPets.first?.id ?? ""
         let storedHistory = Self.decode([CareHistoryItem].self, from: defaults.data(forKey: "timi.history")) ?? []
         let completedOnboarding = defaults.bool(forKey: "timi.onboarding.complete")
         // Empty as well as absent: a previously saved blank would otherwise
@@ -82,7 +82,7 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
         #endif
         self.pets = storedPets
         self.selectedPetId = selectedPetId
-        let selected = storedPets.first(where: { $0.id == selectedPetId }) ?? storedPets[0]
+        let selected = storedPets.first(where: { $0.id == selectedPetId }) ?? storedPets.first ?? Self.placeholderPet
         self.draft = CareDraft(pet: selected)
         self.history = storedHistory
         self.hasCompletedOnboarding = completedOnboarding
@@ -98,11 +98,45 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
         // Signing in is the last time these should ever be asked for. Set
         // after every stored property, which is when `self` may be captured.
         self.auth.onProfileResolved = { [weak self] profile in self?.adoptOwner(profile) }
+        self.auth.onSignedOut = { [weak self] in self?.forgetAccountData() }
+    }
+
+    /// Everything device-local that belongs to whoever was signed in.
+    ///
+    /// Pets, history and contact details live in UserDefaults, which is a
+    /// property of the phone rather than of the person. Signing out and back
+    /// in as somebody else used to leave the previous account's pet on screen,
+    /// which is how a stranger's animal greeted a brand-new customer.
+    func forgetAccountData() {
+        pets = []
+        selectedPetId = ""
+        history = []
+        ownerName = ""; ownerPhone = ""; ownerEmail = ""
+        draft = CareDraft(pet: Self.placeholderPet)
+        currentSearch = nil
+        currentIntake = nil
+        emergencyLocations = []
+        #if !os(Android)
+        defaults.removeObject(forKey: "timi.selectedPet")
+        defaults.removeObject(forKey: "timi.accountId")
+        #endif
+        persistPets()
+        persistHistory()
     }
 
     /// Takes whatever sign-in learned without overwriting anything the owner
     /// has since typed by hand.
     func adoptOwner(_ profile: AuthProfile) {
+        // A different account on the same phone starts clean. Without this,
+        // signing in as somebody new inherits the last person's pets, their
+        // care history and their phone number.
+        if !profile.userId.isEmpty {
+            #if !os(Android)
+            let previous = defaults.string(forKey: "timi.accountId") ?? ""
+            if !previous.isEmpty && previous != profile.userId { forgetAccountData() }
+            defaults.set(profile.userId, forKey: "timi.accountId")
+            #endif
+        }
         if !profile.name.isEmpty { ownerName = profile.name }
         if !profile.phone.isEmpty { ownerPhone = profile.phone }
         if !profile.email.isEmpty { ownerEmail = profile.email }
@@ -118,7 +152,18 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
     /// SwiftUI view hierarchy — observe the same live state as the phone UI.
     public static let shared = AppStore()
 
-    public var selectedPet: PetProfile { pets.first(where: { $0.id == selectedPetId }) ?? pets.first ?? DemoData.pet }
+    /// A profile that is not anybody's pet.
+    ///
+    /// `selectedPet` stays non-optional because a dozen screens read
+    /// `selectedPet.name`, and `hasPet` is what gates anything that matters —
+    /// `beginCare()` refuses without a real one, so this never reaches a
+    /// clinic. It is named neutrally rather than after a sample animal, which
+    /// is how "Milo" and then somebody else's "Otis" ended up greeting people
+    /// who had added no pet at all.
+    static let placeholderPet = PetProfile(id: "", name: "your pet", species: .dog)
+
+    public var hasPet: Bool { !pets.isEmpty }
+    public var selectedPet: PetProfile { pets.first(where: { $0.id == selectedPetId }) ?? pets.first ?? Self.placeholderPet }
     public var isDemoMode: Bool { gateway.isDemo }
     /// What the gateway resolved to, which is not always what is in the text
     /// field — an address that fails validation leaves the gateway on nothing
@@ -130,7 +175,10 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
     public var concernValidation: ConcernValidation { ConcernValidator.evaluate(summary: draft.summary, symptoms: draft.symptomKeys, startedWhen: draft.startedWhen) }
 
     public func completeOnboarding(name: String, species: PetSpecies) {
-        if pets.count == 1 && pets[0] == DemoData.pet && !name.isEmpty {
+        // Creates the first profile rather than renaming a sample one. The
+        // old form only replaced the seeded pet, so with no seed the name
+        // typed during onboarding would have been dropped on the floor.
+        if !name.isEmpty, pets.isEmpty {
             pets = [PetProfile(name: name, species: species, colorToken: 0)]
             selectedPetId = pets[0].id
             draft = CareDraft(pet: pets[0])
@@ -170,6 +218,11 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
     }
 
     public func beginCare() {
+        guard hasPet else {
+            errorMessage = "Add your pet first — clinics need to know who they are being asked about."
+            selectedTab = 1
+            return
+        }
         draft = CareDraft(pet: selectedPet)
         draft.latitude = currentLatitude
         draft.longitude = currentLongitude
@@ -213,19 +266,14 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
         persistPets()
     }
 
-    /// Removes a profile, keeping at least one.
-    ///
-    /// Not a stylistic limit: `selectedPet`, the draft and the launch path all
-    /// read `pets[0]`, so an empty list is a crash on the next launch rather
-    /// than an empty screen. Returns false when the last one was refused, so
-    /// the caller can say why instead of appearing to do nothing.
+    /// Removes a profile. The last one may go too — an account with no pets is
+    /// a real state now, not a crash waiting to happen.
     @discardableResult
     public func deletePet(_ id: String) -> Bool {
-        guard pets.count > 1 else { return false }
         guard let index = pets.firstIndex(where: { $0.id == id }) else { return false }
         pets.remove(at: index)
         if selectedPetId == id {
-            selectedPetId = pets[0].id
+            selectedPetId = pets.first?.id ?? ""
             #if !os(Android)
             defaults.set(selectedPetId, forKey: "timi.selectedPet")
             #endif
@@ -264,7 +312,10 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
     /// Deliberately separate from a care search: this asks nobody for
     /// permission, waits for no clinic to answer, and does not create an
     /// intake. It is a list of places to drive to.
-    public var emergencyLocations: [ClinicLocation] = []
+    public var emergencyLocations: [EmergencyPlace] = []
+    /// The Worker's wording about where these listings come from. Shown as
+    /// given rather than restated, so the caveat cannot drift per screen.
+    public var emergencyNotice: String?
     public var isFindingEmergency = false
     public var emergencyError: String?
     public var showEmergencyList = false
@@ -279,12 +330,13 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
         showEmergencyList = true
         do {
             try? await auth.ensureFreshToken()
-            let found = try await gateway.emergencyLocations(
+            let found = try await gateway.emergencyPlaces(
                 latitude: currentLatitude, longitude: currentLongitude, species: selectedPet.species
             )
-            emergencyLocations = Array(found.prefix(Self.emergencyResultLimit))
+            emergencyNotice = found.notice
+            emergencyLocations = Array(found.places.prefix(Self.emergencyResultLimit))
             if emergencyLocations.isEmpty {
-                emergencyError = "No emergency hospital is listed within 120 miles. Call your regular veterinarian, who will have an after-hours number."
+                emergencyError = "No emergency hospital was found within 60 miles. Call your regular veterinarian — their outgoing message usually names an after-hours hospital."
             }
         } catch {
             if error is CancellationError || Task.isCancelled { isFindingEmergency = false; return }
