@@ -342,6 +342,75 @@ public struct AppConfig: Codable, Sendable {
     public var map: MapConfig?
 }
 
+// MARK: - Payouts
+
+/// One line of the Tími ledger, as this clinic is allowed to see it.
+///
+/// A deliberately thin slice of `payment_ledger`: the clinic gets its own
+/// transfers and its own payouts and nothing else. It never sees what the
+/// customer's card was charged or what Tími retained — those are on the
+/// platform side of the transaction, and putting them on a clinic's screen
+/// invites an argument about a number the clinic cannot act on.
+public struct ClinicLedgerEntry: Identifiable, Codable, Hashable, Sendable {
+    public var id: String
+    public var occurredAt: String
+    public var kind: String
+    public var amountCents: Int
+    public var status: String
+    /// The Stripe transfer or payout id, so a clinic reading its own Express
+    /// dashboard can match that line to this one.
+    public var stripeObjectId: String?
+    public var intakeId: String?
+
+    public init(id: String = "", occurredAt: String = "", kind: String = "", amountCents: Int = 0, status: String = "", stripeObjectId: String? = nil, intakeId: String? = nil) {
+        self.id = id; self.occurredAt = occurredAt; self.kind = kind; self.amountCents = amountCents
+        self.status = status; self.stripeObjectId = stripeObjectId; self.intakeId = intakeId
+    }
+}
+
+/// What this clinic is owed and what Stripe has already sent it.
+///
+/// `awaitingPayoutCents` is what Tími transferred less what Stripe paid out —
+/// not the clinic's Stripe balance, which moves for reasons Tími does not
+/// control and would turn this screen into an explanation of Stripe's
+/// arithmetic rather than ours.
+public struct ClinicEarnings: Codable, Sendable {
+    public var transferredCents: Int
+    public var paidOutCents: Int
+    public var awaitingPayoutCents: Int
+    public var transfers: [ClinicLedgerEntry]
+    public var payouts: [ClinicLedgerEntry]
+
+    public init(transferredCents: Int = 0, paidOutCents: Int = 0, awaitingPayoutCents: Int = 0, transfers: [ClinicLedgerEntry] = [], payouts: [ClinicLedgerEntry] = []) {
+        self.transferredCents = transferredCents; self.paidOutCents = paidOutCents
+        self.awaitingPayoutCents = awaitingPayoutCents
+        self.transfers = transfers; self.payouts = payouts
+    }
+}
+
+/// Only what a clinic can act on. Stripe's requirements hash is an operator's
+/// problem and stays in the platform console.
+public struct ClinicConnectStatus: Codable, Hashable, Sendable {
+    public var onboardingStatus: String
+    public var transfersEnabled: Bool
+    public var payoutsEnabled: Bool
+    public var disabledReason: String?
+
+    public init(onboardingStatus: String = "not_started", transfersEnabled: Bool = false, payoutsEnabled: Bool = false, disabledReason: String? = nil) {
+        self.onboardingStatus = onboardingStatus; self.transfersEnabled = transfersEnabled
+        self.payoutsEnabled = payoutsEnabled; self.disabledReason = disabledReason
+    }
+}
+
+public struct ClinicPayouts: Codable, Sendable {
+    public var earnings: ClinicEarnings
+    public var connect: ClinicConnectStatus?
+
+    public init(earnings: ClinicEarnings = ClinicEarnings(), connect: ClinicConnectStatus? = nil) {
+        self.earnings = earnings; self.connect = connect
+    }
+}
+
 /// Tiny ISO-8601 helper kept internal so it does not widen the public surface
 /// with a `DateFormatter`/`ISO8601DateFormatter` instance in every model.
 enum ClinicDateFormat {

@@ -132,6 +132,17 @@ public final class ClinicAPIClient: @unchecked Sendable {
         return envelope.preferences
     }
 
+    // MARK: - Payouts
+
+    /// What Tími has transferred to this clinic and what Stripe has paid out.
+    ///
+    /// The tenant is never a parameter: the Worker takes it from the session,
+    /// so there is no shape of this call that reads another clinic's money.
+    public func getPayouts() async throws -> ClinicPayouts {
+        if isDemo { return demo.payouts() }
+        return try await send("GET", "/api/clinic/payouts")
+    }
+
     // MARK: - Tenant people management
 
     public func getMembers() async throws -> TenantRoster {

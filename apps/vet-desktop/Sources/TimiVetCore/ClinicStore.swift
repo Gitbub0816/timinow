@@ -238,6 +238,23 @@ import Observation
         catch { statusMessage = error.localizedDescription }
     }
 
+    // MARK: - Payouts
+
+    public var payouts = ClinicPayouts()
+    public var payoutsLoaded = false
+
+    /// Loaded once when the console opens, not on the poll loop. Money does
+    /// not change every six seconds, and putting it on the same timer as the
+    /// intake queue would mean six requests a minute per open console for a
+    /// number that moves twice a day.
+    public func loadPayouts() async {
+        do {
+            payouts = try await api.getPayouts()
+            payoutsLoaded = true
+        } catch let error as ClinicAPIError { statusMessage = error.message }
+        catch { statusMessage = error.localizedDescription }
+    }
+
     public func saveSettings() async {
         isBusy = true
         defer { isBusy = false }

@@ -81,6 +81,28 @@ final class DemoClinicData: @unchecked Sendable {
         requests[index].updatedAt = Self.iso(Date())
     }
 
+    /// Numbers that add up, so somebody demonstrating the console can point at
+    /// the arithmetic: two transfers of the baseline $50 deposit less the $20
+    /// completed fee, one of which Stripe has already paid out.
+    func payouts() -> ClinicPayouts {
+        let now = Date()
+        return ClinicPayouts(
+            earnings: ClinicEarnings(
+                transferredCents: 6000,
+                paidOutCents: 3000,
+                awaitingPayoutCents: 3000,
+                transfers: [
+                    ClinicLedgerEntry(id: "demo_tr_2", occurredAt: Self.iso(now.addingTimeInterval(-3600)), kind: "clinic_transfer", amountCents: 3000, status: "created", stripeObjectId: "tr_demo_2", intakeId: "demo_clinic_request"),
+                    ClinicLedgerEntry(id: "demo_tr_1", occurredAt: Self.iso(now.addingTimeInterval(-90000)), kind: "clinic_transfer", amountCents: 3000, status: "created", stripeObjectId: "tr_demo_1", intakeId: "demo_clinic_request")
+                ],
+                payouts: [
+                    ClinicLedgerEntry(id: "demo_po_1", occurredAt: Self.iso(now.addingTimeInterval(-43200)), kind: "clinic_payout", amountCents: 3000, status: "paid", stripeObjectId: "po_demo_1")
+                ]
+            ),
+            connect: ClinicConnectStatus(onboardingStatus: "complete", transfersEnabled: true, payoutsEnabled: true)
+        )
+    }
+
     private static func iso(_ date: Date) -> String { ISO8601DateFormatter().string(from: date) }
     private static func label(_ status: String) -> String {
         switch status {

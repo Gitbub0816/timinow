@@ -1268,7 +1268,7 @@ async function refreshPayment(env, actor, intakeId) {
  * from our ledger rather than from the clinic's Stripe balance, so the
  * console explains Tími's arithmetic and not Stripe's.
  */
-async function clinicPayouts(env, tenantId) {
+export async function clinicPayouts(env, tenantId) {
   if (!hasDatabase(env)) return json({ earnings: { transferredCents: 0, paidOutCents: 0, awaitingPayoutCents: 0, currency: "usd", transfers: [], payouts: [] }, connect: null });
   const { getStripeAccountForTenant } = await import("./payments.js");
   const [earnings, account] = await Promise.all([
