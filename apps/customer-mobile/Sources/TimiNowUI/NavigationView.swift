@@ -34,6 +34,18 @@ import MapboxDirections
 import CoreLocation
 import UIKit
 
+/// Whether turn-by-turn is compiled into this build.
+///
+/// The two implementations of `TurnByTurnNavigationView` below are chosen by
+/// `canImport`, which callers cannot ask about — a `#if` in a view's `body`
+/// gets messy fast and cannot be read from `TimiNowCore` at all. This is the
+/// same condition, as a value, so a screen can offer our navigation when it
+/// exists and Apple Maps when it does not, rather than offering ours and
+/// presenting the "not included in this build" card.
+public enum TurnByTurn {
+    public static let isAvailable = true
+}
+
 /// Pins both Mapbox Navigation's day and night styles to Tími's single
 /// custom style (docs/PLATFORM-CONTRACT.md: "One style everywhere"),
 /// instead of Mapbox's default streets/dark styles.
@@ -246,6 +258,10 @@ extension NavigationHostController: NavigationViewControllerDelegate {
 
 #else
 
+public enum TurnByTurn {
+    public static let isAvailable = false
+}
+
 /// Non-Mapbox build: keep today's maps.apple.com hand-off. Exercised by
 /// default CI (no `TIMI_MAPBOX` / Mapbox token) and by the Android/Skip
 /// build.
@@ -279,10 +295,19 @@ struct TurnByTurnNavigationView: View {
 /// Shared between both build configurations above.
 enum AppleMapsFallback {
     static func directionsURL(to destination: NavigationDestination) -> URL? {
+        directionsURL(latitude: destination.latitude, longitude: destination.longitude, name: destination.name)
+    }
+
+    /// The coordinate form, for a place that is not a `NavigationDestination`
+    /// — an emergency POI with no coordinates, which cannot be navigated to
+    /// but can still be looked up by name. There was a second copy of this URL
+    /// in `Components.swift`; two Apple Maps links that are meant to behave
+    /// identically only stay identical while somebody remembers both.
+    static func directionsURL(latitude: Double, longitude: Double, name: String) -> URL? {
         var components = URLComponents(string: "https://maps.apple.com/")
         components?.queryItems = [
-            URLQueryItem(name: "daddr", value: "\(destination.latitude),\(destination.longitude)"),
-            URLQueryItem(name: "q", value: destination.name)
+            URLQueryItem(name: "daddr", value: "\(latitude),\(longitude)"),
+            URLQueryItem(name: "q", value: name)
         ]
         return components?.url
     }
@@ -295,6 +320,24 @@ enum AppleMapsFallback {
 struct NavigationScreen: View {
     @Bindable var store: AppStore
     var destination: NavigationDestination
+    /// Overrides the tone taken from the care draft. The emergency list has no
+    /// draft behind it — somebody can reach it from the hero screen without
+    /// having started a search at all — so it passes `.emergency` rather than
+    /// letting an empty draft's default urgency pick a calm voice for a drive
+    /// to an emergency hospital.
+    var tone: NavigationTone?
+    /// Whether arriving here means arriving at the confirmed clinic.
+    ///
+    /// False for the emergency list. `record("arrived")` writes against
+    /// `currentIntake`, and somebody with a confirmed appointment at one clinic
+    /// who then drives to an emergency hospital would otherwise mark that
+    /// appointment arrived — the clinic would be told to expect a patient who
+    /// is on the way somewhere else.
+    var recordsArrival: Bool = true
+    /// Dismisses whatever presented this. Ending navigation used to clear
+    /// `store.navigationDestination` and nothing else, which is not what the
+    /// full-screen cover is bound to, so the screen stayed up.
+    var onFinish: () -> Void = { }
     @State var arrivedPromptShown = false
 
     var body: some View {
@@ -305,23 +348,29 @@ struct NavigationScreen: View {
                 preferences: store.navigationPreferences,
                 navigationStyleURL: store.navigationStyleURL,
                 petName: store.selectedPet.name,
-                tone: NavigationTone.forUrgency(store.draft.urgency),
+                tone: tone ?? NavigationTone.forUrgency(store.draft.urgency),
                 mapboxAccessToken: store.mapToken ?? "",
                 onProgress: { step, summary in store.updateNavigationProgress(step: step, summary: summary) },
                 onArrival: {
                     arrivedPromptShown = true
-                    Task { await store.record("arrived") }
+                    if recordsArrival { Task { await store.record("arrived") } }
                 },
-                onEnd: { store.navigationDestination = nil }
+                onEnd: { finish() }
             ).ignoresSafeArea()
 
             if arrivedPromptShown {
                 HStack(spacing: 12) {
-                    Button("I'm here") { Task { await store.record("arrived") } }.buttonStyle(TimiPrimaryButtonStyle(color: TimiColor.blue))
-                    Button("End navigation") { store.navigationDestination = nil }.buttonStyle(TimiQuietButtonStyle())
+                    Button("I'm here") { if recordsArrival { Task { await store.record("arrived") } } else { finish() } }.buttonStyle(TimiPrimaryButtonStyle(color: TimiColor.blue))
+                    Button("End navigation") { finish() }.buttonStyle(TimiQuietButtonStyle())
                 }.padding(16).background(.white, in: RoundedRectangle(cornerRadius: 20)).padding()
             }
         }
         .onAppear { store.beginNavigation(to: destination) }
+    }
+
+    private func finish() {
+        store.navigationDestination = nil
+        store.updateNavigationProgress(step: nil, summary: nil)
+        onFinish()
     }
 }

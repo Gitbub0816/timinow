@@ -191,11 +191,14 @@ struct TrackerView: View {
         // for — so the macOS branch only has to compile, not look right.
         #if os(macOS)
         .sheet(isPresented: $showNavigation) {
-            if let destination = navigationDestination { NavigationScreen(store: store, destination: destination) }
+            if let destination = navigationDestination { NavigationScreen(store: store, destination: destination, onFinish: { showNavigation = false }) }
         }
         #else
         .fullScreenCover(isPresented: $showNavigation) {
-            if let destination = navigationDestination { NavigationScreen(store: store, destination: destination) }
+            // "End navigation" cleared `store.navigationDestination`, which is
+            // not what this cover is bound to, so the screen stayed up and the
+            // only way out was to force-quit.
+            if let destination = navigationDestination { NavigationScreen(store: store, destination: destination, onFinish: { showNavigation = false }) }
         }
         #endif
     }

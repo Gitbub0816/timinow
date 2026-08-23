@@ -242,7 +242,7 @@ struct EmergencyCareSheet: View {
                     }
 
                     ForEach(store.emergencyLocations) { place in
-                        EmergencyClinicRow(place: place)
+                        EmergencyClinicRow(store: store, place: place)
                     }
 
                     // The Worker's words, not a restatement: most of this list
@@ -265,7 +265,9 @@ struct EmergencyCareSheet: View {
 }
 
 struct EmergencyClinicRow: View {
+    @Bindable var store: AppStore
     var place: EmergencyPlace
+    @State var showNavigation = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -290,7 +292,29 @@ struct EmergencyClinicRow: View {
                     Link(destination: url) { Label("Call", systemImage: "phone.fill") }
                         .buttonStyle(TimiPrimaryButtonStyle())
                 }
-                if let url = directionsURL {
+                // Tími's own navigation when this build has it, which is the
+                // point: an emergency hospital found on a map is still a place
+                // we can drive somebody to, and leaving the app was never a
+                // decision anybody made on purpose.
+                if TurnByTurn.isAvailable, place.navigationDestination != nil {
+                    Button { showNavigation = true } label: {
+                        Label("Navigate", systemImage: "arrow.triangle.turn.up.right.diamond.fill")
+                    }.buttonStyle(TimiPrimaryButtonStyle(color: TimiColor.blue))
+                }
+            }
+            // Apple Maps stays reachable on this screen specifically.
+            //
+            // Everywhere else it is what happens when our navigation is absent.
+            // Here it is a deliberate second door, because this is the screen
+            // somebody opens when an animal is in trouble: Maps may already be
+            // running in CarPlay, it holds their own routing preferences, and
+            // it keeps working if this app does not. Quiet rather than primary
+            // — ours is the offer, this is the escape hatch.
+            if let url = directionsURL {
+                if TurnByTurn.isAvailable {
+                    Link(destination: url) { Label("Open in Maps instead", systemImage: "map.fill") }
+                        .buttonStyle(TimiQuietButtonStyle())
+                } else {
                     Link(destination: url) { Label("Directions", systemImage: "map.fill") }
                         .buttonStyle(TimiPrimaryButtonStyle(color: TimiColor.blue))
                 }
@@ -302,6 +326,28 @@ struct EmergencyClinicRow: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .timiCard(Color.white)
+        // fullScreenCover does not exist on macOS, which is only ever the host
+        // `swift test` builds for — the same split the arrival tracker makes.
+        #if os(macOS)
+        .sheet(isPresented: $showNavigation) { navigationCover }
+        #else
+        .fullScreenCover(isPresented: $showNavigation) { navigationCover }
+        #endif
+    }
+
+    @ViewBuilder private var navigationCover: some View {
+        if let destination = place.navigationDestination {
+            NavigationScreen(
+                store: store,
+                destination: destination,
+                // Nothing about this drive is calm, and there may be no care
+                // draft at all behind it.
+                tone: .emergency,
+                // No intake here, and possibly an intake for somewhere else.
+                recordsArrival: false,
+                onFinish: { showNavigation = false }
+            )
+        }
     }
 
     private var subtitle: String {
@@ -325,14 +371,11 @@ struct EmergencyClinicRow: View {
         return digits.isEmpty ? nil : URL(string: "tel:\(digits)")
     }
 
+    /// The same builder the navigation fallback uses, rather than a second
+    /// copy of the URL that only happens to match it.
     private var directionsURL: URL? {
         guard let latitude = place.latitude, let longitude = place.longitude else { return nil }
-        var components = URLComponents(string: "https://maps.apple.com/")
-        components?.queryItems = [
-            URLQueryItem(name: "daddr", value: "\(latitude),\(longitude)"),
-            URLQueryItem(name: "q", value: place.name)
-        ]
-        return components?.url
+        return AppleMapsFallback.directionsURL(latitude: latitude, longitude: longitude, name: place.name)
     }
 }
 

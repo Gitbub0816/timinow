@@ -1897,6 +1897,74 @@ for (const [path, marker] of [
   }
 }
 
+// The emergency list is the one customer screen that used to hand navigation to
+// Apple Maps unconditionally, because its entries come from Mapbox POI data
+// rather than from a clinic record. That distinction mattered to the code and
+// to nobody holding the phone, and it is easy to reintroduce: the Apple Maps
+// link still lives on this row on purpose, so deleting the Navigate button
+// leaves a screen that looks finished.
+{
+  const components = await read("apps/customer-mobile/Sources/TimiNowUI/Components.swift");
+  const row = components.slice(components.indexOf("struct EmergencyClinicRow"));
+  // Comment lines first: two guards in this file have already been satisfied by
+  // their own explanatory prose rather than by any code.
+  const rowCode = row.split("\n").filter((line) => !line.trim().startsWith("//")).join("\n");
+
+  if (!/NavigationScreen\(/.test(rowCode)) {
+    throw new Error("apps/customer-mobile/Sources/TimiNowUI/Components.swift: EmergencyClinicRow no longer presents NavigationScreen, so an emergency hospital found on the map sends the customer out to Apple Maps even on a build that has turn-by-turn compiled in.");
+  }
+  const rowLines = rowCode.split("\n");
+  const opensNavigation = rowLines.findIndex((line) => /showNavigation = true/.test(line));
+  if (opensNavigation < 0) {
+    throw new Error("apps/customer-mobile/Sources/TimiNowUI/Components.swift: EmergencyClinicRow has no button that opens Tími navigation. The Apple Maps link on this row is deliberate, so removing the Navigate button leaves a screen that looks finished and never uses our own turn-by-turn.");
+  }
+  const guarding = rowLines.slice(Math.max(0, opensNavigation - 5), opensNavigation).join("\n");
+  if (!/TurnByTurn\.isAvailable/.test(guarding) || !/place\.navigationDestination/.test(guarding)) {
+    throw new Error("apps/customer-mobile/Sources/TimiNowUI/Components.swift: EmergencyClinicRow's Navigate button is not gated on TurnByTurn.isAvailable and a navigable destination, so on a build without the Mapbox SDK it opens the \"navigation not included in this build\" card, and on a POI with no coordinates it opens an empty one.");
+  }
+  if (!/recordsArrival: false/.test(rowCode)) {
+    throw new Error("apps/customer-mobile/Sources/TimiNowUI/Components.swift: EmergencyClinicRow presents NavigationScreen without recordsArrival: false. record(\"arrived\") writes against currentIntake, so somebody with a confirmed appointment at one clinic who drives to an emergency hospital marks that appointment arrived — and the clinic is told to expect a patient who is on the way somewhere else.");
+  }
+  if (!/AppleMapsFallback\.directionsURL/.test(rowCode)) {
+    throw new Error("apps/customer-mobile/Sources/TimiNowUI/Components.swift: EmergencyClinicRow builds its own Apple Maps URL again instead of using AppleMapsFallback. Two copies of that link only stay identical while somebody remembers both.");
+  }
+}
+
+// NavigationScreen is presented inside a cover bound to the presenter's own
+// state. Ending navigation cleared store.navigationDestination and nothing
+// else, which is not what the cover is bound to, so the screen stayed up and
+// the only way out was to force-quit the app.
+{
+  const navigation = await read("apps/customer-mobile/Sources/TimiNowUI/NavigationView.swift");
+  if (!/var onFinish: \(\) -> Void/.test(navigation)) {
+    throw new Error("apps/customer-mobile/Sources/TimiNowUI/NavigationView.swift: NavigationScreen has no onFinish, so whatever presented it is never told to dismiss.");
+  }
+  for (const path of [
+    "apps/customer-mobile/Sources/TimiNowUI/OfferAndTrackerViews.swift",
+    "apps/customer-mobile/Sources/TimiNowUI/Components.swift"
+  ]) {
+    const source = await read(path);
+    for (const call of source.split("NavigationScreen(").slice(1)) {
+      // The call's own argument list: up to the first line that closes it.
+      const args = call.slice(0, call.indexOf(")"));
+      if (!/onFinish:/.test(args)) {
+        throw new Error(`${path}: a NavigationScreen is presented without onFinish, so "End navigation" clears the store and leaves the full-screen cover up.`);
+      }
+    }
+  }
+}
+
+// Both build configurations have to answer the availability question. Only one
+// of them is compiled on any given machine, so a missing branch is a build
+// error that CI finds and a developer does not.
+{
+  const navigation = await read("apps/customer-mobile/Sources/TimiNowUI/NavigationView.swift");
+  const declarations = navigation.match(/static let isAvailable = (true|false)/g) || [];
+  if (!declarations.includes("static let isAvailable = true") || !declarations.includes("static let isAvailable = false")) {
+    throw new Error("apps/customer-mobile/Sources/TimiNowUI/NavigationView.swift: TurnByTurn.isAvailable is not declared in both branches of the Mapbox #if, so one build configuration does not compile.");
+  }
+}
+
 const csharpFiles = await collectFiles("apps/vet-windows", ".cs");
 for (const path of csharpFiles) {
   const problems = bracketProblems(await read(path));

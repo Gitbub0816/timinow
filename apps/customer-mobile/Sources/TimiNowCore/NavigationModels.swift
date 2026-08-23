@@ -306,3 +306,34 @@ public enum TimiEnvironment {
     /// starting point.
     public static let defaultAPIBaseURL = "https://timinow.pet"
 }
+
+/// An emergency map result as a navigation destination.
+///
+/// The emergency list is the one screen whose entries do not come from the
+/// Tími network — they are Mapbox POIs, so there is no clinic record, no
+/// intake, and no offer behind them. What there is, is a name, a point and
+/// usually a phone number, and that is the whole of what turn-by-turn needs.
+/// Handing those to Apple Maps because they happen to have arrived from map
+/// data rather than from our own database was a distinction that mattered to
+/// the code and to nobody holding the phone.
+///
+/// Optional, because a POI can come back without coordinates. Nothing can be
+/// navigated to in that case and the caller falls back to the phone number.
+public extension EmergencyPlace {
+    var navigationDestination: NavigationDestination? {
+        guard let latitude = latitude, let longitude = longitude else { return nil }
+        return NavigationDestination(
+            clinicId: id,
+            name: name,
+            address: address ?? "",
+            latitude: latitude,
+            longitude: longitude,
+            phone: phone,
+            // Fills the `{kind}` slot in the "approaching" announcement. Only
+            // claimed when the listing's own name claims it — the same rule
+            // the row's label follows, so the voice never says "emergency
+            // hospital" about a day clinic padding out a short list.
+            kind: emergencyNamed == true ? "emergency hospital" : "clinic"
+        )
+    }
+}
