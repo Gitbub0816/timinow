@@ -2064,6 +2064,24 @@ for (const [path, marker] of [
   }
 }
 
+// The customer app is ink borders, serif headlines and coral on a warm canvas.
+// A stock `Form` is grouped grey sections, hairline separators and system
+// small-caps headers — the look of every settings screen on the phone. The pet
+// sheet was rewritten off exactly that and Settings was left behind, so the
+// tab bar had three Tími screens and one that belonged to somebody else.
+{
+  const support = await read("apps/customer-mobile/Sources/TimiNowUI/SupportViews.swift");
+  const code = support.split("\n").filter((line) => !line.trim().startsWith("//") && !line.trim().startsWith("///")).join("\n");
+  if (/\bForm\s*\{/.test(code)) {
+    throw new Error("apps/customer-mobile/Sources/TimiNowUI/SupportViews.swift uses a SwiftUI Form. That is the system settings look, and it is the one thing these screens are not supposed to be — see PetEditor, which was rewritten off it.");
+  }
+  // A Picker on iOS is a wheel or a menu drawn by the system, in the system's
+  // colours, which is the same problem one control at a time.
+  if (/\bPicker\(/.test(code)) {
+    throw new Error("apps/customer-mobile/Sources/TimiNowUI/SupportViews.swift uses a system Picker. The chip rows next to it are what this app selects with.");
+  }
+}
+
 const csharpFiles = await collectFiles("apps/vet-windows", ".cs");
 for (const path of csharpFiles) {
   const problems = bracketProblems(await read(path));

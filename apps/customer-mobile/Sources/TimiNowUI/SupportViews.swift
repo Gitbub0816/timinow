@@ -269,6 +269,17 @@ struct ActivityView: View {
     }
 }
 
+/// Settings, in Tími's own hand.
+///
+/// This was a `Form`: grouped grey sections, hairline separators, system
+/// small-caps headers. The pet sheet next door was rewritten off exactly that
+/// look and this was left behind, which made it the one screen in the app that
+/// looked like every other app on the phone — reached from a tab bar whose
+/// other three screens are ink borders, serif headlines and coral.
+///
+/// Every binding below is the one the `Form` had. What changed is the
+/// chrome: cards instead of sections, chips instead of wheel pickers, and
+/// labels above fields rather than beside them.
 struct SettingsView: View {
     @Bindable var store: AppStore
     @State var versionTaps = 0
@@ -279,114 +290,262 @@ struct SettingsView: View {
     }
 
     var body: some View {
-        Form {
-            // What a pet owner actually needs from this screen: who the clinic
-            // calls. Typed once here or once on the intake form, then
-            // remembered — not re-entered on every care request.
-            Section {
-                TextField("Your name", text: $store.ownerName).textContentType(.name)
-                TextField("Mobile number", text: $store.ownerPhone).textContentType(.telephoneNumber).keyboardType(.phonePad)
-                TextField("Email (optional)", text: $store.ownerEmail).textContentType(.emailAddress).keyboardType(.emailAddress).autocorrectionDisabled()
-            } header: {
-                Text("Your details")
-            } footer: {
-                Text("Used to fill in your next care request, and given to the clinic you choose so they can reach you.")
-            }
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                Eyebrow(text: "YOUR ACCOUNT")
+                Text("Settings").font(.system(size: 40, weight: .bold, design: .serif))
 
-            if store.auth.isSignedIn {
-                Section("Account") {
-                    // Naming the account is the whole point of having one. Not
-                    // saying which one is signed in is why "we have sign-ins
-                    // and it doesn't save anything" was a reasonable reading.
-                    HStack {
-                        Text("Signed in as")
-                        Spacer()
-                        Text(store.ownerEmail.isEmpty ? (store.ownerPhone.isEmpty ? store.ownerName : store.ownerPhone) : store.ownerEmail)
-                            .foregroundStyle(TimiColor.muted)
-                    }
-                    Button("Sign out", role: .destructive) { Task { await store.auth.signOut() } }
-                }
-            }
-            Section("Permissions") { Toggle("Offer notifications", isOn: $store.notificationsEnabled); Toggle("Use precise location", isOn: $store.locationEnabled) }
-            Section("Navigation") {
-                Toggle("Spoken turn-by-turn", isOn: $store.navigationPreferences.voiceEnabled)
-                Picker("Voice", selection: $store.navigationPreferences.voiceProfile) {
-                    ForEach(VoiceProfile.allCases, id: \.self) { Text($0.title).tag($0) }
-                }
-                #if os(iOS) && !SKIP
-                let deviceVoices = VoicePreviewer.availableVoices()
-                if !deviceVoices.isEmpty {
-                    Picker("Device voice", selection: Binding(
-                        get: { store.navigationPreferences.preferredVoiceIdentifier ?? "" },
-                        set: { store.navigationPreferences.preferredVoiceIdentifier = $0.isEmpty ? nil : $0 }
-                    )) {
-                        // The unset default is the best installed voice, not
-                        // the system's compact one — see VoicePreviewer.bestVoice.
-                        Text("Best available").tag("")
-                        ForEach(deviceVoices, id: \.identifier) { voice in
-                            Text(VoicePreviewer.label(for: voice)).tag(voice.identifier)
-                        }
-                    }
-                }
-                #endif
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Speech rate")
-                    Slider(value: $store.navigationPreferences.speechRate, in: 0...1)
-                }
-                Picker("Distance units", selection: $store.navigationPreferences.distanceUnits) {
-                    ForEach(DistanceUnits.allCases, id: \.self) { Text($0.title).tag($0) }
-                }
-                Toggle("Avoid tolls", isOn: $store.navigationPreferences.avoidTolls)
-                Toggle("Avoid highways", isOn: $store.navigationPreferences.avoidHighways)
-                Toggle("Avoid ferries", isOn: $store.navigationPreferences.avoidFerries)
-                Toggle("Announce arrival at clinic", isOn: $store.navigationPreferences.announceArrivalAtClinic)
-                #if os(iOS) && !SKIP
-                Button("Preview voice") {
-                    VoicePreviewer.shared.preview(
-                        // Previewed in the calm register: this is a settings
-                        // screen, not a drive, and it is the register whose
-                        // wording anyone customising the voice will care about.
-                        text: TimiInstructionRewriter.announcement(
-                            "arrival",
-                            tone: .calm,
-                            clinicName: "Hearth and Paw",
-                            petName: store.selectedPet.name
-                        ) ?? "You've arrived.",
-                        preferences: store.navigationPreferences
-                    )
-                }
-                #endif
-            }
-            Section("Legal and support") { NavigationLink("Terms, privacy, and veterinary safety") { LegalView() }; Link("Privacy requests", destination: URL(string: "mailto:privacy@clearkey.solutions")!); Link("Billing support", destination: URL(string: "mailto:billing@clearkey.solutions")!) }
+                details
+                if store.auth.isSignedIn { account }
+                permissions
+                navigation
+                legal
 
-            // The Worker address, the mode, the onboarding replay: all of it is
-            // ours, none of it is a pet owner's, and a settings screen that
-            // opens with "https://your-worker.workers.dev" tells them they are
-            // holding something unfinished. Tapping the version seven times
-            // brings it back — the same idiom Apple's own apps use, and the
-            // only people who know to do it are the people who need it.
-            Section {
+                // Tapping the version seven times brings the developer card
+                // back — the same idiom Apple's own apps use, and the only
+                // people who know to do it are the people who need it.
                 Text("Tími NOW")
                     .font(.footnote).foregroundStyle(TimiColor.muted)
                     .frame(maxWidth: .infinity, alignment: .center)
                     .contentShape(Rectangle())
                     .onTapGesture { registerVersionTap() }
-            }
-            .listRowBackground(Color.clear)
+                    .padding(.top, 6)
 
-            if store.developerModeEnabled {
-                Section("Connection") {
-                    TextField("https://your-worker.workers.dev", text: $store.apiBaseURLText)
-                    Button("Save API address") { store.saveAPIBaseURL() }
-                    LabeledContent("Mode", value: store.isDemoMode ? "Interactive demo" : "Live Worker")
-                    LabeledContent("Talking to", value: store.resolvedAPIAddress)
-                }
-                Section("Development") {
-                    Button("Replay guided onboarding") { store.resetOnboarding() }
-                    Button("Hide developer settings") { store.developerModeEnabled = false; versionTaps = 0 }
+                if store.developerModeEnabled { developer }
+            }
+            .padding(20)
+            .padding(.bottom, 30)
+        }
+        .background(TimiColor.canvas)
+        .navigationTitle("Settings")
+    }
+
+    // MARK: - Cards
+
+    /// What a pet owner actually needs from this screen: who the clinic calls.
+    /// Typed once here or once on the intake form, then remembered — not
+    /// re-entered on every care request.
+    var details: some View {
+        card("YOUR DETAILS") {
+            field("Name") { TextField("Your name", text: $store.ownerName).textContentType(.name).timiField() }
+            field("Mobile number") { TextField("(555) 123-4567", text: $store.ownerPhone).textContentType(.telephoneNumber).keyboardType(.phonePad).timiField() }
+            field("Email") { TextField("Optional", text: $store.ownerEmail).textContentType(.emailAddress).keyboardType(.emailAddress).autocorrectionDisabled().timiField() }
+            Text("Used to fill in your next care request, and given to the clinic you choose so they can reach you.")
+                .font(.caption).foregroundStyle(TimiColor.muted)
+        }
+    }
+
+    var account: some View {
+        card("ACCOUNT") {
+            // Naming the account is the whole point of having one. Not saying
+            // which one is signed in is why "we have sign-ins and it doesn't
+            // save anything" was a reasonable reading.
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Signed in as").font(.caption).foregroundStyle(TimiColor.muted)
+                Text(signedInAs).font(.title3).fontWeight(.black)
+            }
+            Button("Sign out") { Task { await store.auth.signOut() } }
+                .buttonStyle(TimiQuietButtonStyle())
+        }
+    }
+
+    var signedInAs: String {
+        if !store.ownerEmail.isEmpty { return store.ownerEmail }
+        if !store.ownerPhone.isEmpty { return store.ownerPhone }
+        return store.ownerName.isEmpty ? "This device" : store.ownerName
+    }
+
+    var permissions: some View {
+        card("PERMISSIONS") {
+            toggle("Offer notifications", "Tell me when a clinic answers.", $store.notificationsEnabled)
+            Divider()
+            toggle("Use precise location", "Rank clinics by how far you actually have to drive.", $store.locationEnabled)
+        }
+    }
+
+    var navigation: some View {
+        card("NAVIGATION") {
+            toggle("Spoken turn-by-turn", "Directions read aloud on the way.", $store.navigationPreferences.voiceEnabled)
+
+            voiceChips
+
+            #if os(iOS) && !SKIP
+            let deviceVoices = VoicePreviewer.availableVoices()
+            if !deviceVoices.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Device voice").font(.headline)
+                    // The unset default is the best installed voice, not the
+                    // system's compact one — see VoicePreviewer.bestVoice.
+                    chipRow(title: "Best available", selected: store.navigationPreferences.preferredVoiceIdentifier == nil) {
+                        store.navigationPreferences.preferredVoiceIdentifier = nil
+                    }
+                    ForEach(deviceVoices, id: \.identifier) { voice in
+                        chipRow(title: VoicePreviewer.label(for: voice), selected: store.navigationPreferences.preferredVoiceIdentifier == voice.identifier) {
+                            store.navigationPreferences.preferredVoiceIdentifier = voice.identifier
+                        }
+                    }
                 }
             }
-        }.navigationTitle("Settings")
+            #endif
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Speech rate").font(.headline)
+                Slider(value: $store.navigationPreferences.speechRate, in: 0...1).tint(TimiColor.blue)
+            }
+
+            unitChips
+
+            Divider()
+            toggle("Avoid tolls", nil, $store.navigationPreferences.avoidTolls)
+            toggle("Avoid highways", nil, $store.navigationPreferences.avoidHighways)
+            toggle("Avoid ferries", nil, $store.navigationPreferences.avoidFerries)
+            toggle("Announce arrival at clinic", nil, $store.navigationPreferences.announceArrivalAtClinic)
+
+            #if os(iOS) && !SKIP
+            Button("Preview voice") {
+                VoicePreviewer.shared.preview(
+                    // Previewed in the calm register: this is a settings
+                    // screen, not a drive, and it is the register whose
+                    // wording anyone customising the voice will care about.
+                    text: TimiInstructionRewriter.announcement(
+                        "arrival",
+                        tone: .calm,
+                        clinicName: "Hearth and Paw",
+                        petName: store.selectedPet.name
+                    ) ?? "You've arrived.",
+                    preferences: store.navigationPreferences
+                )
+            }.buttonStyle(TimiQuietButtonStyle())
+            #endif
+        }
+    }
+
+    var legal: some View {
+        card("LEGAL AND SUPPORT") {
+            NavigationLink { LegalView() } label: {
+                row("Terms, privacy, and veterinary safety", "chevron.right")
+            }.buttonStyle(.plain)
+            Divider()
+            Link(destination: URL(string: "mailto:privacy@clearkey.solutions")!) {
+                row("Privacy requests", "envelope")
+            }.buttonStyle(.plain)
+            Divider()
+            Link(destination: URL(string: "mailto:billing@clearkey.solutions")!) {
+                row("Billing support", "envelope")
+            }.buttonStyle(.plain)
+        }
+    }
+
+    /// The Worker address, the mode, the onboarding replay: all of it is ours,
+    /// none of it is a pet owner's, and a settings screen that opens with
+    /// "https://your-worker.workers.dev" tells them they are holding something
+    /// unfinished.
+    var developer: some View {
+        card("DEVELOPER") {
+            field("Worker address") { TextField("https://your-worker.workers.dev", text: $store.apiBaseURLText).autocorrectionDisabled().timiField() }
+            Button("Save API address") { store.saveAPIBaseURL() }.buttonStyle(TimiQuietButtonStyle())
+            Divider()
+            labelled("Mode", store.isDemoMode ? "Interactive demo" : "Live Worker")
+            labelled("Talking to", store.resolvedAPIAddress)
+            Divider()
+            Button("Replay guided onboarding") { store.resetOnboarding() }.buttonStyle(TimiQuietButtonStyle())
+            Button("Hide developer settings") { store.developerModeEnabled = false; versionTaps = 0 }.buttonStyle(TimiQuietButtonStyle())
+        }
+    }
+
+    // MARK: - Pieces
+
+    func card(_ title: String, @ViewBuilder content: () -> some View) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Eyebrow(text: title)
+            content()
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .timiCard(Color.white)
+    }
+
+    func field(_ title: String, @ViewBuilder content: () -> some View) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title).font(.headline)
+            content()
+        }
+    }
+
+    func toggle(_ title: String, _ subtitle: String?, _ value: Binding<Bool>) -> some View {
+        HStack(alignment: .center, spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.headline)
+                if let subtitle { Text(subtitle).font(.caption).foregroundStyle(TimiColor.muted) }
+            }
+            Spacer()
+            Toggle("", isOn: value).labelsHidden().tint(TimiColor.blue)
+        }
+    }
+
+    /// The species-picker idiom from the pet sheet, reused. A wheel picker is
+    /// the single most system-looking control on the phone.
+    ///
+    /// Written out per type rather than once over `Option: Hashable`. Nothing
+    /// else in this module has a generic view helper, and this module is the
+    /// one skipstone transpiles to Kotlin — a first generic here is a Kotlin
+    /// build risk paid for two call sites.
+    var voiceChips: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Voice").font(.headline)
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 120))], spacing: 10) {
+                ForEach(VoiceProfile.allCases, id: \.self) { option in
+                    chipRow(title: option.title, selected: store.navigationPreferences.voiceProfile == option) {
+                        store.navigationPreferences.voiceProfile = option
+                    }
+                }
+            }
+        }
+    }
+
+    var unitChips: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Distance units").font(.headline)
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 120))], spacing: 10) {
+                ForEach(DistanceUnits.allCases, id: \.self) { option in
+                    chipRow(title: option.title, selected: store.navigationPreferences.distanceUnits == option) {
+                        store.navigationPreferences.distanceUnits = option
+                    }
+                }
+            }
+        }
+    }
+
+    func chipRow(title: String, selected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 7) {
+                Image(systemName: selected ? "largecircle.fill.circle" : "circle")
+                    .foregroundStyle(selected ? TimiColor.blue : TimiColor.ink.faded(0.3))
+                Text(title).font(.caption).fontWeight(.bold).multilineTextAlignment(.leading)
+                Spacer(minLength: 0)
+            }
+            .padding(11)
+            .frame(minHeight: 48)
+            .background(selected ? TimiColor.blueSoft : .white, in: RoundedRectangle(cornerRadius: 14))
+            .overlay(RoundedRectangle(cornerRadius: 14).stroke(selected ? TimiColor.blue : TimiColor.ink.faded(0.14), lineWidth: CGFloat(selected ? 2 : 1)))
+        }.buttonStyle(.plain)
+    }
+
+    func row(_ title: String, _ icon: String) -> some View {
+        HStack {
+            Text(title).font(.headline).multilineTextAlignment(.leading)
+            Spacer()
+            Image(systemName: icon).font(.caption).foregroundStyle(TimiColor.muted)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
+    }
+
+    func labelled(_ title: String, _ value: String) -> some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text(title).font(.headline)
+            Spacer()
+            Text(value).font(.caption).foregroundStyle(TimiColor.muted).multilineTextAlignment(.trailing)
+        }
     }
 }
 
