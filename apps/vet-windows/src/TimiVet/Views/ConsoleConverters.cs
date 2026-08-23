@@ -48,8 +48,17 @@ public sealed class PendingStatusToVisibilityConverter : IValueConverter
 /// </summary>
 public sealed class ConnectionHealthToBrushConverter : IValueConverter
 {
-    private static readonly SolidColorBrush HealthyFallback = new(System.Windows.Media.Color.FromRgb(0xF7, 0xC8, 0x4B));
-    private static readonly SolidColorBrush TroubleFallback = new(System.Windows.Media.Color.FromRgb(0xF2, 0x5F, 0x4C));
+    // Frozen: an unfrozen Freezable belongs to the thread that made it, and a static field is made on
+    // whichever thread happens to touch this class first.
+    private static readonly SolidColorBrush HealthyFallback = Frozen(0xF7, 0xC8, 0x4B);
+    private static readonly SolidColorBrush TroubleFallback = Frozen(0xF2, 0x5F, 0x4C);
+
+    private static SolidColorBrush Frozen(byte red, byte green, byte blue)
+    {
+        var brush = new SolidColorBrush(System.Windows.Media.Color.FromRgb(red, green, blue));
+        brush.Freeze();
+        return brush;
+    }
 
     public object Convert(object? value, Type targetType, object parameter, CultureInfo culture)
     {
@@ -75,13 +84,4 @@ public sealed class InitialsConverter : IValueConverter
     }
 
     public object ConvertBack(object? value, Type targetType, object parameter, CultureInfo culture) => throw new NotSupportedException();
-}
-
-/// <summary>Inverts a flag, for enabling one control from another's "off".</summary>
-public sealed class InverseBooleanConverter : IValueConverter
-{
-    public object Convert(object? value, Type targetType, object parameter, CultureInfo culture)
-        => value is bool flag && !flag;
-    public object ConvertBack(object? value, Type targetType, object parameter, CultureInfo culture)
-        => value is bool flag && !flag;
 }
