@@ -248,7 +248,11 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                     else _knownPending.Add(request.Id);
                 }
             }
-            SelectedRequest = Requests.FirstOrDefault(r => r.Id == selectedId) ?? PendingRequests.FirstOrDefault();
+            // Restored from the pending list, which is what the queue shows. Restoring
+            // from Requests re-selected the request that had just been answered — no longer
+            // in the list, so the ListBox immediately set SelectedItem back to null and the
+            // decision workspace flickered through the row nobody had chosen.
+            SelectedRequest = PendingRequests.FirstOrDefault(r => r.Id == selectedId) ?? PendingRequests.FirstOrDefault();
             _initialized = true;
             MarkConnected();
             await EnsureSessionAppliedAsync();

@@ -299,7 +299,12 @@ public struct ConsoleView: View {
             .padding(18)
             ScrollView {
                 VStack(spacing: 0) {
-                    ForEach(store.requests) { request in
+                    // Pending, not everything. This heading says "awaiting a
+                    // decision" and the list under it was every request the
+                    // clinic had — so an answered one stayed put, looking
+                    // undecided apart from its buttons, while the count beside
+                    // the heading correctly said none were waiting.
+                    ForEach(store.pendingRequests) { request in
                         VStack(spacing: 0) {
                             Button { store.select(request) } label: { requestRow(request) }
                                 .buttonStyle(.plain)

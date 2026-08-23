@@ -128,7 +128,8 @@ import Observation
             }
             requests = nextRequests
             pendingRequests = nextPending
-            selectedRequest = requests.first(where: { $0.id == selectedId }) ?? pendingRequests.first
+            // From the pending list, which is what the queue shows.
+            selectedRequest = pendingRequests.first(where: { $0.id == selectedId }) ?? pendingRequests.first
             initialized = true
             statusMessage = "Updated \(Self.timeFormatter.string(from: Date())) · next check in \(clampedPollSeconds) sec"
         } catch let error as ClinicAPIError {

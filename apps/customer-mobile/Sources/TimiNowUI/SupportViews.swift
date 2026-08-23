@@ -304,7 +304,7 @@ struct SettingsView: View {
                 // Tapping the version seven times brings the developer card
                 // back — the same idiom Apple's own apps use, and the only
                 // people who know to do it are the people who need it.
-                Text("Tími NOW")
+                Text("Tími NOW \(TimiEnvironment.appVersion) · built \(TimiEnvironment.buildStamp)")
                     .font(.footnote).foregroundStyle(TimiColor.muted)
                     .frame(maxWidth: .infinity, alignment: .center)
                     .contentShape(Rectangle())
@@ -447,6 +447,12 @@ struct SettingsView: View {
             Divider()
             labelled("Mode", store.isDemoMode ? "Interactive demo" : "Live Worker")
             labelled("Talking to", store.resolvedAPIAddress)
+            Divider()
+            // Whether this device can stay signed in, answered now rather than
+            // by relaunching and seeing. Three things have to be true and each
+            // used to fail silently: the Keychain has to accept the write, the
+            // credential has to be worth writing, and it has to read back.
+            labelled("Sign-in storage", store.auth.credentialDiagnostics)
             Divider()
             Button("Replay guided onboarding") { store.resetOnboarding() }.buttonStyle(TimiQuietButtonStyle())
             Button("Hide developer settings") { store.developerModeEnabled = false; versionTaps = 0 }.buttonStyle(TimiQuietButtonStyle())

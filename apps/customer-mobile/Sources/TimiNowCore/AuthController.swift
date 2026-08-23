@@ -875,18 +875,50 @@ public struct AuthFactorOption: Identifiable, Hashable, Sendable {
         return try? JSONDecoder().decode(StoredAuthCredential.self, from: data)
     }
 
+    /// Why the last save did not store anything, or nil if it did.
+    ///
+    /// Every exit from `saveCredential()` was a bare `return`. Three of them,
+    /// each meaning something different, none of them observable: the app
+    /// signed in, stored nothing, and asked for a password again at the next
+    /// launch with no way to tell which of the three had happened — or whether
+    /// the code had even run.
+    public private(set) var lastCredentialSaveIssue: String?
+
+    /// One line saying whether this device can stay signed in.
+    public var credentialDiagnostics: String {
+        if let issue = lastCredentialSaveIssue { return "not stored — \(issue)" }
+        if let status = keychain.lastFailure { return "Keychain refused the write (OSStatus \(status))" }
+        if let probe = keychain.selfTest() { return "Keychain unusable on this build (OSStatus \(probe))" }
+        return loadCredential() == nil ? "nothing stored yet" : "stored and readable"
+    }
+
     private func saveCredential() {
-        guard let host = frontendAPIHost else { return }
+        guard let host = frontendAPIHost else {
+            lastCredentialSaveIssue = "no Clerk host resolved"
+            return
+        }
         let cookie = clerkNativeMode ? nil : extractClientCookie(host: host)
         // Nothing to resume from is worse than no Keychain item at all: it
         // would restore a host and a session id that no credential can renew.
-        guard cookie != nil || clerkDeviceToken != nil else { return }
+        guard cookie != nil || clerkDeviceToken != nil else {
+            // In native mode this means Clerk never handed back an
+            // `Authorization` header, so there is no client JWT to keep. The
+            // session works for this launch and cannot outlive it.
+            lastCredentialSaveIssue = clerkNativeMode
+                ? "Clerk returned no client token to store"
+                : "no Clerk client cookie present"
+            return
+        }
         let credential = StoredAuthCredential(
             frontendAPIHost: host, clientCookie: cookie, clerkDeviceToken: clerkDeviceToken,
             activeSessionId: activeSessionId,
             workerToken: workerToken, workerTokenExpiresAt: workerTokenExpiresAt
         )
-        guard let data = try? JSONEncoder().encode(credential), let text = String(data: data, encoding: .utf8) else { return }
+        guard let data = try? JSONEncoder().encode(credential), let text = String(data: data, encoding: .utf8) else {
+            lastCredentialSaveIssue = "the credential could not be encoded"
+            return
+        }
+        lastCredentialSaveIssue = nil
         if !keychain.save(text) {
             // A refused write is the difference between "signing in does not
             // stick" and "there is a bug in the sign-in flow", and until now

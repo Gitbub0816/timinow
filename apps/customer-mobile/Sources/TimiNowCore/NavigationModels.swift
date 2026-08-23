@@ -297,6 +297,27 @@ public enum TimiEnvironment {
     /// question. Bumped alongside the Worker's own version string.
     public static let appVersion = "1.2.0"
 
+    /// When the binary now running was built.
+    ///
+    /// `appVersion` is a string somebody edits, so it says the same thing on
+    /// every build and cannot answer the question that actually comes up:
+    /// whether the app on this phone is the one that was just built. Half a
+    /// debugging round trip has gone into "it still does X" against a binary
+    /// from before the fix, on both sides of the conversation. The executable's
+    /// own modification date is stamped by the build and needs nothing
+    /// injected into Info.plist.
+    public static var buildStamp: String {
+        #if !os(Android)
+        if let url = Bundle.main.executableURL,
+           let date = try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate {
+            let formatter = DateFormatter()
+            formatter.dateFormat = "d MMM HH:mm"
+            return formatter.string(from: date)
+        }
+        #endif
+        return "unstamped"
+    }
+
     /// Where a fresh install talks to.
     ///
     /// This used to be empty, and an empty address is what puts the gateway in

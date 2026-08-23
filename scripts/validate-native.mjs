@@ -2082,6 +2082,29 @@ for (const [path, marker] of [
   }
 }
 
+// "Requests awaiting a decision" listed every request the clinic had, on both
+// consoles. Answering one left it in the queue looking undecided apart from its
+// buttons, which a status converter hid — while the count beside the heading,
+// bound to the pending metric, correctly said none were waiting. Both floating
+// panels had it right, which is how it survived: the shape that was tested was
+// not the shape that was used.
+{
+  const consoleView = await read("apps/vet-desktop/Sources/TimiVetUI/ConsoleView.swift");
+  const queue = consoleView.slice(consoleView.indexOf("Requests awaiting a decision"));
+  const loop = queue.match(/ForEach\(store\.(\w+)\)/);
+  if (!loop) throw new Error("apps/vet-desktop/Sources/TimiVetUI/ConsoleView.swift: the review queue no longer iterates a store collection, so this check cannot tell which one it shows.");
+  if (loop[1] !== "pendingRequests") {
+    throw new Error(`apps/vet-desktop/Sources/TimiVetUI/ConsoleView.swift: the review queue lists store.${loop[1]} rather than store.pendingRequests, so a request stays in "awaiting a decision" after it has been answered.`);
+  }
+
+  const mainWindow = await read("apps/vet-windows/src/TimiVet/Views/MainWindow.xaml");
+  const bound = mainWindow.match(/ItemsSource="\{Binding (\w+)\}" SelectedItem="\{Binding SelectedRequest\}"/);
+  if (!bound) throw new Error("apps/vet-windows/src/TimiVet/Views/MainWindow.xaml: the review queue no longer binds an items source alongside SelectedRequest.");
+  if (bound[1] !== "PendingRequests") {
+    throw new Error(`apps/vet-windows/src/TimiVet/Views/MainWindow.xaml: the review queue binds ${bound[1]} rather than PendingRequests, so an answered request stays in "awaiting a decision".`);
+  }
+}
+
 const csharpFiles = await collectFiles("apps/vet-windows", ".cs");
 for (const path of csharpFiles) {
   const problems = bracketProblems(await read(path));
