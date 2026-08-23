@@ -12,6 +12,7 @@ public partial class PeopleWindow : Window
         InitializeComponent();
         _viewModel = viewModel;
         DataContext = viewModel;
+        this.FitToWorkArea();
     }
 
     private void Window_Loaded(object sender, RoutedEventArgs e) => _viewModel.LoadCommand.Execute(null);

@@ -14,6 +14,7 @@ public partial class MainWindow : Window
         DataContext = viewModel;
         Closing += OnClosing;
         _viewModel.OpenPeopleRequested += (_, _) => ((App)System.Windows.Application.Current).ShowPeople();
+        this.FitToWorkArea();
     }
 
     private void OpenMini_Click(object sender, RoutedEventArgs e) => ((App)System.Windows.Application.Current).ShowMini();

@@ -26,6 +26,10 @@ public partial class SignInWindow : Window
         _viewModel = viewModel;
         DataContext = viewModel;
         _otpBoxes = [Otp0, Otp1, Otp2, Otp3, Otp4, Otp5];
+        // MaxHeight is 880 and this window cannot be resized, so on a desktop
+        // shorter than that the very first screen a clinic sees would open
+        // with its title bar above the top of the screen and no way to move it.
+        this.FitToWorkArea();
         _viewModel.PropertyChanged += (_, e) =>
         {
             if (e.PropertyName == nameof(SignInViewModel.IsCodeStep) && viewModel.IsCodeStep) ResetOtpBoxes();

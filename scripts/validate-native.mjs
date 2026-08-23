@@ -1995,6 +1995,56 @@ for (const [path, marker] of [
   }
 }
 
+// A WPF window's Width and Height are device-independent pixels, not screen
+// pixels. At 125% scaling — the Windows default on most laptops — a 1920x1080
+// display is 1536x864 of them, and the console's 1440x920 did not fit. Centred
+// anyway, half the overflow went above the top edge and took the title bar
+// with it, so the app opened with no minimize, maximize or close and a cropped
+// first row. Every developer machine runs at 100%, where this never happens.
+{
+  const windowFit = await read("apps/vet-windows/src/TimiVet/Views/WindowFit.cs");
+  if (!/SystemParameters\.WorkArea/.test(windowFit)) {
+    throw new Error("apps/vet-windows/src/TimiVet/Views/WindowFit.cs no longer bounds windows by SystemParameters.WorkArea, so a window larger than the desktop opens with its title bar off the top of the screen.");
+  }
+
+  for (const path of await collectFiles("apps/vet-windows/src/TimiVet/Views", ".xaml")) {
+    const xaml = await read(path);
+    // Only windows the framework places for us. MiniWindow positions itself.
+    if (!/WindowStartupLocation="CenterScreen"/.test(xaml)) continue;
+    const codeBehind = `${path}.cs`;
+    const source = await read(codeBehind).catch(() => "");
+    if (!/FitToWorkArea\(\)/.test(source)) {
+      throw new Error(`${codeBehind}: this window is centred by WindowStartupLocation but never calls FitToWorkArea(), so on a display whose scaling makes the desktop smaller than the window, it opens with its title bar — and minimize, maximize and close with it — above the top edge of the screen.`);
+    }
+  }
+}
+
+// The Windows icon is committed rather than generated at build time: the
+// generator is a macOS script and the build machine is a Windows one, so a
+// conditional reference meant a working app with a blank taskbar icon and no
+// warning anywhere.
+{
+  const csproj = await read("apps/vet-windows/src/TimiVet/TimiVet.csproj");
+  if (/<ApplicationIcon Condition=/.test(csproj) || /<Resource Include="Assets\\timinow\.ico" Condition=/.test(csproj)) {
+    throw new Error("apps/vet-windows/src/TimiVet/TimiVet.csproj makes the application icon conditional on the file existing, so a checkout without it builds an app with a blank Windows icon and reports nothing.");
+  }
+  const icon = await readFile(resolve(root, "apps/vet-windows/src/TimiVet/Assets/timinow.ico"));
+  if (icon.readUInt16LE(0) !== 0 || icon.readUInt16LE(2) !== 1) {
+    throw new Error("apps/vet-windows/src/TimiVet/Assets/timinow.ico is not an icon file. Windows shows a blank square rather than failing, so nothing else reports this.");
+  }
+  const count = icon.readUInt16LE(4);
+  if (!count) throw new Error("apps/vet-windows/src/TimiVet/Assets/timinow.ico contains no images.");
+  for (let index = 0; index < count; index += 1) {
+    const at = 6 + index * 16;
+    const size = icon.readUInt32LE(at + 8);
+    const offset = icon.readUInt32LE(at + 12);
+    if (offset + size > icon.length) throw new Error(`apps/vet-windows/src/TimiVet/Assets/timinow.ico: image ${index} points past the end of the file.`);
+    if (icon.subarray(offset, offset + 8).toString("hex") !== "89504e470d0a1a0a") {
+      throw new Error(`apps/vet-windows/src/TimiVet/Assets/timinow.ico: image ${index} is not a PNG.`);
+    }
+  }
+}
+
 const csharpFiles = await collectFiles("apps/vet-windows", ".cs");
 for (const path of csharpFiles) {
   const problems = bracketProblems(await read(path));
