@@ -48,11 +48,27 @@ dotnet build TimiVet.sln -c Release
 dotnet run --project src\TimiVet\TimiVet.csproj
 ```
 
-Publish a self-contained Windows x64 build:
+Publish a self-contained Windows x64 build — one `TimiVet.exe` a clinic can copy onto a
+front-desk machine with no .NET runtime installed:
 
 ```powershell
-dotnet publish src\TimiVet\TimiVet.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true
+dotnet publish src\TimiVet\TimiVet.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true
 ```
+
+`IncludeNativeLibrariesForSelfExtract` is not optional here, whatever the flag name suggests.
+`PublishSingleFile` bundles managed assemblies only; WPF drags several native ones with it
+(`PresentationNative_*.dll`, `wpfgfx_*.dll`, `D3DCompiler_47_cor3.dll`, `vcruntime140_cor3.dll`),
+and without this they are written next to the executable instead of into it. The build succeeds
+either way, so the failure shows up later — as an .exe somebody copied on its own and which then
+will not start on the machine they copied it to.
+
+The result is `src\TimiVet\bin\Release\net10.0-windows10.0.19041.0\win-x64\publish\TimiVet.exe`,
+around 150 MB because the runtime is inside it. Add `-p:PublishReadyToRun=true` to trade a larger
+file for a faster cold start, which on an old front-desk PC is usually the trade worth making.
+
+The executable is unsigned. Windows SmartScreen will show "Windows protected your PC" on first run
+until it is signed with an Authenticode certificate; **More info → Run anyway** gets past it for
+testing, but a code-signing certificate is the answer before any clinic installs this.
 
 On first launch the sign-in window opens straight onto **email, username, or phone**: the production
 Worker address is the default and its Clerk instance is resolved before the window is interactive. The
