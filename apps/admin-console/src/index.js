@@ -25,6 +25,20 @@ import {
 } from "../../../src/tenant-admin.js";
 import { hasDatabase, tenantIdForClerkOrg } from "../../../src/db.js";
 import {
+  clinicEarnings,
+  getStripeAccountForTenant,
+  listLedger,
+  markReconciled,
+  recordStripeAccount
+} from "../../../src/payments.js";
+import {
+  createConnectedAccount,
+  createOnboardingSession,
+  retrieveConnectedAccount,
+  stripeConfigured,
+  StripeError
+} from "../../../src/stripe.js";
+import {
   ClerkError,
   createOrganization,
   createOrganizationInvitation,
@@ -670,6 +684,159 @@ function clientErrorFromRow(row) {
   };
 }
 
+/* ------------------------------------------------------------- ledger --- */
+
+/**
+ * The payment ledger, filtered.
+ *
+ * The audience is somebody with a Stripe payout report open in the other
+ * window. So every row carries its Stripe object ids, the totals are computed
+ * across the whole filtered set rather than the returned page (a running
+ * total of 200 rows out of 4,000 is worse than no total), and what is
+ * unreconciled is reported separately from what is merely recent.
+ */
+async function handleLedger(url, env) {
+  if (!hasDatabase(env)) return json({ entries: [], totals: null, tenants: [] });
+  const tenantId = cleanString(url.searchParams.get("tenantId"), 80) || null;
+  const intakeId = cleanString(url.searchParams.get("intakeId"), 80) || null;
+  const kind = cleanString(url.searchParams.get("kind"), 40) || null;
+  const from = cleanString(url.searchParams.get("from"), 40) || null;
+  const to = cleanString(url.searchParams.get("to"), 40) || null;
+  const unreconciledOnly = url.searchParams.get("unreconciled") === "true";
+  const limit = Math.min(1000, Math.max(1, Number(url.searchParams.get("limit")) || 200));
+
+  const [ledger, tenantRows, accountRows] = await Promise.all([
+    listLedger(env, { tenantId, intakeId, kind, from, to, reconciled: unreconciledOnly ? false : undefined, limit }),
+    env.DB.prepare("SELECT id, name FROM tenants ORDER BY name").all(),
+    env.DB.prepare("SELECT tenant_id, stripe_account_id FROM stripe_accounts").all()
+  ]);
+
+  // The connected-account id per tenant, so a row can be opened in the Stripe
+  // dashboard without a second lookup.
+  const accounts = Object.fromEntries(accountRows.results.map((row) => [row.tenant_id, row.stripe_account_id]));
+  return json({
+    ...ledger,
+    tenants: tenantRows.results.map((row) => ({ id: row.id, name: row.name, stripeAccountId: accounts[row.id] || null })),
+    filters: { tenantId, intakeId, kind, from, to, unreconciled: unreconciledOnly, limit }
+  });
+}
+
+/**
+ * Mark rows as matched against a Stripe payout.
+ *
+ * Deliberately manual. Automatic reconciliation would need to read Stripe's
+ * payout reports on a schedule, and until that exists the honest thing is a
+ * button an operator presses after they have actually checked, with their
+ * user id recorded next to it.
+ */
+async function reconcileLedger(request, env, actor) {
+  const body = await readJson(request).catch(() => null);
+  const ids = Array.isArray(body?.ids) ? body.ids.map((id) => cleanString(id, 80)).filter(Boolean) : [];
+  if (!ids.length) return apiError(422, "NO_ENTRIES", "Provide the ledger entry ids to mark reconciled.");
+  const changed = await markReconciled(env, ids, { by: actor.userId });
+  await recordAudit(env, {
+    actorUserId: actor.userId,
+    actorScope: "platform",
+    tenantId: null,
+    action: "ledger.reconciled",
+    target: ids[0],
+    detail: { requested: ids.length, changed }
+  });
+  return json({ reconciled: changed });
+}
+
+/* ------------------------------------------------------------- connect --- */
+
+/**
+ * Whether this clinic can be paid, and what is missing if it cannot.
+ *
+ * Refreshed from Stripe on every read rather than trusted from the table: an
+ * operator opens this screen precisely when they suspect the stored answer is
+ * stale, and a console that shows them the same stale answer is worse than no
+ * console. A Stripe outage degrades to the stored row rather than an error.
+ */
+async function handleConnectStatus(env, tenantId) {
+  const tenant = await getTenant(env, tenantId);
+  if (!tenant) return apiError(404, "TENANT_NOT_FOUND", "That workspace was not found.");
+  let account = await getStripeAccountForTenant(env, tenantId);
+  let refreshError = null;
+  if (account && stripeConfigured(env)) {
+    try {
+      const fresh = await retrieveConnectedAccount(env, account.stripeAccountId, { accountsApi: account.accountsApi });
+      account = await recordStripeAccount(env, {
+        tenantId,
+        stripeAccountId: account.stripeAccountId,
+        accountsApi: account.accountsApi,
+        account: fresh
+      }) || account;
+    } catch (error) {
+      refreshError = error.message;
+    }
+  }
+  const earnings = await clinicEarnings(env, tenantId, { limit: 10 });
+  return json({
+    tenantId,
+    stripeConfigured: stripeConfigured(env),
+    account,
+    earnings: { transferredCents: earnings.transferredCents, paidOutCents: earnings.paidOutCents, awaitingPayoutCents: earnings.awaitingPayoutCents },
+    refreshError
+  });
+}
+
+/**
+ * Start (or resume) embedded onboarding for a clinic.
+ *
+ * Creates the connected account on first call and an AccountSession every
+ * time. The client secret goes to the browser, which mounts Stripe's
+ * `account-onboarding` component inside this console — never a redirect to a
+ * Stripe-hosted page, and never a KYC form of our own.
+ *
+ * The account creation is idempotency-keyed on the tenant id, so a double
+ * click cannot leave a clinic with two connected accounts and half its money
+ * in each.
+ */
+async function startConnectOnboarding(env, actor, tenantId) {
+  if (!stripeConfigured(env)) return apiError(503, "PAYMENTS_NOT_CONFIGURED", "STRIPE_SECRET_KEY is not set on this Worker.");
+  const tenant = await getTenant(env, tenantId);
+  if (!tenant) return apiError(404, "TENANT_NOT_FOUND", "That workspace was not found.");
+
+  const accountsApi = env.STRIPE_ACCOUNTS_API === "v2" ? "v2" : "v1";
+  let stored = await getStripeAccountForTenant(env, tenantId);
+  try {
+    if (!stored) {
+      const location = await env.DB.prepare("SELECT * FROM locations WHERE tenant_id = ? AND active = 1 ORDER BY created_at LIMIT 1").bind(tenantId).first();
+      const created = await createConnectedAccount(env, {
+        tenantId,
+        businessName: tenant.name,
+        country: "US",
+        accountsApi,
+        supportUrl: env.VET_APP_URL || undefined
+      });
+      stored = await recordStripeAccount(env, { tenantId, stripeAccountId: created.id, accountsApi, account: created, createdBy: actor.userId });
+      await recordAudit(env, {
+        actorUserId: actor.userId,
+        actorScope: "platform",
+        tenantId,
+        action: "stripe.account.created",
+        target: created.id,
+        detail: { accountsApi, locationId: location?.id || null }
+      });
+    }
+    const session = await createOnboardingSession(env, stored.stripeAccountId);
+    return json({
+      // The client secret is single-use and short-lived, which is why it is
+      // returned rather than stored.
+      clientSecret: session.client_secret,
+      stripeAccountId: stored.stripeAccountId,
+      publishableKey: env.STRIPE_PUBLISHABLE_KEY || null,
+      account: stored
+    }, { status: 201 });
+  } catch (error) {
+    if (error instanceof StripeError) return apiError(error.status >= 400 && error.status < 600 ? error.status : 502, "STRIPE_REQUEST_FAILED", error.message);
+    throw error;
+  }
+}
+
 async function handleAudit(url, env) {
   const limit = Math.min(200, Math.max(1, Number(url.searchParams.get("limit")) || 100));
   const result = await env.DB.prepare(`
@@ -773,6 +940,14 @@ async function handleApi(request, env) {
     if (method === "POST" && locationsMatch) return addLocation(request, env, actor, decodeURIComponent(locationsMatch[1]));
 
     if (method === "GET" && path === "/api/admin/client-errors") return handleClientErrors(url, env);
+    if (method === "GET" && path === "/api/admin/ledger") return handleLedger(url, env);
+    if (method === "POST" && path === "/api/admin/ledger/reconcile") return reconcileLedger(request, env, actor);
+
+    const connectMatch = path.match(/^\/api\/admin\/tenants\/([^/]+)\/stripe$/);
+    if (method === "GET" && connectMatch) return handleConnectStatus(env, decodeURIComponent(connectMatch[1]));
+    const onboardingMatch = path.match(/^\/api\/admin\/tenants\/([^/]+)\/stripe\/onboarding-session$/);
+    if (method === "POST" && onboardingMatch) return startConnectOnboarding(env, actor, decodeURIComponent(onboardingMatch[1]));
+
     const adminsMatch = path.match(/^\/api\/admin\/tenants\/([^/]+)\/admins$/);
     if (method === "POST" && adminsMatch) return seatAdmin(request, env, actor, decodeURIComponent(adminsMatch[1]));
 
