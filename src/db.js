@@ -442,6 +442,18 @@ export function normalizeIntakeRow(row) {
     depositAmountCents: row.deposit_amount_cents,
     paymentStatus: row.payment_status,
     paymentProviderId: row.payment_provider_id,
+    // Frozen at settlement rather than recomputed. A tenant that edits its
+    // policy afterwards must not retroactively change what a past visit was
+    // worth, and `settlementOutcome` being non-null is what stops the
+    // settlement sweep paying the same intake twice. Null on every row
+    // written before migration 0008.
+    settlementOutcome: row.settlement_outcome || null,
+    settledAt: row.settled_at || null,
+    clinicAmountCents: row.clinic_amount_cents ?? null,
+    platformFeeCents: row.platform_fee_cents ?? null,
+    refundAmountCents: row.refund_amount_cents ?? null,
+    stripeTransferId: row.stripe_transfer_id || null,
+    transferGroup: row.transfer_group || null,
     sourceSearchId: row.source_search_id || null,
     selectedOfferId: row.selected_offer_id || null,
     createdAt: row.created_at,

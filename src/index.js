@@ -10,6 +10,14 @@ import {
   revokeInvitation
 } from "./tenant-admin.js";
 import { DEMO_LOCATIONS, LEGAL_VERSION, RED_FLAG_TERMS, TECHNICIAN_NOTICE, VALID_INTAKE_STATUS, VALID_SPECIES, VALID_URGENCY } from "./catalog.js";
+import {
+  clinicEarnings,
+  ensureDepositPaymentIntent,
+  handleStripeEvent,
+  outcomeForIntake,
+  settleIntake
+} from "./payments.js";
+import { stripeConfigured, StripeError, verifyWebhookSignature } from "./stripe.js";
 import { findEmergencyVeterinaryPlaces, phoneKey } from "./mapbox-places.js";
 import {
   getCareOffer,
@@ -1183,68 +1191,207 @@ export async function decideIntake(request, env, actor, tenantId, intakeId) {
   return json({ intake: await getIntake(env, intake.id) });
 }
 
-async function createPaymentIntent(env, intake) {
-  if (!intake.policy?.depositRequired || intake.depositAmountCents <= 0) return { mode: "none", intake };
-  if (intake.paymentStatus === "paid") return { mode: "paid", intake };
-  if (!env.STRIPE_SECRET_KEY) {
-    if (env.DEMO_MODE !== "true") throw new Error("PAYMENTS_NOT_CONFIGURED");
-    const providerId = newId("demo_payment");
-    await env.DB.prepare("UPDATE intake_requests SET payment_status = 'paid', payment_provider_id = ?, updated_at = ? WHERE id = ?")
-      .bind(providerId, new Date().toISOString(), intake.id).run();
-    return { mode: "demo", intake: await getIntake(env, intake.id) };
-  }
-
-  const form = new URLSearchParams();
-  form.set("amount", String(intake.depositAmountCents));
-  form.set("currency", "usd");
-  form.set("automatic_payment_methods[enabled]", "true");
-  form.set("description", `Tími arrival deposit ${intake.publicCode}`);
-  form.set("metadata[intake_id]", intake.id);
-  form.set("metadata[tenant_id]", intake.tenantId);
-  const response = await fetch("https://api.stripe.com/v1/payment_intents", {
-    method: "POST",
-    headers: { authorization: `Bearer ${env.STRIPE_SECRET_KEY}`, "content-type": "application/x-www-form-urlencoded" },
-    body: form.toString()
-  });
-  const payment = await response.json();
-  if (!response.ok) throw new Error(payment.error?.message || "Stripe rejected the payment request");
-  await env.DB.prepare("UPDATE intake_requests SET payment_status = 'requires_action', payment_provider_id = ?, updated_at = ? WHERE id = ?")
-    .bind(payment.id, new Date().toISOString(), intake.id).run();
-  return { mode: "stripe", clientSecret: payment.client_secret, paymentIntentId: payment.id, intake: await getIntake(env, intake.id) };
-}
-
-async function handlePayment(request, env, actor, intakeId) {
+/**
+ * Create (or return) the deposit PaymentIntent, and hand the client what it
+ * needs to mount Elements: the client secret and the publishable key.
+ *
+ * The publishable key travels with the response so a native client never has
+ * to hold its own copy — one place to rotate it, and no app release needed to
+ * do so. It is public by definition; `/api/config` serves the same value.
+ */
+async function handlePaymentIntent(request, env, actor, intakeId) {
   if (!hasDatabase(env)) return apiError(503, "DATABASE_REQUIRED", "D1 is required for payments.");
   const intake = await getIntake(env, intakeId);
   if (!intake) return apiError(404, "INTAKE_NOT_FOUND", "The intake request was not found.");
+  // Ownership, not merely authentication. Without this any signed-in account
+  // could mint a PaymentIntent against somebody else's intake and read a
+  // client secret that completes their payment.
   if (signInRequired(env) && intake.customerUserId !== actor?.userId) return apiError(403, "INTAKE_ACCESS_DENIED", "This intake belongs to another account.");
   if (!new Set(["accepted", "en_route"]).has(intake.status)) return apiError(409, "INTAKE_NOT_ACCEPTED", "The clinic must accept the intake before collecting a deposit.");
+
   try {
-    return json(await createPaymentIntent(env, intake), { status: 201 });
+    const result = await ensureDepositPaymentIntent(env, intake);
+    return json({
+      ...result,
+      publishableKey: env.STRIPE_PUBLISHABLE_KEY || null,
+      depositAmountCents: intake.depositAmountCents,
+      currency: "usd"
+    }, { status: 201 });
   } catch (error) {
-    const status = error.message === "PAYMENTS_NOT_CONFIGURED" ? 503 : 502;
-    return apiError(status, error.message === "PAYMENTS_NOT_CONFIGURED" ? error.message : "PAYMENT_PROVIDER_ERROR", error.message);
+    return paymentFailure(error);
   }
 }
 
+function paymentFailure(error) {
+  if (error.message === "PAYMENTS_NOT_CONFIGURED") {
+    return apiError(503, "PAYMENTS_NOT_CONFIGURED", "Deposits are not configured on this deployment.");
+  }
+  if (error instanceof StripeError) {
+    // Stripe's own message, and never the request that produced it: a
+    // PaymentIntent body echoed into an error response is a client secret in
+    // somebody's logs.
+    return apiError(error.status >= 400 && error.status < 600 ? error.status : 502, "PAYMENT_PROVIDER_ERROR", error.message);
+  }
+  return apiError(502, "PAYMENT_PROVIDER_ERROR", error.message);
+}
+
+/** The original route, kept so existing clients keep working. */
+function handlePayment(request, env, actor, intakeId) {
+  return handlePaymentIntent(request, env, actor, intakeId);
+}
+
+/**
+ * The customer's view of their own deposit.
+ *
+ * Read-only on purpose. It used to reach into Stripe and write
+ * `payment_status` from whatever it found, which made a *client-triggered
+ * GET* the thing that marked a deposit paid — a customer who never paid could
+ * hold the page open and eventually be told they had. State changes now
+ * arrive at `/api/stripe/webhook`, signed by Stripe. This reports.
+ */
 async function refreshPayment(env, actor, intakeId) {
   if (!hasDatabase(env)) return apiError(503, "DATABASE_REQUIRED", "D1 is required for payments.");
   const intake = await getIntake(env, intakeId);
   if (!intake) return apiError(404, "INTAKE_NOT_FOUND", "The intake request was not found.");
   if (signInRequired(env) && intake.customerUserId !== actor?.userId) return apiError(403, "INTAKE_ACCESS_DENIED", "This intake belongs to another account.");
-  if (!intake.paymentProviderId || intake.paymentProviderId.startsWith("demo_") || !env.STRIPE_SECRET_KEY) return json({ intake });
-  const response = await fetch(`https://api.stripe.com/v1/payment_intents/${encodeURIComponent(intake.paymentProviderId)}`, {
-    headers: { authorization: `Bearer ${env.STRIPE_SECRET_KEY}` }
+  return json({
+    intake,
+    paymentsProvider: stripeConfigured(env) ? "stripe" : (env.DEMO_MODE === "true" ? "demo" : "none")
   });
-  const payment = await response.json();
-  if (!response.ok) return apiError(502, "PAYMENT_PROVIDER_ERROR", payment.error?.message || "Unable to verify payment.");
-  const statusMap = { succeeded: "paid", processing: "processing", requires_payment_method: "failed", requires_action: "requires_action", canceled: "failed" };
-  const paymentStatus = statusMap[payment.status] || intake.paymentStatus;
-  if (paymentStatus !== intake.paymentStatus) {
-    await env.DB.prepare("UPDATE intake_requests SET payment_status = ?, updated_at = ? WHERE id = ?")
-      .bind(paymentStatus, new Date().toISOString(), intake.id).run();
+}
+
+/**
+ * What this clinic has earned and what Stripe has already paid it.
+ *
+ * Scoped to the caller's own tenant with no way to name another — the tenant
+ * id comes from the session, never from the request. Every number is read
+ * from our ledger rather than from the clinic's Stripe balance, so the
+ * console explains Tími's arithmetic and not Stripe's.
+ */
+async function clinicPayouts(env, tenantId) {
+  if (!hasDatabase(env)) return json({ earnings: { transferredCents: 0, paidOutCents: 0, awaitingPayoutCents: 0, currency: "usd", transfers: [], payouts: [] }, connect: null });
+  const { getStripeAccountForTenant } = await import("./payments.js");
+  const [earnings, account] = await Promise.all([
+    clinicEarnings(env, tenantId),
+    getStripeAccountForTenant(env, tenantId)
+  ]);
+  return json({
+    earnings,
+    // Only the parts a clinic needs to act on. The requirements hash is an
+    // operator's problem and stays in the platform console.
+    connect: account ? {
+      onboardingStatus: account.onboardingStatus,
+      transfersEnabled: account.transfersEnabled,
+      payoutsEnabled: account.payoutsEnabled,
+      disabledReason: account.disabledReason
+    } : null
+  });
+}
+
+/**
+ * Stripe's webhook. Public, because Stripe does not sign in — the signature
+ * is the authentication.
+ *
+ * This is the only endpoint that moves payment state. A client reporting
+ * success is not evidence: the app can be closed before the charge clears,
+ * the network can drop the confirmation, and anybody can POST whatever they
+ * like to a URL. Stripe telling us over a signed channel is the fact, so the
+ * ledger and every `payment_status` transition are written from here.
+ *
+ * `request.text()` before anything else: signature verification needs the
+ * exact bytes Stripe sent, and parsing then re-serializing the JSON changes
+ * the hash even when it changes nothing a human would notice.
+ */
+async function handleStripeWebhook(request, env) {
+  if (!hasDatabase(env)) return apiError(503, "DATABASE_REQUIRED", "D1 is required to record payment events.");
+  const raw = await request.text();
+  const signature = request.headers.get("stripe-signature");
+
+  const verified = await verifyWebhookSignature(raw, signature, env.STRIPE_WEBHOOK_SECRET);
+  if (!verified.ok) {
+    // 400, never 401: Stripe retries a 401 forever and treats a 400 as a
+    // rejected delivery. The reason is logged, not returned — telling an
+    // unauthenticated caller which check failed helps only the caller.
+    console.warn(JSON.stringify({ event: "stripe_webhook_rejected", reason: verified.reason }));
+    return apiError(400, "SIGNATURE_INVALID", "The webhook signature could not be verified.");
   }
-  return json({ intake: await getIntake(env, intake.id), providerStatus: payment.status });
+
+  let payload;
+  try {
+    payload = JSON.parse(raw);
+  } catch {
+    return apiError(400, "MALFORMED_EVENT", "The webhook body is not JSON.");
+  }
+
+  try {
+    const result = await handleStripeEvent(env, payload);
+    await settleFromEvent(env, payload, result);
+    console.log(JSON.stringify({ event: "stripe_webhook", type: payload.type, id: payload.id, handled: Boolean(result.handled), duplicate: Boolean(result.duplicate) }));
+    return json({ received: true, ...result });
+  } catch (error) {
+    // 500 so Stripe retries. The event row is already marked failed, and the
+    // idempotency claim is released by the retry taking the same path.
+    console.error(JSON.stringify({ event: "stripe_webhook_error", type: payload.type, id: payload.id, message: error.message }));
+    return apiError(500, "WEBHOOK_PROCESSING_FAILED", "The event was verified but could not be applied.");
+  }
+}
+
+/**
+ * Settle an intake whose deposit has just cleared and whose outcome is
+ * already known.
+ *
+ * The ordinary order is the other way round — the money arrives, the animal
+ * is seen, the outcome settles — but a delayed payment method can succeed
+ * after the clinic has already recorded the visit, and without this the
+ * clinic would never be paid for it.
+ */
+async function settleFromEvent(env, event, result) {
+  if (!result?.handled || event.type !== "payment_intent.succeeded" || !result.intakeId) return;
+  const intake = await getIntake(env, result.intakeId);
+  if (!intake || intake.settlementOutcome) return;
+  const outcome = outcomeForIntake(intake);
+  if (!outcome) return;
+  await settleIntake(env, intake, { outcome, stripeEventId: event.id });
+}
+
+/**
+ * Pay out everything whose outcome is settled and whose money has not moved.
+ *
+ * A sweep rather than a hook on the status change, for two reasons. A clinic
+ * can finish Stripe onboarding days after the visit it was owed for, and the
+ * transfer that was refused then has to happen now. And a transfer that fails
+ * — Stripe down, balance insufficient — must be retried without anybody
+ * noticing it failed; leaving `settlement_outcome` null is what makes the row
+ * come back here.
+ */
+async function settleOutstandingIntakes(env) {
+  if (!hasDatabase(env)) return;
+  const rows = await env.DB.prepare(`
+    SELECT id FROM intake_requests
+    WHERE settlement_outcome IS NULL
+      AND status IN ('completed', 'seen', 'no_show', 'cancelled', 'declined', 'expired')
+      AND payment_status IN ('paid', 'refunded')
+    ORDER BY updated_at
+    LIMIT 50
+  `).all();
+  let settled = 0;
+  const refusals = [];
+  for (const row of rows.results) {
+    const intake = await getIntake(env, row.id);
+    if (!intake) continue;
+    try {
+      const result = await settleIntake(env, intake, {});
+      if (result.settled) settled += 1;
+      else refusals.push({ intakeId: row.id, reason: result.reason });
+    } catch (error) {
+      // One clinic's restricted account must not stop the sweep for every
+      // other clinic, so this is logged and the loop continues.
+      refusals.push({ intakeId: row.id, reason: error.name === "StripeError" ? error.code || "STRIPE_ERROR" : "ERROR", message: error.message });
+    }
+  }
+  if (rows.results.length) {
+    console.log(JSON.stringify({ event: "settlement_sweep", candidates: rows.results.length, settled, refusals }));
+  }
 }
 
 async function expireStaleState(env) {
@@ -1351,6 +1498,10 @@ async function handleApi(request, env, ctx) {
   // Public on purpose: the reports worth having most are from somebody who
   // could not sign in.
   if (method === "POST" && path === "/api/client-errors") return recordClientError(request, env);
+  // Public because Stripe does not carry a Clerk session. The Stripe-Signature
+  // header is this endpoint's entire authentication, and it is checked before
+  // the body is parsed — see handleStripeWebhook.
+  if (method === "POST" && path === "/api/stripe/webhook") return handleStripeWebhook(request, env);
   if (method === "GET" && path.startsWith("/api/locations/")) {
     const location = await getLocation(env, decodeURIComponent(path.slice("/api/locations/".length)));
     return location ? json({ location: enrichLocation(location) }) : apiError(404, "LOCATION_NOT_FOUND", "The hospital was not found.");
@@ -1396,7 +1547,7 @@ async function handleApi(request, env, ctx) {
     }
   }
 
-  const intakeMatch = path.match(/^\/api\/intakes\/([^/]+)(?:\/(status|payment|payment-status))?$/);
+  const intakeMatch = path.match(/^\/api\/intakes\/([^/]+)(?:\/(status|payment|payment-intent|payment-status))?$/);
   if (intakeMatch) {
     const intakeId = decodeURIComponent(intakeMatch[1]);
     const action = intakeMatch[2] || null;
@@ -1408,6 +1559,7 @@ async function handleApi(request, env, ctx) {
     }
     if (method === "POST" && action === "status") return updateCustomerIntakeStatus(request, env, actor, intakeId);
     if (method === "POST" && action === "payment") return handlePayment(request, env, actor, intakeId);
+    if (method === "POST" && action === "payment-intent") return handlePaymentIntent(request, env, actor, intakeId);
     if (method === "GET" && action === "payment-status") return refreshPayment(env, actor, intakeId);
   }
 
@@ -1416,6 +1568,7 @@ async function handleApi(request, env, ctx) {
     const tenantId = actor.tenantId;
     if (!tenantId) return apiError(403, "TENANT_REQUIRED", "Choose an active Clerk organization mapped to a Tími tenant.");
     if (method === "GET" && path === "/api/clinic/dashboard") return clinicDashboard(env, tenantId);
+    if (method === "GET" && path === "/api/clinic/payouts") return clinicPayouts(env, tenantId);
     if (method === "POST" && path === "/api/clinic/availability") return setClinicAvailability(request, env, actor, tenantId);
     if (path === "/api/clinic/call-preferences") {
       if (method === "GET") return getCallPreferences(env, tenantId);
@@ -1452,6 +1605,9 @@ export default {
 
   async scheduled(_controller, env, ctx) {
     ctx.waitUntil(expireStaleState(env));
+    // After the sweep, not before: the same tick that turns an intake into a
+    // no-show is the tick that should pay the clinic its no-show share.
+    ctx.waitUntil(settleOutstandingIntakes(env));
     // The voice gateway has no scheduler of its own — one cron for the account
     // rather than two. Immediate dispatch handles the time-critical path; this
     // sweep picks up retries and anything that failed to dispatch.
