@@ -46,6 +46,7 @@ const requiredFiles = [
   "src/stripe.js",
   "src/payments.js",
   "scripts/stripe-test.mjs",
+  "docs/STRIPE.md",
   "scripts/voice-test.mjs",
   ".env.example",
   "docs/PRODUCTION-SETUP.md",
