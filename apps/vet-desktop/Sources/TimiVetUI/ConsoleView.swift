@@ -8,12 +8,16 @@ public struct ConsoleView: View {
     var onOpenMini: () -> Void
     var onManagePeople: () -> Void
     var onSignOut: () -> Void
+    /// Plays the intake alert on demand. "No sound fires" is not something
+    /// anybody should have to wait for a real patient to test.
+    var onTestAlert: () -> Void
 
-    public init(store: ClinicStore, onOpenMini: @escaping () -> Void, onManagePeople: @escaping () -> Void, onSignOut: @escaping () -> Void) {
+    public init(store: ClinicStore, onOpenMini: @escaping () -> Void, onManagePeople: @escaping () -> Void, onSignOut: @escaping () -> Void, onTestAlert: @escaping () -> Void = { }) {
         self.store = store
         self.onOpenMini = onOpenMini
         self.onManagePeople = onManagePeople
         self.onSignOut = onSignOut
+        self.onTestAlert = onTestAlert
     }
 
     public var body: some View {
@@ -203,8 +207,26 @@ public struct ConsoleView: View {
             ScrollView {
                 VStack(spacing: 0) {
                     ForEach(store.requests) { request in
-                        Button { store.select(request) } label: { requestRow(request) }
-                            .buttonStyle(.plain)
+                        VStack(spacing: 0) {
+                            Button { store.select(request) } label: { requestRow(request) }
+                                .buttonStyle(.plain)
+                            // Answering is the ordinary case, so it happens
+                            // here. Opening the workspace is for shaping an
+                            // offer — a later time, a different window, a note.
+                            if request.status == "pending" {
+                                HStack(spacing: 8) {
+                                    Button("Yes, we can see them") { Task { await store.answer(request, decline: false) } }
+                                        .buttonStyle(TimiVetPrimaryButtonStyle(color: TimiVetColor.blue))
+                                        .disabled(store.isBusy)
+                                    Button("No") { Task { await store.answer(request, decline: true) } }
+                                        .buttonStyle(TimiVetQuietButtonStyle())
+                                        .disabled(store.isBusy)
+                                }
+                                .padding(.horizontal, 16)
+                                .padding(.bottom, 14)
+                                .background(request.id == store.selectedRequest?.id ? TimiVetColor.blueSoft : Color.clear)
+                            }
+                        }
                         Divider().foregroundStyle(TimiVetColor.cardBorderAlt)
                     }
                 }
@@ -331,7 +353,13 @@ public struct ConsoleView: View {
                     Text("Polling interval, seconds").font(TimiVetFont.ui(13, weight: .semibold))
                     Stepper("\(store.settings.pollSeconds) sec", value: $store.settings.pollSeconds, in: 3...60)
                     Toggle("Desktop intake alerts", isOn: $store.settings.alertsEnabled)
-                    Toggle("Play alert sound", isOn: $store.settings.playSound)
+                    HStack {
+                        Toggle("Play alert sound", isOn: $store.settings.playSound)
+                        Spacer()
+                        Button("Test", action: onTestAlert).buttonStyle(TimiVetQuietButtonStyle())
+                    }
+                    Text("The alert plays through normal output, not the system alert beep — that follows a separate Alert Volume slider, and macOS silences a notification's own sound while this window is frontmost.")
+                        .font(TimiVetFont.ui(10)).foregroundStyle(TimiVetColor.muted)
                     Toggle("Floating console stays on top", isOn: $store.settings.miniWindowTopmost)
                     Toggle("Floating console stays above everything (screen saver level)", isOn: $store.settings.stayAboveEverything)
                     Toggle("Open floating console automatically on a new request", isOn: $store.settings.autoShowMiniOnNewRequest)

@@ -1344,6 +1344,86 @@ for (const path of [
   }
 }
 
+// A network blip at launch is not a sign-out. `catch { signOutLocally() }`
+// treated "Clerk says this session is gone" and "the phone had no network for
+// a second while the app opened" as the same thing — and signOutLocally
+// deletes the Keychain item, so one blip signed somebody out permanently and,
+// once the store began clearing account data on sign-out, took their pets and
+// their history with it.
+for (const [path, marker] of [
+  ["apps/customer-mobile/Sources/TimiNowCore/AuthController.swift", "isCredentialRejected"],
+  ["apps/vet-desktop/Sources/TimiVetCore/AuthController.swift", "isCredentialRejected"]
+]) {
+  const source = await read(path);
+  if (!source.includes(marker) || !/func resumeWithoutChecking\(\)/.test(source)) {
+    throw new Error(`${path} signs out on any failure while restoring a session. Only Clerk rejecting the credential is a sign-out; a timeout or a 5xx says nothing about the account, and the Keychain item is deleted either way.`);
+  }
+  // The restore path must not have a bare catch-all that reaches signOutLocally.
+  const restore = source.slice(source.indexOf("let client = try await getClient()"));
+  const firstCatchAll = restore.indexOf("} catch {");
+  const body = restore.slice(firstCatchAll, firstCatchAll + 140);
+  if (firstCatchAll !== -1 && /signOutLocally\(\)/.test(body)) {
+    throw new Error(`${path}: the catch-all while restoring a session still calls signOutLocally(). That is the blip-signs-you-out bug.`);
+  }
+}
+
+// The console paints a light palette by hand; AppKit's own controls follow the
+// system appearance. On a Mac in dark mode that put dark text boxes inside
+// light cards with their labels black on black, and nothing in the decision
+// workspace could be read. The phone app pins itself light the same way.
+{
+  const delegate = await read("apps/vet-desktop/Sources/TimiVetApp/AppDelegate.swift");
+  if (!/NSApp\.appearance = NSAppearance\(named: \.aqua\)/.test(delegate)) {
+    throw new Error("apps/vet-desktop/Sources/TimiVetApp/AppDelegate.swift does not pin the console to the light appearance. Every system control in the workspace renders dark against hand-painted light cards.");
+  }
+  for (const path of [
+    "apps/vet-desktop/Sources/TimiVetApp/TimiVetApp.swift",
+    "apps/vet-desktop/Sources/TimiVetUI/FloatingPanel.swift"
+  ]) {
+    const source = await read(path);
+    if (!/preferredColorScheme\(\.light\)/.test(source)) {
+      throw new Error(`${path} hosts a SwiftUI hierarchy in an AppKit window without pinning its colour scheme, so it follows the system into dark mode on its own.`);
+    }
+  }
+}
+
+// A queue alert has to lead to an answer. It led to "Open decision workspace":
+// find the window, read four number fields, press a button — for what is
+// almost always "yes, usual window" or "no, we're full".
+{
+  const store = await read("apps/vet-desktop/Sources/TimiVetCore/ClinicStore.swift");
+  if (!/func answer\(_ request: ClinicRequest, decline: Bool\)/.test(store)) {
+    throw new Error("apps/vet-desktop/Sources/TimiVetCore/ClinicStore.swift has no one-press answer, so every response has to go through the decision workspace.");
+  }
+  for (const path of [
+    "apps/vet-desktop/Sources/TimiVetUI/MiniConsoleView.swift",
+    "apps/vet-desktop/Sources/TimiVetUI/ConsoleView.swift"
+  ]) {
+    const source = await read(path);
+    if (!/store\.answer\(request, decline: false\)/.test(source) || !/store\.answer\(request, decline: true\)/.test(source)) {
+      throw new Error(`${path} does not offer accept and decline on the request itself. The floating panel raising an alert whose only action is "open another window" is what this replaced.`);
+    }
+  }
+  const alerts = await read("apps/vet-desktop/Sources/TimiVetUI/AlertCenter.swift");
+  const alertCode = alerts.split("\n").filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line)).join("\n");
+  if (/NSSound\.beep\(\)/.test(alertCode)) {
+    throw new Error("apps/vet-desktop/Sources/TimiVetUI/AlertCenter.swift uses NSSound.beep(), which follows the separate Alert Volume slider and is routinely silent. Play a named sound through normal output.");
+  }
+  if (!/func playAlert\(emergency: Bool\)/.test(alerts) || !/private var alertSound: NSSound\?/.test(alerts)) {
+    throw new Error("apps/vet-desktop/Sources/TimiVetUI/AlertCenter.swift must hold the NSSound while it plays — one released mid-sound simply stops, which is its own silent-alert bug.");
+  }
+}
+
+// One offer on screen with no sign that more are coming reads as the final
+// answer, and waiting for a second that may never arrive is the delay this
+// app exists to remove.
+{
+  const offers = await read("apps/customer-mobile/Sources/TimiNowUI/OfferAndTrackerViews.swift");
+  if (!/var stillCollecting: Bool/.test(offers) || !/Still asking/.test(offers)) {
+    throw new Error("apps/customer-mobile/Sources/TimiNowUI/OfferAndTrackerViews.swift does not say whether more clinics are still being asked, so the first offer looks like the last one.");
+  }
+}
+
 const csharpFiles = await collectFiles("apps/vet-windows", ".cs");
 for (const path of csharpFiles) {
   const problems = bracketProblems(await read(path));

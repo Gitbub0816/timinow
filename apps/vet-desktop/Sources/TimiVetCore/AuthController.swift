@@ -156,9 +156,40 @@ public struct AuthWorkspaceOption: Identifiable, Hashable, Sendable {
             }
             _ = try await ensureFreshToken()
             await refreshSession()
+        } catch let error as ClinicAPIError {
+            if Self.isCredentialRejected(error) { signOutLocally(); return }
+            resumeWithoutChecking()
         } catch {
-            signOutLocally()
+            resumeWithoutChecking()
         }
+    }
+
+    /// Stay signed in when the check could not be made.
+    ///
+    /// `catch { signOutLocally() }` treated "Clerk says this session is gone"
+    /// and "the network was not up yet when the console launched" as the same
+    /// thing, and signOutLocally deletes the Keychain item — so a console
+    /// opened before the Wi-Fi reconnected asked the clinic to sign in again,
+    /// permanently.
+    private func resumeWithoutChecking() {
+        if workerToken != nil && activeSessionId != nil {
+            stage = .signedIn
+            Task { await refreshSession() }
+        } else {
+            stage = .identifier
+        }
+    }
+
+    /// Clerk refusing the credential, as distinct from not being reachable.
+    /// A timeout or a 5xx says nothing about the account.
+    private static func isCredentialRejected(_ error: ClinicAPIError) -> Bool {
+        if case .server(let message) = error {
+            let lowered = message.lowercased()
+            return lowered.contains("unauthenticated") || lowered.contains("unauthorized")
+                || lowered.contains("session") && lowered.contains("expired")
+        }
+        if case .signInRequired = error { return true }
+        return false
     }
 
     // MARK: - Identifier -> first factor

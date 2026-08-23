@@ -56,11 +56,46 @@ struct OfferSearchView: View {
         }.padding(.top, 18)
     }
 
+    /// True while the Worker is still collecting answers, as distinct from
+    /// having finished with however many it got.
+    var stillCollecting: Bool { store.currentSearch?.status == "collecting" }
+    var awaitingCount: Int { max(0, store.currentSearch?.progress?.awaiting ?? 0) }
+
+    var headline: String {
+        if stillCollecting { return "\(store.draft.pet.name) has an answer." }
+        return offers.count == 1 ? "\(store.draft.pet.name) has one option." : "\(store.draft.pet.name) has options."
+    }
+
     var offersView: some View {
         VStack(alignment: .leading, spacing: 17) {
             Eyebrow(text: "\(offers.count) OF \(store.currentSearch?.maxOffers ?? 5) OFFERS", color: TimiColor.blue)
-            Text("\(store.draft.pet.name) has options.").font(.system(size: 40, weight: .bold, design: .serif))
+            Text(headline).font(.system(size: 40, weight: .bold, design: .serif))
             Text("Compare the clinics below. Nothing is confirmed until you choose.").foregroundStyle(TimiColor.muted)
+            // Offers appear the moment a clinic says yes, so the first one is
+            // choosable while the rest are still being asked. Without saying
+            // so, one offer on screen looks like the final answer — and
+            // waiting for a second that may never come is exactly the delay
+            // this app exists to remove.
+            if stillCollecting {
+                HStack(spacing: 10) {
+                    ProgressView().tint(TimiColor.blue)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Still asking \(awaitingCount) more clinic\(awaitingCount == 1 ? "" : "s")")
+                            .font(.callout).fontWeight(.black)
+                        Text("You can take one of these now — the rest are released the moment you do.")
+                            .font(.caption).foregroundStyle(TimiColor.muted)
+                    }
+                    Spacer()
+                }
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(TimiColor.blueSoft, in: RoundedRectangle(cornerRadius: 15))
+            } else {
+                Text(offers.count == 1
+                    ? "One clinic answered. That is the whole answer for now — the rest declined or did not respond in time."
+                    : "\(offers.count) clinics answered. Asking has finished.")
+                    .font(.caption).fontWeight(.semibold).foregroundStyle(TimiColor.muted)
+            }
             ClinicMapView(
                 clinics: offers.compactMap(\.location),
                 selectedClinicId: nil,

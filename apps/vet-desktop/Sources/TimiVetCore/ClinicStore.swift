@@ -165,6 +165,23 @@ import Observation
     public func offer() async { await respond(decline: false) }
     public func decline() async { await respond(decline: true) }
 
+    /// Answer one request without opening the workspace first.
+    ///
+    /// Every response used to go through the decision workspace: select the
+    /// row, read four number fields, press a button. That is the right screen
+    /// for shaping an offer and the wrong one for the ordinary case, which is
+    /// "yes, usual window" or "no, we're full" — and it is the only thing the
+    /// floating panel could offer at all, which is why a queue alert led to
+    /// "Open decision workspace" rather than to an answer.
+    ///
+    /// The workspace's current values are used as they stand, which is what
+    /// makes this one press: they are the clinic's own defaults until somebody
+    /// changes them.
+    public func answer(_ request: ClinicRequest, decline: Bool) async {
+        selectedRequest = request
+        await respond(decline: decline)
+    }
+
     private func respond(decline: Bool) async {
         guard let request = selectedRequest else { return }
         if !decline && offerWaitMin > offerWaitMax { statusMessage = "Offer minimum wait cannot exceed maximum wait."; return }

@@ -164,14 +164,52 @@ public struct AuthFactorOption: Identifiable, Hashable, Sendable {
             let client = try await getClient()
             guard let sessionId = activeSessionId,
                   (client.sessions ?? []).contains(where: { $0.id == sessionId && $0.status == "active" }) else {
+                // Clerk answered, and does not know this session. That is a
+                // real sign-out.
                 signOutLocally()
                 return
             }
             _ = try await ensureFreshToken()
             markSignedIn()
+        } catch let error as TimiAPIError {
+            if Self.isCredentialRejected(error) { signOutLocally(); return }
+            resumeWithoutChecking()
         } catch {
-            signOutLocally()
+            resumeWithoutChecking()
         }
+    }
+
+    /// Stay signed in when the check could not be made.
+    ///
+    /// This used to be `catch { signOutLocally() }`, which treated "Clerk says
+    /// this session is gone" and "the phone had no network for a second at
+    /// launch" as the same thing — and `signOutLocally()` deletes the Keychain
+    /// item, so a single blip at the wrong moment signed somebody out
+    /// permanently and, once the store started clearing account data on
+    /// sign-out, took their pets and their history with it. Cellular handover
+    /// on app open is not an unusual event; it is what happens every time
+    /// somebody opens the app while walking.
+    ///
+    /// The credential survives, the app opens signed in if a Worker token is
+    /// still in hand, and the next call re-mints it once there is a network.
+    private func resumeWithoutChecking() {
+        if workerToken != nil && activeSessionId != nil {
+            markSignedIn()
+        } else {
+            // Nothing to run on, but still not a sign-out: the credential
+            // stays for the next launch.
+            stage = .identifier
+        }
+    }
+
+    /// Clerk refusing the credential, as distinct from not being reachable.
+    ///
+    /// 401/403 mean this client is not who it says it is; 404 means the
+    /// session no longer exists. A timeout, a 5xx or a 429 mean nothing about
+    /// the account at all.
+    private static func isCredentialRejected(_ error: TimiAPIError) -> Bool {
+        if case .server(let status, _, _, _) = error { return status == 401 || status == 403 || status == 404 }
+        return false
     }
 
     // MARK: - Email or phone

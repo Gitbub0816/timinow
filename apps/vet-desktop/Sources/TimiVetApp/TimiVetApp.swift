@@ -26,7 +26,8 @@ public struct RootView: View {
                         store: delegate.clinicStore,
                         onOpenMini: { delegate.showMiniConsole() },
                         onManagePeople: { delegate.showPeopleWindow() },
-                        onSignOut: { Task { await delegate.signOut() } }
+                        onSignOut: { Task { await delegate.signOut() } },
+                        onTestAlert: { delegate.alertCenter.previewAlert() }
                     )
                 } else {
                     NoClinicAccessView(onSignOut: { Task { await delegate.signOut() } })
@@ -36,6 +37,11 @@ public struct RootView: View {
             }
         }
         .frame(minWidth: 1180, minHeight: 720)
+        // Belt and braces with NSApp.appearance: a SwiftUI hierarchy hosted in
+        // an AppKit window keeps its own colour scheme, and every control in
+        // the decision workspace is a system one drawn against hand-painted
+        // light cards.
+        .preferredColorScheme(.light)
         .background(WindowConfigurator { window in delegate.registerMainWindow(window) })
         .task(id: delegate.authController.isSignedIn) {
             if delegate.authController.isSignedIn { await delegate.bootstrapAfterSignIn() }
