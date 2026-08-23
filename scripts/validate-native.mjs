@@ -1606,6 +1606,29 @@ for (const [path, marker] of [
     if (/SignOutLocally\(\)/.test(bareCatch[1]) || /_credentials\.Clear\(\)/.test(bareCatch[1])) {
       throw new Error(`${windowsRoot}/Services/ClerkAuthService.cs: the catch-all while restoring a session erases the credential. That is the blip-signs-you-out bug.`);
     }
+    // And it has to actually resume. The two checks above are satisfied by a
+    // ResumeWithoutChecking that returns Rejected — the method is present, the
+    // catch-all deletes nothing itself, and the caller signs out one frame
+    // later on the outcome it was handed. Verified by making exactly that
+    // change and watching the validator pass.
+    const resumeBody = memberBody(clerkAuth, "private SessionRestoreOutcome ResumeWithoutChecking()");
+    if (!resumeBody) {
+      throw new Error(`${windowsRoot}/Services/ClerkAuthService.cs no longer declares ResumeWithoutChecking, so an unreachable Clerk has no outcome that means "try again later".`);
+    }
+    if (/SessionRestoreOutcome\.Rejected/.test(resumeBody)) {
+      throw new Error(`${windowsRoot}/Services/ClerkAuthService.cs: ResumeWithoutChecking returns Rejected. Being unable to reach Clerk is not Clerk refusing the credential, and Rejected is the outcome that erases it — one blip on a clinic's morning Wi-Fi would sign them out permanently.`);
+    }
+    if (!/SessionRestoreOutcome\.(ResumedUnverified|Unreachable)/.test(resumeBody)) {
+      throw new Error(`${windowsRoot}/Services/ClerkAuthService.cs: ResumeWithoutChecking returns neither ResumedUnverified nor Unreachable, so there is no path that keeps a credential through a network failure.`);
+    }
+    // Erasing is allowed in exactly one place: the handler for a credential
+    // Clerk actually refused.
+    const erasingCatches = [...clerkAuth.matchAll(/catch[^\n]*\n\s*\{[\s\S]{0,300}?SignOutLocally\(\)/g)];
+    for (const hit of erasingCatches) {
+      if (!/IsCredentialRejected/.test(hit[0])) {
+        throw new Error(`${windowsRoot}/Services/ClerkAuthService.cs erases the credential from a catch that is not filtered on IsCredentialRejected. Only Clerk saying no is a sign-out.`);
+      }
+    }
   }
   if (!/CanResumeClinicSessionOffline/.test(appShell)) {
     throw new Error(`${windowsRoot}/App.xaml.cs drops to the sign-in window whenever /api/session cannot be reached, so a console opened before the network is up asks a clinic to complete a sign-in it has no connection for.`);
