@@ -185,7 +185,12 @@ struct SafetyBanner: View {
                 Button { Task { await store.findEmergencyCare() } } label: {
                     HStack(spacing: 8) {
                         if store.isFindingEmergency { ProgressView().tint(.white) }
-                        Text(store.isFindingEmergency ? "Finding emergency hospitals…" : "Find emergency care now")
+                        // Short, and allowed to shrink rather than clip: the
+                        // first label was long enough to overflow the button
+                        // and render with both ends cut off.
+                        Text(store.isFindingEmergency ? "Finding hospitals…" : "Emergency care now")
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.75)
                         Image(systemName: "arrow.right")
                     }
                 }
@@ -263,6 +268,7 @@ struct EmergencyClinicRow: View {
             if let address = clinic.address, !address.isEmpty {
                 Text(address).font(.callout).foregroundStyle(TimiColor.muted)
             }
+            StaffingNotice(notice: clinic.staffingNotice)
             HStack(spacing: 10) {
                 if let url = telephoneURL {
                     Link(destination: url) { Label("Call", systemImage: "phone.fill") }
@@ -302,6 +308,29 @@ struct EmergencyClinicRow: View {
             URLQueryItem(name: "q", value: clinic.name)
         ]
         return components?.url
+    }
+}
+
+/// Shown wherever a technician-staffed provider appears — an offer, an
+/// emergency result, a confirmed clinic.
+///
+/// A veterinary technician works under a veterinarian's supervision and cannot
+/// diagnose, prognose, prescribe, or perform surgery, so which one is on the
+/// floor changes what an offer can mean. The wording comes from the Worker so
+/// it is identical everywhere and cannot be edited per screen.
+struct StaffingNotice: View {
+    var notice: String?
+    var body: some View {
+        if let notice, !notice.isEmpty {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: "stethoscope").foregroundStyle(TimiColor.ink)
+                Text(notice).font(.caption).fontWeight(.semibold).foregroundStyle(TimiColor.ink)
+            }
+            .padding(11)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(TimiColor.goldSoft, in: RoundedRectangle(cornerRadius: 13))
+            .overlay(RoundedRectangle(cornerRadius: 13).stroke(TimiColor.gold))
+        }
     }
 }
 

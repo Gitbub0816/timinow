@@ -253,7 +253,7 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
             locations = try await gateway.locations(latitude: draft.latitude, longitude: draft.longitude, species: draft.pet.species, care: care)
             currentSearch = try await gateway.startSearch(draft, locationIds: locations.prefix(30).map(\.id))
             route = .searching
-        } catch { errorMessage = Self.describe(error) }
+        } catch { report(error) }
         isWorking = false
     }
 
@@ -287,6 +287,7 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
                 emergencyError = "No emergency hospital is listed within 120 miles. Call your regular veterinarian, who will have an after-hours number."
             }
         } catch {
+            if error is CancellationError || Task.isCancelled { isFindingEmergency = false; return }
             emergencyLocations = []
             emergencyError = Self.describe(error)
         }
@@ -296,7 +297,7 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
     public func refreshSearch() async {
         guard let search = currentSearch, !gateway.isDemo, ["collecting", "offers_ready"].contains(search.status) else { return }
         do { currentSearch = try await gateway.refreshSearch(search.id) }
-        catch { errorMessage = Self.describe(error) }
+        catch { report(error) }
     }
 
     public func selectOffer(_ offer: CareOffer) async {
@@ -311,7 +312,7 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
             showCelebration = true
             history.insert(CareHistoryItem(id: result.intake.id, petName: result.intake.pet?.name ?? selectedPet.name, clinicName: (result.location ?? offer.location)?.name ?? "Veterinary clinic", status: result.intake.status, dateISO: result.intake.decisionAt ?? ""), at: 0)
             persistHistory()
-        } catch { errorMessage = Self.describe(error) }
+        } catch { report(error) }
         isWorking = false
     }
 
@@ -320,14 +321,14 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
         if gateway.isDemo { intake.status = status; currentIntake = intake }
         else {
             do { currentIntake = try await gateway.updateIntake(intake.id, status: status) }
-            catch { errorMessage = Self.describe(error) }
+            catch { report(error) }
         }
     }
 
     public func record(_ milestone: String) async {
         guard var intake = currentIntake else { return }
         do { try await gateway.recordObservation(intake: intake, milestone: milestone); intake.status = milestone; currentIntake = intake }
-        catch { errorMessage = Self.describe(error) }
+        catch { report(error) }
     }
 
     public func resetCareFlow() {
@@ -396,6 +397,18 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
     /// completed. (TimiNowCore.TimiAPIError error 0.)" and nothing else.
     /// Every catch block goes through here so the real message reaches the
     /// screen.
+    /// Shows an error, unless it is a cancellation.
+    ///
+    /// Every screen that polls does so from a `.task`, which SwiftUI cancels
+    /// when the screen goes away — including when somebody presses Cancel. The
+    /// request in flight is cancelled with it, and reporting that as a failure
+    /// tells them something broke at the exact moment they asked for it to
+    /// stop.
+    func report(_ error: Error) {
+        if error is CancellationError || Task.isCancelled { return }
+        errorMessage = Self.describe(error)
+    }
+
     static func describe(_ error: Error) -> String {
         if let apiError = error as? TimiAPIError { return apiError.message }
         return error.localizedDescription

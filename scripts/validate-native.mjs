@@ -1203,6 +1203,122 @@ for (const path of [
   }
 }
 
+// The terms version a client sends must be the one the Worker accepts. It
+// rejects anything else outright, so a bump applied in one place and not the
+// other is a 422 on the last screen of the flow with nothing pointing at the
+// notice that changed. The string used to be a literal in eight files.
+{
+  const catalog = await read("src/catalog.js");
+  const declared = catalog.match(/export const LEGAL_VERSION = "([^"]+)"/);
+  if (!declared) throw new Error("src/catalog.js no longer declares LEGAL_VERSION.");
+  const client = await read("apps/customer-mobile/Sources/TimiNowCore/APIClient.swift");
+  const sent = client.match(/enum TimiLegal \{[\s\S]*?static let version = "([^"]+)"/);
+  if (!sent) throw new Error("apps/customer-mobile/Sources/TimiNowCore/APIClient.swift no longer declares TimiLegal.version.");
+  if (sent[1] !== declared[1]) {
+    throw new Error(`The phone app accepts terms version ${sent[1]}; the Worker accepts ${declared[1]}. Every care request is refused with 422 VALIDATION_FAILED.`);
+  }
+  // And nowhere else may carry its own copy.
+  for (const path of ["apps/customer-mobile/Sources/TimiNowCore/APIClient.swift", "public/app.js", "src/index.js"]) {
+    const source = await read(path);
+    const strays = [...source.matchAll(/legalVersion: "(\d{4}-\d{2}-\d{2})"/g)].map((hit) => hit[1]);
+    if (strays.length) {
+      throw new Error(`${path} hardcodes legalVersion ${strays.join(", ")}. Read it from LEGAL_VERSION (or /api/config) so it cannot drift from the Worker that validates it.`);
+    }
+  }
+}
+
+// Which credential staffs a provider is an operator's field, and the two Sets
+// that police it live in different Workers.
+{
+  const catalog = await read("src/catalog.js");
+  const admin = await read("apps/admin-console/src/index.js");
+  const values = (source) => {
+    const match = source.match(/VALID_STAFFING = new Set\(\[([^\]]*)\]/);
+    if (!match) return null;
+    return [...match[1].matchAll(/"([^"]+)"/g)].map((hit) => hit[1]).sort().join(",");
+  };
+  const expected = values(catalog);
+  const actual = values(admin);
+  if (!expected) throw new Error("src/catalog.js no longer declares VALID_STAFFING.");
+  if (!actual) throw new Error("apps/admin-console/src/index.js no longer declares VALID_STAFFING, so any string could be stored as a staffing level.");
+  if (expected !== actual) {
+    throw new Error(`apps/admin-console/src/index.js accepts staffing levels [${actual}] but src/catalog.js recognises [${expected}]. A level the customer Worker does not know reads as veterinarian-staffed, which is the wrong direction to be wrong in.`);
+  }
+  // The notice is composed once, server-side, so it cannot be reworded per
+  // screen. A client that builds its own would drift from the legal text.
+  const worker = await read("src/index.js");
+  if (!/staffingNotice:/.test(worker)) {
+    throw new Error("src/index.js no longer composes staffingNotice, so each client would have to word the scope-of-practice notice itself.");
+  }
+  // Both places somebody meets a clinic: the offer they choose between, and
+  // the one they were confirmed with. Counted rather than merely present,
+  // because dropping one leaves the other matching.
+  for (const [path, required] of [
+    ["apps/customer-mobile/Sources/TimiNowUI/OfferAndTrackerViews.swift", 2],
+    ["apps/customer-mobile/Sources/TimiNowUI/Components.swift", 1]
+  ]) {
+    const source = await read(path);
+    const shown = [...source.matchAll(/StaffingNotice\(notice:/g)].length;
+    if (shown < required) {
+      throw new Error(`${path} shows the staffing notice in ${shown} of ${required} places. Wherever it is missing, a technician-staffed provider is indistinguishable from a veterinarian-staffed one at the moment somebody chooses.`);
+    }
+  }
+}
+
+// Cancelling is not failing. SwiftUI cancels the search screen's polling task
+// when that screen goes away, which cancels the request in flight; URLSession
+// reports it as an error whose description is the single word "cancelled", so
+// pressing Cancel put "Could not reach …/api/searches/search_7af97a9e:
+// cancelled" on screen as though something had broken.
+{
+  const client = await read("apps/customer-mobile/Sources/TimiNowCore/APIClient.swift");
+  if (!/if Task\.isCancelled \{ throw CancellationError\(\) \}/.test(client)) {
+    throw new Error("apps/customer-mobile/Sources/TimiNowCore/APIClient.swift reports a cancelled request as a transport failure. Pressing Cancel then shows an error toast.");
+  }
+  const store = await read("apps/customer-mobile/Sources/TimiNowCore/AppStore.swift");
+  const reportBody = store.match(/func report\(_ error: Error\) \{[\s\S]*?\n    \}/);
+  if (!reportBody) {
+    throw new Error("apps/customer-mobile/Sources/TimiNowCore/AppStore.swift no longer has report(_:), so a cancelled poll surfaces as a failure.");
+  }
+  if (!/error is CancellationError/.test(reportBody[0])) {
+    throw new Error("apps/customer-mobile/Sources/TimiNowCore/AppStore.swift: report(_:) no longer drops cancellations, which is the only reason it exists.");
+  }
+  // The assignment belongs inside report(_:) and nowhere else — a catch that
+  // writes errorMessage directly is a cancellation toast waiting to happen.
+  const assignments = [...store.matchAll(/errorMessage = Self\.describe\(error\)/g)].length;
+  if (assignments !== 1) {
+    throw new Error(`apps/customer-mobile/Sources/TimiNowCore/AppStore.swift assigns errorMessage from a caught error in ${assignments} places; only report(_:) may. Pressing Cancel would show "cancelled" as a failure.`);
+  }
+}
+
+// Optional medical context is optional the whole way down: never required to
+// make a request, and never presented as anything but what the owner typed.
+{
+  const worker = await read("src/index.js");
+  if (!/cleanString\(pet\.medications, 500\)/.test(worker) || !/cleanString\(pet\.allergies, 500\)/.test(worker)) {
+    throw new Error("src/index.js no longer reads pet.medications and pet.allergies, so anything an owner records is dropped before it reaches a clinic.");
+  }
+  const errorsBlock = worker.slice(worker.indexOf("function validateIntake"), worker.indexOf("clinicConcernSummary ="));
+  if (/errors\.push\([^)]*(medication|allerg)/i.test(errorsBlock)) {
+    throw new Error("src/index.js validates medications or allergies as required. They are optional, and a care request must never depend on them.");
+  }
+  const legal = await read("apps/customer-mobile/Sources/TimiNowUI/SupportViews.swift");
+  for (const [needle, what] of [
+    ["veterinary technician", "the scope-of-practice notice for technician-staffed providers"],
+    ["Medications and allergies you record", "the notice covering optional medical information"]
+  ]) {
+    if (!legal.includes(needle)) {
+      throw new Error(`apps/customer-mobile/Sources/TimiNowUI/SupportViews.swift is missing ${what}. Both are shipped behaviour and both need a notice.`);
+    }
+  }
+  const web = await read("public/index.html");
+  for (const needle of ["veterinary technician", "Medications and allergies you record", "medications or allergies you choose to record"]) {
+    if (!web.includes(needle)) {
+      throw new Error(`public/index.html is missing the legal text for "${needle}". The web and the phone must carry the same notices.`);
+    }
+  }
+}
+
 const csharpFiles = await collectFiles("apps/vet-windows", ".cs");
 for (const path of csharpFiles) {
   const problems = bracketProblems(await read(path));

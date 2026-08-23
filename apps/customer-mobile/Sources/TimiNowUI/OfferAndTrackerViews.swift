@@ -91,6 +91,7 @@ struct OfferCard: View {
                 Text("\(rank)").font(.system(size: 21, weight: .black, design: .serif)).frame(width: 44, height: 44).background(rank == 1 ? TimiColor.gold : TimiColor.blueSoft, in: Circle()).overlay(Circle().stroke(TimiColor.ink, lineWidth: 2))
                 VStack(alignment: .leading, spacing: 4) { Eyebrow(text: isEmergency ? "EMERGENCY INTAKE OPEN" : "AVAILABLE NOW", color: isEmergency ? TimiColor.coral : TimiColor.blue); Text(clinic.name).font(.title3).fontWeight(.black); Text(clinic.address ?? "Address shown on confirmation").font(.caption).foregroundStyle(TimiColor.muted) }
             }
+            StaffingNotice(notice: clinic.staffingNotice)
             HStack(spacing: 8) { MetricChip(title: "Travel", value: clinic.distanceMiles.map { String(format: "%.1f mi", $0) } ?? "—"); MetricChip(title: "Reported wait", value: TimiFormat.wait(offer.waitMin, offer.waitMax), color: TimiColor.goldSoft) }
             HStack(spacing: 8) { MetricChip(title: "Deposit", value: TimiFormat.money(offer.depositAmountCents)); MetricChip(title: "Exam fee", value: (offer.baseExamFeeCents ?? 0) > 0 ? "From \(TimiFormat.money(offer.baseExamFeeCents))" : "Not supplied", color: TimiColor.coralSoft) }
             if details { VStack(alignment: .leading, spacing: 8) { Label(offer.clinicNote ?? "The clinic reports capacity for this arrival window.", systemImage: "quote.bubble.fill"); Label("Held temporarily while you compare", systemImage: "timer"); if isEmergency { Label("Examination priority is determined by clinical triage", systemImage: "cross.case.fill") } }.font(.caption).foregroundStyle(TimiColor.muted).transition(.opacity.combined(with: .move(edge: .top))) }
@@ -167,6 +168,7 @@ struct TrackerView: View {
     var clinicCard: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack { Image(systemName: "building.2.fill").font(.title).foregroundStyle(.white).frame(width: 54, height: 54).background(TimiColor.blue, in: RoundedRectangle(cornerRadius: 16)); VStack(alignment: .leading) { Text(clinic?.name ?? "Veterinary clinic").font(.title3).fontWeight(.black); Text(clinic?.address ?? "Address unavailable").font(.caption).foregroundStyle(TimiColor.muted) } }
+            StaffingNotice(notice: clinic?.staffingNotice)
             Divider(); Text(intake?.clinicNote ?? "The clinic is expecting your arrival. Capacity and clinical priority can still change.").font(.callout)
             HStack { if let phone = clinic?.phone, let url = URL(string: "tel:\(phone.filter { $0.isNumber || $0 == "+" })") { Link(destination: url) { Label("Call", systemImage: "phone.fill") } }; Spacer(); Button { showNavigation = true } label: { Label("Navigate", systemImage: "arrow.triangle.turn.up.right.diamond.fill") }.disabled(navigationDestination == nil) }.fontWeight(.bold).foregroundStyle(TimiColor.blue)
         }.timiCard(Color.white)

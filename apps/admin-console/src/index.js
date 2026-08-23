@@ -61,6 +61,9 @@ const SECURITY_HEADERS = {
 };
 
 const VALID_SPECIES = new Set(["dog", "cat", "bird", "rabbit", "reptile", "small_mammal", "other"]);
+// Set by an operator here, never by the clinic: a provider cannot declare its
+// own supervision level. See VALID_STAFFING in src/catalog.js.
+const VALID_STAFFING = new Set(["veterinarian", "veterinary_technician"]);
 const VALID_LOCATION_KINDS = new Set(["general", "urgent", "emergency", "specialty"]);
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 
@@ -168,6 +171,15 @@ function validateLocationInput(input, { requireAll = true } = {}) {
   const capabilities = Array.isArray(input?.capabilities)
     ? [...new Set(input.capabilities.map((value) => cleanString(value, 40).toLowerCase()).filter(Boolean))].slice(0, 20)
     : [];
+  // Absent means veterinarian, which is what every provider was before this
+  // field existed. An unrecognised value is rejected rather than defaulted:
+  // getting this wrong in the permissive direction would show a technician-run
+  // location as veterinarian-staffed.
+  const staffingLevel = cleanString(input?.staffingLevel, 40).toLowerCase() || "veterinarian";
+  const staffingNote = cleanString(input?.staffingNote, 300) || null;
+  if (!VALID_STAFFING.has(staffingLevel)) {
+    errors.push("location.staffingLevel must be veterinarian or veterinary_technician");
+  }
 
   if (requireAll) {
     if (!name) errors.push("location.name is required");
@@ -199,6 +211,8 @@ function validateLocationInput(input, { requireAll = true } = {}) {
     arrivalWindowMinutes: numberInRange(input?.arrivalWindowMinutes, 5, 180, 20),
     species,
     capabilities,
+    staffingLevel,
+    staffingNote,
     baseExamFeeCents: numberInRange(input?.baseExamFeeCents, 0, 10_000_00, null)
   };
 }
@@ -232,14 +246,16 @@ function insertLocationStatement(env, { id, tenantId, slug, location }) {
     INSERT INTO locations (
       id, tenant_id, name, slug, kind, address_line1, city, region, postal_code, phone,
       latitude, longitude, timezone, open_24_hours, accepts_walk_ins, auto_accept,
-      arrival_window_minutes, species_json, capabilities_json, base_exam_fee_cents, active
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+      arrival_window_minutes, species_json, capabilities_json, base_exam_fee_cents,
+      staffing_level, staffing_note, active
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
   `).bind(
     id, tenantId, location.name, slug, location.kind, location.addressLine1, location.city,
     location.region, location.postalCode, location.phone, location.latitude, location.longitude,
     location.timezone, location.open24Hours ? 1 : 0, location.acceptsWalkIns ? 1 : 0,
     location.autoAccept ? 1 : 0, location.arrivalWindowMinutes,
-    JSON.stringify(location.species), JSON.stringify(location.capabilities), location.baseExamFeeCents
+    JSON.stringify(location.species), JSON.stringify(location.capabilities), location.baseExamFeeCents,
+    location.staffingLevel, location.staffingNote
   );
 }
 
@@ -432,6 +448,8 @@ function adminLocationFromRow(row) {
     arrivalWindowMinutes: row.arrival_window_minutes,
     species: JSON.parse(row.species_json || "[]"),
     capabilities: JSON.parse(row.capabilities_json || "[]"),
+    staffingLevel: row.staffing_level || "veterinarian",
+    staffingNote: row.staffing_note || null,
     baseExamFeeCents: row.base_exam_fee_cents,
     active: Boolean(row.active),
     createdAt: row.created_at

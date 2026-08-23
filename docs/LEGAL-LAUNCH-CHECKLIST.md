@@ -6,15 +6,20 @@ Product copy and acceptance points are implemented in `public/index.html`. This 
 
 - A versioned Terms, Privacy/Notice at Collection, Veterinary Safety, Deposit/Refund, Clinic Participation, and Accessibility legal center.
 - Separate, unchecked acceptance for the current terms/safety notice and transactional contact consent.
-- Server-side enforcement of legal version `2026-08-21`; the acceptance version and timestamp are written into the intake event audit trail.
+- Server-side enforcement of legal version `2026-08-22` (`LEGAL_VERSION` in `src/catalog.js`, served on `/api/config`); the acceptance version and timestamp are written into the intake event audit trail.
 - A non-diagnostic boundary: Tími routes structured intake and never claims to diagnose, treat, prescribe, clinically triage, establish a VCPR, or guarantee an appointment.
 - Capacity source/age disclosure and a warning that critical patients can change waits and order.
 - Clinic-specific deposit policy disclosure before a request, repeated terms before payment, and a stored policy snapshot.
 - Privacy disclosure for contact, pet-concern, location, device/security, payment-status, and clinic organization data.
 - California privacy request contact and Global Privacy Control commitment; no sale or cross-context behavioral advertising.
 - Clinic responsibilities for licensure, independent medical judgment, accurate capacity, data handling, billing, and Stripe onboarding.
+- Scope-of-practice disclosure for providers staffed by a veterinary technician rather than a veterinarian. The flag is set by a platform operator at onboarding (never self-declared), stored on the location, and rendered from one server-composed string (`TECHNICIAN_NOTICE` in `src/catalog.js`) so no client can reword it. It states that a technician works under veterinarian supervision and may not diagnose, prognose, prescribe, or perform surgery, and that the label is not a verification of any individual's credential or licence status.
+- Optional owner-recorded medications and allergies, with a notice that they are unverified, are not a medical record, come from no veterinarian, are shared with every clinic a request reaches, and do not replace the treating clinic's own history-taking. The intake screen names them specifically when a profile has them, rather than covering them under "your structured intake".
 
 ## Required before accepting real deposits
+
+0. Have counsel review the two notices added in version `2026-08-22`: the veterinary-technician scope-of-practice disclosure and the owner-recorded medications/allergies notice. State practice acts differ on what a technician may do and on how a non-veterinarian provider may be advertised, so the wording and the labelling obligation are worth a specific read in every state Tími lists providers in.
+
 
 1. Confirm the operating company name, address, support emails, and any registered DBA/trademark.
 2. Have counsel approve the consumer Terms, Privacy Policy, deposit/refund language, limitation of liability, governing law, and clinic master services agreement.

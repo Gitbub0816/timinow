@@ -169,4 +169,37 @@ export const RED_FLAG_TERMS = [
 
 export const VALID_SPECIES = new Set(["dog", "cat", "bird", "rabbit", "reptile", "small_mammal", "other"]);
 export const VALID_URGENCY = new Set(["routine", "same_day", "urgent", "emergency"]);
+
+/**
+ * Which credential staffs a location.
+ *
+ * Not a self-declared field: it is set by a platform operator when the provider
+ * is created. A veterinary technician works under a veterinarian's supervision
+ * and, in every US state, may not diagnose, prognose, prescribe, or perform
+ * surgery — so which one is on the floor changes what an offer can mean, and a
+ * customer comparing offers has to be able to see it.
+ */
+export const VALID_STAFFING = new Set(["veterinarian", "veterinary_technician"]);
+
+/**
+ * The standard notice for a technician-staffed provider, worded once here so
+ * every surface says the same thing. An operator's own note is shown alongside
+ * it, never instead of it.
+ */
+export const TECHNICIAN_NOTICE =
+  "Staffed by a veterinary technician, not a veterinarian. Technicians work under veterinarian supervision and cannot diagnose, prognose, prescribe, or perform surgery. Suitable for minor concerns; anything that may need a diagnosis or treatment decision should go to a veterinarian.";
+
+/**
+ * The terms and safety notice a care request is accepted against.
+ *
+ * One constant, because the Worker rejects anything that does not match it
+ * exactly and it used to be a literal repeated across the Worker, the web
+ * client, the iOS client and four test files — eight places to keep in step,
+ * with a 422 on the last screen of the flow as the only warning when they fell
+ * out of it.
+ *
+ * 2026-08-22 adds the optional medications and allergies an owner may record,
+ * and the veterinary-technician staffing notice.
+ */
+export const LEGAL_VERSION = "2026-08-22";
 export const VALID_INTAKE_STATUS = new Set(["available", "limited", "confirm_first", "critical_only", "diverting", "closed", "unverified"]);

@@ -87,6 +87,8 @@ struct PetsView: View {
         var parts: [String] = [pet.species.title]
         if !pet.breed.isEmpty { parts.append(pet.breed) }
         if let weight = pet.weightLbs { parts.append(String(format: "%.0f lb", weight)) }
+        if !pet.allergies.isEmpty { parts.append("Allergies noted") }
+        if !pet.medications.isEmpty { parts.append("On medication") }
         return parts.joined(separator: " · ")
     }
 }
@@ -103,6 +105,8 @@ struct PetEditor: View {
     @State var species: PetSpecies = .dog
     @State var breed = ""
     @State var weight = ""
+    @State var medications = ""
+    @State var allergies = ""
     @State var confirmingDelete = false
     @State var loaded = false
 
@@ -116,6 +120,16 @@ struct PetEditor: View {
                     }
                     TextField("Breed", text: $breed)
                     TextField("Weight in pounds", text: $weight)
+                }
+                // Optional, and said so twice: in the header and in the
+                // footer. An owner who leaves both blank is not missing a step.
+                Section {
+                    TextField("Medications", text: $medications)
+                    TextField("Allergies", text: $allergies)
+                } header: {
+                    Text("Medications and allergies — optional")
+                } footer: {
+                    Text("Shared with the clinics your care request reaches, exactly as you write it. Tími is not a medical record: nothing here comes from a veterinarian, none of it is verified, and a clinic will confirm everything with you on arrival. Leave it blank if you would rather not.")
                 }
                 if let pet = editing {
                     Section {
@@ -155,7 +169,9 @@ struct PetEditor: View {
                             breed: breed.trimmingCharacters(in: .whitespaces),
                             weightLbs: Double(weight),
                             birthYear: existing?.birthYear,
-                            colorToken: existing?.colorToken ?? store.pets.count
+                            colorToken: existing?.colorToken ?? store.pets.count,
+                            medications: medications.trimmingCharacters(in: .whitespacesAndNewlines),
+                            allergies: allergies.trimmingCharacters(in: .whitespacesAndNewlines)
                         ))
                         isPresented = false
                     }.disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
@@ -171,6 +187,8 @@ struct PetEditor: View {
                     species = pet.species
                     breed = pet.breed
                     weight = pet.weightLbs.map { String(format: "%.0f", $0) } ?? ""
+                    medications = pet.medications
+                    allergies = pet.allergies
                 }
             }
         }
@@ -308,11 +326,13 @@ struct SettingsView: View {
 struct LegalView: View {
     var body: some View {
         ScrollView { VStack(alignment: .leading, spacing: 22) {
-            Eyebrow(text: "EFFECTIVE AUGUST 21, 2026"); Text("Legal and safety").font(.system(size: 40, weight: .bold, design: .serif))
+            Eyebrow(text: "EFFECTIVE AUGUST 22, 2026"); Text("Legal and safety").font(.system(size: 40, weight: .bold, design: .serif))
             legalSection("Tími is not veterinary care", "Tími provides technology for locating participating veterinary facilities, displaying reported intake capacity, sharing structured operational intake, and comparing availability offers. Tími does not diagnose, prescribe, recommend treatment, create a veterinarian-client-patient relationship, guarantee care, or replace clinical triage.")
             legalSection("No promise of care or priority", "A listing, reported status, offer, estimated wait, or arrival window is not a guaranteed appointment or examination time. Capacity can change. The independent clinic decides whether and when to examine or treat an animal, and critical patients may be seen first.")
-            legalSection("Information sharing", "Your structured intake may be shared with up to 30 matching participating clinics, including clinics you do not select, so they can evaluate current capacity. Tími displays up to five active offers. Only the clinic you choose is confirmed. Service providers may process data for hosting, authentication, communications, security, analytics, and payments.")
+            legalSection("Information sharing", "Your structured intake — including any medications or allergies you chose to record — may be shared with up to 30 matching participating clinics, including clinics you do not select, so they can evaluate current capacity. Tími displays up to five active offers. Only the clinic you choose is confirmed. Service providers may process data for hosting, authentication, communications, security, analytics, and payments.")
             legalSection("Deposits and veterinary charges", "When a clinic requires a deposit, its amount, policy version, cancellation, refund, and no-show rules are shown before payment. Unless that displayed policy says otherwise, the deposit is credited to the clinic invoice. The clinic bills remaining veterinary charges and handles insurance. Tími does not submit insurance claims.")
+            legalSection("Providers staffed by a veterinary technician", "Some participating providers are staffed by a registered, licensed, or certified veterinary technician rather than a veterinarian, and Tími labels them before you choose. A veterinary technician works under a veterinarian's supervision and, under state practice acts, may not diagnose, prognose, prescribe, or perform surgery. Those providers are listed for minor concerns; anything that may need a diagnosis or a treatment decision should go to a veterinarian. The label is set by Tími from what the provider supplies at onboarding and is not a verification of any individual's credential, licence status, or scope of practice.")
+            legalSection("Medications and allergies you record", "Anything you add to a pet profile is optional, stored as you type it, and shared with the clinics your care request reaches. Tími is not a medical record system: nothing in that field comes from a veterinarian, none of it is verified, and no clinic may rely on it in place of its own history-taking. Keep it current, confirm it with the treating clinic, and do not record anything you would not want shared with the clinics contacted for a request.")
             legalSection("Emergency safety", "Do not wait for Tími if your animal may be in immediate danger. Travel to the nearest appropriate emergency-capable veterinary facility while someone calls ahead. For suspected poisoning, contact a veterinarian or recognized animal poison-control service immediately.")
             legalSection("Operator and contact", "Tími NOW is operated by ClearKey Solutions, LLC in Hayward, California. California law governs the service to the extent permitted. Contact legal@clearkey.solutions or privacy@clearkey.solutions for applicable requests.")
         }.padding(20).padding(.bottom, 40) }.background(TimiColor.paper).navigationTitle("Legal")

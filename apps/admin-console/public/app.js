@@ -394,6 +394,9 @@ function renderLocationCard(loc) {
     <h3>${escapeHtml(loc.name)} <span class="pill role-member">${escapeHtml(loc.kind)}</span></h3>
     <p>${escapeHtml(loc.addressLine1)}, ${escapeHtml(loc.city)}, ${escapeHtml(loc.region)} ${escapeHtml(loc.postalCode)} · ${escapeHtml(loc.phone)}</p>
     <p>${loc.species.map(escapeHtml).join(", ")}${loc.capabilities.length ? " · " + loc.capabilities.map(escapeHtml).join(", ") : ""}</p>
+    ${loc.staffingLevel === "veterinary_technician"
+      ? `<p class="hint"><strong>Veterinary technician staffed.</strong> Customers see the standard scope-of-practice notice before choosing this provider.${loc.staffingNote ? " " + escapeHtml(loc.staffingNote) : ""}</p>`
+      : ""}
   </div>`;
 }
 
@@ -758,6 +761,8 @@ function wireStaticHandlers() {
         arrivalWindowMinutes: Number(form.loc_arrival.value) || 20,
         species,
         capabilities,
+        staffingLevel: form.loc_techstaffed.checked ? "veterinary_technician" : "veterinarian",
+        staffingNote: form.loc_staffingnote.value.trim() || undefined,
         baseExamFeeCents: form.loc_examfee.value ? Math.round(Number(form.loc_examfee.value) * 100) : undefined
       },
       policy: {

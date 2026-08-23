@@ -1,3 +1,4 @@
+import { LEGAL_VERSION } from "../src/catalog.js";
 import { readFile } from "node:fs/promises";
 import { DatabaseSync } from "node:sqlite";
 import worker from "../src/index.js";
@@ -55,6 +56,7 @@ database.exec(await readFile("migrations/0002_seed.sql", "utf8"));
 database.exec(await readFile("migrations/0003_multi_offer_search.sql", "utf8"));
 database.exec(await readFile("migrations/0004_tenancy_admin.sql", "utf8"));
 database.exec(await readFile("migrations/0005_voice_calls.sql", "utf8"));
+database.exec(await readFile("migrations/0006_care_context.sql", "utf8"));
 
 const env = {
   ASSETS: { fetch: async () => new Response("asset") },
@@ -84,7 +86,7 @@ const intakePayload = {
   travelMinutes: 12,
   consentToContact: true,
   legalConsent: true,
-  legalVersion: "2026-08-21"
+  legalVersion: LEGAL_VERSION
 };
 
 let result = await call("/api/locations?lat=37.6688&lng=-122.0808&species=dog&care=urgent");
@@ -110,6 +112,45 @@ assert(result.response.status === 201, "Arrival observation must be stored");
 
 result = await call("/api/clinic/dashboard", { headers: { "x-demo-role": "clinic", "x-demo-tenant-id": "tenant_hearth" } });
 assert(result.response.status === 200 && result.body.requests.some((item) => item.id === acceptedId), "Clinic dashboard must contain its intake");
+
+/* ------------------------------ optional medications and allergies --- */
+
+// Optional means optional: the intake above carried neither and was accepted.
+// When they are given they must reach the clinic unchanged, because a
+// paraphrased allergy is worse than none.
+result = await call("/api/intakes", {
+  method: "POST",
+  headers: { "content-type": "application/json" },
+  body: JSON.stringify({
+    ...intakePayload,
+    pet: { ...intakePayload.pet, medications: "Apoquel 5.4mg twice daily", allergies: "Penicillin — hives last spring" }
+  })
+});
+assert(result.response.status === 201, `Medications and allergies must not block an intake: ${JSON.stringify(result.body)}`);
+const medicalIntakeId = result.body.intake.id;
+assert(result.body.intake.pet.medications === "Apoquel 5.4mg twice daily", "Medications must round-trip verbatim");
+assert(result.body.intake.pet.allergies === "Penicillin — hives last spring", "Allergies must round-trip verbatim");
+
+result = await call("/api/clinic/dashboard", { headers: { "x-demo-role": "clinic", "x-demo-tenant-id": "tenant_hearth" } });
+const clinicView = result.body.requests.find((item) => item.id === medicalIntakeId);
+assert(clinicView?.pet.allergies === "Penicillin — hives last spring", "The clinic must see the allergies the owner recorded");
+assert(clinicView?.pet.medications === "Apoquel 5.4mg twice daily", "The clinic must see the medications the owner recorded");
+
+/* ------------------------------------- veterinary technician staffing --- */
+
+// A provider a platform operator has marked technician-staffed must carry the
+// scope-of-practice notice everywhere it is listed, worded by the Worker so no
+// client can reword it.
+database.prepare("UPDATE locations SET staffing_level = 'veterinary_technician', staffing_note = ? WHERE id = 'loc_juniper'")
+  .run("A veterinarian is on call weekday evenings.");
+result = await call("/api/locations?lat=37.6688&lng=-122.0808&species=dog&care=urgent");
+const technicianRun = result.body.locations.find((item) => item.id === "loc_juniper");
+const veterinarianRun = result.body.locations.find((item) => item.id === "loc_hearth");
+assert(technicianRun?.staffingLevel === "veterinary_technician", "The staffing level must reach the client");
+assert(/cannot diagnose, prognose, prescribe, or perform surgery/.test(technicianRun?.staffingNotice || ""), "A technician-staffed provider must carry the scope-of-practice notice");
+assert(/on call weekday evenings/.test(technicianRun?.staffingNotice || ""), "The operator's own note must appear alongside the standard notice, not instead of it");
+assert(veterinarianRun?.staffingNotice === null, "A veterinarian-staffed provider must carry no notice — a row written before the column existed is not 'unknown'");
+database.prepare("UPDATE locations SET staffing_level = 'veterinarian', staffing_note = NULL WHERE id = 'loc_juniper'").run();
 
 result = await call("/api/clinic/availability", {
   method: "POST",
@@ -205,4 +246,4 @@ for (const table of tableChecks) {
 }
 
 database.close();
-console.log("D1 end-to-end tests passed: five-offer search, atomic customer selection, clinic release, policy snapshot, deposit, travel, observation, expiry, and audit.");
+console.log("D1 end-to-end tests passed: five-offer search, atomic customer selection, clinic release, policy snapshot, deposit, travel, optional medications and allergies, veterinary-technician staffing notices, observation, expiry, and audit.");

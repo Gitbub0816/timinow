@@ -90,12 +90,16 @@ public final class TimiGateway: @unchecked Sendable {
         guard let baseURL else { return DemoData.search(for: draft) }
         let payload = StartSearchPayload(
             locationIds: locationIds, targetLimit: 30, radiusMiles: 50,
-            pet: PetPayload(name: draft.pet.name, species: draft.pet.species.rawValue, breed: draft.pet.breed, weightLbs: draft.pet.weightLbs),
+            pet: PetPayload(
+                name: draft.pet.name, species: draft.pet.species.rawValue, breed: draft.pet.breed, weightLbs: draft.pet.weightLbs,
+                medications: draft.pet.medications.isEmpty ? nil : draft.pet.medications,
+                allergies: draft.pet.allergies.isEmpty ? nil : draft.pet.allergies
+            ),
             owner: OwnerPayload(name: draft.ownerName, phone: draft.ownerPhone, email: draft.ownerEmail.isEmpty ? nil : draft.ownerEmail),
             concernCategory: draft.urgency == .emergency ? "possible_emergency" : "illness_or_injury", concernSummary: draft.summary,
             symptoms: draft.symptomKeys, startedWhen: draft.startedWhen, urgency: draft.urgency.rawValue, redFlags: draft.redFlags,
             customerLatitude: draft.latitude, customerLongitude: draft.longitude, consentToContact: draft.contactConsent,
-            legalConsent: draft.legalConsent, legalVersion: "2026-08-21"
+            legalConsent: draft.legalConsent, legalVersion: TimiLegal.version
         )
         let envelope: CareSearchEnvelope = try await send(baseURL.appendingPathComponent("api/searches"), method: "POST", body: payload)
         return envelope.search
@@ -134,7 +138,17 @@ public final class TimiGateway: @unchecked Sendable {
         let _: ObservationEnvelope = try await send(baseURL.appendingPathComponent("api/observations"), method: "POST", body: ObservationPayload(intakeId: intake.id, locationId: intake.locationId, milestone: milestone))
     }
 
-    /// `GET /api/config` → `map`: the Mapbox public token and the style URL,
+    /// The terms and safety notice this build accepts against.
+///
+/// The Worker rejects a care request whose `legalVersion` is not exactly its
+/// own — `LEGAL_VERSION` in src/catalog.js — so a version bumped in one place
+/// and not the other is a 422 on the last screen of the flow with no
+/// explanation attached to the notice that changed.
+public enum TimiLegal {
+    public static let version = "2026-08-22"
+}
+
+/// `GET /api/config` → `map`: the Mapbox public token and the style URL,
     /// per docs/PLATFORM-CONTRACT.md. Returns `nil` in demo mode so callers
     /// keep the compiled-in `MapDefaults.styleURL`.
     public func fetchMapConfig() async throws -> MapConfig? {
@@ -171,6 +185,13 @@ public final class TimiGateway: @unchecked Sendable {
         do {
             (responseData, response) = try await session.data(for: request)
         } catch {
+            // Cancelling is not failing. SwiftUI cancels the search screen's
+            // polling task the moment that screen goes away, which cancels the
+            // request in flight, and URLSession reports that as an error whose
+            // description is the single word "cancelled" — so pressing Cancel
+            // put "Could not reach …/api/searches/search_7af97a9e: cancelled"
+            // on screen as though something had gone wrong.
+            if Task.isCancelled { throw CancellationError() }
             // A URLError reaching the UI unwrapped reads as "The operation
             // couldn't be completed" with no host and no reason, which is the
             // same dead end as before. Wrapped, it says which address failed
@@ -194,7 +215,13 @@ public final class TimiGateway: @unchecked Sendable {
     }
 }
 
-private struct PetPayload: Encodable { var name: String; var species: String; var breed: String; var weightLbs: Double? }
+private struct PetPayload: Encodable {
+    var name: String; var species: String; var breed: String; var weightLbs: Double?
+    /// Omitted when blank rather than sent as "": a clinic reading an empty
+    /// allergies line has been told something, and it is not true.
+    var medications: String?
+    var allergies: String?
+}
 private struct StartSearchPayload: Encodable {
     var locationIds: [String]; var targetLimit: Int; var radiusMiles: Int; var pet: PetPayload; var owner: OwnerPayload
     var concernCategory: String; var concernSummary: String; var symptoms: [String]; var startedWhen: String; var urgency: String

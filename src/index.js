@@ -9,7 +9,7 @@ import {
   requireTenantAdmin,
   revokeInvitation
 } from "./tenant-admin.js";
-import { DEMO_LOCATIONS, RED_FLAG_TERMS, VALID_INTAKE_STATUS, VALID_SPECIES, VALID_URGENCY } from "./catalog.js";
+import { DEMO_LOCATIONS, LEGAL_VERSION, RED_FLAG_TERMS, TECHNICIAN_NOTICE, VALID_INTAKE_STATUS, VALID_SPECIES, VALID_URGENCY } from "./catalog.js";
 import {
   getCareOffer,
   getCareSearch,
@@ -123,6 +123,12 @@ function availabilityLabel(status) {
 function enrichLocation(location) {
   return {
     ...location,
+    // Composed here rather than in each client, so the wording cannot drift
+    // between the phone, the web page and the console. Null when a
+    // veterinarian staffs the place, which is the ordinary case.
+    staffingNotice: location.staffingLevel === "veterinary_technician"
+      ? [TECHNICIAN_NOTICE, location.staffingNote].filter(Boolean).join(" ")
+      : null,
     availability: {
       ...location.availability,
       label: availabilityLabel(location.availability.intakeStatus),
@@ -214,6 +220,11 @@ function validateIntake(body, { requireLocation = true } = {}) {
   const concernSummary = cleanString(body.concernSummary, 1200);
   const symptoms = Array.isArray(body.symptoms) ? [...new Set(body.symptoms.map((value) => cleanString(value, 50)).filter((value) => VALID_SYMPTOMS.has(value)))].slice(0, 9) : [];
   const startedWhen = cleanString(body.startedWhen, 40);
+  // Optional, always. Free text an owner chose to type, passed to the clinic
+  // verbatim; not a medical record, not received from any veterinarian, and
+  // never required to make a request.
+  const medications = cleanString(pet.medications, 500) || null;
+  const allergies = cleanString(pet.allergies, 500) || null;
   const redFlags = redFlagsFrom(concernSummary, body.redFlags);
   const urgency = redFlags.length ? "emergency" : requestedUrgency;
   const errors = [];
@@ -227,9 +238,9 @@ function validateIntake(body, { requireLocation = true } = {}) {
   if (specificityError) errors.push(specificityError);
   if (!VALID_URGENCY.has(urgency)) errors.push("urgency is invalid");
   if (body.consentToContact !== true) errors.push("consentToContact is required");
-  if (body.legalConsent !== true || cleanString(body.legalVersion, 20) !== "2026-08-21") errors.push("current terms and safety notice must be accepted");
+  if (body.legalConsent !== true || cleanString(body.legalVersion, 20) !== LEGAL_VERSION) errors.push("current terms and safety notice must be accepted");
   const clinicConcernSummary = `${humanizeOnset(startedWhen)} · ${symptoms.map(humanizeSymptom).join(", ")} · ${concernSummary}`;
-  return { errors, pet, owner, species, urgency, concernSummary, clinicConcernSummary, symptoms, startedWhen, redFlags, legalVersion: "2026-08-21" };
+  return { errors, pet, owner, species, urgency, concernSummary, clinicConcernSummary, symptoms, startedWhen, redFlags, medications, allergies, legalVersion: LEGAL_VERSION };
 }
 
 /**
@@ -346,8 +357,9 @@ async function createIntake(request, env, actor) {
         age_years, weight_lbs, owner_name, owner_phone, owner_email, concern_category,
         concern_summary, urgency, red_flags_json, customer_latitude, customer_longitude,
         travel_minutes, status, requested_at, decision_at, request_expires_at, arrival_by,
-        policy_snapshot_json, deposit_amount_cents, payment_status, consent_to_contact
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+        policy_snapshot_json, deposit_amount_cents, payment_status, consent_to_contact,
+        medications, allergies
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
     `).bind(
       intakeId, code, location.id, location.tenantId, actor?.userId || null,
       cleanString(validated.pet.name, 80), validated.species, cleanString(validated.pet.breed, 120) || null,
@@ -355,7 +367,8 @@ async function createIntake(request, env, actor) {
       cleanString(validated.owner.email, 160) || null, cleanString(body.concernCategory, 80),
       validated.clinicConcernSummary, validated.urgency, JSON.stringify(validated.redFlags), customerLatitude,
       customerLongitude, travelMinutes, status, now, decisionAt, isoAfter(requestTtl), arrivalBy,
-      JSON.stringify(policy), policy.depositAmountCents || 0, paymentStatus
+      JSON.stringify(policy), policy.depositAmountCents || 0, paymentStatus,
+      validated.medications, validated.allergies
     ),
     env.DB.prepare(`
       INSERT INTO intake_events (id, intake_id, event_type, actor_type, actor_id, detail_json)
@@ -471,15 +484,16 @@ async function createCareSearch(request, env, actor) {
       owner_name, owner_phone, owner_email, concern_category, concern_summary, urgency,
       red_flags_json, customer_latitude, customer_longitude, radius_miles, status,
       max_offers, target_limit, legal_version, legal_accepted_at, requested_at,
-      collection_expires_at, search_expires_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'collecting', 5, ?, ?, ?, ?, ?, ?)
+      collection_expires_at, search_expires_at, medications, allergies
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'collecting', 5, ?, ?, ?, ?, ?, ?, ?, ?)
   `).bind(
     searchId, publicCode(), actor?.userId || null, cleanString(validated.pet.name, 80), validated.species,
     cleanString(validated.pet.breed, 120) || null, ageYears, weightLbs, cleanString(validated.owner.name, 120),
     cleanString(validated.owner.phone, 30), cleanString(validated.owner.email, 160) || null,
     cleanString(body.concernCategory, 80), validated.clinicConcernSummary, validated.urgency,
     JSON.stringify(validated.redFlags), latitude, longitude, radiusMiles, targetLimit,
-    validated.legalVersion, now, now, collectionExpiresAt, searchExpiresAt
+    validated.legalVersion, now, now, collectionExpiresAt, searchExpiresAt,
+    validated.medications, validated.allergies
   )];
 
   candidates.forEach((location, rank) => {
@@ -699,12 +713,12 @@ async function selectCareOffer(request, env, actor, searchId) {
         concern_summary, urgency, red_flags_json, customer_latitude, customer_longitude,
         travel_minutes, status, requested_at, decision_at, request_expires_at, arrival_by,
         clinic_note, policy_snapshot_json, deposit_amount_cents, payment_status, consent_to_contact,
-        source_search_id, selected_offer_id
+        source_search_id, selected_offer_id, medications, allergies
       )
       SELECT ?, ?, ?, ?, customer_user_id, pet_name, species, breed, age_years, weight_lbs,
              owner_name, owner_phone, owner_email, concern_category, concern_summary, urgency,
              red_flags_json, customer_latitude, customer_longitude, ?, 'accepted', requested_at,
-             ?, ?, ?, ?, ?, ?, ?, 1, id, ?
+             ?, ?, ?, ?, ?, ?, ?, 1, id, ?, medications, allergies
       FROM care_searches
       WHERE id = ? AND selected_offer_id = ? AND selected_intake_id IS NULL
     `).bind(

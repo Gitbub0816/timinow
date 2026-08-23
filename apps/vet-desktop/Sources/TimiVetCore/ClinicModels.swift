@@ -60,9 +60,15 @@ public struct PetSummary: Codable, Hashable, Sendable {
     public var breed: String?
     public var ageYears: Double?
     public var weightLbs: Double?
+    /// Optional, owner-supplied, unverified. Shown so the desk is not hearing
+    /// it for the first time when the animal walks in — not as a record, and
+    /// never as something to act on without confirming.
+    public var medications: String?
+    public var allergies: String?
 
-    public init(name: String = "Pet", species: String = "other", breed: String? = nil, ageYears: Double? = nil, weightLbs: Double? = nil) {
+    public init(name: String = "Pet", species: String = "other", breed: String? = nil, ageYears: Double? = nil, weightLbs: Double? = nil, medications: String? = nil, allergies: String? = nil) {
         self.name = name; self.species = species; self.breed = breed; self.ageYears = ageYears; self.weightLbs = weightLbs
+        self.medications = medications; self.allergies = allergies
     }
 }
 

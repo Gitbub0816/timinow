@@ -101,7 +101,11 @@ struct IntakeFlowView: View {
                     .autocorrectionDisabled().timiField()
             }
             VStack(alignment: .leading, spacing: 10) { Eyebrow(text: "BEFORE WE CONTACT CLINICS"); acknowledgement($store.draft.contactConsent, "I authorize Tími and contacted participating clinics to call or text me about this care request."); acknowledgement($store.draft.legalConsent, "I agree to the Terms, Privacy Notice, Veterinary Safety Notice, and the selected clinic's displayed policy.") }.timiCard(TimiColor.paper)
-            Text("Your structured intake may be shared with up to 30 matching participating clinics so they can respond. You may compare up to five active offers. Only the clinic you select is confirmed.").font(.caption).foregroundStyle(TimiColor.muted)
+            // Named specifically when there is something to name. A blanket
+            // "your structured intake" does not tell somebody that the
+            // medication list they typed into a pet profile weeks ago is about
+            // to reach thirty clinics.
+            Text(sharingNotice).font(.caption).foregroundStyle(TimiColor.muted)
             NavigationLink { LegalView() } label: { Label("Read legal and veterinary safety notices", systemImage: "doc.text.fill").font(.callout).fontWeight(.bold).foregroundStyle(TimiColor.blue) }
         }
     }
@@ -113,5 +117,14 @@ struct IntakeFlowView: View {
     /// UIKeyboardType in its signature, and that type does not exist on the
     /// Android side of this module.
     func fieldLabel(_ title: String) -> some View { Text(title).font(.headline) }
+
+    var sharingNotice: String {
+        let base = "Your structured intake may be shared with up to 30 matching participating clinics so they can respond. You may compare up to five active offers. Only the clinic you select is confirmed."
+        var recorded: [String] = []
+        if !store.draft.pet.allergies.isEmpty { recorded.append("allergies") }
+        if !store.draft.pet.medications.isEmpty { recorded.append("medications") }
+        guard !recorded.isEmpty else { return base }
+        return base + " That includes the \(recorded.joined(separator: " and ")) recorded on \(store.draft.pet.name)'s profile, which are unverified and shared exactly as you wrote them. Edit them under Pets."
+    }
     func acknowledgement(_ binding: Binding<Bool>, _ text: String) -> some View { Toggle(isOn: binding) { Text(text).font(.caption).fontWeight(.semibold) }.toggleStyle(.switch).tint(TimiColor.blue) }
 }

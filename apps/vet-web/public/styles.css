@@ -276,3 +276,20 @@ label.field { display: grid; gap: .35rem; font-size: .72rem; font-weight: 700; c
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .001ms !important; }
 }
+
+/* Owner-recorded allergies and medications: optional, unverified, and marked
+   as such wherever the console shows them. */
+.owner-supplied-medical {
+  margin: 0.6rem 0 0;
+  padding: 0.6rem 0.75rem;
+  border-radius: 8px;
+  background: #fff0b9;
+  border: 1px solid #f7c84b;
+  font-size: 0.85rem;
+}
+.owner-supplied-medical small {
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: #6f7483;
+}

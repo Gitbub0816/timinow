@@ -237,6 +237,19 @@ public struct ConsoleView: View {
         .background(request.id == store.selectedRequest?.id ? TimiVetColor.blueSoft : Color.clear)
     }
 
+    @ViewBuilder
+    private func ownerSuppliedRow(_ label: String, _ value: String?) -> some View {
+        if let value, !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("\(label) — REPORTED BY OWNER, UNVERIFIED").timiVetEyebrow()
+                Text(value).font(TimiVetFont.ui(14, weight: .semibold))
+            }
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(TimiVetColor.goldSoft, in: RoundedRectangle(cornerRadius: 8))
+        }
+    }
+
     private var decisionWorkspace: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
@@ -244,6 +257,11 @@ public struct ConsoleView: View {
                 if let request = store.selectedRequest {
                     Text(request.petLine).font(TimiVetFont.display(27))
                     Text(request.concernSummary).font(TimiVetFont.ui(15))
+                    // Owner-supplied and unverified, and labelled as such: it
+                    // arrives so the desk is not hearing it for the first time
+                    // at the door, not as a record to act on.
+                    ownerSuppliedRow("ALLERGIES", request.pet.allergies)
+                    ownerSuppliedRow("MEDICATIONS", request.pet.medications)
                     HStack(spacing: 18) {
                         ownerField("OWNER", request.owner.name)
                         ownerField("PHONE", request.owner.phone)

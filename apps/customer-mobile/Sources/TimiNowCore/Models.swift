@@ -30,9 +30,36 @@ public struct PetProfile: Identifiable, Codable, Hashable, Sendable {
     public var weightLbs: Double?
     public var birthYear: Int?
     public var colorToken: Int
+    /// Optional, always. What the owner chose to write down, passed to the
+    /// clinic as typed. Not a medical record: nothing here comes from a
+    /// veterinarian, and no request needs it.
+    public var medications: String
+    public var allergies: String
 
-    public init(id: String = UUID().uuidString, name: String, species: PetSpecies, breed: String = "", weightLbs: Double? = nil, birthYear: Int? = nil, colorToken: Int = 0) {
+    public init(id: String = UUID().uuidString, name: String, species: PetSpecies, breed: String = "", weightLbs: Double? = nil, birthYear: Int? = nil, colorToken: Int = 0, medications: String = "", allergies: String = "") {
         self.id = id; self.name = name; self.species = species; self.breed = breed; self.weightLbs = weightLbs; self.birthYear = birthYear; self.colorToken = colorToken
+        self.medications = medications; self.allergies = allergies
+    }
+
+    // Explicit, so a profile stored before these existed still decodes. Swift's
+    // synthesized init(from:) does not fall back to a property's default when
+    // the key is absent — it throws — and every pet on every phone was written
+    // without them.
+    enum CodingKeys: String, CodingKey {
+        case id, name, species, breed, weightLbs, birthYear, colorToken, medications, allergies
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        name = try container.decode(String.self, forKey: .name)
+        species = try container.decode(PetSpecies.self, forKey: .species)
+        breed = try container.decodeIfPresent(String.self, forKey: .breed) ?? ""
+        weightLbs = try container.decodeIfPresent(Double.self, forKey: .weightLbs)
+        birthYear = try container.decodeIfPresent(Int.self, forKey: .birthYear)
+        colorToken = try container.decodeIfPresent(Int.self, forKey: .colorToken) ?? 0
+        medications = try container.decodeIfPresent(String.self, forKey: .medications) ?? ""
+        allergies = try container.decodeIfPresent(String.self, forKey: .allergies) ?? ""
     }
 }
 
@@ -91,13 +118,20 @@ public struct ClinicLocation: Identifiable, Codable, Hashable, Sendable {
     public var distanceMiles: Double?
     public var baseExamFeeCents: Int?
     public var capabilities: [String]?
+    /// `veterinarian` or `veterinary_technician`, set by a platform operator.
+    public var staffingLevel: String?
+    /// The notice to show when this provider is technician-staffed. Composed by
+    /// the Worker so the wording is identical on every surface; nil when a
+    /// veterinarian staffs the place.
+    public var staffingNotice: String?
     public var availability: ClinicAvailability?
     public var policy: ClinicPolicy?
 
-    public init(id: String, tenantId: String? = nil, name: String, kind: String? = nil, address: String? = nil, phone: String? = nil, latitude: Double? = nil, longitude: Double? = nil, distanceMiles: Double? = nil, baseExamFeeCents: Int? = nil, capabilities: [String]? = nil, availability: ClinicAvailability? = nil, policy: ClinicPolicy? = nil) {
+    public init(id: String, tenantId: String? = nil, name: String, kind: String? = nil, address: String? = nil, phone: String? = nil, latitude: Double? = nil, longitude: Double? = nil, distanceMiles: Double? = nil, baseExamFeeCents: Int? = nil, capabilities: [String]? = nil, staffingLevel: String? = nil, staffingNotice: String? = nil, availability: ClinicAvailability? = nil, policy: ClinicPolicy? = nil) {
         self.id = id; self.tenantId = tenantId; self.name = name; self.kind = kind; self.address = address; self.phone = phone
         self.latitude = latitude; self.longitude = longitude; self.distanceMiles = distanceMiles; self.baseExamFeeCents = baseExamFeeCents
-        self.capabilities = capabilities; self.availability = availability; self.policy = policy
+        self.capabilities = capabilities; self.staffingLevel = staffingLevel; self.staffingNotice = staffingNotice
+        self.availability = availability; self.policy = policy
     }
 }
 

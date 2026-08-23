@@ -61,7 +61,10 @@ struct HomeView: View {
                 HStack(spacing: 12) { MetricChip(title: "One intake", value: "Up to 30 clinics"); MetricChip(title: "Your choice", value: "Up to 5 offers", color: TimiColor.goldSoft) }
                 SafetyBanner(compact: true, store: store)
                 VStack(alignment: .leading, spacing: 12) { Eyebrow(text: "HOW TÍMI WORKS"); processRow(1, "Describe what you observe", "Rules prevent vague requests before anything is shared."); processRow(2, "Clinics answer with live capacity", "Each response includes timing, wait, deposit, and offer hold."); processRow(3, "Choose the best fit", "Only your selected clinic is confirmed; every other offer is released.") }.timiCard(TimiColor.paper)
-            }.padding(20).padding(.bottom, 20)
+            // Enough clearance for the tab bar, which floats over the scroll
+            // view rather than shortening it — the last card was rendering
+            // behind it.
+            }.padding(20).padding(.bottom, 80)
         }.background(TimiColor.canvas)
     }
 
