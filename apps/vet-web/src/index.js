@@ -20,6 +20,7 @@ import { describeSession } from "../../../src/session.js";
 import { hasDatabase, tenantIdForClerkOrg } from "../../../src/db.js";
 import {
   clinicDashboard,
+  clinicPayouts,
   decideIntake,
   respondToCareSearch,
   setClinicAvailability
@@ -144,6 +145,9 @@ async function handleApi(request, env) {
     const tenantId = actor.tenantId;
     if (!tenantId) return apiError(403, "TENANT_REQUIRED", "Choose an active Clerk organization mapped to a Tími tenant.");
     if (method === "GET" && path === "/api/clinic/dashboard") return clinicDashboard(env, tenantId);
+    // Served here as well as on the customer Worker because the desktop
+    // consoles point at providers.timinow.pet, which is this one.
+    if (method === "GET" && path === "/api/clinic/payouts") return clinicPayouts(env, tenantId);
     if (method === "POST" && path === "/api/clinic/availability") return setClinicAvailability(request, env, actor, tenantId);
     const decisionMatch = path.match(/^\/api\/clinic\/intakes\/([^/]+)\/decision$/);
     if (method === "POST" && decisionMatch) return decideIntake(request, env, actor, tenantId, decodeURIComponent(decisionMatch[1]));

@@ -14,6 +14,8 @@ const state = {
   pendingFactor: null,
   bootstrap: null,
   route: { screen: "tenants" },
+  /** Survives a re-render so "mark reconciled" returns to the same view. */
+  ledgerFilters: { tenantId: "", kind: "", from: "", to: "", intakeId: "", unreconciled: false },
   map: null,
   marker: null
 };
@@ -95,11 +97,12 @@ function parseHash() {
   if (detailMatch) return { screen: "tenant-detail", id: decodeURIComponent(detailMatch[1]) };
   if (raw === "audit") return { screen: "audit" };
   if (raw === "errors") return { screen: "errors" };
+  if (raw === "ledger") return { screen: "ledger" };
   return { screen: "tenants" };
 }
 
 function updateNavActive() {
-  const top = ["audit", "errors"].includes(state.route.screen) ? state.route.screen : "tenants";
+  const top = ["audit", "errors", "ledger"].includes(state.route.screen) ? state.route.screen : "tenants";
   document.querySelectorAll("[data-nav]").forEach((a) => a.classList.toggle("active", a.dataset.nav === top));
 }
 
@@ -152,6 +155,11 @@ async function renderRoute() {
   if (state.route.screen === "errors") {
     showScreen("errors");
     await loadClientErrors();
+    return;
+  }
+  if (state.route.screen === "ledger") {
+    showScreen("ledger");
+    await loadLedger();
     return;
   }
   showScreen("tenants");
@@ -524,12 +532,134 @@ function renderTenantDetail(data) {
         </div>` : '<p class="page-lede">No policy on record.</p>'}
     </div>
 
+    <div class="panel" data-connect-panel>
+      <h2>Stripe Connect</h2>
+      <p class="page-lede">Loading connected account…</p>
+    </div>
+
     <div class="panel">
       <h2>Audit trail</h2>
       <div class="audit-list">${audit.length ? audit.map(renderAuditRow).join("") : '<p class="page-lede">No recorded actions yet.</p>'}</div>
     </div>
   `;
   wireTenantDetailEvents(tenant.id);
+  loadConnectStatus(tenant.id);
+}
+
+/* -------------------------------------------------------------- connect --- */
+
+/**
+ * Whether this clinic can actually be paid.
+ *
+ * Loaded after the rest of the page rather than with it: the Worker refreshes
+ * the account from Stripe on every read, so this is the one panel that can be
+ * slow, and blocking the whole workspace view on a Stripe round trip would
+ * make every other tab feel broken when Stripe is having a bad day.
+ */
+async function loadConnectStatus(tenantId) {
+  const panel = document.querySelector("[data-connect-panel]");
+  if (!panel) return;
+  try {
+    const data = await apiFetch(`/api/admin/tenants/${encodeURIComponent(tenantId)}/stripe`);
+    panel.innerHTML = renderConnectPanel(tenantId, data);
+    wireConnectPanel(tenantId);
+  } catch (error) {
+    panel.innerHTML = `<h2>Stripe Connect</h2><p class="page-lede">${escapeHtml(error.message)}</p>`;
+  }
+}
+
+const CONNECT_LABELS = {
+  not_started: "Not started",
+  in_progress: "Onboarding in progress",
+  restricted: "Waiting on Stripe",
+  complete: "Ready to receive transfers",
+  disabled: "Disabled by Stripe"
+};
+
+function renderConnectPanel(tenantId, data) {
+  const { account, earnings, refreshError, stripeConfigured } = data;
+  if (!stripeConfigured) {
+    return `<h2>Stripe Connect</h2><p class="page-lede">This console has no STRIPE_SECRET_KEY, so no connected account can be created or read. See docs/STRIPE.md.</p>`;
+  }
+  if (!account) {
+    return `<h2>Stripe Connect</h2>
+      <p class="page-lede">This clinic has no connected account, so nothing can be transferred to it. Deposits would still be collected — Tími is the merchant of record — and the clinic's share would sit in the platform balance until it onboards.</p>
+      <button class="button button-primary" type="button" data-connect-onboard>Start embedded onboarding</button>
+      <div data-connect-embed hidden style="margin-top:1.25rem;"></div>`;
+  }
+
+  // The one question that matters, answered first and in words rather than as
+  // a capability string nobody outside Stripe reads the same way.
+  const verdict = account.transfersEnabled
+    ? "This clinic can receive transfers."
+    : "This clinic CANNOT receive transfers. Settled intakes stay unsettled and are retried by the sweep until it can.";
+  const due = [
+    ...(account.requirements?.currently_due || []),
+    ...(account.requirements?.past_due || [])
+  ];
+
+  return `<h2>Stripe Connect<span class="hint"> — ${escapeHtml(CONNECT_LABELS[account.onboardingStatus] || account.onboardingStatus)}</span></h2>
+    <p class="page-lede">${escapeHtml(verdict)}</p>
+    ${refreshError ? `<p class="page-lede">Could not refresh from Stripe just now (${escapeHtml(refreshError)}); showing the last known answer.</p>` : ""}
+    <div class="tenant-summary">
+      <span><small>Account</small><strong style="font-size:.75rem; word-break:break-all;">${escapeHtml(account.stripeAccountId)}</strong></span>
+      <span><small>Accounts API</small><strong>${escapeHtml(account.accountsApi)}</strong></span>
+      <span><small>Transfers</small><strong>${escapeHtml(account.transfersStatus)}</strong></span>
+      <span><small>Payouts</small><strong>${escapeHtml(account.payoutsStatus)}</strong></span>
+      <span><small>Transferred</small><strong>${formatCents(earnings.transferredCents)}</strong></span>
+      <span><small>Paid out by Stripe</small><strong>${formatCents(earnings.paidOutCents)}</strong></span>
+      <span><small>Awaiting payout</small><strong>${formatCents(earnings.awaitingPayoutCents)}</strong></span>
+      <span><small>Checked</small><strong>${escapeHtml(formatDateTime(account.capabilitiesRefreshedAt))}</strong></span>
+    </div>
+    ${account.disabledReason ? `<p class="page-lede">Stripe reason: ${escapeHtml(account.disabledReason)}</p>` : ""}
+    ${due.length ? `<p class="page-lede">Stripe still needs: ${escapeHtml(due.join(", "))}</p>` : ""}
+    ${account.transfersEnabled ? "" : `<button class="button button-primary" type="button" data-connect-onboard>Continue embedded onboarding</button>`}
+    <div data-connect-embed hidden style="margin-top:1.25rem;"></div>`;
+}
+
+/**
+ * Mount Stripe's own onboarding component inside this page.
+ *
+ * Embedded, never a redirect and never a form of our own. A redirect drops
+ * the operator (or the clinic sitting with them) onto a Stripe-hosted page at
+ * the exact moment we are asking a business for its bank details, and an
+ * API-onboarding form would mean maintaining KYC fields per country forever.
+ */
+function wireConnectPanel(tenantId) {
+  const button = document.querySelector("[data-connect-onboard]");
+  if (!button) return;
+  button.addEventListener("click", async () => {
+    button.disabled = true;
+    const mount = document.querySelector("[data-connect-embed]");
+    mount.hidden = false;
+    mount.innerHTML = '<p class="page-lede">Opening Stripe onboarding…</p>';
+    try {
+      const session = await apiFetch(`/api/admin/tenants/${encodeURIComponent(tenantId)}/stripe/onboarding-session`, { method: "POST", body: "{}" });
+      if (!session.publishableKey) throw new Error("No Stripe publishable key is configured on this console.");
+      const { loadConnectAndInitialize } = await import(/* webpackIgnore: true */ "https://cdn.jsdelivr.net/npm/@stripe/connect-js@3/+esm");
+      const connect = loadConnectAndInitialize({
+        publishableKey: session.publishableKey,
+        // Called again whenever the component needs a fresh session, which is
+        // why the endpoint mints one per call and stores none.
+        fetchClientSecret: async () => {
+          const next = await apiFetch(`/api/admin/tenants/${encodeURIComponent(tenantId)}/stripe/onboarding-session`, { method: "POST", body: "{}" });
+          return next.clientSecret;
+        }
+      });
+      mount.innerHTML = "";
+      const component = connect.create("account-onboarding");
+      component.setOnExit(() => {
+        // Exiting is not finishing. Re-read the account rather than assuming.
+        loadConnectStatus(tenantId);
+      });
+      mount.appendChild(component);
+      void session;
+    } catch (error) {
+      mount.innerHTML = `<p class="page-lede">${escapeHtml(error.message)}</p>`;
+    } finally {
+      button.disabled = false;
+    }
+  });
 }
 
 function wireTenantDetailEvents(tenantId) {
@@ -807,6 +937,22 @@ function wireStaticHandlers() {
     loadClientErrors(event.target.reference.value.trim().toUpperCase());
   });
 
+  document.querySelector('form[data-form="ledger-filter"]')?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const form = event.target;
+    loadLedger({
+      tenantId: form.tenantId.value,
+      kind: form.kind.value,
+      // Dates are inclusive at both ends, so the upper bound is pushed to the
+      // end of the day. Without this, "to 3 March" silently excludes
+      // everything that happened on 3 March.
+      from: form.from.value ? `${form.from.value}T00:00:00.000Z` : "",
+      to: form.to.value ? `${form.to.value}T23:59:59.999Z` : "",
+      intakeId: form.intakeId.value.trim(),
+      unreconciled: form.unreconciled.checked
+    });
+  });
+
   window.addEventListener("hashchange", route);
 }
 
@@ -854,6 +1000,144 @@ function renderClientError(item) {
       ${detail ? `<small>${detail}</small>` : ""}
     </div>
   </div>`;
+}
+
+/* --------------------------------------------------------------- ledger --- */
+
+const LEDGER_LABELS = {
+  deposit_pending: "Deposit pending",
+  deposit_captured: "Deposit captured",
+  deposit_failed: "Deposit failed",
+  deposit_canceled: "Deposit cancelled",
+  clinic_transfer: "Transfer to clinic",
+  transfer_reversed: "Transfer reversed",
+  platform_fee: "Tími fee",
+  customer_refund: "Customer refund",
+  clinic_payout: "Clinic payout",
+  dispute: "Dispute",
+  adjustment: "Adjustment"
+};
+
+/**
+ * The ledger screen.
+ *
+ * The totals come from the Worker and cover the whole filtered set, not the
+ * rows on screen. A running total of the visible 200 out of four thousand is
+ * a number that looks authoritative and is wrong, which is worse than showing
+ * none.
+ */
+async function loadLedger(overrides = {}) {
+  const totalsMount = document.querySelector("[data-ledger-totals]");
+  const listMount = document.querySelector("[data-ledger-list]");
+  listMount.innerHTML = '<div class="loading-state"><span class="spinner" aria-hidden="true"></span><p>Loading ledger…</p></div>';
+  const filters = { ...state.ledgerFilters, ...overrides };
+  state.ledgerFilters = filters;
+
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(filters)) {
+    if (value !== "" && value !== null && value !== undefined && value !== false) query.set(key, String(value));
+  }
+  query.set("limit", "300");
+
+  try {
+    const data = await apiFetch(`/api/admin/ledger?${query.toString()}`);
+    renderLedgerTenantOptions(data.tenants || [], filters.tenantId);
+    totalsMount.innerHTML = renderLedgerTotals(data.totals);
+    listMount.innerHTML = data.entries.length
+      ? `<div class="panel">
+           <div class="page-head" style="margin-bottom:1rem;">
+             <h2 style="margin:0;">${data.entries.length} entr${data.entries.length === 1 ? "y" : "ies"}</h2>
+             <button class="button button-small" type="button" data-ledger-reconcile>Mark selected reconciled</button>
+           </div>
+           ${data.entries.map(renderLedgerRow).join("")}
+         </div>`
+      : '<div class="empty-state"><p>No ledger entries match that filter. Nothing has moved, or the filter is too narrow.</p></div>';
+    wireLedgerActions();
+  } catch (error) {
+    totalsMount.innerHTML = "";
+    listMount.innerHTML = `<div class="empty-state"><p>${escapeHtml(error.message)}</p></div>`;
+  }
+}
+
+function renderLedgerTenantOptions(tenants, selected) {
+  const select = document.querySelector("[data-ledger-tenants]");
+  if (!select || select.dataset.filled === "true") return;
+  select.innerHTML = `<option value="">All clinics</option>${tenants.map((tenant) => `<option value="${escapeAttr(tenant.id)}" ${tenant.id === selected ? "selected" : ""}>${escapeHtml(tenant.name)}${tenant.stripeAccountId ? "" : " (no Stripe account)"}</option>`).join("")}`;
+  select.dataset.filled = "true";
+}
+
+function renderLedgerTotals(totals) {
+  if (!totals) return "";
+  return `<div class="tenant-summary" style="margin-bottom:1.25rem;">
+    <span><small>Entries</small><strong>${totals.entries}</strong></span>
+    <span><small>In (to Tími)</small><strong>${formatCents(totals.inCents)}</strong></span>
+    <span><small>Out (to clinics and customers)</small><strong>${formatCents(totals.outCents)}</strong></span>
+    <span><small>Net held</small><strong>${formatCents(totals.netCents)}</strong></span>
+    <span><small>Tími fees retained</small><strong>${formatCents(totals.platformFeeCents)}</strong></span>
+    <span><small>Transferred to clinics</small><strong>${formatCents(totals.transferredCents)}</strong></span>
+    <span><small>Refunded to customers</small><strong>${formatCents(totals.refundedCents)}</strong></span>
+    <span><small>Unreconciled</small><strong>${totals.unreconciledEntries} · ${formatCents(totals.unreconciledInCents + totals.unreconciledOutCents)}</strong></span>
+  </div>`;
+}
+
+/**
+ * One row. Every Stripe id it has is on screen, because the reason somebody
+ * opened this page is to paste one of them into Stripe.
+ */
+function renderLedgerRow(entry) {
+  const ids = [
+    ["pi", entry.paymentIntentId],
+    ["ch", entry.chargeId],
+    ["tr", entry.transferId],
+    ["re", entry.refundId],
+    ["po", entry.payoutId],
+    ["txn", entry.balanceTransactionId],
+    ["acct", entry.stripeAccountId],
+    ["group", entry.transferGroup],
+    ["evt", entry.stripeEventId]
+  ].filter(([, value]) => Boolean(value))
+    .map(([label, value]) => `${escapeHtml(label)} ${escapeHtml(value)}`)
+    .join(" · ");
+  const sign = entry.direction === "in" ? "+" : "−";
+  return `<div class="member-row">
+    <div class="who">
+      <strong>${escapeHtml(LEDGER_LABELS[entry.kind] || entry.kind)} · ${escapeHtml(entry.status)}</strong>
+      <small>${escapeHtml(formatDateTime(entry.occurredAt))}${entry.intakeId ? ` · <a href="#ledger" data-ledger-intake="${escapeAttr(entry.intakeId)}">${escapeHtml(entry.intakeId)}</a>` : ""}${entry.availableOn ? ` · available ${escapeHtml(formatDate(entry.availableOn))}` : ""}</small>
+      <small style="word-break:break-all;">${ids || "no Stripe object"}</small>
+      ${entry.feeCents ? `<small>Stripe fee ${formatCents(entry.feeCents)} · net ${formatCents(entry.netCents)}</small>` : ""}
+    </div>
+    <div style="text-align:right;">
+      <strong>${sign}${formatCents(entry.amountCents)}</strong>
+      <small style="display:block;">${entry.reconciled ? "reconciled" : `<label style="display:inline-flex; gap:.3rem; align-items:center;"><input type="checkbox" data-ledger-select value="${escapeAttr(entry.id)}"> unreconciled</label>`}</small>
+    </div>
+  </div>`;
+}
+
+function wireLedgerActions() {
+  document.querySelector("[data-ledger-reconcile]")?.addEventListener("click", async (event) => {
+    const ids = [...document.querySelectorAll("[data-ledger-select]:checked")].map((input) => input.value);
+    if (!ids.length) { toast("Select the entries you have matched against a Stripe payout.", true); return; }
+    event.target.disabled = true;
+    try {
+      const { reconciled } = await apiFetch("/api/admin/ledger/reconcile", { method: "POST", body: JSON.stringify({ ids }) });
+      toast(`${reconciled} entr${reconciled === 1 ? "y" : "ies"} marked reconciled.`);
+      await loadLedger();
+    } catch (error) {
+      toast(error.message, true);
+    } finally {
+      event.target.disabled = false;
+    }
+  });
+
+  document.querySelectorAll("[data-ledger-intake]").forEach((link) => {
+    link.addEventListener("click", (event) => {
+      event.preventDefault();
+      // Everything Tími did for one intake, which is the natural unit when a
+      // customer says a number does not look right.
+      document.querySelector('form[data-form="ledger-filter"]').intakeId.value = link.dataset.ledgerIntake;
+      loadLedger({ intakeId: link.dataset.ledgerIntake, tenantId: "" });
+    });
+  });
 }
 
 function describeAdminResult(admin) {

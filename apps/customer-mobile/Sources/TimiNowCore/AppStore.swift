@@ -380,6 +380,56 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
         }
     }
 
+    // MARK: - Deposit
+
+    /// The current deposit intent, or nil until the screen asks for one.
+    ///
+    /// Held here rather than in the view so a redraw does not open a second
+    /// PaymentIntent. The Worker's idempotency key would make that harmless at
+    /// Stripe, but it would still be a request per redraw.
+    public var depositIntent: DepositIntent?
+    public var depositBusy = false
+
+    /// Ask the Worker for the deposit intent for the current intake.
+    ///
+    /// Demo builds have no Stripe credentials, so the Worker completes the
+    /// deposit locally and answers `mode: "demo"`. That path has to keep
+    /// working — the whole test suite and every offline demo run through it —
+    /// and it must be visibly a demo rather than a card form that goes
+    /// nowhere.
+    public func prepareDeposit() async {
+        guard let intake = currentIntake, (intake.depositAmountCents ?? 0) > 0 else { return }
+        if gateway.isDemo {
+            var value = intake
+            value.paymentStatus = "paid"
+            currentIntake = value
+            depositIntent = DepositIntent(mode: "demo", depositAmountCents: intake.depositAmountCents, intake: value)
+            return
+        }
+        depositBusy = true
+        do {
+            let intent = try await gateway.createDepositIntent(intakeId: intake.id)
+            depositIntent = intent
+            if let updated = intent.intake { currentIntake = updated }
+        } catch { report(error) }
+        depositBusy = false
+    }
+
+    /// Called after Stripe reports the payment confirmed on the device.
+    ///
+    /// It re-reads the intake from the Worker rather than setting
+    /// `paymentStatus` locally. The phone is not the authority on whether a
+    /// payment cleared: the confirmation can arrive here and never reach
+    /// Stripe, the app can be killed between the two, and a client that can
+    /// mark itself paid is a client that can lie. `payment_intent.succeeded`
+    /// on the webhook is what actually changes the row; this just asks what it
+    /// says now.
+    public func refreshDepositStatus() async {
+        guard let intake = currentIntake, !gateway.isDemo else { return }
+        do { currentIntake = try await gateway.refreshIntake(intake.id) }
+        catch { report(error) }
+    }
+
     public func record(_ milestone: String) async {
         guard var intake = currentIntake else { return }
         do { try await gateway.recordObservation(intake: intake, milestone: milestone); intake.status = milestone; currentIntake = intake }

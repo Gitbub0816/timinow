@@ -167,7 +167,7 @@ struct TrackerView: View {
                     }
                     clinicCard
                     timeline
-                    if (intake?.depositAmountCents ?? 0) > 0 { depositCard }
+                    if (intake?.depositAmountCents ?? 0) > 0 { DepositSection(store: store) }
                     actionButtons
                     SafetyBanner(compact: true)
                     Button("Finish and return home") { store.resetCareFlow() }.buttonStyle(TimiQuietButtonStyle())
@@ -214,10 +214,6 @@ struct TrackerView: View {
     }
 
     func timelineRow(_ complete: Bool, _ title: String, _ detail: String) -> some View { HStack(alignment: .top, spacing: 13) { Image(systemName: complete ? "checkmark.circle.fill" : "circle").font(.title2).foregroundStyle(complete ? TimiColor.blue : TimiColor.ink.opacity(0.2)); VStack(alignment: .leading) { Text(title).fontWeight(.bold); Text(detail).font(.caption).foregroundStyle(TimiColor.muted) } } }
-
-    var depositCard: some View {
-        VStack(alignment: .leading, spacing: 11) { Eyebrow(text: intake?.paymentStatus == "paid" ? "DEPOSIT PAID" : "ARRIVAL DEPOSIT"); HStack { Text(TimiFormat.money(intake?.depositAmountCents)).font(.system(size: 34, weight: .bold, design: .serif)); Spacer(); Image(systemName: intake?.paymentStatus == "paid" ? "checkmark.shield.fill" : "creditcard.fill").font(.title).foregroundStyle(TimiColor.blue) }; Text("The deposit is credited to the clinic's invoice. Remaining veterinary charges are billed by the clinic; Tími does not submit insurance claims.").font(.caption).foregroundStyle(TimiColor.muted); if intake?.paymentStatus != "paid" { Button("Complete deposit") { if store.isDemoMode, var value = store.currentIntake { value.paymentStatus = "paid"; store.currentIntake = value } else { store.errorMessage = "Secure native Stripe Payment Sheet activates when the production Stripe mobile configuration is added." } }.buttonStyle(TimiPrimaryButtonStyle(color: TimiColor.blue)) } }.timiCard(TimiColor.goldSoft)
-    }
 
     var actionButtons: some View {
         VStack(spacing: 11) {

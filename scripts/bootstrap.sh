@@ -550,7 +550,10 @@ set_var CLERK_TOKEN_TEMPLATE   "$CUSTOMER" "$VET" "$ADMIN"
 set_var AUTHORIZED_PARTIES     "$CUSTOMER" "$VET" "$ADMIN"
 set_var MAPBOX_STYLE_URL       "$CUSTOMER" "$VET" "$ADMIN" "$VOICE"
 set_var MAPBOX_NAVIGATION_STYLE_URL "$CUSTOMER" "$VET" "$ADMIN"
-set_var STRIPE_PUBLISHABLE_KEY "$CUSTOMER"
+# The admin console needs the publishable key too: it initializes ConnectJS to
+# render Stripe's embedded onboarding component inside the workspace page.
+set_var STRIPE_PUBLISHABLE_KEY "$CUSTOMER" "$ADMIN"
+set_var STRIPE_ACCOUNTS_API    "$ADMIN"
 set_var TWILIO_FROM_NUMBER     "$VOICE"
 set_var VOICE_PUBLIC_URL       "$VOICE"
 set_var VOICE_CALLS_ENABLED    "$VOICE"
@@ -727,6 +730,35 @@ check_secret_shape() { # check_secret_shape KEY VALUE
       esac ;;
     TWILIO_AUTH_TOKEN)
       [ "${#2}" -eq 32 ] || die "  TWILIO_AUTH_TOKEN is ${#2} characters; a Twilio auth token is 32. Check for a truncated paste or surrounding quotes." ;;
+    STRIPE_SECRET_KEY)
+      case "$2" in
+        sk_live_*|sk_test_*|rk_live_*|rk_test_*) : ;;
+        pk_*) die "  STRIPE_SECRET_KEY starts \"pk_\", which is the PUBLISHABLE key.
+
+  They sit next to each other on the same dashboard page and are easy to swap.
+  A publishable key here means every charge, transfer and refund is refused
+  with \"Invalid API Key provided\", and the reverse mistake is worse — a
+  secret key in STRIPE_PUBLISHABLE_KEY is served to every browser by
+  /api/config. Take the one revealed behind \"Reveal live key\"." ;;
+        whsec_*) die "  STRIPE_SECRET_KEY starts \"whsec_\", which is a webhook signing secret. That belongs in STRIPE_WEBHOOK_SECRET." ;;
+        *) die "  STRIPE_SECRET_KEY does not look like a Stripe secret key. It starts sk_live_, sk_test_, or rk_ for a restricted key." ;;
+      esac ;;
+    STRIPE_WEBHOOK_SECRET)
+      case "$2" in
+        whsec_*) : ;;
+        # This one is worth naming precisely. A webhook endpoint configured
+        # with the wrong secret does not fail loudly — it rejects every event,
+        # so deposits are charged and never marked paid, clinics are never
+        # transferred to, and the only symptom is a queue of failed deliveries
+        # in a Stripe dashboard nobody is watching.
+        sk_*|pk_*) die "  STRIPE_WEBHOOK_SECRET holds an API key, not a webhook signing secret.
+
+  The signing secret starts \"whsec_\" and is specific to one endpoint. Find
+  it under Developers → Webhooks → your endpoint → \"Reveal\". With the wrong
+  value here the Worker rejects every event Stripe sends: deposits get charged
+  and never marked paid, and nothing is ever transferred to a clinic." ;;
+        *) die "  STRIPE_WEBHOOK_SECRET does not start \"whsec_\". It is per-endpoint — Developers → Webhooks → your endpoint → Reveal." ;;
+      esac ;;
   esac
 }
 
@@ -795,6 +827,52 @@ if ! $DRY && have TWILIO_ACCOUNT_SID && have TWILIO_AUTH_TOKEN; then
   echo
 fi
 
+# Ask Stripe whether the key works, and whether the two keys are the same
+# account and the same mode, rather than finding out when somebody's card is
+# declined. `GET /v1/balance` is a read: no charge, no object created, nothing
+# billable. The key goes in on stdin so it never reaches argv or shell history.
+#
+# The mode mismatch is the one worth catching. A live secret key with a test
+# publishable key looks entirely fine on both dashboards and fails only at the
+# moment a real customer confirms a payment, with "No such payment_intent".
+if ! $DRY && have STRIPE_SECRET_KEY; then
+  bold "4c. Stripe credentials"
+  ST_SECRET="$(env_value STRIPE_SECRET_KEY)"
+  ST_STATUS="$(printf 'user = "%s:"\n' "$ST_SECRET" \
+    | curl -sS --config - -o /dev/null -w '%{http_code}' --max-time 20 \
+      "https://api.stripe.com/v1/balance" 2>/dev/null || echo "000")"
+  case "$ST_STATUS" in
+    200) echo "  accepted by Stripe" ;;
+    401) die "  Stripe rejected STRIPE_SECRET_KEY (401).
+
+  The key is the right shape, so this is not a typo: it has been rolled,
+  deleted, or belongs to a different account. Take a fresh one from
+  Developers → API keys. Nothing was deployed." ;;
+    403) warn "  Stripe answered 403. If this is a restricted key, it needs write access to" ;
+         warn "  PaymentIntents, Transfers, Refunds, Connect accounts and Account sessions." ;;
+    000) warn "  Could not reach Stripe to check the key — continuing." ;;
+    *)   warn "  Stripe answered $ST_STATUS when checking the key. Continuing, but expect" ;
+         warn "  deposits to fail if this is not transient." ;;
+  esac
+
+  if have STRIPE_PUBLISHABLE_KEY; then
+    ST_PUB="$(env_value STRIPE_PUBLISHABLE_KEY)"
+    ST_SECRET_MODE="test"; case "$ST_SECRET" in *_live_*) ST_SECRET_MODE="live" ;; esac
+    ST_PUB_MODE="test";    case "$ST_PUB"    in pk_live_*) ST_PUB_MODE="live" ;; esac
+    if [ "$ST_SECRET_MODE" != "$ST_PUB_MODE" ]; then
+      die "  STRIPE_SECRET_KEY is a ${ST_SECRET_MODE} key and STRIPE_PUBLISHABLE_KEY is a ${ST_PUB_MODE} key.
+
+  A mixed pair fails in the least helpful way there is. The PaymentIntent is
+  created in one mode and the browser or app tries to confirm it in the other,
+  so the customer sees \"No such payment_intent\" at the moment they press pay,
+  and both dashboards look perfectly healthy. Take both keys from the same
+  page, in the same mode. Nothing was deployed."
+    fi
+    echo "  secret and publishable keys are both ${ST_SECRET_MODE} mode"
+  fi
+  echo
+fi
+
 bold "5. Worker secrets"
 put_secret CLERK_SECRET_KEY      "$CUSTOMER" "$VET" "$ADMIN" "$VOICE"
 # Not a secret in the security sense — it is served to every browser by
@@ -805,7 +883,13 @@ put_secret MAPBOX_PUBLIC_TOKEN   "$CUSTOMER" "$VET" "$ADMIN"
 put_secret TWILIO_ACCOUNT_SID    "$VOICE"
 put_secret TWILIO_AUTH_TOKEN     "$VOICE"
 put_secret GEMINI_API_KEY        "$VOICE"
-put_secret STRIPE_SECRET_KEY     "$CUSTOMER"
+# The customer Worker charges the deposit and receives the webhook; the admin
+# Worker creates connected accounts and reads their capabilities. The
+# veterinary Worker gets neither — its payouts view reads the D1 ledger and
+# never talks to Stripe, so there is no reason to put a key that can move
+# money on it.
+put_secret STRIPE_SECRET_KEY     "$CUSTOMER" "$ADMIN"
+# Only the Worker that serves /api/stripe/webhook.
 put_secret STRIPE_WEBHOOK_SECRET "$CUSTOMER"
 echo
 

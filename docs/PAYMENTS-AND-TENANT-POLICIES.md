@@ -1,5 +1,9 @@
 # Tími payment and tenant policy specification
 
+This document defines *what* each outcome is worth. `docs/STRIPE.md` describes
+*how* the money actually moves — Connect, separate charges and transfers, the
+ledger, and what still has to be set up by hand in the Stripe dashboard.
+
 ## Commercial baseline
 
 Tími collects a clinic-defined arrival deposit only after the clinic accepts an immediate intake request.

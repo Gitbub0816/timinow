@@ -161,6 +161,21 @@ public final class TimiGateway: @unchecked Sendable {
         return envelope.intake
     }
 
+    /// Ask the Worker for this intake's deposit PaymentIntent.
+    ///
+    /// The publishable key comes back with the client secret rather than being
+    /// compiled into the app. One place to rotate it, and rotating it does not
+    /// need an App Store release — which matters, because the alternative is a
+    /// key baked into a build that people keep running for months.
+    ///
+    /// The Worker creates the PaymentIntent idempotently, so calling this
+    /// twice for the same intake returns the same intent rather than opening a
+    /// second one against the same card.
+    public func createDepositIntent(intakeId: String) async throws -> DepositIntent {
+        guard let baseURL else { throw TimiAPIError.invalidConfiguration(configuredAddress) }
+        return try await send(baseURL.appendingPathComponent("api/intakes/\(intakeId)/payment-intent"), method: "POST", body: EmptyPayload())
+    }
+
     public func recordObservation(intake: CareIntake, milestone: String) async throws {
         guard let baseURL else { return }
         let _: ObservationEnvelope = try await send(baseURL.appendingPathComponent("api/observations"), method: "POST", body: ObservationPayload(intakeId: intake.id, locationId: intake.locationId, milestone: milestone))
@@ -315,3 +330,31 @@ private struct OfferSelectionPayload: Encodable { var offerId: String }
 private struct StatusPayload: Encodable { var status: String }
 private struct ObservationPayload: Encodable { var intakeId: String; var locationId: String; var milestone: String }
 private struct ObservationEnvelope: Decodable { var recorded: Bool }
+private struct EmptyPayload: Encodable {}
+
+/// What the Worker returns for `POST /api/intakes/{id}/payment-intent`.
+///
+/// `mode` says which path answered: `stripe` when a real PaymentIntent was
+/// created, `demo` when this deployment has no Stripe credentials and the
+/// deposit was completed locally, `paid` when it already was, `none` when this
+/// clinic's policy asks for no deposit at all. The UI has to distinguish them
+/// — showing a card field for a demo deployment would be asking somebody for a
+/// card number that goes nowhere.
+///
+/// The client secret is never logged and never persisted. Anyone holding it
+/// can complete this payment.
+public struct DepositIntent: Decodable, Sendable {
+    public var mode: String
+    public var clientSecret: String?
+    public var paymentIntentId: String?
+    public var publishableKey: String?
+    public var depositAmountCents: Int?
+    public var currency: String?
+    public var intake: CareIntake?
+
+    public init(mode: String = "none", clientSecret: String? = nil, paymentIntentId: String? = nil, publishableKey: String? = nil, depositAmountCents: Int? = nil, currency: String? = "usd", intake: CareIntake? = nil) {
+        self.mode = mode; self.clientSecret = clientSecret; self.paymentIntentId = paymentIntentId
+        self.publishableKey = publishableKey; self.depositAmountCents = depositAmountCents
+        self.currency = currency; self.intake = intake
+    }
+}

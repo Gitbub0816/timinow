@@ -42,6 +42,11 @@ const requiredFiles = [
   "migrations/0005_voice_calls.sql",
   "migrations/0006_care_context.sql",
   "migrations/0007_client_errors.sql",
+  "migrations/0008_payments_ledger.sql",
+  "src/stripe.js",
+  "src/payments.js",
+  "scripts/stripe-test.mjs",
+  "docs/STRIPE.md",
   "scripts/voice-test.mjs",
   ".env.example",
   "docs/PRODUCTION-SETUP.md",
@@ -91,9 +96,10 @@ for (const screen of expectedScreens) {
 }
 
 const voiceMigration = await readFile("migrations/0005_voice_calls.sql", "utf8");
-const requiredTables = ["tenants", "locations", "availability_reports", "tenant_policies", "intake_requests", "intake_events", "customer_observations", "notification_outbox", "care_searches", "care_search_targets", "care_offers", "platform_admins", "tenant_members", "tenant_invitations", "admin_audit_log", "clinic_call_attempts"];
+const paymentsMigration = await readFile("migrations/0008_payments_ledger.sql", "utf8");
+const requiredTables = ["tenants", "locations", "availability_reports", "tenant_policies", "intake_requests", "intake_events", "customer_observations", "notification_outbox", "care_searches", "care_search_targets", "care_offers", "platform_admins", "tenant_members", "tenant_invitations", "admin_audit_log", "clinic_call_attempts", "stripe_accounts", "payment_ledger", "stripe_events"];
 for (const table of requiredTables) {
-  if (!`${migration}\n${multiOfferMigration}\n${tenancyMigration}\n${voiceMigration}`.includes(`CREATE TABLE IF NOT EXISTS ${table}`)) throw new Error(`Missing D1 table: ${table}`);
+  if (!`${migration}\n${multiOfferMigration}\n${tenancyMigration}\n${voiceMigration}\n${paymentsMigration}`.includes(`CREATE TABLE IF NOT EXISTS ${table}`)) throw new Error(`Missing D1 table: ${table}`);
 }
 
 const requiredRoutes = ["/api/config", "/api/locations", "/api/intakes", "/api/searches", "select-offer", "/api/observations", "/api/clinic/dashboard", "/api/clinic/availability", "search-targets", "/api/session", "/api/tenant/members"];
