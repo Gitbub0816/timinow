@@ -399,6 +399,122 @@ function record(name) { results.push(name); }
   record("charge.refunded redelivery writes one row");
 }
 
+/* -------------------------- 7b. a failed event is retried, not dropped --- */
+
+// The most expensive bug this integration could have, and it was here.
+//
+// Every event id was claimed with a bare INSERT, and any existing row was
+// read as "already handled". So an event whose first delivery *failed* —
+// a D1 hiccup, a Stripe call timing out mid-settlement — was answered
+// "duplicate, nothing to do" on every retry Stripe made, forever. A
+// payment_intent.succeeded that failed once left the customer charged and
+// the intake unpaid permanently, and the ledger with no record of either.
+//
+// A row only means "do not process" once it reached a terminal state. A row
+// in `failed` means the opposite: this is the retry, and it is the only
+// chance the event will get.
+{
+  const intakeId = "intake_retry";
+  await seedIntake({ id: intakeId, tenantId: "tenant_cedar", depositCents: 5000, paymentStatus: "requires_action" });
+  const event = {
+    id: "evt_transient_1",
+    type: "payment_intent.succeeded",
+    created: 1787000000,
+    livemode: true,
+    data: {
+      object: {
+        id: "pi_transient_1",
+        object: "payment_intent",
+        amount: 5000,
+        amount_received: 5000,
+        currency: "usd",
+        latest_charge: "ch_transient_1",
+        metadata: { intake_id: intakeId, tenant_id: "tenant_cedar" }
+      }
+    }
+  };
+
+  // Fail the ledger write once, the way a transient database fault would.
+  const realPrepare = LIVE_ENV.DB.prepare.bind(LIVE_ENV.DB);
+  let failNext = true;
+  LIVE_ENV.DB.prepare = (sql) => {
+    if (failNext && /INSERT OR IGNORE INTO payment_ledger/i.test(sql)) throw new Error("transient D1 failure");
+    return realPrepare(sql);
+  };
+  let threw = false;
+  try { await handleStripeEvent(LIVE_ENV, event); } catch { threw = true; }
+  LIVE_ENV.DB.prepare = realPrepare;
+
+  assert(threw, "a transient fault while applying an event must surface, so Stripe retries");
+  assertEqual(
+    database.prepare("SELECT status FROM stripe_events WHERE id = 'evt_transient_1'").get().status,
+    "failed",
+    "the event is recorded as failed rather than processed"
+  );
+  assertEqual(
+    Number(database.prepare("SELECT COUNT(*) AS total FROM payment_ledger WHERE payment_intent_id = 'pi_transient_1'").get().total),
+    0,
+    "nothing was written by the failed attempt"
+  );
+
+  const retry = await handleStripeEvent(LIVE_ENV, event);
+  assert(retry.handled, "Stripe's retry of a failed event must actually apply it");
+  assertEqual(
+    Number(database.prepare("SELECT COUNT(*) AS total FROM payment_ledger WHERE payment_intent_id = 'pi_transient_1'").get().total),
+    1,
+    "the retry writes the ledger row the first attempt could not"
+  );
+  assertEqual(
+    database.prepare("SELECT payment_status FROM intake_requests WHERE id = ?").get(intakeId).payment_status,
+    "paid",
+    "and the intake finally reaches paid, which is the whole point"
+  );
+
+  const third = await handleStripeEvent(LIVE_ENV, event);
+  assert(third.duplicate, "a third delivery, after success, is a duplicate again");
+  assertEqual(
+    Number(database.prepare("SELECT COUNT(*) AS total FROM payment_ledger WHERE payment_intent_id = 'pi_transient_1'").get().total),
+    1,
+    "re-claiming a failed event must not open the door to double-writing a succeeded one"
+  );
+  record("a failed event is re-applied on retry, and only once");
+}
+
+/* ------------- 7c. the ledger records what Stripe says, always --------- */
+
+// Stripe's metadata is Stripe's, not ours. An intake can be deleted, a test
+// event can name nothing, a typo in metadata is permanent once it is on a
+// live object. The ledger carried foreign keys to our own tables, so an
+// unmatched id made the INSERT fail — and the ledger silently refused to
+// record what Stripe told us, in exactly the case where an operator most
+// needs the record. A ledger of external facts must be able to hold a fact
+// it cannot match.
+{
+  const event = {
+    id: "evt_unmatched_1",
+    type: "payment_intent.succeeded",
+    created: 1787000100,
+    livemode: true,
+    data: {
+      object: {
+        id: "pi_unmatched_1",
+        object: "payment_intent",
+        amount: 4200,
+        amount_received: 4200,
+        currency: "usd",
+        metadata: { intake_id: "intake_that_never_existed", tenant_id: "tenant_gone" }
+      }
+    }
+  };
+  const result = await handleStripeEvent(LIVE_ENV, event);
+  assert(result.handled, "an event naming an unknown intake is still applied");
+  const row = database.prepare("SELECT * FROM payment_ledger WHERE payment_intent_id = 'pi_unmatched_1'").get();
+  assert(row, "the money that moved is recorded even though nothing matches it");
+  assertEqual(row.intake_id, "intake_that_never_existed", "the unmatched id is kept verbatim, for an operator to chase");
+  assertEqual(row.amount_cents, 4200, "and the amount is exactly what Stripe said");
+  record("an unmatched intake id is recorded, not fatal");
+}
+
 /* ------------------------- 7. a transfer is refused without capability --- */
 {
   resetStripe();

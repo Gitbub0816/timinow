@@ -676,7 +676,30 @@ async function markSettled(env, intake, split, { transferId }) {
   });
 }
 
+/**
+ * Note something on an intake's timeline, if that intake is still there.
+ *
+ * `intake_events.intake_id` is a real foreign key, and rightly so — an event
+ * about nothing is not an event. But the id here comes from Stripe metadata,
+ * and Stripe neither knows nor cares whether our row still exists: an intake
+ * can have been deleted, a test event can name anything, a typo in metadata is
+ * permanent once it is on a live object.
+ *
+ * Letting the constraint throw meant one unmatched id failed the whole webhook
+ * — the ledger row was written, then rolled back with it, and the event was
+ * marked failed. The money had moved and we had no record of it.
+ *
+ * So a missing intake is skipped, not fatal. The ledger has already recorded
+ * what Stripe told us, carrying the unmatched id as plain text, which is where
+ * an operator goes looking anyway.
+ */
 async function recordIntakeEvent(env, intakeId, type, detail) {
+  if (!intakeId) return;
+  const exists = await env.DB.prepare("SELECT 1 FROM intake_requests WHERE id = ? LIMIT 1").bind(intakeId).first();
+  if (!exists) {
+    console.warn(JSON.stringify({ event: "intake_event_skipped", intakeId, type, reason: "no such intake" }));
+    return;
+  }
   await env.DB.prepare("INSERT INTO intake_events (id, intake_id, event_type, actor_type, actor_id, detail_json) VALUES (?, ?, ?, 'system', NULL, ?)")
     .bind(newId("event"), intakeId, type, JSON.stringify(detail || {})).run();
 }
@@ -725,11 +748,30 @@ async function claimEvent(env, event) {
   } catch (error) {
     // A primary-key collision is the expected outcome of a redelivery, not a
     // failure. Anything else is a real database problem and must surface.
-    if (/UNIQUE|constraint/i.test(error.message || "")) {
-      await env.DB.prepare("UPDATE stripe_events SET attempts = attempts + 1 WHERE id = ?").bind(event.id).run();
-      return false;
-    }
-    throw error;
+    if (!/UNIQUE|constraint/i.test(error.message || "")) throw error;
+
+    // A row exists, but that alone does not make this a duplicate. If the last
+    // delivery ended in `failed`, the event was never applied — and Stripe
+    // retrying it is the only chance it will ever get.
+    //
+    // Treating any existing row as a duplicate meant one transient fault while
+    // applying an event dropped it permanently: a payment_intent.succeeded
+    // that failed once left the customer charged and the intake unpaid
+    // forever, with every retry answered "duplicate, nothing to do". The
+    // handler above even claimed the claim was released by the retry. It was
+    // not.
+    //
+    // Conditional on `status = 'failed'`, so this cannot steal an event from a
+    // delivery that is still in flight: a concurrent attempt leaves the row in
+    // `received`, this update matches nothing, and Stripe retries again if
+    // that attempt also fails.
+    const reclaimed = await env.DB.prepare(
+      "UPDATE stripe_events SET status = 'received', attempts = attempts + 1, last_error = NULL WHERE id = ? AND status = 'failed'"
+    ).bind(event.id).run();
+    if (reclaimed.meta?.changes) return true;
+
+    await env.DB.prepare("UPDATE stripe_events SET attempts = attempts + 1 WHERE id = ?").bind(event.id).run();
+    return false;
   }
 }
 

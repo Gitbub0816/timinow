@@ -158,9 +158,22 @@ CREATE TABLE IF NOT EXISTS payment_ledger (
   stripe_account_id TEXT,
   available_on TEXT,
 
-  tenant_id TEXT REFERENCES tenants(id) ON DELETE SET NULL,
-  intake_id TEXT REFERENCES intake_requests(id) ON DELETE SET NULL,
-  search_id TEXT REFERENCES care_searches(id) ON DELETE SET NULL,
+  -- Deliberately NOT foreign keys.
+  --
+  -- These are Stripe's words for what a payment was about, copied out of
+  -- object metadata. Stripe does not know or care whether our rows still
+  -- exist: an intake can be deleted, a test event can name nothing, metadata
+  -- can be wrong. With a foreign key here the INSERT fails and the ledger
+  -- silently refuses to record what Stripe told us — in exactly the cases
+  -- where an operator most needs the record, and with the event then marked
+  -- failed and dropped.
+  --
+  -- A ledger of external facts must be able to hold a fact it cannot match.
+  -- The admin console left-joins these; an id with nothing behind it shows as
+  -- unmatched, which is information rather than an error.
+  tenant_id TEXT,
+  intake_id TEXT,
+  search_id TEXT,
 
   status TEXT NOT NULL DEFAULT 'recorded',
   -- Cleared when an operator (or a future automated sweep) has matched this
