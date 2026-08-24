@@ -221,3 +221,35 @@ code.env-var { display: inline-block; padding: .15rem .45rem; border-radius: 5px
   .admin-nav { display: none; }
   .audit-row { grid-template-columns: 1fr; gap: .2rem; }
 }
+
+/* ------------------------------------------- Evander, the loading companion --- */
+/* 1024x768 sprite sheet: 8 columns x 6 rows of 128px frames, 48 frames, 10fps.
+   Columns advance every tenth of a second; rows every .8s. Reduced motion pins
+   the first frame. */
+.evander {
+  --evander-frame: 128px;
+  flex: 0 0 auto;
+  width: var(--evander-frame);
+  height: var(--evander-frame);
+  background-image: url("/assets/anim/evander-sheet-1024.png");
+  background-repeat: no-repeat;
+  background-position: 0 0;
+  background-size: calc(var(--evander-frame) * 8) calc(var(--evander-frame) * 6);
+  animation: evander-x .8s steps(8) infinite, evander-y 4.8s steps(6) infinite;
+}
+.evander-sm { --evander-frame: 72px; }
+@keyframes evander-x { from { background-position-x: 0; } to { background-position-x: calc(var(--evander-frame) * -8); } }
+@keyframes evander-y { from { background-position-y: 0; } to { background-position-y: calc(var(--evander-frame) * -6); } }
+@media (prefers-reduced-motion: reduce) { .evander { animation: none !important; } }
+
+/* ----------------------------------------------------- analytics summary --- */
+.stat-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 1px; margin-bottom: 1.25rem; overflow: hidden; border: 1px solid var(--line); border-radius: 12px; background: var(--line); }
+.stat-row span { padding: .9rem 1rem; background: white; }
+.stat-row small { display: block; color: var(--muted); font-size: .58rem; letter-spacing: .07em; text-transform: uppercase; }
+.stat-row strong { display: block; margin-top: .35rem; font-family: var(--serif); font-size: 1.35rem; }
+.count-bar { position: relative; display: block; height: 8px; margin-top: .35rem; border-radius: 4px; background: var(--blue-soft); overflow: hidden; }
+.count-bar i { position: absolute; inset: 0 auto 0 0; display: block; border-radius: 4px; background: var(--blue); }
+.count-list { display: grid; gap: .55rem; }
+.count-list .count-line { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: .8rem; align-items: baseline; font-size: .76rem; }
+.count-list .count-line > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 700; }
+.count-list .count-line > span:last-child { color: var(--muted); font-variant-numeric: tabular-nums; }

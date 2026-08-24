@@ -16,6 +16,61 @@ import {
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 
+/* ---------------------------------------------------------------------- */
+/* First-party analytics beacon.                                           */
+/*                                                                         */
+/* Cookieless by design: events carry an event name, a path, and optional  */
+/* coarse metadata — never an identifier, cookie, or storage-derived id.   */
+/* Fire-and-forget: a failed beacon must never affect the page.            */
+/* ---------------------------------------------------------------------- */
+const track = (() => {
+  const queue = [];
+  let flushTimer = null;
+  function deliver(events) {
+    if (!events.length) return;
+    const body = JSON.stringify({ events });
+    try {
+      if (navigator.sendBeacon && navigator.sendBeacon("/api/analytics", new Blob([body], { type: "application/json" }))) return;
+    } catch { /* fall through to fetch */ }
+    try {
+      fetch("/api/analytics", { method: "POST", headers: { "content-type": "application/json" }, body, keepalive: true, credentials: "omit" }).catch(() => {});
+    } catch { /* analytics must never break the page */ }
+  }
+  function flush() {
+    window.clearTimeout(flushTimer);
+    flushTimer = null;
+    while (queue.length) deliver(queue.splice(0, 25));
+  }
+  try {
+    addEventListener("pagehide", flush);
+    addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") flush(); });
+  } catch { /* ignore */ }
+  return (name, meta) => {
+    try {
+      if (!/^[a-z0-9_.:-]{1,40}$/i.test(String(name))) return;
+      const event = { name: String(name), path: `#${state?.route || "home"}` };
+      if (meta && typeof meta === "object") event.meta = meta;
+      queue.push(event);
+      if (!flushTimer) flushTimer = window.setTimeout(flush, 400);
+    } catch { /* analytics must never break the page */ }
+  };
+})();
+
+/* Boot splash: shown by static HTML immediately, hidden once the app has
+   booted — but never before ~1.2s, so it reads as a moment, not a flash. */
+const BOOT_STARTED_AT = Date.now();
+function hideBootSplash() {
+  const splash = $("[data-boot-splash]");
+  if (!splash || splash.dataset.hiding) return;
+  splash.dataset.hiding = "true";
+  const linger = Math.max(0, 1200 - (Date.now() - BOOT_STARTED_AT));
+  window.setTimeout(() => {
+    splash.classList.add("is-hidden");
+    window.setTimeout(() => splash.remove(), 480);
+  }, linger);
+}
+window.setTimeout(hideBootSplash, 10000);
+
 const APP_ROUTES = new Set(["find", "results", "tracker", "pets", "clinic", "sign-in", "legal"]);
 const PROTECTED_ROUTES = new Set(["find", "results", "tracker", "pets", "clinic"]);
 const DEFAULT_POSITION = { latitude: 37.6688, longitude: -122.0808, label: "Hayward, California", detail: "Using demonstration coordinates" };
@@ -105,6 +160,12 @@ function formatMoney(cents) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format((cents || 0) / 100);
 }
 
+/** The customer-paid share of Tími's service fee, disclosed wherever amounts show. */
+function serviceFeeSentence() {
+  const cents = state.config?.fees?.customerFeeCents ?? 2500;
+  return `Includes a ${formatMoney(cents)} Tími service fee, charged at the time of service.`;
+}
+
 function timestampMs(value) {
   if (!value) return Number.NaN;
   const normalized = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(value)
@@ -171,6 +232,7 @@ function parseRoute() {
   const raw = location.hash.replace(/^#/, "") || "home";
   const [route] = raw.split("?");
   if (route === "how-it-works" || route === "emergency") return "home";
+  if (route === "vets-apply") return "vets";
   return $("[data-screen='" + CSS.escape(route) + "']") ? route : "home";
 }
 
@@ -205,6 +267,10 @@ async function renderRoute() {
     try { state.session = (await api("/api/session")).session; } catch { state.session = null; }
   }
   state.route = route;
+  if (renderRoute.lastTrackedRoute !== route) {
+    renderRoute.lastTrackedRoute = route;
+    track("page_view");
+  }
 
   const render = () => {
     $$('[data-screen]').forEach((screen) => {
@@ -225,6 +291,7 @@ async function renderRoute() {
     results: "Available veterinary care · Tími NOW",
     tracker: "Live intake request · Tími NOW",
     pets: "Pet profile · Tími NOW",
+    vets: "For veterinary teams · Tími NOW",
     clinic: "Clinic console · Tími NOW",
     legal: "Legal center · Tími NOW",
     "sign-in": "Sign in · Tími NOW"
@@ -233,6 +300,9 @@ async function renderRoute() {
   if (route === "home") {
     const anchor = location.hash.replace("#", "");
     if (["how-it-works", "emergency"].includes(anchor)) requestAnimationFrame(() => document.getElementById(anchor)?.scrollIntoView());
+  }
+  if (route === "vets" && location.hash.replace("#", "").split("?")[0] === "vets-apply") {
+    requestAnimationFrame(() => document.getElementById("vets-apply")?.scrollIntoView());
   }
   if (route === "legal") {
     const section = routeQuery().get("section") || "terms";
@@ -308,24 +378,9 @@ async function initializeClerk() {
     const Clerk = clerkModule.Clerk || clerkModule.default?.Clerk || clerkModule.default;
     state.clerk = new Clerk(state.config.clerkPublishableKey);
     await state.clerk.load();
-    await maybeHandleOAuthRedirect();
     state.clerk.addListener(() => renderAccountMenu());
   } catch (error) {
     console.error("Clerk initialization failed", error);
-  }
-}
-
-async function maybeHandleOAuthRedirect() {
-  if (!state.clerk) return;
-  const hasRedirectParams = /[?&](__clerk_status|__clerk_handshake|__clerk_ticket|rotating_token_nonce)=/.test(location.href);
-  if (!hasRedirectParams) return;
-  try {
-    await state.clerk.handleRedirectCallback({
-      afterSignInUrl: `${location.origin}/#find`,
-      afterSignUpUrl: `${location.origin}/#find`
-    });
-  } catch (error) {
-    console.error("Clerk redirect handling failed", error);
   }
 }
 
@@ -350,9 +405,7 @@ function resetAuthFlow() {
     forceOrgPicker: false
   };
   $("[data-auth-identifier-form]")?.reset();
-  $("[data-auth-password-form]")?.reset();
   $("[data-auth-signup-form]")?.reset();
-  $("[data-auth-reset-form]")?.reset();
   clearOtpInputs();
   setAuthStep("identifier");
 }
@@ -465,23 +518,23 @@ function openOrgSwitcher() {
   setRoute("sign-in");
 }
 
+/** Tími sign-in offers one-time codes only: email codes and phone codes. */
+const ALLOWED_FIRST_FACTORS = new Set(["email_code", "phone_code"]);
+
 function strategyLabel(factor) {
   switch (factor.strategy) {
-    case "password": return { title: "Use your password", detail: "" };
     case "email_code": return { title: "Email me a code", detail: factor.safeIdentifier || "" };
     case "phone_code": return { title: "Text me a code", detail: factor.safeIdentifier || "" };
-    case "passkey": return { title: "Use a passkey", detail: "" };
-    case "reset_password_email_code": return { title: "Reset your password", detail: "Emails a reset code" };
     default: return { title: humanize(factor.strategy), detail: "" };
   }
 }
 
 function renderStrategyStep(signIn) {
-  const factors = signIn.supportedFirstFactors || [];
+  const factors = (signIn.supportedFirstFactors || []).filter((factor) => ALLOWED_FIRST_FACTORS.has(factor.strategy));
   state.auth.factors = factors;
   if (factors.length <= 1) {
     if (factors[0]) return startFactor(factors[0]);
-    return showAuthError({ errors: [{ longMessage: "No sign-in method is available for this account." }] });
+    return showAuthError({ errors: [{ longMessage: "This account has no email or phone number that can receive a one-time code. Contact support to update your account." }] });
   }
   const list = $("[data-auth-strategy-list]");
   list.innerHTML = factors.map((factor, index) => {
@@ -493,16 +546,9 @@ function renderStrategyStep(signIn) {
 
 async function startFactor(factor) {
   switch (factor.strategy) {
-    case "password":
-      setAuthStep("password");
-      break;
     case "email_code":
     case "phone_code":
-    case "reset_password_email_code":
       await prepareAndShowCode(factor);
-      break;
-    case "passkey":
-      await signInWithPasskey();
       break;
     default:
       showAuthError({ errors: [{ longMessage: `Unsupported sign-in method: ${humanize(factor.strategy)}` }] });
@@ -518,32 +564,10 @@ async function prepareAndShowCode(factor) {
     state.auth.signIn = updated;
     state.auth.activeFactor = factor;
     state.auth.flowKind = "sign-in";
-    $("[data-auth-code-lede]").textContent = factor.strategy === "reset_password_email_code"
-      ? `Enter the reset code sent to ${factor.safeIdentifier || "your email"}.`
-      : `Enter the 6-digit code sent to ${factor.safeIdentifier || "you"}.`;
+    $("[data-auth-code-lede]").textContent = `Enter the 6-digit code sent to ${factor.safeIdentifier || "you"}.`;
     clearOtpInputs();
     startResendCooldown();
     setAuthStep("code");
-  } catch (error) { showAuthError(error); }
-}
-
-async function signInWithPasskey() {
-  try {
-    const signIn = state.auth.signIn || state.clerk.client.signIn;
-    const result = await signIn.authenticateWithPasskey();
-    state.auth.signIn = result;
-    await handleSignInResult(result);
-  } catch (error) { showAuthError(error); }
-}
-
-async function startOAuth(strategy) {
-  if (!state.clerk) return;
-  try {
-    await state.clerk.client.signIn.authenticateWithRedirect({
-      strategy,
-      redirectUrl: `${location.origin}/#sign-in`,
-      redirectUrlComplete: `${location.origin}/#find`
-    });
   } catch (error) { showAuthError(error); }
 }
 
@@ -560,7 +584,7 @@ async function handleSignInResult(signIn) {
       showAuthError({ errors: [{ longMessage: "This account requires a second verification step that isn't supported here yet. Please contact your workspace administrator." }] });
       break;
     case "needs_new_password":
-      setAuthStep("reset");
+      showAuthError({ errors: [{ longMessage: "Tími sign-in uses one-time codes only; passwords are no longer supported. Contact support if your account still requires one." }] });
       break;
     case "needs_identifier":
       resetAuthFlow();
@@ -605,7 +629,6 @@ async function submitCode() {
       const factor = state.auth.activeFactor;
       const attempted = await state.auth.signIn.attemptFirstFactor({ strategy: factor.strategy, code });
       state.auth.signIn = attempted;
-      if (factor.strategy === "reset_password_email_code" && attempted.status === "needs_new_password") return setAuthStep("reset");
       await handleSignInResult(attempted);
     }
   } catch (error) {
@@ -803,7 +826,7 @@ function careType() {
 
 async function loadLocations() {
   const list = $("[data-hospital-list]");
-  list.innerHTML = '<div class="loading-state"><span></span><strong>Checking nearby capacity…</strong></div>';
+  list.innerHTML = '<div class="loading-state"><span class="evander evander-sm" aria-hidden="true"></span><strong>Checking nearby capacity…</strong></div>';
   const position = state.intakeDraft.position || DEFAULT_POSITION;
   const params = new URLSearchParams({ lat: position.latitude, lng: position.longitude, radius: "50", species: state.intakeDraft.species || "dog", care: careType() });
   try {
@@ -877,7 +900,7 @@ function openHospitalDialog(locationId, requestMode = false) {
   content.innerHTML = `<p class="eyebrow coral">${escapeHtml(humanize(location.kind))} CARE</p><h2 id="hospital-dialog-title">${escapeHtml(location.name)}</h2><p class="address">${escapeHtml(location.address)} · ${escapeHtml(location.phone)}</p>
     <div class="dialog-capacity"><div><small>CURRENT STATUS</small><strong>${escapeHtml(location.availability.label)}</strong></div><div><small>STABLE-PATIENT WAIT</small><strong>${escapeHtml(waitText(location))}</strong></div><div><small>VERIFIED</small><strong>${escapeHtml(formatRelativeTime(location.availability.reportedAt))}</strong></div><div><small>SOURCE</small><strong>${escapeHtml(humanize(location.availability.source))} · ${escapeHtml(location.availability.confidence)}</strong></div></div>
     <p class="dialog-note">${escapeHtml(location.availability.note || "Hospital staff determine clinical priority after intake. Your actual wait can change when critical patients arrive.")}</p>
-    <div class="deposit-box"><strong>${policy.depositRequired ? `${formatMoney(policy.depositAmountCents)} arrival deposit after acceptance` : "No Tími deposit required"}</strong><small>${policy.depositRequired ? `Policy ${escapeHtml(policy.version || "current")}: the full deposit is credited to the clinic invoice. Refund and no-show terms are shown again before payment.` : "The clinic will handle veterinary payment directly."}</small></div>
+    <div class="deposit-box"><strong>${policy.depositRequired ? `${formatMoney(policy.depositAmountCents)} arrival deposit after acceptance` : "No Tími deposit required"}</strong><small>${policy.depositRequired ? `Policy ${escapeHtml(policy.version || "current")}: the full deposit is credited to the clinic invoice. Refund and no-show terms are shown again before payment. ${escapeHtml(serviceFeeSentence())}` : "The clinic will handle veterinary payment directly."}</small></div>
     <p class="dialog-legal">If included in a search, this clinic receives the structured intake under the <a href="#legal?section=terms">Terms</a> and <a href="#legal?section=safety">Veterinary Safety Notice</a>. No clinic is confirmed until you choose an offer.</p>
     <div class="dialog-actions"><a class="button button-quiet" href="tel:${escapeHtml(location.phone.replace(/[^0-9+]/g, ""))}">Call hospital</a><button class="button button-primary" type="button" data-close-dialog>Done</button></div>`;
   const dialog = $("[data-hospital-dialog]");
@@ -912,13 +935,14 @@ async function startCareSearch() {
         customerLongitude: draft.position.longitude,
         consentToContact: draft.contactConsent === true,
         legalConsent: draft.legalConsent === true,
-        legalVersion: state.config?.legalVersion || "2026-08-22"
+        legalVersion: state.config?.legalVersion || "2026-08-24"
       })
     });
     state.currentSearch = data.search;
     state.currentIntake = null;
     writeStorage(STORAGE_KEYS.search, state.currentSearch);
     writeStorage(STORAGE_KEYS.intake, null);
+    track("search_started", { clinics: candidates.length });
     setRoute("tracker");
   } catch (error) {
     showToast(error.message);
@@ -952,7 +976,7 @@ async function submitIntake(locationId) {
         travelMinutes: Math.max(5, Math.round((location.distanceMiles || 2) * 4)),
         consentToContact: draft.contactConsent === true,
         legalConsent: draft.legalConsent === true,
-        legalVersion: state.config?.legalVersion || "2026-08-22"
+        legalVersion: state.config?.legalVersion || "2026-08-24"
       })
     });
     state.currentIntake = { ...data.intake, location: data.location };
@@ -1061,8 +1085,12 @@ function renderCareSearch() {
     ? "Compare the live offers and choose the clinic that works best. Tími will release every offer you do not select."
     : `Offers will be collected until ${formatClock(search.collectionExpiresAt || search.searchExpiresAt)} or until five clinics respond.`;
   const list = $("[data-offer-list]");
+  if (offers.length && renderCareSearch.offersViewedFor !== search.id) {
+    renderCareSearch.offersViewedFor = search.id;
+    track("offers_viewed", { offers: offers.length });
+  }
   if (!offers.length) {
-    list.innerHTML = `<div class="empty-state offer-waiting"><span class="offer-spinner"></span><strong>${search.status === "expired" ? "No active offers remain" : "Waiting for clinic responses"}</strong><p>${search.status === "expired" ? "Capacity changes quickly. Please start a new search." : "You may leave this page open; responses update automatically."}</p></div>`;
+    list.innerHTML = `<div class="empty-state offer-waiting">${search.status === "expired" ? "" : '<span class="evander evander-sm" aria-hidden="true"></span>'}<strong>${search.status === "expired" ? "No active offers remain" : "Waiting for clinic responses"}</strong><p>${search.status === "expired" ? "Capacity changes quickly. Please start a new search." : "You may leave this page open; responses update automatically."}</p></div>`;
     return;
   }
   list.innerHTML = offers.map((offer) => {
@@ -1123,6 +1151,7 @@ async function selectCareOffer(offerId) {
     state.currentIntake = { ...data.intake, location: data.location || offer.location };
     writeStorage(STORAGE_KEYS.search, state.currentSearch);
     writeStorage(STORAGE_KEYS.intake, state.currentIntake);
+    track("offer_selected");
     showToast("Clinic selected. The other offers were released.");
     renderTracker();
   } catch (error) {
@@ -1194,7 +1223,9 @@ function maybePresentPayment(intake) {
   paymentButton.hidden = !required || intake.paymentStatus === "paid";
   paymentButton.textContent = required ? `Pay ${formatMoney(intake.depositAmountCents)} deposit` : "";
   paymentNote.hidden = !required;
-  paymentNote.textContent = intake.paymentStatus === "paid" ? "Deposit paid and credited to the clinic invoice." : "The clinic requires an arrival deposit before departure.";
+  paymentNote.textContent = intake.paymentStatus === "paid"
+    ? "Deposit paid and credited to the clinic invoice."
+    : `The clinic requires an arrival deposit before departure. ${serviceFeeSentence()}`;
 }
 
 async function updateIntakeStatus(status) {
@@ -1237,7 +1268,7 @@ async function startPayment() {
   if (!intake) return;
   const policy = intake.policy || {};
   const clinic = intake.location?.name || "the selected clinic";
-  $("[data-payment-disclosure]").textContent = `${clinic} requires ${formatMoney(intake.depositAmountCents)}. The full amount is credited to its invoice. Free cancellation: ${policy.freeCancelMinutes ?? 0} minutes; later refund and no-show handling follow clinic policy ${policy.version || "current"}.`;
+  $("[data-payment-disclosure]").textContent = `${clinic} requires ${formatMoney(intake.depositAmountCents)}. The full amount is credited to its invoice. Free cancellation: ${policy.freeCancelMinutes ?? 0} minutes; later refund and no-show handling follow clinic policy ${policy.version || "current"}. ${serviceFeeSentence()}`;
   $("[data-payment-policy-ack]").textContent = `I authorize the ${formatMoney(intake.depositAmountCents)} deposit and agree to clinic policy ${policy.version || "current"}, including its cancellation, refund, and no-show terms.`;
   const form = $("[data-payment-form]");
   state.stripeElements = null;
@@ -1283,6 +1314,7 @@ async function confirmStripePayment(event) {
     $("[data-payment-dialog]").close(); document.body.classList.remove("dialog-open");
     renderTracker();
     button.disabled = false; button.textContent = "Complete demo deposit";
+    track("deposit_paid", { mode: "demo" });
     return showToast("Demonstration deposit completed. No card was charged.");
   }
   if (!state.stripeElements) {
@@ -1300,6 +1332,7 @@ async function confirmStripePayment(event) {
   }
   const result = await state.stripe.confirmPayment({ elements: state.stripeElements, confirmParams: { return_url: `${location.origin}/#tracker` }, redirect: "if_required" });
   if (result.error) { showToast(result.error.message); button.disabled = false; button.textContent = "Pay deposit"; return; }
+  track("deposit_paid", { mode: "stripe" });
   $("[data-payment-dialog]").close(); document.body.classList.remove("dialog-open");
   await api(`/api/intakes/${encodeURIComponent(state.currentIntake.id)}/payment-status`);
   await refreshCurrentIntake();
@@ -1521,22 +1554,12 @@ document.addEventListener("click", (event) => {
   const toastButton = event.target.closest("[data-toast-message]");
   if (toastButton) showToast(toastButton.dataset.toastMessage);
 
-  const oauthButton = event.target.closest("[data-oauth]");
-  if (oauthButton) startOAuth(oauthButton.dataset.oauth);
-  const passkeyButton = event.target.closest("[data-passkey-signin]");
-  if (passkeyButton) signInWithPasskey();
   const authBack = event.target.closest("[data-auth-back]");
   if (authBack) setAuthStep("identifier");
   const authToggleMode = event.target.closest("[data-auth-toggle-mode]");
   if (authToggleMode) {
     const currentStep = event.target.closest("[data-auth-step]")?.dataset.authStep;
     setAuthStep(currentStep === "sign-up" ? "identifier" : "sign-up");
-  }
-  const forgotPassword = event.target.closest("[data-auth-forgot-password]");
-  if (forgotPassword) {
-    const resetFactor = (state.auth?.factors || []).find((factor) => factor.strategy === "reset_password_email_code");
-    if (resetFactor) prepareAndShowCode(resetFactor);
-    else showAuthError({ errors: [{ longMessage: "Password reset is not available for this account." }] });
   }
   const codeSubmit = event.target.closest("[data-auth-code-submit]");
   if (codeSubmit) submitCode();
@@ -1596,36 +1619,6 @@ $("[data-auth-identifier-form]")?.addEventListener("submit", async (event) => {
   finally { setSubmitting(form, false, "Continue"); }
 });
 
-$("[data-auth-password-form]")?.addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const form = event.currentTarget;
-  const password = form.elements.password.value;
-  setSubmitting(form, true, "Sign in");
-  try {
-    const attempted = await state.auth.signIn.attemptFirstFactor({ strategy: "password", password });
-    state.auth.signIn = attempted;
-    await handleSignInResult(attempted);
-  } catch (error) { showAuthError(error); }
-  finally { setSubmitting(form, false, "Sign in"); }
-});
-
-$("[data-auth-reset-form]")?.addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const form = event.currentTarget;
-  const values = new FormData(form);
-  const password = String(values.get("password") || "");
-  const confirmPassword = String(values.get("confirmPassword") || "");
-  if (password.length < 8) return showAuthError({ errors: [{ longMessage: "Password must be at least 8 characters." }] });
-  if (password !== confirmPassword) return showAuthError({ errors: [{ longMessage: "Passwords do not match." }] });
-  setSubmitting(form, true, "Set new password");
-  try {
-    const result = await state.auth.signIn.resetPassword({ password });
-    state.auth.signIn = result;
-    await handleSignInResult(result);
-  } catch (error) { showAuthError(error); }
-  finally { setSubmitting(form, false, "Set new password"); }
-});
-
 $("[data-auth-signup-form]")?.addEventListener("submit", async (event) => {
   event.preventDefault();
   const form = event.currentTarget;
@@ -1633,11 +1626,10 @@ $("[data-auth-signup-form]")?.addEventListener("submit", async (event) => {
   const firstName = String(values.get("firstName") || "").trim();
   const lastName = String(values.get("lastName") || "").trim();
   const identifier = String(values.get("identifier") || "").trim();
-  const password = String(values.get("password") || "");
   const isPhone = identifier.includes("@") === false && /^[+0-9()\-\s]{7,}$/.test(identifier);
   setSubmitting(form, true, "Create account");
   try {
-    const payload = { firstName, lastName, password };
+    const payload = { firstName, lastName };
     if (isPhone) payload.phoneNumber = identifier; else payload.emailAddress = identifier;
     const signUp = await state.clerk.client.signUp.create(payload);
     state.auth.signUp = signUp;
@@ -1699,6 +1691,45 @@ $("[data-intake-form]")?.addEventListener("submit", (event) => {
   setRoute("results");
 });
 
+$("[data-provider-form]")?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const errorBox = $("[data-provider-error]");
+  if (errorBox) errorBox.hidden = true;
+  if (!form.reportValidity()) return;
+  const values = new FormData(form);
+  const payload = {
+    practiceName: String(values.get("practiceName") || "").trim(),
+    contactName: String(values.get("contactName") || "").trim(),
+    email: String(values.get("email") || "").trim(),
+    phone: String(values.get("phone") || "").trim(),
+    city: String(values.get("city") || "").trim(),
+    state: String(values.get("state") || "").trim()
+  };
+  const species = String(values.get("species") || "").trim();
+  const message = String(values.get("message") || "").trim();
+  if (species) payload.species = species;
+  if (message) payload.message = message;
+  const button = form.querySelector("button[type='submit']");
+  const buttonHtml = button.innerHTML;
+  button.disabled = true;
+  button.textContent = "Sending…";
+  try {
+    await api("/api/provider-applications", { method: "POST", body: JSON.stringify(payload) });
+    track("provider_application_submitted");
+    form.hidden = true;
+    const success = $("[data-provider-success]");
+    if (success) { success.hidden = false; success.scrollIntoView({ block: "nearest" }); }
+  } catch (error) {
+    if (errorBox) {
+      errorBox.textContent = error.message || "The request could not be sent. Please check the form and try again.";
+      errorBox.hidden = false;
+    }
+    button.disabled = false;
+    button.innerHTML = buttonHtml;
+  }
+});
+
 $("[data-sort-results]")?.addEventListener("change", renderLocations);
 $("[data-availability-form]")?.addEventListener("submit", publishAvailability);
 $("[data-decision-form]")?.addEventListener("submit", submitDecision);
@@ -1724,7 +1755,14 @@ $("[data-install]")?.addEventListener("click", async () => {
 });
 
 window.addEventListener("hashchange", () => { if (state.route === "find") persistFormDraft(); renderRoute(); });
-window.addEventListener("load", async () => { await loadConfig(); await renderRoute(); });
+window.addEventListener("load", async () => {
+  try {
+    await loadConfig();
+    await renderRoute();
+  } finally {
+    hideBootSplash();
+  }
+});
 
 if ("serviceWorker" in navigator) window.addEventListener("load", () => navigator.serviceWorker.register("/sw.js").catch(() => {}));
 

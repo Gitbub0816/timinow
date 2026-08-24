@@ -7,8 +7,8 @@
  * using the Document Picture-in-Picture API (see openMiniWindow()).
  *
  * Per docs/PLATFORM-CONTRACT.md, no prebuilt Clerk component is mounted
- * anywhere in this file. Clerk loads headless and every flow (sign-in,
- * organization switching, passkeys, OAuth redirects, invitation acceptance)
+ * anywhere in this file. Clerk loads headless and every flow (sign-in with
+ * one-time email/phone codes, organization switching, invitation acceptance)
  * is driven through the client API by hand.
  */
 
@@ -39,6 +39,58 @@ const state = {
   miniWin: null,
   miniKind: null // "pip" | "popup"
 };
+
+/* ----------------------------------------------------------- analytics --- */
+/* First-party, cookieless beacon. Events carry a name, a path, and optional
+   coarse metadata — never an identifier. A failed beacon never affects the
+   console. */
+const track = (() => {
+  const queue = [];
+  let flushTimer = null;
+  function deliver(events) {
+    if (!events.length) return;
+    const body = JSON.stringify({ events });
+    try {
+      if (navigator.sendBeacon && navigator.sendBeacon("/api/analytics", new Blob([body], { type: "application/json" }))) return;
+    } catch { /* fall through to fetch */ }
+    try {
+      fetch("/api/analytics", { method: "POST", headers: { "content-type": "application/json" }, body, keepalive: true, credentials: "omit" }).catch(() => {});
+    } catch { /* analytics must never break the console */ }
+  }
+  function flush() {
+    window.clearTimeout(flushTimer);
+    flushTimer = null;
+    while (queue.length) deliver(queue.splice(0, 25));
+  }
+  try {
+    addEventListener("pagehide", flush);
+    addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") flush(); });
+  } catch { /* ignore */ }
+  return (name, meta) => {
+    try {
+      if (!/^[a-z0-9_.:-]{1,40}$/i.test(String(name))) return;
+      const event = { name: String(name), path: `#${state?.route || "console"}` };
+      if (meta && typeof meta === "object") event.meta = meta;
+      queue.push(event);
+      if (!flushTimer) flushTimer = window.setTimeout(flush, 400);
+    } catch { /* analytics must never break the console */ }
+  };
+})();
+
+/* Boot splash: static HTML shows it instantly; hidden once the console has
+   booted, but never before ~1.2s so it cannot flash. */
+const BOOT_STARTED_AT = Date.now();
+function hideBootSplash() {
+  const splash = $("[data-boot-splash]");
+  if (!splash || splash.dataset.hiding) return;
+  splash.dataset.hiding = "true";
+  const linger = Math.max(0, 1200 - (Date.now() - BOOT_STARTED_AT));
+  window.setTimeout(() => {
+    splash.classList.add("is-hidden");
+    window.setTimeout(() => splash.remove(), 480);
+  }, linger);
+}
+window.setTimeout(hideBootSplash, 10000);
 
 /* ------------------------------------------------------------- storage --- */
 
@@ -181,9 +233,6 @@ async function initializeClerk() {
     const Clerk = clerkModule.Clerk || clerkModule.default?.Clerk || clerkModule.default;
     state.clerk = new Clerk(state.config.clerkPublishableKey);
     await state.clerk.load();
-    // If we just returned from an OAuth redirect, complete the handshake. This
-    // is a no-op (rejects harmlessly) when there is nothing pending.
-    try { await state.clerk.handleRedirectCallback({ redirectUrlComplete: `${location.origin}/#workspace` }); } catch { /* nothing pending */ }
     await handleInvitationTicket();
     state.clerk.addListener(() => { renderRoute(); });
   } catch (error) {
@@ -205,8 +254,16 @@ async function handleInvitationTicket() {
       if (attempt.status === "complete" && attempt.createdSessionId) {
         await state.clerk.setActive({ session: attempt.createdSessionId });
       } else {
-        // The invited person needs to set a password before the account is usable.
-        state.signIn = { stage: "ticket-password", identifier: attempt.emailAddress || "", attempt, factor: null, error: null, busy: false };
+        // Accounts are passwordless: finish through the ordinary one-time-code
+        // flow with the invited email prefilled.
+        state.signIn = {
+          stage: "identifier",
+          identifier: attempt.emailAddress || "",
+          attempt: null,
+          factor: null,
+          error: "Your invitation was accepted. Continue with your work email to receive a one-time sign-in code.",
+          busy: false
+        };
       }
     } catch (signUpError) {
       console.warn("Invitation ticket could not be redeemed", signUpError);
@@ -245,30 +302,8 @@ function renderSignIn() {
         ${errorHtml}
         <button class="button button-primary button-block" type="submit" ${busy ? "disabled" : ""}>${busy ? "Checking…" : "Continue"}</button>
       </form>
-      <div class="sign-in-divider">or continue with</div>
-      <div class="sign-in-alt">
-        <button class="button button-quiet button-block" type="button" data-passkey>Sign in with a passkey</button>
-        <button class="button button-quiet button-block" type="button" data-oauth="oauth_google">Continue with Google</button>
-        <button class="button button-quiet button-block" type="button" data-oauth="oauth_apple">Continue with Apple</button>
-      </div>`;
+      <p class="sign-in-note" style="margin-top:1rem">We'll send a one-time code to your email or phone — Tími sign-in uses no passwords.</p>`;
     $("[data-identifier-form]", mount).addEventListener("submit", onIdentifierSubmit);
-    $("[data-passkey]", mount).addEventListener("click", onPasskeySignIn);
-    $$("[data-oauth]", mount).forEach((button) => button.addEventListener("click", () => onOAuthSignIn(button.dataset.oauth)));
-    return;
-  }
-
-  if (stage === "password") {
-    mount.innerHTML = `
-      <button class="sign-in-back" type="button" data-back>← Use a different account</button>
-      <form class="sign-in-step" data-password-form style="margin-top:.8rem">
-        <label class="field">Password for ${escapeHtml(state.signIn.identifier)}
-          <input name="password" type="password" autocomplete="current-password" required>
-        </label>
-        ${errorHtml}
-        <button class="button button-primary button-block" type="submit" ${busy ? "disabled" : ""}>${busy ? "Signing in…" : "Sign in"}</button>
-      </form>`;
-    $("[data-back]", mount).addEventListener("click", () => { state.signIn = { stage: "identifier", identifier: "", attempt: null, factor: null, error: null, busy: false }; renderSignIn(); });
-    $("[data-password-form]", mount).addEventListener("submit", onPasswordSubmit);
     return;
   }
 
@@ -287,20 +322,6 @@ function renderSignIn() {
     $("[data-code-form]", mount).addEventListener("submit", onCodeSubmit);
     return;
   }
-
-  if (stage === "ticket-password") {
-    mount.innerHTML = `
-      <p class="sign-in-note">Your invitation is confirmed. Set a password to finish creating your account.</p>
-      <form class="sign-in-step" data-ticket-form style="margin-top:.8rem">
-        <label class="field">Choose a password
-          <input name="password" type="password" autocomplete="new-password" minlength="8" required>
-        </label>
-        ${errorHtml}
-        <button class="button button-primary button-block" type="submit" ${busy ? "disabled" : ""}>${busy ? "Finishing…" : "Finish creating account"}</button>
-      </form>`;
-    $("[data-ticket-form]", mount).addEventListener("submit", onTicketPasswordSubmit);
-    return;
-  }
 }
 
 async function onIdentifierSubmit(event) {
@@ -311,20 +332,17 @@ async function onIdentifierSubmit(event) {
   try {
     const attempt = await state.clerk.client.signIn.create({ identifier });
     const factors = attempt.supportedFirstFactors || [];
-    const factor = factors.find((f) => f.strategy === "password")
-      || factors.find((f) => f.strategy === "email_code")
+    // One-time codes only: email first, then phone. Passwords, passkeys, and
+    // OAuth are not offered on any Tími web surface.
+    const factor = factors.find((f) => f.strategy === "email_code")
       || factors.find((f) => f.strategy === "phone_code");
-    if (!factor) throw new Error("This account does not support a sign-in method available here.");
-    if (factor.strategy === "password") {
-      state.signIn = { stage: "password", identifier, attempt, factor, error: null, busy: false };
-    } else {
-      await attempt.prepareFirstFactor({
-        strategy: factor.strategy,
-        emailAddressId: factor.emailAddressId,
-        phoneNumberId: factor.phoneNumberId
-      });
-      state.signIn = { stage: "code", identifier, attempt, factor, error: null, busy: false };
-    }
+    if (!factor) throw new Error("This account has no email or phone number that can receive a one-time code. Ask your workspace administrator to update it.");
+    await attempt.prepareFirstFactor({
+      strategy: factor.strategy,
+      emailAddressId: factor.emailAddressId,
+      phoneNumberId: factor.phoneNumberId
+    });
+    state.signIn = { stage: "code", identifier, attempt, factor, error: null, busy: false };
   } catch (error) {
     state.signIn = { stage: "identifier", identifier, attempt: null, factor: null, error: signInErrorMessage(error), busy: false };
   }
@@ -339,20 +357,6 @@ async function completeIfDone(result) {
   return false;
 }
 
-async function onPasswordSubmit(event) {
-  event.preventDefault();
-  const password = new FormData(event.currentTarget).get("password")?.toString();
-  state.signIn.busy = true; state.signIn.error = null; renderSignIn();
-  try {
-    const result = await state.signIn.attempt.attemptFirstFactor({ strategy: "password", password });
-    if (!(await completeIfDone(result))) throw new Error("Sign-in requires an additional step this console does not yet support.");
-  } catch (error) {
-    state.signIn.error = signInErrorMessage(error);
-    state.signIn.busy = false;
-    renderSignIn();
-  }
-}
-
 async function onCodeSubmit(event) {
   event.preventDefault();
   const code = new FormData(event.currentTarget).get("code")?.toString().trim();
@@ -363,43 +367,6 @@ async function onCodeSubmit(event) {
   } catch (error) {
     state.signIn.error = signInErrorMessage(error);
     state.signIn.busy = false;
-    renderSignIn();
-  }
-}
-
-async function onTicketPasswordSubmit(event) {
-  event.preventDefault();
-  const password = new FormData(event.currentTarget).get("password")?.toString();
-  state.signIn.busy = true; state.signIn.error = null; renderSignIn();
-  try {
-    const result = await state.signIn.attempt.update({ password });
-    if (!(await completeIfDone(result))) throw new Error("Could not finish creating the account. Ask your administrator to resend the invitation.");
-  } catch (error) {
-    state.signIn.error = signInErrorMessage(error);
-    state.signIn.busy = false;
-    renderSignIn();
-  }
-}
-
-async function onPasskeySignIn() {
-  try {
-    const result = await state.clerk.client.signIn.authenticateWithPasskey();
-    await completeIfDone(result);
-  } catch (error) {
-    state.signIn.error = signInErrorMessage(error);
-    renderSignIn();
-  }
-}
-
-async function onOAuthSignIn(strategy) {
-  try {
-    await state.clerk.client.signIn.authenticateWithRedirect({
-      strategy,
-      redirectUrl: `${location.origin}/#sign-in`,
-      redirectUrlComplete: `${location.origin}/#workspace`
-    });
-  } catch (error) {
-    state.signIn.error = signInErrorMessage(error);
     renderSignIn();
   }
 }
@@ -483,6 +450,10 @@ async function renderRoute() {
   }
 
   state.route = route;
+  if (renderRoute.lastTrackedRoute !== route) {
+    renderRoute.lastTrackedRoute = route;
+    track("page_view");
+  }
   $$("[data-screen]").forEach((screen) => screen.classList.toggle("is-active", screen.dataset.screen === route));
   $$("[data-nav]").forEach((link) => link.classList.toggle("active", link.dataset.nav === route));
   document.title = ({
@@ -532,6 +503,10 @@ function setStatus(message) {
 }
 
 async function enterConsole() {
+  if (!enterConsole.tracked) {
+    enterConsole.tracked = true;
+    track("console_opened");
+  }
   syncSettingsForm();
   await refreshDashboard(true);
   window.clearInterval(state.pollTimer);
@@ -718,6 +693,7 @@ async function submitDecision(request, form, decline) {
       body = decline ? { decision: "decline", arrivalWindowMinutes, note } : { decision: "accept", arrivalWindowMinutes, note };
     }
     await api(path, { method: "POST", body: JSON.stringify(body) });
+    track("decision_made", { decision: decline ? "decline" : (request.searchTarget ? "offer" : "accept") });
     setStatus(decline ? `Declined ${request.pet?.name}'s request.` : `${request.searchTarget ? "Availability offer sent" : "Arrival accepted"} for ${request.pet?.name}.`);
     state.selectedRequestId = null;
     await refreshDashboard(true);
@@ -1110,11 +1086,15 @@ window.addEventListener("hashchange", renderRoute);
 window.addEventListener("beforeunload", closeMiniWindow);
 
 async function main() {
-  wireGlobalActions();
-  wireAvailabilityForm();
-  wireSettingsForm();
-  await loadConfig();
-  await renderRoute();
+  try {
+    wireGlobalActions();
+    wireAvailabilityForm();
+    wireSettingsForm();
+    await loadConfig();
+    await renderRoute();
+  } finally {
+    hideBootSplash();
+  }
 }
 
 main();

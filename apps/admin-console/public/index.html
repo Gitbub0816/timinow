@@ -24,6 +24,8 @@
     <span class="brand-mark">Tími <small>Platform Console</small></span>
     <nav class="admin-nav" data-operator-nav hidden aria-label="Platform console navigation">
       <a href="#tenants" data-nav="tenants">Tenants</a>
+      <a href="#applications" data-nav="applications">Applications</a>
+      <a href="#analytics" data-nav="analytics">Analytics</a>
       <a href="#audit" data-nav="audit">Audit log</a>
       <a href="#ledger" data-nav="ledger">Ledger</a>
       <a href="#errors" data-nav="errors">Client errors</a>
@@ -47,7 +49,7 @@
 
     <section class="screen" data-screen="loading" aria-live="polite">
       <div class="loading-state" style="min-height: calc(100svh - 68px);">
-        <span class="spinner" aria-hidden="true"></span>
+        <span class="evander" aria-hidden="true"></span>
         <p>Loading the platform console…</p>
       </div>
     </section>
@@ -81,19 +83,7 @@
             <div class="strategy-list" data-strategy-list></div>
           </div>
 
-          <!-- Step 3a: password -->
-          <form data-step="password" hidden>
-            <button class="button button-quiet sign-in-back" type="button" data-back-to="strategy">← Choose another way to sign in</button>
-            <div class="form-grid">
-              <label class="field">
-                <span>Password</span>
-                <input type="password" name="password" autocomplete="current-password" required>
-              </label>
-            </div>
-            <button class="button button-primary button-block" type="submit">Sign in</button>
-          </form>
-
-          <!-- Step 3b: one-time code (email_code / phone_code) -->
+          <!-- Step 3: one-time code (email_code / phone_code) -->
           <form data-step="code" hidden>
             <button class="button button-quiet sign-in-back" type="button" data-back-to="strategy">← Choose another way to sign in</button>
             <p class="lede" data-code-lede>Enter the 6-digit code we sent you.</p>
@@ -106,12 +96,7 @@
             <button class="button button-primary button-block" type="submit">Verify and sign in</button>
           </form>
 
-          <div class="divider" data-step="identifier-extras">or</div>
-          <div class="oauth-row" data-step="identifier-extras">
-            <button class="button button-block" type="button" data-passkey>Sign in with a passkey</button>
-            <button class="button button-block" type="button" data-oauth="oauth_google">Continue with Google</button>
-            <button class="button button-block" type="button" data-oauth="oauth_apple">Continue with Apple</button>
-          </div>
+          <p class="lede" data-step="identifier-extras" style="margin-top: 1.2rem;">We'll send a one-time code to your email or phone. Tími sign-in uses no passwords.</p>
         </div>
       </div>
     </section>
@@ -260,6 +245,47 @@
         <a class="button button-quiet" href="#tenants" style="margin-bottom: 1rem; padding-left: 0;">← Back to tenants</a>
         <div data-tenant-detail-body>
           <div class="loading-state"><span class="spinner" aria-hidden="true"></span><p>Loading tenant…</p></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ---------------------------------------------------- applications --- -->
+    <section class="screen" data-screen="applications" aria-labelledby="applications-title">
+      <div class="shell">
+        <div class="page-head">
+          <div>
+            <p class="eyebrow">Growth</p>
+            <h1 class="page-title" id="applications-title">Provider applications</h1>
+            <p class="page-lede">Join requests from veterinary practices, submitted through the public site's "For veterinary teams" page. Move each one through new → contacted → closed.</p>
+          </div>
+        </div>
+        <div data-applications-body>
+          <div class="loading-state"><span class="spinner" aria-hidden="true"></span><p>Loading applications…</p></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ------------------------------------------------------- analytics --- -->
+    <section class="screen" data-screen="analytics" aria-labelledby="analytics-title">
+      <div class="shell">
+        <div class="page-head">
+          <div>
+            <p class="eyebrow">Platform-wide</p>
+            <h1 class="page-title" id="analytics-title">Analytics</h1>
+            <p class="page-lede">First-party, cookieless usage across the three web surfaces. Visitors are daily-rotating anonymous hashes, so a visitor can never be followed across days.</p>
+          </div>
+          <form data-form="analytics-range">
+            <label class="field"><span>Window</span>
+              <select name="days">
+                <option value="7" selected>Last 7 days</option>
+                <option value="30">Last 30 days</option>
+                <option value="90">Last 90 days</option>
+              </select>
+            </label>
+          </form>
+        </div>
+        <div data-analytics-body>
+          <div class="loading-state"><span class="spinner" aria-hidden="true"></span><p>Loading analytics…</p></div>
         </div>
       </div>
     </section>

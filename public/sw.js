@@ -1,4 +1,4 @@
-const CACHE = "timinow-shell-v6";
+const CACHE = "timinow-shell-v7";
 const SHELL = [
   "/",
   "/index.html",
@@ -6,6 +6,7 @@ const SHELL = [
   "/app.js",
   "/map.js",
   "/manifest.webmanifest",
+  "/assets/anim/evander-sheet-1024.png",
   "/assets/brand/timinow-wordmark.png",
   "/assets/art/find-care-hero.png",
   "/assets/art/clinic-operations.png",

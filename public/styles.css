@@ -193,7 +193,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--blue); box-shado
 .search-summary h2 { font-size: 1.45rem; }.search-summary dl { margin: 0; }.search-summary dl div { display: flex; justify-content: space-between; gap: .8rem; padding: .8rem 0; border-top: 1px solid var(--line); font-size: .68rem; }.search-summary dt { color: var(--muted); }.search-summary dd { margin: 0; text-align: right; font-weight: 800; }
 .summary-safety { margin-top: 1rem; padding: .8rem; background: var(--coral-soft); border-radius: 9px; }.summary-safety strong { font-size: .7rem; }.summary-safety p { margin: .3rem 0 0; color: var(--ink-soft); font-size: .63rem; line-height: 1.5; }
 .loading-state, .empty-state { min-height: 170px; display: grid; place-items: center; align-content: center; gap: 1rem; color: var(--muted); text-align: center; border: 1px dashed #aeb3bf; border-radius: 14px; }
-.loading-state span { width: 32px; height: 32px; border: 4px solid var(--blue-soft); border-top-color: var(--blue); border-radius: 50%; animation: spin .8s linear infinite; }
+.loading-state span:not(.evander) { width: 32px; height: 32px; border: 4px solid var(--blue-soft); border-top-color: var(--blue); border-radius: 50%; animation: spin .8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
 /* Tracker */
@@ -333,7 +333,7 @@ dialog { width: min(620px, calc(100% - 2rem)); max-height: 90svh; overflow: auto
   .emergency-section { grid-template-columns: auto 1fr; }.emergency-section .button { grid-column: 2; justify-self: start; }
   .availability-console { grid-template-columns: 1fr; }.clinic-columns { grid-template-columns: 1fr; }.compact-fields { grid-template-columns: 1fr 1fr; }
   .availability-current { border-right: 0; border-bottom: 1px solid #e6e8ed; padding-bottom: 1rem; }.status-buttons { grid-template-columns: repeat(3, 1fr); }
-  .site-footer { grid-template-columns: 150px 1fr; }.site-footer nav { grid-column: 1/3; grid-template-columns: repeat(5, auto); }
+  .site-footer { grid-template-columns: 150px 1fr; }.site-footer nav { grid-column: 1/3; grid-template-columns: repeat(3, auto); }
 }
 
 @media (max-width: 800px) {
@@ -541,3 +541,72 @@ dialog { width: min(620px, calc(100% - 2rem)); max-height: 90svh; overflow: auto
   .navigation-banner { grid-template-columns: auto 1fr; }
   .navigation-banner .icon-button { grid-column: 2; justify-self: end; }
 }
+
+/* ============================== Evander, the loading companion ============================== */
+/* 1024x768 sprite sheet: 8 columns x 6 rows of 128px frames, 48 frames at 10fps.
+   Two stepped animations traverse the grid — columns every tenth of a second,
+   rows every eighth-of-a-second-times-eight — so the loop is seamless with no
+   JavaScript ticker to leak. Reduced motion pins the first frame. */
+.evander {
+  --evander-frame: 128px;
+  flex: 0 0 auto;
+  width: var(--evander-frame);
+  height: var(--evander-frame);
+  background-image: url("/assets/anim/evander-sheet-1024.png");
+  background-repeat: no-repeat;
+  background-position: 0 0;
+  background-size: calc(var(--evander-frame) * 8) calc(var(--evander-frame) * 6);
+  animation: evander-x .8s steps(8) infinite, evander-y 4.8s steps(6) infinite;
+}
+.evander-sm { --evander-frame: 72px; }
+@keyframes evander-x { from { background-position-x: 0; } to { background-position-x: calc(var(--evander-frame) * -8); } }
+@keyframes evander-y { from { background-position-y: 0; } to { background-position-y: calc(var(--evander-frame) * -6); } }
+@media (prefers-reduced-motion: reduce) { .evander { animation: none; } }
+
+.boot-splash {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: .4rem;
+  background: var(--paper);
+  text-align: center;
+  transition: opacity .38s ease;
+}
+.boot-splash p { margin: 0; color: var(--muted); font-size: .74rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.boot-splash strong { font-family: var(--serif); font-size: 1.6rem; letter-spacing: -.03em; }
+.boot-splash.is-hidden { opacity: 0; pointer-events: none; }
+.offer-waiting .evander { margin: 0 auto .6rem; }
+
+/* ============================== for veterinary teams (#vets) ============================== */
+.vets-screen { padding-bottom: 0; }
+.vets-hero { padding: clamp(3rem, 7vw, 6rem) clamp(1.25rem, 7vw, 7rem) clamp(2rem, 4vw, 3.5rem); }
+.vets-hero h1 { max-width: 900px; }
+.vets-hero .hero-lede { max-width: 640px; }
+.vets-points { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 1rem; padding: 0 clamp(1.25rem, 7vw, 7rem) 3.5rem; }
+.vets-points article { padding: 1.4rem; border: 2px solid var(--ink); border-radius: 16px; background: var(--white); box-shadow: var(--shadow); }
+.vets-points article h3 { font-size: 1rem; margin: .7rem 0 .4rem; }
+.vets-points article p { margin: 0; color: var(--ink-soft); font-size: .78rem; line-height: 1.6; }
+.vets-points .sketch-icon { width: 74px; height: 74px; margin: 0; font-size: 1.7rem; box-shadow: 4px 5px 0 rgba(17, 27, 59, .14); }
+.vets-fees { padding: 4rem clamp(1.25rem, 7vw, 7rem); background: var(--blue-soft); border-top: 3px solid var(--ink); border-bottom: 3px solid var(--ink); }
+.vets-fees h2 { max-width: 760px; }
+.vets-fees > p { max-width: 680px; line-height: 1.65; }
+.fee-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1rem; margin-top: 1.6rem; }
+.fee-cards article { padding: 1.4rem; border: 2px solid var(--ink); border-radius: 16px; background: var(--white); box-shadow: var(--shadow); }
+.fee-cards small { display: block; font-size: .62rem; font-weight: 900; letter-spacing: .12em; color: var(--coral); }
+.fee-cards strong { display: block; margin: .5rem 0 .4rem; font-family: var(--serif); font-size: 2.1rem; letter-spacing: -.03em; }
+.fee-cards p { margin: 0; color: var(--ink-soft); font-size: .78rem; line-height: 1.6; }
+.fee-footnote { margin: 1.4rem 0 0; max-width: 680px; color: var(--ink-soft); font-size: .72rem; line-height: 1.6; }
+.vets-apply { display: grid; grid-template-columns: minmax(260px, .8fr) minmax(320px, 1.2fr); gap: clamp(1.5rem, 4vw, 4rem); padding: 4rem clamp(1.25rem, 7vw, 7rem) 5rem; }
+.vets-apply .form-grid label, .vets-apply label.wide { display: grid; gap: .4rem; font-size: .7rem; font-weight: 900; }
+.vets-apply input, .vets-apply textarea { width: 100%; border: 2px solid var(--ink); border-radius: 10px; background: var(--white); padding: .7rem .8rem; font-size: .86rem; font-weight: 500; }
+.vets-apply input:focus, .vets-apply textarea:focus { border-color: var(--blue); box-shadow: 0 0 0 3px rgba(35, 87, 217, .13); outline: none; }
+.vets-apply .button { margin-top: 1.1rem; }
+.provider-error { margin: 1rem 0 0; padding: .8rem .9rem; border: 2px solid var(--coral-dark); border-radius: 10px; background: var(--coral-soft); color: var(--coral-dark); font-size: .76rem; line-height: 1.5; }
+.provider-success { padding: 1.6rem; border: 2px solid var(--ink); border-radius: 16px; background: var(--green-soft); box-shadow: var(--shadow); }
+.provider-success h3 { font-family: var(--serif); font-size: 1.5rem; margin-bottom: .5rem; }
+.provider-success p { margin: 0; color: var(--ink-soft); font-size: .8rem; line-height: 1.6; }
+.vets-apply .microcopy { margin-top: 1rem; }
+@media (max-width: 900px) { .vets-apply { grid-template-columns: 1fr; } }

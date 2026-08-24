@@ -293,3 +293,40 @@ label.field { display: grid; gap: .35rem; font-size: .72rem; font-weight: 700; c
   letter-spacing: 0.06em;
   color: #6f7483;
 }
+
+/* ------------------------------------------- Evander, the loading companion --- */
+/* 1024x768 sprite sheet: 8 columns x 6 rows of 128px frames, 48 frames, 10fps.
+   Columns advance every tenth of a second; rows every .8s. Reduced motion pins
+   the first frame (the global .001ms rule would otherwise strobe an infinite
+   animation, so the override is explicit). */
+.evander {
+  --evander-frame: 128px;
+  flex: 0 0 auto;
+  width: var(--evander-frame);
+  height: var(--evander-frame);
+  background-image: url("/assets/anim/evander-sheet-1024.png");
+  background-repeat: no-repeat;
+  background-position: 0 0;
+  background-size: calc(var(--evander-frame) * 8) calc(var(--evander-frame) * 6);
+  animation: evander-x .8s steps(8) infinite, evander-y 4.8s steps(6) infinite;
+}
+.evander-sm { --evander-frame: 72px; }
+@keyframes evander-x { from { background-position-x: 0; } to { background-position-x: calc(var(--evander-frame) * -8); } }
+@keyframes evander-y { from { background-position-y: 0; } to { background-position-y: calc(var(--evander-frame) * -6); } }
+@media (prefers-reduced-motion: reduce) { .evander { animation: none !important; } }
+
+.boot-splash {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: .35rem;
+  background: var(--canvas);
+  text-align: center;
+  transition: opacity .38s ease;
+}
+.boot-splash strong { font-family: var(--serif); font-size: 1.4rem; letter-spacing: -.02em; }
+.boot-splash p { margin: 0; color: var(--muted); font-size: .68rem; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
+.boot-splash.is-hidden { opacity: 0; pointer-events: none; }

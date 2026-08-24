@@ -20,6 +20,42 @@ const state = {
   marker: null
 };
 
+/* ----------------------------------------------------------- analytics --- */
+/* First-party, cookieless beacon: an event name, a path, optional coarse
+   metadata — never an identifier. A failed beacon never affects the console. */
+const track = (() => {
+  const queue = [];
+  let flushTimer = null;
+  function deliver(events) {
+    if (!events.length) return;
+    const body = JSON.stringify({ events });
+    try {
+      if (navigator.sendBeacon && navigator.sendBeacon("/api/analytics", new Blob([body], { type: "application/json" }))) return;
+    } catch { /* fall through to fetch */ }
+    try {
+      fetch("/api/analytics", { method: "POST", headers: { "content-type": "application/json" }, body, keepalive: true, credentials: "omit" }).catch(() => {});
+    } catch { /* analytics must never break the console */ }
+  }
+  function flush() {
+    clearTimeout(flushTimer);
+    flushTimer = null;
+    while (queue.length) deliver(queue.splice(0, 25));
+  }
+  try {
+    addEventListener("pagehide", flush);
+    addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") flush(); });
+  } catch { /* ignore */ }
+  return (name, meta) => {
+    try {
+      if (!/^[a-z0-9_.:-]{1,40}$/i.test(String(name))) return;
+      const event = { name: String(name), path: `#${state.route?.screen || "tenants"}` };
+      if (meta && typeof meta === "object") event.meta = meta;
+      queue.push(event);
+      if (!flushTimer) flushTimer = setTimeout(flush, 400);
+    } catch { /* analytics must never break the console */ }
+  };
+})();
+
 /* --------------------------------------------------------------- utils --- */
 
 function escapeHtml(value) {
@@ -98,11 +134,13 @@ function parseHash() {
   if (raw === "audit") return { screen: "audit" };
   if (raw === "errors") return { screen: "errors" };
   if (raw === "ledger") return { screen: "ledger" };
+  if (raw === "analytics") return { screen: "analytics" };
+  if (raw === "applications") return { screen: "applications" };
   return { screen: "tenants" };
 }
 
 function updateNavActive() {
-  const top = ["audit", "errors", "ledger"].includes(state.route.screen) ? state.route.screen : "tenants";
+  const top = ["audit", "errors", "ledger", "analytics", "applications"].includes(state.route.screen) ? state.route.screen : "tenants";
   document.querySelectorAll("[data-nav]").forEach((a) => a.classList.toggle("active", a.dataset.nav === top));
 }
 
@@ -131,12 +169,20 @@ async function checkBootstrapAndRoute() {
     return;
   }
   document.querySelector("[data-operator-nav]").hidden = false;
+  if (!checkBootstrapAndRoute.trackedOpen) {
+    checkBootstrapAndRoute.trackedOpen = true;
+    track("console_opened");
+  }
   await renderRoute();
 }
 
 async function renderRoute() {
   state.route = parseHash();
   updateNavActive();
+  if (renderRoute.lastTrackedScreen !== state.route.screen) {
+    renderRoute.lastTrackedScreen = state.route.screen;
+    track("page_view");
+  }
   if (state.route.screen === "tenants-new") {
     showScreen("tenants-new");
     initTenantForm();
@@ -162,6 +208,16 @@ async function renderRoute() {
     await loadLedger();
     return;
   }
+  if (state.route.screen === "analytics") {
+    showScreen("analytics");
+    await loadAnalytics();
+    return;
+  }
+  if (state.route.screen === "applications") {
+    showScreen("applications");
+    await loadApplications();
+    return;
+  }
   showScreen("tenants");
   await loadTenants();
 }
@@ -181,7 +237,7 @@ async function initClerk() {
 }
 
 function showStep(step) {
-  ["identifier", "strategy", "password", "code"].forEach((s) => {
+  ["identifier", "strategy", "code"].forEach((s) => {
     const el = document.querySelector(`[data-step="${s}"]`);
     if (el) el.hidden = s !== step;
   });
@@ -204,7 +260,6 @@ function resetSignInForm() {
   state.pendingFactor = null;
   clearSignInError();
   document.querySelector('form[data-step="identifier"]')?.reset();
-  document.querySelector('form[data-step="password"]')?.reset();
   document.querySelector('form[data-step="code"]')?.reset();
   showStep("identifier");
   document.querySelector("[data-clerk-missing]").hidden = Boolean(state.config?.clerkPublishableKey) || !state.config?.signInRequired;
@@ -215,8 +270,10 @@ function renderStrategyChoices(attempt) {
   list.innerHTML = "";
   document.querySelector("[data-strategy-identity]").textContent = attempt.identifier ? `Continuing as ${attempt.identifier}` : "";
   const seen = new Set();
+  // One-time codes only: email and phone. Passwords, passkeys, and OAuth are
+  // not offered on any Tími web surface.
   const supported = (attempt.supportedFirstFactors || []).filter((factor) => {
-    if (!["password", "email_code", "phone_code"].includes(factor.strategy)) return false;
+    if (!["email_code", "phone_code"].includes(factor.strategy)) return false;
     if (seen.has(factor.strategy)) return false;
     seen.add(factor.strategy);
     return true;
@@ -225,25 +282,19 @@ function renderStrategyChoices(attempt) {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "button";
-    button.textContent = factor.strategy === "password"
-      ? "Use your password"
-      : factor.strategy === "email_code"
-        ? `Email a code to ${factor.safeIdentifier || "your inbox"}`
-        : `Text a code to ${factor.safeIdentifier || "your phone"}`;
+    button.textContent = factor.strategy === "email_code"
+      ? `Email a code to ${factor.safeIdentifier || "your inbox"}`
+      : `Text a code to ${factor.safeIdentifier || "your phone"}`;
     button.addEventListener("click", () => chooseStrategy(factor));
     list.appendChild(button);
   }
   if (!supported.length) {
-    list.innerHTML = '<p class="sign-in-error" style="margin:0;">No supported sign-in method was found for this account.</p>';
+    list.innerHTML = '<p class="sign-in-error" style="margin:0;">This account has no email or phone number that can receive a one-time code.</p>';
   }
 }
 
 async function chooseStrategy(factor) {
   clearSignInError();
-  if (factor.strategy === "password") {
-    showStep("password");
-    return;
-  }
   try {
     await state.signIn.prepareFirstFactor(
       factor.strategy === "email_code"
@@ -792,18 +843,6 @@ function wireStaticHandlers() {
     });
   });
 
-  document.querySelector('form[data-step="password"]').addEventListener("submit", async (event) => {
-    event.preventDefault();
-    clearSignInError();
-    try {
-      const result = await state.signIn.attemptFirstFactor({ strategy: "password", password: event.target.password.value });
-      if (result.status === "complete") await completeSignIn(result);
-      else showSignInError(new Error("Additional verification is required for this account."));
-    } catch (error) {
-      showSignInError(error);
-    }
-  });
-
   document.querySelector('form[data-step="code"]').addEventListener("submit", async (event) => {
     event.preventDefault();
     clearSignInError();
@@ -815,33 +854,6 @@ function wireStaticHandlers() {
     } catch (error) {
       showSignInError(error);
     }
-  });
-
-  document.querySelector("[data-passkey]").addEventListener("click", async () => {
-    clearSignInError();
-    if (!state.clerk) return;
-    try {
-      const result = await state.clerk.client.signIn.authenticateWithPasskey();
-      if (result?.status === "complete") await completeSignIn(result);
-    } catch (error) {
-      showSignInError(error);
-    }
-  });
-
-  document.querySelectorAll("[data-oauth]").forEach((button) => {
-    button.addEventListener("click", async () => {
-      clearSignInError();
-      if (!state.clerk) return;
-      try {
-        await state.clerk.client.signIn.authenticateWithRedirect({
-          strategy: button.dataset.oauth,
-          redirectUrl: `${location.origin}/`,
-          redirectUrlComplete: `${location.origin}/#tenants`
-        });
-      } catch (error) {
-        showSignInError(error);
-      }
-    });
   });
 
   document.querySelector("[data-account-trigger]").addEventListener("click", () => {
@@ -952,6 +964,9 @@ function wireStaticHandlers() {
       unreconciled: form.unreconciled.checked
     });
   });
+
+  document.querySelector('form[data-form="analytics-range"]')?.addEventListener("change", () => loadAnalytics());
+  document.querySelector('form[data-form="analytics-range"]')?.addEventListener("submit", (event) => { event.preventDefault(); loadAnalytics(); });
 
   window.addEventListener("hashchange", route);
 }
@@ -1136,6 +1151,147 @@ function wireLedgerActions() {
       // customer says a number does not look right.
       document.querySelector('form[data-form="ledger-filter"]').intakeId.value = link.dataset.ledgerIntake;
       loadLedger({ intakeId: link.dataset.ledgerIntake, tenantId: "" });
+    });
+  });
+}
+
+/* ------------------------------------------------------------ analytics --- */
+
+/**
+ * First-party analytics summary. Visitors are daily-rotating anonymous
+ * hashes, so per-day visitor counts are honest but cannot be summed into
+ * "unique visitors" across the window — the total is labelled visitor-days.
+ */
+async function loadAnalytics() {
+  const mount = document.querySelector("[data-analytics-body]");
+  mount.innerHTML = '<div class="loading-state"><span class="spinner" aria-hidden="true"></span><p>Loading analytics…</p></div>';
+  const days = Number(document.querySelector('form[data-form="analytics-range"]')?.days?.value) || 7;
+  try {
+    const data = await apiFetch(`/api/admin/analytics/summary?days=${encodeURIComponent(days)}`);
+    renderAnalytics(data);
+  } catch (error) {
+    mount.innerHTML = `<div class="empty-state"><p>${escapeHtml(error.message)}</p></div>`;
+  }
+}
+
+function countLines(rows, labelKey) {
+  if (!rows?.length) return '<p class="page-lede">Nothing recorded yet.</p>';
+  const max = Math.max(...rows.map((row) => Number(row.count) || 0), 1);
+  return `<div class="count-list">${rows.map((row) => `
+    <div>
+      <div class="count-line"><span>${escapeHtml(row[labelKey] || "—")}</span><span>${Number(row.count) || 0}</span></div>
+      <span class="count-bar"><i style="width:${Math.max(2, Math.round(((Number(row.count) || 0) / max) * 100))}%"></i></span>
+    </div>`).join("")}</div>`;
+}
+
+function renderAnalytics(data) {
+  const mount = document.querySelector("[data-analytics-body]");
+  const days = data.days || [];
+  const totalEvents = days.reduce((sum, day) => sum + (Number(day.events) || 0), 0);
+  const totalVisitorDays = days.reduce((sum, day) => sum + (Number(day.visitors) || 0), 0);
+  const busiest = days.reduce((top, day) => ((Number(day.events) || 0) > (Number(top?.events) || 0) ? day : top), null);
+  const maxDayEvents = Math.max(...days.map((day) => Number(day.events) || 0), 1);
+  const surfaces = data.surfaces || [];
+
+  mount.innerHTML = `
+    <div class="stat-row">
+      <span><small>Events</small><strong>${totalEvents}</strong></span>
+      <span><small>Visitor-days</small><strong>${totalVisitorDays}</strong></span>
+      <span><small>Busiest day</small><strong>${busiest ? escapeHtml(formatDate(busiest.date)) : "—"}</strong></span>
+      <span><small>Surfaces reporting</small><strong>${surfaces.length}</strong></span>
+    </div>
+    <div class="grid-2">
+      <div class="panel">
+        <h2>Per day</h2>
+        <div class="table-wrap" style="border:1px solid var(--line); box-shadow:none;">
+          <table class="data-table" style="min-width:0;">
+            <thead><tr><th>Date</th><th>Visitors</th><th>Events</th><th style="width:38%"></th></tr></thead>
+            <tbody>${days.length ? days.map((day) => `
+              <tr>
+                <td>${escapeHtml(formatDate(day.date))}</td>
+                <td>${Number(day.visitors) || 0}</td>
+                <td>${Number(day.events) || 0}</td>
+                <td><span class="count-bar"><i style="width:${Math.max(2, Math.round(((Number(day.events) || 0) / maxDayEvents) * 100))}%"></i></span></td>
+              </tr>`).join("") : '<tr class="empty-row"><td colspan="4">No events in this window.</td></tr>'}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div>
+        <div class="panel">
+          <h2>Surfaces</h2>
+          ${surfaces.length ? `<div class="count-list">${surfaces.map((surface) => `
+            <div class="count-line"><span>${escapeHtml(surface.surface || "unknown")}</span><span>${Number(surface.events) || 0} events · ${Number(surface.visitors) || 0} visitors</span></div>`).join("")}</div>` : '<p class="page-lede">Nothing recorded yet.</p>'}
+        </div>
+        <div class="panel">
+          <h2>Top events</h2>
+          ${countLines(data.names, "name")}
+        </div>
+        <div class="panel">
+          <h2>Top paths</h2>
+          ${countLines(data.paths, "path")}
+        </div>
+      </div>
+    </div>`;
+}
+
+/* ------------------------------------------------- provider applications --- */
+
+const APPLICATION_STATUSES = ["new", "contacted", "closed"];
+
+async function loadApplications() {
+  const mount = document.querySelector("[data-applications-body]");
+  mount.innerHTML = '<div class="loading-state"><span class="spinner" aria-hidden="true"></span><p>Loading applications…</p></div>';
+  try {
+    const data = await apiFetch("/api/admin/provider-applications");
+    renderApplications(data.applications || []);
+  } catch (error) {
+    mount.innerHTML = `<div class="empty-state"><p>${escapeHtml(error.message)}</p></div>`;
+  }
+}
+
+function renderApplications(applications) {
+  const mount = document.querySelector("[data-applications-body]");
+  if (!applications.length) {
+    mount.innerHTML = '<div class="table-wrap"><table class="data-table"><tbody><tr class="empty-row"><td>No provider applications yet. They arrive from the public site\'s "For veterinary teams" page.</td></tr></tbody></table></div>';
+    return;
+  }
+  const rows = applications.map((application) => `
+    <tr>
+      <td><strong>${escapeHtml(application.practiceName || "—")}</strong>${application.species ? `<br><small style="color:var(--muted);">${escapeHtml(application.species)}</small>` : ""}</td>
+      <td>${escapeHtml(application.contactName || "—")}<br><small style="color:var(--muted);"><a href="mailto:${escapeAttr(application.email || "")}" style="color:var(--blue);">${escapeHtml(application.email || "")}</a> · ${escapeHtml(application.phone || "")}</small></td>
+      <td>${escapeHtml(application.city || "—")}, ${escapeHtml(application.state || "—")}</td>
+      <td style="max-width:280px;">${application.message ? `<small>${escapeHtml(application.message)}</small>` : '<small style="color:var(--muted);">—</small>'}</td>
+      <td>${formatDate(application.createdAt)}</td>
+      <td>
+        <select data-application-status data-id="${escapeAttr(application.id)}">
+          ${APPLICATION_STATUSES.map((status) => `<option value="${status}" ${application.status === status ? "selected" : ""}>${status}</option>`).join("")}
+        </select>
+      </td>
+    </tr>`).join("");
+  mount.innerHTML = `
+    <div class="table-wrap">
+      <table class="data-table">
+        <thead><tr><th>Practice</th><th>Contact</th><th>Location</th><th>Message</th><th>Received</th><th>Status</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
+  mount.querySelectorAll("[data-application-status]").forEach((select) => {
+    select.addEventListener("change", async () => {
+      select.disabled = true;
+      try {
+        await apiFetch(`/api/admin/provider-applications/${encodeURIComponent(select.dataset.id)}`, {
+          method: "PATCH",
+          body: JSON.stringify({ status: select.value })
+        });
+        toast(`Marked ${select.value}.`);
+      } catch (error) {
+        toast(error.message, true);
+        await loadApplications();
+        return;
+      } finally {
+        select.disabled = false;
+      }
     });
   });
 }
