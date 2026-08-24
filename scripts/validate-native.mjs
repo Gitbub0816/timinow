@@ -1965,6 +1965,34 @@ for (const [path, marker] of [
   }
 }
 
+// An automatic sign-out must not delete the customer's data.
+//
+// Clerk's native API does not refuse a device token it no longer recognises —
+// it returns a brand-new empty client with 200 OK. So "your token was not
+// accepted" and "you signed out elsewhere" arrive identically, and reading the
+// first as the second signed the person out at every launch, cleared the
+// Keychain, and through onSignedOut deleted their pets, their care history and
+// their own name. Three symptoms, one line.
+{
+  const auth = await read("apps/customer-mobile/Sources/TimiNowCore/AuthController.swift");
+  const code = auth.split("\n").filter((line) => !line.trim().startsWith("//") && !line.trim().startsWith("///")).join("\n");
+
+  if (!/if sessions\.isEmpty \{[\s\S]{0,120}resumeWithoutChecking\(\)/.test(code)) {
+    throw new Error("apps/customer-mobile/Sources/TimiNowCore/AuthController.swift: an empty Clerk client is treated as a sign-out again. Clerk answers an unrecognised device token with an empty client and 200 OK, so that path signs somebody out on every launch and takes their pets with it.");
+  }
+  if (!/private func signOutLocally\(explicit: Bool\)/.test(code)) {
+    throw new Error("apps/customer-mobile/Sources/TimiNowCore/AuthController.swift: signOutLocally no longer distinguishes a sign-out somebody asked for from one this code decided on. Only the first may clear device-local data — the second is a guess about a credential, and a guess must not delete somebody's animals.");
+  }
+  if (!/if explicit \{ onSignedOut\(\) \}/.test(code)) {
+    throw new Error("apps/customer-mobile/Sources/TimiNowCore/AuthController.swift: signOutLocally fires onSignedOut unconditionally, so an automatic sign-out clears pets, history and the owner's name with no undo.");
+  }
+  // The launch path must never call it with explicit: true.
+  const start = code.slice(code.indexOf("public func start() async"), code.indexOf("private func resumeWithoutChecking"));
+  if (/signOutLocally\(explicit: true\)/.test(start)) {
+    throw new Error("apps/customer-mobile/Sources/TimiNowCore/AuthController.swift: start() signs out explicitly, which clears device-local data on a launch-time credential check.");
+  }
+}
+
 // Two files in one module declaring the same type name.
 //
 // PetPayload existed in APIClient.swift as the pet inside a care search, and a

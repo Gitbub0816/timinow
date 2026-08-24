@@ -182,17 +182,36 @@ public struct AuthFactorOption: Identifiable, Hashable, Sendable {
 
         do {
             let client = try await getClient()
+            let sessions = client.sessions ?? []
+            // A client with no sessions at all is not an answer about this
+            // account.
+            //
+            // Clerk's native API does not refuse a device token it no longer
+            // recognises — it hands back a brand-new, empty client with 200 OK.
+            // So "the token was not accepted" and "you signed out on another
+            // device" arrive as the same response, and this read the first as
+            // the second: it signed the person out, deleted the Keychain item,
+            // and — through onSignedOut — took their pets, their care history
+            // and their own name with it. Every launch. Which is exactly what
+            // "it does not stay signed in and does not save my name" is.
+            //
+            // A client that has sessions and does not have ours is the real
+            // sign-out, and is still treated as one.
+            if sessions.isEmpty {
+                resumeWithoutChecking()
+                return
+            }
             guard let sessionId = activeSessionId,
-                  (client.sessions ?? []).contains(where: { $0.id == sessionId && $0.status == "active" }) else {
-                // Clerk answered, and does not know this session. That is a
-                // real sign-out.
-                signOutLocally()
+                  sessions.contains(where: { $0.id == sessionId && $0.status == "active" }) else {
+                // Clerk answered, knows this device, and does not know this
+                // session. That is a real sign-out.
+                signOutLocally(explicit: false)
                 return
             }
             _ = try await ensureFreshToken()
             markSignedIn()
         } catch let error as TimiAPIError {
-            if Self.isCredentialRejected(error) { signOutLocally(); return }
+            if Self.isCredentialRejected(error) { signOutLocally(explicit: false); return }
             resumeWithoutChecking()
         } catch {
             resumeWithoutChecking()
@@ -554,11 +573,24 @@ public struct AuthFactorOption: Identifiable, Hashable, Sendable {
         if let sessionId = activeSessionId {
             _ = try? await clerkRequest(path: "/v1/client/sessions/\(sessionId)/end", method: "POST")
         }
-        signOutLocally()
+        signOutLocally(explicit: true)
     }
 
-    private func signOutLocally() {
-        onSignedOut()
+    /// Ends the session on this device.
+    ///
+    /// `explicit` is whether a person asked for it. Only then is device-local
+    /// data cleared, because clearing it is destructive and irreversible: pets,
+    /// care history and the owner's own name live in UserDefaults and there is
+    /// no undo. An automatic sign-out — a rejected token, a session Clerk no
+    /// longer lists — is a guess about a credential, and a guess must not be
+    /// allowed to delete somebody's animals.
+    ///
+    /// Signing in as a *different* account still starts clean: `adoptOwner`
+    /// compares the stored Clerk user id and clears on a mismatch, which is
+    /// the condition that actually matters and does not depend on anyone
+    /// having pressed Sign out first.
+    private func signOutLocally(explicit: Bool) {
+        if explicit { onSignedOut() }
         activeSessionId = nil; workerToken = nil; workerTokenExpiresAt = nil
         clerkDeviceToken = nil
         // Back to native for the next attempt, so a session resumed the old
