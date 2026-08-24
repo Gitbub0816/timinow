@@ -2313,6 +2313,22 @@ for (const [path, marker] of [
   }
 }
 
+// The install script is the reason "which build am I running" stopped being a
+// question on Windows. It must keep the same two protections the raw publish
+// line carries, plus the Start Menu shortcut that makes the app findable.
+{
+  const install = await read("apps/vet-windows/install.ps1");
+  if (!/Stop-Process -Name TimiVet/.test(install)) {
+    throw new Error("apps/vet-windows/install.ps1 no longer stops a running TimiVet before publishing, so the publish fails on the exe lock and silently leaves the old binary installed.");
+  }
+  if (!/IncludeNativeLibrariesForSelfExtract=true/.test(install)) {
+    throw new Error("apps/vet-windows/install.ps1 publishes without IncludeNativeLibrariesForSelfExtract, so the installed exe will not start on a machine it is copied to.");
+  }
+  if (!/LASTEXITCODE -ne 0/.test(install) || !/\.CreateShortcut\(/.test(install)) {
+    throw new Error("apps/vet-windows/install.ps1 must refuse to install a failed build and must create the Start Menu shortcut - without the shortcut the app goes back to being unfindable.");
+  }
+}
+
 // A single-file publish rewrites TimiVet.exe in place, and Windows refuses to
 // delete a running executable. With the console open, GenerateBundle fails with
 // UnauthorizedAccessException and MSBuild stack frames — never the sentence

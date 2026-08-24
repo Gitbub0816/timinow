@@ -37,6 +37,26 @@ talk to the same Worker, default to the same address, and are meant to be indist
 - A tenant people console (roster, invite, role change, remove, revoke invitation) for workspace admins
 - Complete interactive fixture mode when no HTTPS Worker URL is configured
 
+## Install on this machine
+
+One command builds the console and installs it the way Windows expects an
+application to exist - a stable location under the current user, a Start Menu
+entry, searchable, pinnable:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File apps\vet-windows\install.ps1
+```
+
+Add `-Desktop` for a desktop shortcut too. It needs no administrator rights,
+stops a running instance first, refuses to touch the previous install if the
+build fails, and launches the result. Re-running it is the upgrade path.
+
+This exists because `dotnet publish` alone leaves the executable five folders
+deep inside `bin\`, which is not a place anyone finds an app: every round of
+"is this the new build" this project has had came from launching whatever old
+copy was actually reachable. The installed app's footer shows its own build
+time, so a stale copy identifies itself.
+
 ## Build on Windows
 
 Install the .NET 10 SDK or Visual Studio 2022 with **.NET desktop development**, then:
