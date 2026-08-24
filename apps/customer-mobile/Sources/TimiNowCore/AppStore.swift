@@ -103,6 +103,7 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
         self.auth.onProfileResolved = { [weak self] profile in self?.adoptOwner(profile) }
         self.auth.onSignedOut = { [weak self] in self?.forgetAccountData() }
         self.auth.onCredentialStorageFailed = { [weak self] status in self?.reportKeychainFailure(status) }
+        self.auth.onRestoreOutcome = { [weak self] outcome in self?.reportRestoreOutcome(outcome) }
     }
 
     /// Brings this device's pets and the account's together.
@@ -142,7 +143,26 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
         persistPets()
     }
 
-    /// Reports a stage the previous launch entered and never left.
+    /// Sends the launch's restore outcome to the Worker when it was not clean.
+    ///
+    /// The two quiet outcomes are the two that need no investigation: a
+    /// resumed session, and a fresh install with nothing stored. Everything
+    /// else is a row an operator can read instead of asking for screenshots.
+    func reportRestoreOutcome(_ outcome: String) {
+        if outcome == "resumed the active session" { return }
+        if outcome.hasPrefix("no stored credential") { return }
+        let report = ClientErrorReport(
+            surface: "customer_ios",
+            appVersion: TimiEnvironment.appVersion,
+            path: "/auth/restore",
+            code: "RESTORE_NOT_CLEAN",
+            message: outcome,
+            detail: ["build": TimiEnvironment.buildStamp]
+        )
+        Task { [gateway] in await gateway.reportFailure(report) }
+    }
+
+        /// Reports a stage the previous launch entered and never left.
     ///
     /// Called once at startup. Nothing is shown to the customer — they were
     /// there, they know it closed — and the report is what turns "it crashes

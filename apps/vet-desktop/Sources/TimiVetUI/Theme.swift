@@ -121,9 +121,15 @@ extension View {
     /// Two percent and one point down, snapping in and easing out: quick
     /// enough that it reads as the button moving rather than as an animation.
     func timiVetPress(_ pressed: Bool) -> some View {
-        scaleEffect(pressed ? 0.97 : 1)
+        // 0.97 was written first and it was true but invisible: three percent
+        // of a 38-point button is one point, and feedback nobody can see is
+        // feedback that does not exist. Four percent, a point of travel and a
+        // brightness dip together read as the button physically giving way,
+        // which is the entire job.
+        scaleEffect(pressed ? 0.96 : 1)
             .offset(y: pressed ? 1 : 0)
-            .animation(.spring(response: 0.18, dampingFraction: 0.6), value: pressed)
+            .brightness(pressed ? -0.06 : 0)
+            .animation(.spring(response: 0.16, dampingFraction: 0.65), value: pressed)
     }
 }
 

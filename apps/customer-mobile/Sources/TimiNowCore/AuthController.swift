@@ -95,6 +95,18 @@ public struct AuthFactorOption: Identifiable, Hashable, Sendable {
     /// — there is nothing the person can do about it — but the report is what
     /// turns "it does not stay signed in" into one line naming the reason.
     public var onCredentialStorageFailed: (Int32) -> Void = { _ in }
+    /// What the last launch's session restore actually did, in one sentence.
+    ///
+    /// "It does not stay signed in" has five different causes that all end on
+    /// the same sign-in screen: nothing stored, a host mismatch, Clerk not
+    /// recognising the device token, Clerk actively ending the session, and a
+    /// network failure at the wrong moment. Four rounds of fixes have gone
+    /// into guessing which one a screenshot showed. This is the launch path
+    /// saying which branch it took, readable in Settings and reported to the
+    /// Worker, so the next report is the answer rather than another guess.
+    public private(set) var lastRestoreOutcome = "not yet run"
+    /// Fired once per start() with the outcome above.
+    public var onRestoreOutcome: (String) -> Void = { _ in }
 
     private let gateway: TimiGateway
     private let keychain = KeychainStore()
@@ -135,6 +147,7 @@ public struct AuthFactorOption: Identifiable, Hashable, Sendable {
     public func start() async {
         isBusy = true
         defer { isBusy = false }
+        defer { onRestoreOutcome(lastRestoreOutcome) }
 
         do {
             let config = try await gateway.fetchAppConfig()
@@ -163,6 +176,11 @@ public struct AuthFactorOption: Identifiable, Hashable, Sendable {
             frontendAPIHost = storedHost
         }
         guard let host = frontendAPIHost, let stored, stored.frontendAPIHost == host else {
+            if stored == nil {
+                lastRestoreOutcome = "no stored credential - first launch, or after an explicit sign-out"
+            } else {
+                lastRestoreOutcome = "stored credential is for \(stored?.frontendAPIHost ?? "nothing"), this Worker uses \(frontendAPIHost ?? "nothing")"
+            }
             stage = .identifier
             return
         }
@@ -198,22 +216,35 @@ public struct AuthFactorOption: Identifiable, Hashable, Sendable {
             // A client that has sessions and does not have ours is the real
             // sign-out, and is still treated as one.
             if sessions.isEmpty {
+                lastRestoreOutcome = "Clerk returned an empty client for the stored device token; resumed on the local credential"
                 resumeWithoutChecking()
                 return
             }
             guard let sessionId = activeSessionId,
                   sessions.contains(where: { $0.id == sessionId && $0.status == "active" }) else {
                 // Clerk answered, knows this device, and does not know this
-                // session. That is a real sign-out.
+                // session. That is a real sign-out - and if it recurs at
+                // every launch, it is Clerk ending sessions server-side:
+                // the instance's inactivity timeout or maximum lifetime,
+                // which are Dashboard settings no client code can change.
+                let listed = sessions.map { "\($0.id.suffix(6)):\($0.status)" }.joined(separator: ", ")
+                lastRestoreOutcome = "signed out by Clerk - it lists \(sessions.count) session(s) [\(listed)] and ours is not among the active ones. Recurring at every launch, this is the instance's session lifetime settings."
                 signOutLocally(explicit: false)
                 return
             }
             _ = try await ensureFreshToken()
+            lastRestoreOutcome = "resumed the active session"
             markSignedIn()
         } catch let error as TimiAPIError {
-            if Self.isCredentialRejected(error) { signOutLocally(explicit: false); return }
+            if Self.isCredentialRejected(error) {
+                lastRestoreOutcome = "Clerk rejected the stored credential (\(error.localizedDescription))"
+                signOutLocally(explicit: false)
+                return
+            }
+            lastRestoreOutcome = "could not reach Clerk (\(error.localizedDescription)); resumed on the local credential"
             resumeWithoutChecking()
         } catch {
+            lastRestoreOutcome = "could not reach Clerk (\(error.localizedDescription)); resumed on the local credential"
             resumeWithoutChecking()
         }
     }

@@ -100,9 +100,9 @@ struct SignInView: View {
             VStack(alignment: .leading, spacing: 12) {
                 TextField("Email or mobile number", text: $auth.identifierText)
                     .textContentType(.username)
-                    .keyboardType(.emailAddress)
+                    .timiKeyboard(.email)
                     .autocorrectionDisabled()
-                    .textInputAutocapitalization(.never)
+                    .timiNoAutocapitalization()
                     .timiField()
                 Button { Task { await auth.submitIdentifier() } } label: {
                     Label("Continue", systemImage: "arrow.right")
@@ -120,13 +120,13 @@ struct SignInView: View {
                     .timiField()
                 TextField("Email address", text: $auth.signUpEmail)
                     .textContentType(.emailAddress)
-                    .keyboardType(.emailAddress)
+                    .timiKeyboard(.email)
                     .autocorrectionDisabled()
-                    .textInputAutocapitalization(.never)
+                    .timiNoAutocapitalization()
                     .timiField()
                 TextField("Mobile number", text: $auth.signUpPhone)
                     .textContentType(.telephoneNumber)
-                    .keyboardType(.phonePad)
+                    .timiKeyboard(.phone)
                     .timiField()
                 Button { Task { await auth.submitProfile() } } label: {
                     Label("Create my account", systemImage: "arrow.right")
@@ -162,7 +162,7 @@ struct SignInView: View {
             VStack(alignment: .leading, spacing: 12) {
                 TextField("6-digit code", text: $auth.codeText)
                     .textContentType(.oneTimeCode)
-                    .keyboardType(.numberPad)
+                    .timiKeyboard(.number)
                     .timiField()
                 Button { Task { await auth.submitCode() } } label: {
                     Label(auth.isCreatingAccount ? "Create my account" : "Sign in", systemImage: "arrow.right")

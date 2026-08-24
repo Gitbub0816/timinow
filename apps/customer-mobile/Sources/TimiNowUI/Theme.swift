@@ -74,6 +74,41 @@ struct TimiQuietButtonStyle: ButtonStyle {
     }
 }
 
+/// Which keyboard a field wants, named without naming UIKit.
+///
+/// `keyboardType` and `textInputAutocapitalization` exist on iOS (and in
+/// Skip's Android bridge) and not on macOS — and `swift test` builds this
+/// whole module for the macOS host. Every bare call to either was therefore a
+/// host-build error, which failed CI's test step, which *skipped* the step
+/// that compiles the real iOS app. The one job that could catch device-only
+/// mistakes spent days being cancelled by a keyboard hint.
+public enum TimiKeyboardKind {
+    case phone, email, decimal, number
+}
+
+extension View {
+    @ViewBuilder func timiKeyboard(_ kind: TimiKeyboardKind) -> some View {
+        #if os(macOS)
+        self
+        #else
+        switch kind {
+        case .phone: self.keyboardType(.phonePad)
+        case .email: self.keyboardType(.emailAddress)
+        case .decimal: self.keyboardType(.decimalPad)
+        case .number: self.keyboardType(.numberPad)
+        }
+        #endif
+    }
+
+    @ViewBuilder func timiNoAutocapitalization() -> some View {
+        #if os(macOS)
+        self
+        #else
+        self.textInputAutocapitalization(.never)
+        #endif
+    }
+}
+
 extension View {
     /// Text entry in the same hand as the buttons and the cards: a solid
     /// plate, a full-weight ink border, and the same hard offset shadow.

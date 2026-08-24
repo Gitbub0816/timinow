@@ -1983,6 +1983,25 @@ for (const [path, marker] of [
   }
 }
 
+// keyboardType and textInputAutocapitalization exist on iOS and in Skip's
+// Android bridge, and not on macOS - and `swift test` builds TimiNowUI for the
+// macOS host. Every bare call was a host-build error, which failed CI's test
+// step, which SKIPPED the step that compiles the real iOS app: the one job
+// that could catch device-only mistakes spent days being cancelled by a
+// keyboard hint. The shims in Theme.swift are the only place either may be
+// named.
+{
+  for (const path of swiftFiles) {
+    if (!path.startsWith("apps/customer-mobile/")) continue;
+    if (path.endsWith("/Theme.swift")) continue;
+    const source = await read(path);
+    const code = source.split("\n").filter((line) => !line.trim().startsWith("//") && !line.trim().startsWith("///")).join("\n");
+    if (/\.keyboardType\(/.test(code) || /\.textInputAutocapitalization\(/.test(code)) {
+      throw new Error(`${path} calls keyboardType or textInputAutocapitalization directly. Those are iOS-only and this module also builds for the macOS host, where the call is a compile error that takes CI's entire iOS pipeline down. Use .timiKeyboard(...) / .timiNoAutocapitalization() from Theme.swift.`);
+    }
+  }
+}
+
 // An automatic sign-out must not delete the customer's data.
 //
 // Clerk's native API does not refuse a device token it no longer recognises —
@@ -1995,7 +2014,7 @@ for (const [path, marker] of [
   const auth = await read("apps/customer-mobile/Sources/TimiNowCore/AuthController.swift");
   const code = auth.split("\n").filter((line) => !line.trim().startsWith("//") && !line.trim().startsWith("///")).join("\n");
 
-  if (!/if sessions\.isEmpty \{[\s\S]{0,120}resumeWithoutChecking\(\)/.test(code)) {
+  if (!/if sessions\.isEmpty \{[\s\S]{0,400}resumeWithoutChecking\(\)/.test(code)) {
     throw new Error("apps/customer-mobile/Sources/TimiNowCore/AuthController.swift: an empty Clerk client is treated as a sign-out again. Clerk answers an unrecognised device token with an empty client and 200 OK, so that path signs somebody out on every launch and takes their pets with it.");
   }
   if (!/private func signOutLocally\(explicit: Bool\)/.test(code)) {

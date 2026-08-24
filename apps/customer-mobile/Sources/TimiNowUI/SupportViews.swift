@@ -174,7 +174,7 @@ struct PetEditor: View {
                         TextField("Optional", text: $breed).timiField()
                     }
                     field("Weight in pounds") {
-                        TextField("Optional", text: $weight).keyboardType(.decimalPad).timiField()
+                        TextField("Optional", text: $weight).timiKeyboard(.decimal).timiField()
                     }
 
                     VStack(alignment: .leading, spacing: 10) {
@@ -328,8 +328,8 @@ struct SettingsView: View {
     var details: some View {
         card("YOUR DETAILS") {
             field("Name") { TextField("Your name", text: $store.ownerName).textContentType(.name).timiField() }
-            field("Mobile number") { TextField("(555) 123-4567", text: $store.ownerPhone).textContentType(.telephoneNumber).keyboardType(.phonePad).timiField() }
-            field("Email") { TextField("Optional", text: $store.ownerEmail).textContentType(.emailAddress).keyboardType(.emailAddress).autocorrectionDisabled().timiField() }
+            field("Mobile number") { TextField("(555) 123-4567", text: $store.ownerPhone).textContentType(.telephoneNumber).timiKeyboard(.phone).timiField() }
+            field("Email") { TextField("Optional", text: $store.ownerEmail).textContentType(.emailAddress).timiKeyboard(.email).autocorrectionDisabled().timiField() }
             Text("Used to fill in your next care request, and given to the clinic you choose so they can reach you.")
                 .font(.caption).foregroundStyle(TimiColor.muted)
         }
@@ -472,6 +472,7 @@ struct SettingsView: View {
             // credential has to be worth writing, and it has to read back.
             labelled("Sign-in storage", store.auth.credentialDiagnostics)
             labelled("Last crash", TimiBreadcrumb.lastCrash ?? "none recorded")
+            labelled("Last launch", store.auth.lastRestoreOutcome)
             Divider()
             Button("Replay guided onboarding") { store.resetOnboarding() }.buttonStyle(TimiQuietButtonStyle())
             Button("Hide developer settings") { store.developerModeEnabled = false; versionTaps = 0 }.buttonStyle(TimiQuietButtonStyle())

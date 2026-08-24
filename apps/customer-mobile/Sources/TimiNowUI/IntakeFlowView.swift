@@ -92,12 +92,12 @@ struct IntakeFlowView: View {
             VStack(alignment: .leading, spacing: 7) {
                 fieldLabel("Mobile number")
                 TextField("(510) 555-0123", text: $store.draft.ownerPhone)
-                    .textContentType(.telephoneNumber).keyboardType(.phonePad).timiField()
+                    .textContentType(.telephoneNumber).timiKeyboard(.phone).timiField()
             }
             VStack(alignment: .leading, spacing: 7) {
                 fieldLabel("Email (optional)")
                 TextField("you@example.com", text: $store.draft.ownerEmail)
-                    .textContentType(.emailAddress).keyboardType(.emailAddress)
+                    .textContentType(.emailAddress).timiKeyboard(.email)
                     .autocorrectionDisabled().timiField()
             }
             VStack(alignment: .leading, spacing: 10) { Eyebrow(text: "BEFORE WE CONTACT CLINICS"); acknowledgement($store.draft.contactConsent, "I authorize Tími and contacted participating clinics to call or text me about this care request."); acknowledgement($store.draft.legalConsent, "I agree to the Terms, Privacy Notice, Veterinary Safety Notice, and the selected clinic's displayed policy.") }.timiCard(TimiColor.paper)
