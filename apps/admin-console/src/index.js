@@ -14,6 +14,7 @@
 
 import { actorForRequest, signInRequired } from "../../../src/auth.js";
 import { publicConfig } from "../../../src/config.js";
+import { recordAnalyticsEvents } from "../../../src/analytics.js";
 import { describeSession } from "../../../src/session.js";
 import {
   addMember,
@@ -684,6 +685,98 @@ function clientErrorFromRow(row) {
   };
 }
 
+/* --------------------------------------------------- analytics summary --- */
+
+/**
+ * The traffic answer an operator actually asks for: how many people, doing
+ * what, where — per day and per surface. Computed from analytics_events,
+ * which stores no identifier that survives a day, so "visitors" here means
+ * distinct day-scoped hashes and can never be a list of people.
+ */
+async function handleAnalyticsSummary(url, env) {
+  if (!hasDatabase(env)) return json({ days: [], names: [], paths: [], surfaces: [] });
+  const days = Math.min(90, Math.max(1, Number(url.searchParams.get("days")) || 7));
+  const since = new Date(Date.now() - days * 86_400_000).toISOString();
+
+  const [byDay, byName, byPath, bySurface] = await Promise.all([
+    env.DB.prepare(`
+      SELECT date(occurred_at) AS day, COUNT(DISTINCT visitor_hash) AS visitors, COUNT(*) AS events
+      FROM analytics_events WHERE datetime(occurred_at) >= datetime(?)
+      GROUP BY date(occurred_at) ORDER BY day
+    `).bind(since).all(),
+    env.DB.prepare(`
+      SELECT name, COUNT(*) AS count
+      FROM analytics_events WHERE datetime(occurred_at) >= datetime(?)
+      GROUP BY name ORDER BY count DESC, name LIMIT 25
+    `).bind(since).all(),
+    env.DB.prepare(`
+      SELECT path, COUNT(*) AS count
+      FROM analytics_events WHERE datetime(occurred_at) >= datetime(?) AND path IS NOT NULL
+      GROUP BY path ORDER BY count DESC, path LIMIT 10
+    `).bind(since).all(),
+    env.DB.prepare(`
+      SELECT surface, COUNT(*) AS events, COUNT(DISTINCT visitor_hash) AS visitors
+      FROM analytics_events WHERE datetime(occurred_at) >= datetime(?)
+      GROUP BY surface ORDER BY events DESC
+    `).bind(since).all()
+  ]);
+
+  return json({
+    days: byDay.results.map((row) => ({ date: row.day, visitors: Number(row.visitors), events: Number(row.events) })),
+    names: byName.results.map((row) => ({ name: row.name, count: Number(row.count) })),
+    paths: byPath.results.map((row) => ({ path: row.path, count: Number(row.count) })),
+    surfaces: bySurface.results.map((row) => ({ surface: row.surface, events: Number(row.events), visitors: Number(row.visitors) }))
+  });
+}
+
+/* -------------------------------------------------- provider applications --- */
+
+const VALID_APPLICATION_STATUS = new Set(["new", "contacted", "closed"]);
+
+function providerApplicationFromRow(row) {
+  return {
+    id: row.id,
+    practiceName: row.practice_name,
+    contactName: row.contact_name,
+    email: row.email,
+    phone: row.phone,
+    city: row.city,
+    state: row.state,
+    species: row.species,
+    message: row.message,
+    status: row.status,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
+
+/** Every application, newest first. The public form writes; only this reads. */
+async function handleProviderApplications(env) {
+  if (!hasDatabase(env)) return json({ applications: [] });
+  const result = await env.DB.prepare(`
+    SELECT * FROM provider_applications
+    ORDER BY datetime(created_at) DESC, rowid DESC
+    LIMIT 200
+  `).all();
+  return json({ applications: result.results.map(providerApplicationFromRow) });
+}
+
+/** Move one application through new → contacted → closed (in any order —
+ * a closed application can be reopened by setting it back to new). */
+async function updateProviderApplication(request, env, applicationId) {
+  if (!hasDatabase(env)) return apiError(503, "DATABASE_REQUIRED", "D1 is required to update provider applications.");
+  const body = await readJson(request).catch(() => null);
+  const status = cleanString(body?.status, 20);
+  if (!VALID_APPLICATION_STATUS.has(status)) {
+    return apiError(422, "INVALID_STATUS", "Status must be new, contacted, or closed.");
+  }
+  const result = await env.DB.prepare("UPDATE provider_applications SET status = ?, updated_at = ? WHERE id = ?")
+    .bind(status, new Date().toISOString(), applicationId).run();
+  if (!result.meta?.changes) return apiError(404, "APPLICATION_NOT_FOUND", "That provider application was not found.");
+  const row = await env.DB.prepare("SELECT * FROM provider_applications WHERE id = ? LIMIT 1").bind(applicationId).first();
+  return json({ application: providerApplicationFromRow(row) });
+}
+
 /* ------------------------------------------------------------- ledger --- */
 
 /**
@@ -907,6 +1000,10 @@ async function handleApi(request, env) {
 
   if (method === "GET" && path === "/api/health") return json({ ok: true, service: "timinow-admin", version: "1.0.0-admin", database: hasDatabase(env) });
   if (method === "GET" && path === "/api/config") return handleConfig(env);
+  // Public, like the other two Workers mount it, so the console's sign-in page
+  // is counted too. The beacon identifies nobody (see src/analytics.js), and
+  // the surface is this Worker's own SURFACE var, never the client's claim.
+  if (method === "POST" && path === "/api/analytics") return recordAnalyticsEvents(request, env);
 
   const actor = await authenticatedActor(request, env);
   if (signInRequired(env) && !actor) return authRequiredResponse();
@@ -940,6 +1037,10 @@ async function handleApi(request, env) {
     if (method === "POST" && locationsMatch) return addLocation(request, env, actor, decodeURIComponent(locationsMatch[1]));
 
     if (method === "GET" && path === "/api/admin/client-errors") return handleClientErrors(url, env);
+    if (method === "GET" && path === "/api/admin/analytics/summary") return handleAnalyticsSummary(url, env);
+    if (method === "GET" && path === "/api/admin/provider-applications") return handleProviderApplications(env);
+    const applicationMatch = path.match(/^\/api\/admin\/provider-applications\/([^/]+)$/);
+    if (method === "PATCH" && applicationMatch) return updateProviderApplication(request, env, decodeURIComponent(applicationMatch[1]));
     if (method === "GET" && path === "/api/admin/ledger") return handleLedger(url, env);
     if (method === "POST" && path === "/api/admin/ledger/reconcile") return reconcileLedger(request, env, actor);
 

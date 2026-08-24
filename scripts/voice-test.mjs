@@ -330,11 +330,38 @@ assertBalancedXml(outboundResult.text, "outbound response");
 assert(outboundResult.text.includes("<Gather"), "The outbound webhook must respond with a Gather prompt");
 const acceptGatherUrl = extractActionUrl(outboundResult.text);
 
+/**
+ * Dual delivery. The phone call is an addition to the console, never a
+ * replacement for it: the call has been placed and answered (the outbound
+ * webhook above marked the attempt in_progress), and the same request must
+ * still be sitting on the clinic dashboard as pending — whoever is at the
+ * desk may reach the screen before anybody reaches the phone. A drain that
+ * flipped the target's status to "being called" would hide it here, which is
+ * exactly the regression this guards.
+ */
+const { applyCareSearchDecision, clinicDashboard } = await import("../src/index.js");
+{
+  const dashboard = await (await clinicDashboard(env, "tenant_hearth")).json();
+  const midCall = dashboard.requests.find((item) => item.id === "target_accept");
+  assert(midCall, "A target Tími is phoning must still be listed on the clinic dashboard");
+  assert(midCall.status === "pending", `A target mid-call must read pending on the dashboard, not ${midCall.status}`);
+  assert(dashboard.metrics.pending >= 1, "A mid-call target must count toward the dashboard's pending metric");
+}
+
 const firstPressOne = await postForm(acceptGatherUrl, { CallSid: "CA_accept", Digits: "1" });
 assertBalancedXml(firstPressOne.text, "gather response (accept)");
 assert(/thank you/i.test(firstPressOne.text), "Pressing 1 must play the accepted confirmation");
 assert(database.prepare("SELECT COUNT(*) AS c FROM care_offers WHERE target_id = 'target_accept'").get().c === 1, "Pressing 1 must create exactly one care_offers row");
 assert(database.prepare("SELECT status FROM care_search_targets WHERE id = 'target_accept'").get().status === "offered", "Pressing 1 must flip the target to offered");
+
+// The other half of dual delivery: the decision made on the phone must show
+// up in the console, so a staffer looking at the screen sees that a colleague
+// already answered rather than answering again.
+{
+  const dashboard = await (await clinicDashboard(env, "tenant_hearth")).json();
+  const decided = dashboard.requests.find((item) => item.id === "target_accept");
+  assert(decided?.status === "offered", `A phone acceptance must show as offered on the dashboard, not ${decided?.status}`);
+}
 
 const secondPressOne = await postForm(acceptGatherUrl, { CallSid: "CA_accept", Digits: "1" });
 assertBalancedXml(secondPressOne.text, "gather response (accept, repeated)");
@@ -354,7 +381,6 @@ insertSearchAndTarget({
   locationId: "loc_hearth",
   phone: "(510) 555-0194"
 });
-const { applyCareSearchDecision } = await import("../src/index.js");
 const consoleResult = await applyCareSearchDecision(env, {
   targetId: "target_console",
   tenantId: "tenant_hearth",
@@ -389,6 +415,13 @@ assertBalancedXml(pressTwo.text, "gather response (decline)");
 assert(/understood/i.test(pressTwo.text), "Pressing 2 must play the declined acknowledgement");
 assert(database.prepare("SELECT status FROM care_search_targets WHERE id = 'target_decline'").get().status === "declined", "Pressing 2 must mark the target declined");
 assert(database.prepare("SELECT COUNT(*) AS c FROM care_offers WHERE target_id = 'target_decline'").get().c === 0, "Declining must never create a care_offers row");
+// Dual delivery for the "no" as well: a decline over the phone must read as
+// decided on the console, or the desk answers a question already answered.
+{
+  const dashboard = await (await clinicDashboard(env, "tenant_hearth")).json();
+  const declined = dashboard.requests.find((item) => item.id === "target_decline");
+  assert(declined?.status === "declined", `A phone decline must show as declined on the dashboard, not ${declined?.status}`);
+}
 
 // --- signature/token rejection on a real route ---
 const forged = await worker.fetch(new Request(acceptGatherUrl, {
@@ -504,4 +537,4 @@ database.close();
   }
 }
 
-console.log("Voice gateway tests passed: Twilio signature verification, call-script content, TwiML well-formedness and escaping, quiet-hours math, phone normalization, cron drain (tenant opt-out + successful placement), phone acceptance producing a byte-identical offer to the console path, and the inbound callback path.");
+console.log("Voice gateway tests passed: Twilio signature verification, call-script content, TwiML well-formedness and escaping, quiet-hours math, phone normalization, cron drain (tenant opt-out + successful placement), dual delivery (a target stays pending on the dashboard mid-call and its phone decision shows there), phone acceptance producing a byte-identical offer to the console path, and the inbound callback path.");

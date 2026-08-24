@@ -53,6 +53,12 @@ struct DepositSection: View {
             }
             Text("The deposit is credited to the clinic's invoice. Remaining veterinary charges are billed by the clinic; Tími does not submit insurance claims.")
                 .font(.caption).foregroundStyle(TimiColor.muted)
+            // The fee disclosure the terms promise happens at checkout. The
+            // amount comes from /api/config (store.customerFeeCents, 2500
+            // compiled in), so a clinic passing the whole service fee through
+            // is disclosed correctly without an app release.
+            Text("Includes a \(TimiFormat.money(store.customerFeeCents)) Tími service fee, charged at the time of service.")
+                .font(.caption).fontWeight(.semibold).foregroundStyle(TimiColor.ink)
 
             if !isPaid { collectionControls }
 

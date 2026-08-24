@@ -273,6 +273,19 @@ public struct MapConfig: Codable, Hashable, Sendable {
     public var navigationStyleUrl: String?
 }
 
+/// `/api/config` → `fees`. What the platform charges, read rather than
+/// compiled in, so a fee change does not need an App Store release — the same
+/// reason the Mapbox token flows this way. Every field is optional because a
+/// Worker deployed before the fee contract simply omits the key.
+public struct FeeConfig: Codable, Hashable, Sendable {
+    /// The customer's share, in cents, disclosed at checkout.
+    public var customerFeeCents: Int?
+    /// The whole per-intake service fee, in cents; the remainder after the
+    /// customer's share comes out of the clinic payout.
+    public var totalServiceFeeCents: Int?
+    public var currency: String?
+}
+
 public struct AppConfigEnvelope: Codable, Sendable {
     public var map: MapConfig?
     /// The Clerk instance to sign in against. The host is base64-encoded
@@ -284,6 +297,12 @@ public struct AppConfigEnvelope: Codable, Sendable {
     /// Whether the Worker will reject unauthenticated calls. Read rather than
     /// assumed, so a demo deployment does not show a sign-in wall.
     public var signInRequired: Bool?
+    /// Service-fee disclosure amounts. Absent on Workers that predate them.
+    public var fees: FeeConfig?
+    /// The terms version this Worker validates care requests against. Absent
+    /// on Workers that predate it, in which case the compiled-in
+    /// `TimiLegal.version` is used — see `TimiGateway.acceptedLegalVersion`.
+    public var legalVersion: String?
 }
 
 /// Compiled-in defaults used until `GET /api/config` returns live values

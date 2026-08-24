@@ -27,6 +27,12 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
     public var mapToken: String?
     public var mapStyleURL = MapDefaults.styleURL
     public var navigationStyleURL = MapDefaults.styleURL
+    /// The customer's share of the Tími service fee, in cents, disclosed
+    /// beside the deposit. 2500 is the compiled-in fallback; `/api/config`
+    /// overrides it the same way the map token arrives, so a fee change (or a
+    /// clinic passing the whole fee through) does not strand shipped builds
+    /// disclosing the wrong amount.
+    public var customerFeeCents = 2500
     public var navigationDestination: NavigationDestination?
     public var currentNavigationStep: NavigationStepModel?
     public var currentRouteSummary: RouteSummary?
@@ -411,6 +417,9 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
             locations = try await gateway.locations(latitude: draft.latitude, longitude: draft.longitude, species: draft.pet.species, care: care)
             currentSearch = try await gateway.startSearch(draft, locationIds: locations.prefix(30).map(\.id))
             route = .searching
+            // Species and urgency are coarse product facts; the pet's name,
+            // the owner and the location deliberately stay out of the meta.
+            trackEvent("search_started", path: "intake", meta: ["species": draft.pet.species.rawValue, "urgency": draft.urgency.rawValue])
         } catch { report(error) }
         isWorking = false
     }
@@ -438,6 +447,7 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
         isFindingEmergency = true
         emergencyError = nil
         showEmergencyList = true
+        trackEvent("emergency_list_opened", path: "emergency")
         do {
             try? await auth.ensureFreshToken()
             let found = try await gateway.emergencyPlaces(
@@ -474,6 +484,7 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
             showCelebration = true
             history.insert(CareHistoryItem(id: result.intake.id, petName: result.intake.pet?.name ?? selectedPet.name, clinicName: (result.location ?? offer.location)?.name ?? "Veterinary clinic", status: result.intake.status, dateISO: result.intake.decisionAt ?? ""), at: 0)
             persistHistory()
+            trackEvent("offer_selected", path: "offers")
         } catch { report(error) }
         isWorking = false
     }
@@ -533,6 +544,10 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
     /// says now.
     public func refreshDepositStatus() async {
         guard let intake = currentIntake, !gateway.isDemo else { return }
+        // This method's only caller is the Stripe sheet reporting a completed
+        // confirmation on-device, which makes it the client-side "payment
+        // succeeded" moment — the webhook remains the authority on the money.
+        trackEvent("deposit_paid", path: "tracker")
         do { currentIntake = try await gateway.refreshIntake(intake.id) }
         catch { report(error) }
     }
@@ -548,15 +563,42 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
         navigationDestination = nil; currentNavigationStep = nil; currentRouteSummary = nil
     }
 
-    /// Refreshes the Mapbox token and style URLs from `GET /api/config`.
-    /// Falls back silently to the compiled-in `MapDefaults.styleURL` (already
-    /// the initial value of `mapStyleURL`/`navigationStyleURL`) whenever the
-    /// Worker is unreachable or running in demo mode.
+    /// Refreshes the Mapbox token, style URLs, fee disclosure, and legal
+    /// version from `GET /api/config`. Falls back silently to the compiled-in
+    /// defaults (already the initial values) whenever the Worker is
+    /// unreachable or running in demo mode — every field here has one, so a
+    /// launch on a dead connection changes nothing.
     public func loadMapConfig() async {
-        guard let config = try? await gateway.fetchMapConfig() else { return }
-        if let token = config.token, !token.isEmpty { mapToken = token }
-        if let styleUrl = config.styleUrl, !styleUrl.isEmpty { mapStyleURL = styleUrl }
-        if let navStyleUrl = config.navigationStyleUrl, !navStyleUrl.isEmpty { navigationStyleURL = navStyleUrl }
+        guard let config = try? await gateway.fetchAppConfig() else { return }
+        if let token = config.map?.token, !token.isEmpty { mapToken = token }
+        if let styleUrl = config.map?.styleUrl, !styleUrl.isEmpty { mapStyleURL = styleUrl }
+        if let navStyleUrl = config.map?.navigationStyleUrl, !navStyleUrl.isEmpty { navigationStyleURL = navStyleUrl }
+        if let fee = config.fees?.customerFeeCents, fee > 0 { customerFeeCents = fee }
+        // The Worker's own terms version outranks the compiled one, so a
+        // server-side legal bump does not 422 every care request from builds
+        // already in the field.
+        if let legal = config.legalVersion, !legal.isEmpty { gateway.acceptedLegalVersion = legal }
+    }
+
+    // MARK: - Analytics
+
+    /// True once this launch's app_open has gone out, so a second root task —
+    /// a scene reconnecting, a preview — cannot double-count a launch.
+    private var hasRecordedAppOpen = false
+
+    /// One fire-and-forget product event. Never blocks the caller and never
+    /// surfaces a failure — analytics must not be a second thing to go wrong.
+    /// Nothing here may carry a user id or a coordinate: the endpoint is
+    /// cookieless by contract, and this is the client's half of that promise.
+    func trackEvent(_ name: String, path: String? = nil, meta: [String: String]? = nil) {
+        Task { [gateway] in await gateway.recordAnalytics([TimiAnalyticsEvent(name: name, path: path, meta: meta)]) }
+    }
+
+    /// Called from the root view's launch task, once per process.
+    public func recordAppOpen() {
+        guard !hasRecordedAppOpen else { return }
+        hasRecordedAppOpen = true
+        trackEvent("app_open")
     }
 
     /// Called from the navigation screen as Mapbox reports progress, and
@@ -568,6 +610,9 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
 
     public func beginNavigation(to destination: NavigationDestination) {
         navigationDestination = destination
+        // The destination's name and coordinates deliberately stay out of the
+        // event — where somebody drove is not a product metric.
+        trackEvent("navigation_started", path: "navigation")
     }
 
     public func saveAPIBaseURL() {

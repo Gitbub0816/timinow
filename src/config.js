@@ -5,7 +5,7 @@
  * others. Nothing secret belongs in here: this response is readable by anyone.
  */
 
-import { LEGAL_VERSION } from "./catalog.js";
+import { LEGAL_VERSION, TIMI_CUSTOMER_FEE_CENTS, TIMI_TOTAL_SERVICE_FEE_CENTS } from "./catalog.js";
 import { hasDatabase } from "./db.js";
 import { signInRequired } from "./auth.js";
 
@@ -45,6 +45,16 @@ export function publicConfig(env) {
      * Worker rejects everything else against.
      */
     legalVersion: LEGAL_VERSION,
+    /**
+     * Tími's own service fee, so every checkout screen quotes the same
+     * numbers the ledger charges. See the constants in src/catalog.js for the
+     * split and the disclosure rule when a clinic passes the whole fee on.
+     */
+    fees: {
+      customerFeeCents: TIMI_CUSTOMER_FEE_CENTS,
+      totalServiceFeeCents: TIMI_TOTAL_SERVICE_FEE_CENTS,
+      currency: "usd"
+    },
     database: hasDatabase(env) ? "d1" : "fixtures",
     map: {
       /** Public Mapbox token only. A secret (sk.) token must never appear here. */

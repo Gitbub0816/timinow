@@ -107,6 +107,11 @@ public struct AuthFactorOption: Identifiable, Hashable, Sendable {
     public private(set) var lastRestoreOutcome = "not yet run"
     /// Fired once per start() with the outcome above.
     public var onRestoreOutcome: (String) -> Void = { _ in }
+    /// True once start() has finished, whatever it decided. The launch splash
+    /// holds the screen on this: without it the app opened straight onto the
+    /// sign-in wall and then visibly skipped past it the moment restore
+    /// resumed the session. Set in a defer so every exit path counts.
+    public private(set) var hasAttemptedRestore = false
 
     private let gateway: TimiGateway
     private let keychain = KeychainStore()
@@ -147,7 +152,10 @@ public struct AuthFactorOption: Identifiable, Hashable, Sendable {
     public func start() async {
         isBusy = true
         defer { isBusy = false }
-        defer { onRestoreOutcome(lastRestoreOutcome) }
+        defer {
+            hasAttemptedRestore = true
+            onRestoreOutcome(lastRestoreOutcome)
+        }
 
         do {
             let config = try await gateway.fetchAppConfig()
@@ -918,7 +926,13 @@ public struct AuthFactorOption: Identifiable, Hashable, Sendable {
         // phone-only account, whose single real factor is phone_code, from
         // being sent straight to the code screen.
         let usable = factors.filter { !$0.strategy.hasPrefix("reset_password") }
-        for factor in (usable.isEmpty ? factors : usable) {
+        // Magic codes only. Password is filtered here — the one place factor
+        // options are made — rather than by deleting the password plumbing,
+        // so session restore and the completion paths stay untouched. An
+        // account that somehow carries no code factor gets the existing "no
+        // supported sign-in method" message instead of a password prompt.
+        let offered = usable.filter { $0.strategy == "email_code" || $0.strategy == "phone_code" }
+        for factor in offered {
             guard seen.insert(factor.strategy).inserted else { continue }
             let label: String
             switch factor.strategy {

@@ -65,7 +65,7 @@ struct SignInView: View {
         case .identifier: return "Who should we\nkeep this for?"
         case .profile: return "Let's set up\nyour account"
         case .strategyPicker: return "How would you\nlike to sign in?"
-        case .password: return "Enter your\npassword"
+        case .password: return "Sign in with\na code instead"
         case .code: return auth.isCreatingAccount ? "Check your\nmessages" : "Enter the code\nwe sent"
         case .signedIn: return "You're in"
         }
@@ -80,7 +80,11 @@ struct SignInView: View {
         case .strategyPicker:
             return "Choose whichever is quickest right now."
         case .password:
-            return "Signing in as \(auth.pendingIdentifier)."
+            // Unreachable now that the factor options are filtered to codes,
+            // but the stage still exists in the controller — kept so restore
+            // and completion stay untouched — so it needs honest wording
+            // rather than a password field that no longer works.
+            return "Tími signs you in with a one-time code by email or text. Start over and we'll send you one."
         case .code:
             // Sign-up verifies whatever Clerk still has unverified, which is
             // not always the address that was typed first — naming the wrong
@@ -147,16 +151,10 @@ struct SignInView: View {
             }
 
         case .password:
-            VStack(alignment: .leading, spacing: 12) {
-                SecureField("Password", text: $auth.passwordText)
-                    .textContentType(.password)
-                    .timiField()
-                Button { Task { await auth.submitPassword() } } label: {
-                    Label("Sign in", systemImage: "arrow.right")
-                }
-                .buttonStyle(TimiPrimaryButtonStyle())
-                .disabled(auth.isBusy)
-            }
+            // The password stage is no longer offered — codes are the only
+            // sign-in method — so there is deliberately no field here. The
+            // "Start over" button below this switch is the way out.
+            EmptyView()
 
         case .code:
             VStack(alignment: .leading, spacing: 12) {

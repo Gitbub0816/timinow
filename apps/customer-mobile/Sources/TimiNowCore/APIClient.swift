@@ -54,6 +54,13 @@ public protocol TimiSessionTokenProviding: AnyObject, Sendable {
 public final class TimiGateway: @unchecked Sendable {
     public var baseURL: URL?
     public var bearerToken: String?
+    /// The legal version this deployment's Worker actually validates against,
+    /// as `/api/config` reported it. Set by `AppStore.loadMapConfig`; nil
+    /// until the config answers, in which case the compiled-in
+    /// `TimiLegal.version` is what a care request quotes. Preferring the
+    /// Worker's own answer is what keeps a legal bump deployed server-side
+    /// from turning every care request into a 422 until the next app release.
+    public var acceptedLegalVersion: String?
     /// Set by `AppStore` once both objects exist. `weak`, so the two never
     /// form a retain cycle.
     public weak var tokenProvider: TimiSessionTokenProviding?
@@ -127,7 +134,7 @@ public final class TimiGateway: @unchecked Sendable {
             concernCategory: draft.urgency == .emergency ? "possible_emergency" : "illness_or_injury", concernSummary: draft.summary,
             symptoms: draft.symptomKeys, startedWhen: draft.startedWhen, urgency: draft.urgency.rawValue, redFlags: draft.redFlags,
             customerLatitude: draft.latitude, customerLongitude: draft.longitude, consentToContact: draft.contactConsent,
-            legalConsent: draft.legalConsent, legalVersion: TimiLegal.version
+            legalConsent: draft.legalConsent, legalVersion: acceptedLegalVersion ?? TimiLegal.version
         )
         let envelope: CareSearchEnvelope = try await send(baseURL.appendingPathComponent("api/searches"), method: "POST", body: payload)
         return envelope.search
@@ -231,6 +238,25 @@ public final class TimiGateway: @unchecked Sendable {
         guard let baseURL else { return nil }
         let envelope: AppConfigEnvelope = try await send(baseURL.appendingPathComponent("api/config"))
         return envelope.map
+    }
+
+    /// Sends product analytics and forgets about them.
+    ///
+    /// Mirrors `reportFailure`: never throws, never surfaces, and does not go
+    /// through `send(_:)` on purpose — `send` attaches a bearer token to every
+    /// request, and `/api/analytics` is cookieless by contract: it must
+    /// receive no identifiers of any kind. The Worker caps a batch at 25
+    /// events and rejects the whole batch over that, so the cap is enforced
+    /// here too rather than letting one oversized batch lose everything.
+    public func recordAnalytics(_ events: [TimiAnalyticsEvent]) async {
+        guard let baseURL, !events.isEmpty else { return }
+        guard let body = try? encoder.encode(AnalyticsPayload(events: Array(events.prefix(25)))) else { return }
+        var request = URLRequest(url: baseURL.appendingPathComponent("api/analytics"))
+        request.httpMethod = "POST"
+        request.timeoutInterval = 8
+        request.httpBody = body
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        _ = try? await session.data(for: request)
     }
 
     /// Sends a failure report and forgets about it.
@@ -347,14 +373,38 @@ public struct ClientErrorReport: Encodable, Sendable {
     }
 }
 
+/// One product event for `POST /api/analytics`.
+///
+/// The endpoint is cookieless and anonymous, so nothing here may ever carry a
+/// user id, an email, a phone number, or a coordinate — the Worker attaches
+/// its own coarse, daily-rotating hash server-side. Names must match the
+/// Worker's `^[a-z0-9_.:-]+$` rule or the batch is refused.
+public struct TimiAnalyticsEvent: Encodable, Sendable {
+    public var name: String
+    /// The screen it happened on, not a URL.
+    public var path: String?
+    public var meta: [String: String]?
+
+    public init(name: String, path: String? = nil, meta: [String: String]? = nil) {
+        self.name = name; self.path = path; self.meta = meta
+    }
+}
+
+private struct AnalyticsPayload: Encodable { var events: [TimiAnalyticsEvent] }
+
 /// The terms and safety notice this build accepts against.
 ///
 /// The Worker rejects a care request whose `legalVersion` is not exactly its
 /// own — `LEGAL_VERSION` in src/catalog.js — so a version bumped in one place
 /// and not the other is a 422 on the last screen of the flow with no
-/// explanation attached to the notice that changed.
+/// explanation attached to the notice that changed. scripts/validate-native.mjs
+/// fails the build unless this constant equals that one, so the two are only
+/// ever bumped in the same change. This is the compiled-in fallback: when
+/// `/api/config` names its own legalVersion, that answer wins (see
+/// `TimiGateway.acceptedLegalVersion`), which is what lets a Worker bump its
+/// terms without stranding every already-installed build.
 public enum TimiLegal {
-    public static let version = "2026-08-22"
+    public static let version = "2026-08-24"
 }
 
 

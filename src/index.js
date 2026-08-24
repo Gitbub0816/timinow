@@ -20,6 +20,7 @@ import {
 } from "./payments.js";
 import { stripeConfigured, StripeError, verifyWebhookSignature } from "./stripe.js";
 import { findEmergencyVeterinaryPlaces, phoneKey } from "./mapbox-places.js";
+import { recordAnalyticsEvents } from "./analytics.js";
 import { listPets, savePet, removePet, syncPets, validatePet } from "./pets.js";
 import {
   getCareOffer,
@@ -312,6 +313,67 @@ async function recordClientError(request, env) {
   // Logged as well as stored: a Worker tail is where somebody looks first.
   console.warn(JSON.stringify({ event: "client_error", reference, surface, status, code, path }));
   return json({ recorded: true, reference }, { status: 202 });
+}
+
+/**
+ * A veterinary practice asking to join the network.
+ *
+ * Public and unauthenticated on purpose: the practices Tími most wants to
+ * hear from have no account, no Clerk organization, and no tenant — that is
+ * why they are applying. Everything is length-checked and the application
+ * lands as a `provider_applications` row with a status, so "we'd like to be
+ * listed" stops being an email somebody has to remember.
+ */
+const EMAIL_SHAPE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+const PHONE_SHAPE = /^\+?[0-9().\-\s]{7,24}$/;
+
+async function createProviderApplication(request, env) {
+  if (!hasDatabase(env)) {
+    // Same posture as pets: say plainly that nothing was stored rather than
+    // pretend an application landed somewhere it could never be read.
+    return apiError(503, "DATABASE_REQUIRED", "Tími cannot store applications right now. Please try again shortly.");
+  }
+  const body = await readJson(request).catch(() => null);
+  if (!body || typeof body !== "object") return apiError(400, "JSON_REQUIRED", "A valid JSON request body is required.");
+
+  // Refused over the limit rather than silently truncated: a practice name
+  // cut mid-word is a worse record than a form asking to shorten it.
+  const field = (value) => (typeof value === "string" ? value.trim() : "");
+  const practiceName = field(body.practiceName);
+  const contactName = field(body.contactName);
+  const email = field(body.email);
+  const phone = field(body.phone);
+  const city = field(body.city);
+  const state = field(body.state);
+  const species = field(body.species);
+  const message = field(body.message);
+
+  const errors = [];
+  if (!practiceName || practiceName.length > 120) errors.push("practiceName is required (at most 120 characters)");
+  if (!contactName || contactName.length > 120) errors.push("contactName is required (at most 120 characters)");
+  if (!email || email.length > 160 || !EMAIL_SHAPE.test(email)) errors.push("email is invalid");
+  if (!PHONE_SHAPE.test(phone)) errors.push("phone is invalid");
+  if (!city || city.length > 120) errors.push("city is required (at most 120 characters)");
+  if (!state || state.length > 60) errors.push("state is required (at most 60 characters)");
+  if (species.length > 120) errors.push("species must be at most 120 characters");
+  if (message.length > 1000) errors.push("message must be at most 1000 characters");
+  if (errors.length) return apiError(422, "VALIDATION_FAILED", "Review the application form.", errors);
+
+  const applicationId = newId("application");
+  const now = new Date().toISOString();
+  await env.DB.prepare(`
+    INSERT INTO provider_applications (
+      id, practice_name, contact_name, email, phone, city, state, species, message, status, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'new', ?, ?)
+  `).bind(
+    applicationId, practiceName, contactName, email, phone, city, state,
+    species || null, message || null, now, now
+  ).run();
+
+  // Only the id and the status go back. The applicant already knows what they
+  // typed, and echoing it would make this public endpoint a formatter for
+  // arbitrary text.
+  return json({ application: { id: applicationId, status: "new" } }, { status: 201 });
 }
 
 /**
@@ -1549,6 +1611,12 @@ async function handleApi(request, env, ctx) {
   // Public on purpose: the reports worth having most are from somebody who
   // could not sign in.
   if (method === "POST" && path === "/api/client-errors") return recordClientError(request, env);
+  // Public because a practice applying to join has no account yet — that is
+  // why it is applying.
+  if (method === "POST" && path === "/api/provider-applications") return createProviderApplication(request, env);
+  // Public because the pages that matter most are the ones before sign-in,
+  // and the beacon identifies nobody — see src/analytics.js.
+  if (method === "POST" && path === "/api/analytics") return recordAnalyticsEvents(request, env);
   // Public because Stripe does not carry a Clerk session. The Stripe-Signature
   // header is this endpoint's entire authentication, and it is checked before
   // the body is parsed — see handleStripeWebhook.

@@ -16,6 +16,7 @@
 
 import { actorForRequest, roleAllows, signInRequired } from "../../../src/auth.js";
 import { publicConfig } from "../../../src/config.js";
+import { recordAnalyticsEvents } from "../../../src/analytics.js";
 import { describeSession } from "../../../src/session.js";
 import { hasDatabase, tenantIdForClerkOrg } from "../../../src/db.js";
 import {
@@ -128,6 +129,11 @@ async function handleApi(request, env) {
 
   if (method === "GET" && path === "/api/health") return json({ ok: true, service: "timinow-vet", surface: "clinic", database: hasDatabase(env) });
   if (method === "GET" && path === "/api/config") return handleConfig(env);
+  // Public, and above the sign-in gate like the customer Worker mounts it: the
+  // sign-in page itself is a page worth counting, and the beacon identifies
+  // nobody — see src/analytics.js. The surface comes from this Worker's own
+  // SURFACE var, so a beacon here can never file itself under the customer app.
+  if (method === "POST" && path === "/api/analytics") return recordAnalyticsEvents(request, env);
 
   const actor = await authenticatedActor(request, env);
   if (signInRequired(env) && !actor) return authRequiredResponse();

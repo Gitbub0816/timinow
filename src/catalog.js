@@ -200,6 +200,24 @@ export const TECHNICIAN_NOTICE =
  *
  * 2026-08-22 adds the optional medications and allergies an owner may record,
  * and the veterinary-technician staffing notice.
+ *
+ * 2026-08-24 adds the service-fee disclosure: Tími's $50 fee per completed
+ * intake, the standard $25 customer share, and the required checkout notice
+ * when a clinic passes the whole fee to the customer. See the fee constants
+ * below and `fees` on /api/config.
  */
-export const LEGAL_VERSION = "2026-08-22";
+export const LEGAL_VERSION = "2026-08-24";
 export const VALID_INTAKE_STATUS = new Set(["available", "limited", "confirm_first", "critical_only", "diverting", "closed", "unverified"]);
+
+/**
+ * Tími's service fee is $50 per completed intake. The standard arrangement
+ * charges the customer $25 at the time of service and deducts the remainder
+ * from the clinic payout; a clinic may elect to pass the entire $50 to the
+ * customer, which must then be disclosed at checkout.
+ *
+ * Constants rather than tenant policy fields, because this is Tími's own
+ * price: the same on every surface, served by /api/config so no client
+ * carries a copy that can drift from what is actually charged.
+ */
+export const TIMI_CUSTOMER_FEE_CENTS = 2500;
+export const TIMI_TOTAL_SERVICE_FEE_CENTS = 5000;

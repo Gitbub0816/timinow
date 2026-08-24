@@ -43,6 +43,8 @@ const requiredFiles = [
   "migrations/0006_care_context.sql",
   "migrations/0007_client_errors.sql",
   "migrations/0008_payments_ledger.sql",
+  "migrations/0010_provider_analytics.sql",
+  "src/analytics.js",
   "src/stripe.js",
   "src/payments.js",
   "scripts/stripe-test.mjs",
@@ -98,12 +100,13 @@ for (const screen of expectedScreens) {
 const voiceMigration = await readFile("migrations/0005_voice_calls.sql", "utf8");
 const paymentsMigration = await readFile("migrations/0008_payments_ledger.sql", "utf8");
 const petsMigration = await readFile("migrations/0009_pets.sql", "utf8");
-const requiredTables = ["tenants", "locations", "availability_reports", "tenant_policies", "intake_requests", "intake_events", "customer_observations", "notification_outbox", "care_searches", "care_search_targets", "care_offers", "platform_admins", "tenant_members", "tenant_invitations", "admin_audit_log", "clinic_call_attempts", "stripe_accounts", "payment_ledger", "stripe_events", "pets"];
+const providerAnalyticsMigration = await readFile("migrations/0010_provider_analytics.sql", "utf8");
+const requiredTables = ["tenants", "locations", "availability_reports", "tenant_policies", "intake_requests", "intake_events", "customer_observations", "notification_outbox", "care_searches", "care_search_targets", "care_offers", "platform_admins", "tenant_members", "tenant_invitations", "admin_audit_log", "clinic_call_attempts", "stripe_accounts", "payment_ledger", "stripe_events", "pets", "provider_applications", "analytics_events"];
 for (const table of requiredTables) {
-  if (!`${migration}\n${multiOfferMigration}\n${tenancyMigration}\n${voiceMigration}\n${paymentsMigration}\n${petsMigration}`.includes(`CREATE TABLE IF NOT EXISTS ${table}`)) throw new Error(`Missing D1 table: ${table}`);
+  if (!`${migration}\n${multiOfferMigration}\n${tenancyMigration}\n${voiceMigration}\n${paymentsMigration}\n${petsMigration}\n${providerAnalyticsMigration}`.includes(`CREATE TABLE IF NOT EXISTS ${table}`)) throw new Error(`Missing D1 table: ${table}`);
 }
 
-const requiredRoutes = ["/api/config", "/api/locations", "/api/intakes", "/api/searches", "select-offer", "/api/observations", "/api/clinic/dashboard", "/api/clinic/availability", "search-targets", "/api/session", "/api/tenant/members", "/api/pets"];
+const requiredRoutes = ["/api/config", "/api/locations", "/api/intakes", "/api/searches", "select-offer", "/api/observations", "/api/clinic/dashboard", "/api/clinic/availability", "search-targets", "/api/session", "/api/tenant/members", "/api/pets", "/api/provider-applications", "/api/analytics"];
 for (const route of requiredRoutes) {
   if (!worker.includes(route)) throw new Error(`Missing API route: ${route}`);
 }
@@ -394,6 +397,39 @@ if (!moments.some((moment) => PLAYFUL.test(TIMI_ANNOUNCEMENTS.calm[moment]))) {
   // A hard delete cannot tell a second device that anything happened.
   if (/DELETE FROM pets/.test(pets)) {
     throw new Error("src/pets.js hard-deletes pets. A row that is simply gone cannot tell a phone that has been offline since before the deletion to remove its own copy, so the pet comes back at the next sync.");
+  }
+}
+
+// The analytics table's privacy promise — no consent banner because nothing
+// identifying is stored — is enforced here, not merely described in the
+// migration. The raw connecting IP and user agent may exist only as input to
+// the day-scoped visitor hash; one bind argument added in the wrong place
+// turns that promise into a claim that is simply false, and nothing else
+// would notice.
+{
+  const analytics = await readFile("src/analytics.js", "utf8");
+  if (!analytics.includes('headers.get("cf-connecting-ip")')) {
+    throw new Error("src/analytics.js no longer reads cf-connecting-ip, so the visitor hash has lost the input that distinguishes one visitor from another.");
+  }
+  if (!analytics.includes("SHA-256")) {
+    throw new Error("src/analytics.js no longer hashes the visitor inputs with SHA-256, so whatever it stores instead is either linkable or useless.");
+  }
+  const insertAt = analytics.indexOf("INSERT INTO analytics_events");
+  if (insertAt === -1) throw new Error("src/analytics.js no longer inserts into analytics_events.");
+  // The whole statement, from the INSERT through the end of its bind list.
+  const bindEnd = analytics.indexOf(")));", insertAt);
+  const insertRegion = analytics.slice(insertAt, bindEnd === -1 ? insertAt + 800 : bindEnd);
+  if (/headers\.get|cf-connecting-ip|user-agent|\bip\b|userAgent/.test(insertRegion)) {
+    throw new Error("src/analytics.js feeds the raw IP or user agent into an analytics_events row. Those values may only enter the SHA-256 visitor hash — storing either one raw is exactly what the no-consent-banner design promises never happens.");
+  }
+  // All three Workers must mount the beacon. One that does not answers 404,
+  // and a beacon is designed to swallow failures — so that surface's numbers
+  // simply stop existing and nobody is told.
+  for (const [label, path] of [["customer", "src/index.js"], ["veterinary", "apps/vet-web/src/index.js"], ["admin", "apps/admin-console/src/index.js"]]) {
+    const source = await readFile(path, "utf8");
+    if (!source.includes('path === "/api/analytics"') || !source.includes("recordAnalyticsEvents")) {
+      throw new Error(`The ${label} Worker does not route POST /api/analytics to the shared recordAnalyticsEvents handler, so that surface's beacons vanish silently.`);
+    }
   }
 }
 

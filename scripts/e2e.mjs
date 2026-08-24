@@ -1,7 +1,9 @@
-import { LEGAL_VERSION } from "../src/catalog.js";
+import { LEGAL_VERSION, TIMI_CUSTOMER_FEE_CENTS, TIMI_TOTAL_SERVICE_FEE_CENTS } from "../src/catalog.js";
 import { readFile } from "node:fs/promises";
 import { DatabaseSync } from "node:sqlite";
 import worker from "../src/index.js";
+import vetWorker from "../apps/vet-web/src/index.js";
+import adminWorker from "../apps/admin-console/src/index.js";
 
 class D1StatementMock {
   constructor(database, sql) {
@@ -60,6 +62,7 @@ database.exec(await readFile("migrations/0006_care_context.sql", "utf8"));
 database.exec(await readFile("migrations/0007_client_errors.sql", "utf8"));
 database.exec(await readFile("migrations/0008_payments_ledger.sql", "utf8"));
 database.exec(await readFile("migrations/0009_pets.sql", "utf8"));
+database.exec(await readFile("migrations/0010_provider_analytics.sql", "utf8"));
 
 const env = {
   ASSETS: { fetch: async () => new Response("asset") },
@@ -94,6 +97,17 @@ const intakePayload = {
 
 let result = await call("/api/locations?lat=37.6688&lng=-122.0808&species=dog&care=urgent");
 assert(result.response.status === 200 && result.body.locations.length === 5, "D1 location search must return all seeded clinics");
+
+/* -------------------------------------------------- public config: fees --- */
+
+// The fee amounts are asserted twice over on purpose: against the constants,
+// so this test can never disagree with the Worker, and against the literal
+// dollar figures, because the numbers themselves are the commercial contract.
+result = await call("/api/config");
+assert(result.response.status === 200 && result.body.legalVersion === LEGAL_VERSION && result.body.legalVersion === "2026-08-24", "/api/config must serve legal version 2026-08-24, the one the Worker validates intakes against");
+assert(result.body.fees?.customerFeeCents === TIMI_CUSTOMER_FEE_CENTS && result.body.fees.customerFeeCents === 2500, "/api/config must disclose the $25 customer fee");
+assert(result.body.fees?.totalServiceFeeCents === TIMI_TOTAL_SERVICE_FEE_CENTS && result.body.fees.totalServiceFeeCents === 5000, "/api/config must disclose the $50 total service fee");
+assert(result.body.fees?.currency === "usd", "The fee currency travels with the amounts");
 
 result = await call("/api/intakes", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ...intakePayload, concernSummary: "My dog isn't acting like himself.", symptoms: ["energy_or_behavior"] }) });
 assert(result.response.status === 422 && result.body.error.details.some((detail) => detail.includes("observable")), "Vague concern descriptions must be rejected without AI");
@@ -385,11 +399,145 @@ result = await call("/api/pets/pet_bad", {
 });
 assert(result.response.status === 422 && result.body.error.code === "INVALID_WEIGHT", "An impossible weight is refused");
 
-const tableChecks = ["tenants", "locations", "availability_reports", "tenant_policies", "intake_requests", "intake_events", "customer_observations", "notification_outbox", "care_searches", "care_search_targets", "care_offers", "pets"];
+/* ------------------------------------------------ provider applications --- */
+
+// Public on purpose: the practices Tími most wants to hear from have no
+// account, no organization, and no tenant — that is why they are applying.
+// The admin console is the only reader.
+const applicationPayload = {
+  practiceName: "Redwood Trail Veterinary Clinic",
+  contactName: "Dr. Priya Raman",
+  email: "priya@redwoodtrailvet.example",
+  phone: "(510) 555-0142",
+  city: "Oakland",
+  state: "CA",
+  species: "dogs, cats, rabbits",
+  message: "Two DVMs, open until 10pm on weekdays."
+};
+const jsonHeaders = { "content-type": "application/json" };
+result = await call("/api/provider-applications", { method: "POST", headers: jsonHeaders, body: JSON.stringify(applicationPayload) });
+assert(result.response.status === 201 && result.body.application.status === "new", `A provider application must land as new: ${JSON.stringify(result.body)}`);
+const applicationId = result.body.application.id;
+
+// Refused rather than truncated: a practice name cut mid-word is a worse
+// record than a form asking to shorten it.
+result = await call("/api/provider-applications", { method: "POST", headers: jsonHeaders, body: JSON.stringify({ ...applicationPayload, email: "not-an-email" }) });
+assert(result.response.status === 422, "A malformed email must be refused");
+result = await call("/api/provider-applications", { method: "POST", headers: jsonHeaders, body: JSON.stringify({ ...applicationPayload, phone: "nope" }) });
+assert(result.response.status === 422, "A phone Tími could never dial back must be refused");
+result = await call("/api/provider-applications", { method: "POST", headers: jsonHeaders, body: JSON.stringify({ ...applicationPayload, practiceName: "x".repeat(121) }) });
+assert(result.response.status === 422, "An over-length practice name must be refused, not truncated");
+result = await call("/api/provider-applications", { method: "POST", headers: jsonHeaders, body: JSON.stringify({ ...applicationPayload, message: "x".repeat(1001) }) });
+assert(result.response.status === 422, "An over-length message must be refused");
+result = await call("/api/provider-applications", { method: "POST", headers: jsonHeaders, body: JSON.stringify({ practiceName: "Nameless" }) });
+assert(result.response.status === 422 && result.body.error.details.length >= 4, "Missing required fields must all be named at once, not one 422 per retry");
+
+// The operator side, gated by the same platform-admin check as every other
+// /api/admin route.
+const adminEnv = { ...env, SURFACE: "admin", PLATFORM_ADMIN_USER_IDS: "user_operator" };
+const operatorHeaders = { "content-type": "application/json", "x-demo-user-id": "user_operator" };
+async function adminCall(path, init = {}) {
+  const response = await adminWorker.fetch(new Request(`https://admin.timi.example${path}`, init), adminEnv);
+  return { response, body: await response.json() };
+}
+
+result = await adminCall("/api/admin/provider-applications", { headers: operatorHeaders });
+assert(result.response.status === 200 && result.body.applications[0]?.id === applicationId, "The operator list is newest first and contains the application");
+assert(result.body.applications[0].practiceName === applicationPayload.practiceName && result.body.applications[0].message === applicationPayload.message, "The operator reads exactly what the practice typed");
+result = await adminCall("/api/admin/provider-applications", { headers: { ...operatorHeaders, "x-demo-user-id": "user_random" } });
+assert(result.response.status === 403, "A non-operator must not read applications");
+
+result = await adminCall(`/api/admin/provider-applications/${applicationId}`, { method: "PATCH", headers: operatorHeaders, body: JSON.stringify({ status: "contacted" }) });
+assert(result.response.status === 200 && result.body.application.status === "contacted", "An operator can mark an application contacted");
+result = await adminCall(`/api/admin/provider-applications/${applicationId}`, { method: "PATCH", headers: operatorHeaders, body: JSON.stringify({ status: "spam" }) });
+assert(result.response.status === 422, "An unknown status must be refused, not stored");
+result = await adminCall("/api/admin/provider-applications/application_missing", { method: "PATCH", headers: operatorHeaders, body: JSON.stringify({ status: "closed" }) });
+assert(result.response.status === 404, "A missing application answers 404");
+
+/* -------------------------------------------------------------- analytics --- */
+
+// The privacy contract is tested where it matters: on the rows. No raw IP, no
+// raw user agent, and a visitor value that is the same for the same
+// ip/ua/day, different for a different ip, and never the ip itself.
+const uaDesktop = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36";
+const uaMobile = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148";
+const beacon = (events, headers = {}) => call("/api/analytics", {
+  method: "POST",
+  headers: { ...jsonHeaders, ...headers },
+  body: JSON.stringify({ events })
+});
+
+result = await beacon(
+  [{ name: "page_view", path: "/find?species=dog&owner=maya@example.com", meta: { screen: "find" } }, { name: "search_started" }],
+  { "user-agent": uaDesktop, "cf-connecting-ip": "203.0.113.7" }
+);
+assert(result.response.status === 202, `The beacon must be acknowledged: ${JSON.stringify(result.body)}`);
+result = await beacon([{ name: "page_view", path: "/results" }], { "user-agent": uaDesktop, "cf-connecting-ip": "203.0.113.7" });
+assert(result.response.status === 202, "A second beacon from the same visitor must be acknowledged");
+result = await beacon([{ name: "page_view", path: "/find" }], { "user-agent": uaMobile, "cf-connecting-ip": "198.51.100.4" });
+assert(result.response.status === 202, "A mobile beacon must be acknowledged");
+
+const analyticsRows = database.prepare("SELECT * FROM analytics_events").all();
+assert(analyticsRows.length === 4, `Four events should be stored so far, got ${analyticsRows.length}`);
+for (const row of analyticsRows) {
+  const serialized = JSON.stringify(row);
+  assert(!serialized.includes("203.0.113.7") && !serialized.includes("198.51.100.4"), "No raw IP address may ever be stored");
+  assert(!serialized.includes("Mozilla"), "No raw user agent may ever be stored");
+  assert(/^[0-9a-f]{16}$/.test(row.visitor_hash), "visitor_hash is 16 hex characters of a SHA-256, nothing else");
+  assert(row.surface === "customer", "The surface is the Worker's own identity, never the client's claim");
+  assert(row.occurred_at && row.visitor_hash !== "203.0.113.7", "The visitor value must never equal the raw ip");
+}
+const desktopHashes = new Set(analyticsRows.filter((row) => row.device === "desktop").map((row) => row.visitor_hash));
+assert(desktopHashes.size === 1, "The same ip, user agent and day must hash to the same visitor");
+const mobileRow = analyticsRows.find((row) => row.device === "mobile");
+assert(mobileRow && !desktopHashes.has(mobileRow.visitor_hash), "A different ip must hash to a different visitor");
+assert(!analyticsRows.some((row) => (row.path || "").includes("?") || (row.path || "").includes("maya@")), "Query strings are stripped before the row exists — a query is where an email lands in a URL");
+assert(analyticsRows.some((row) => JSON.parse(row.meta_json).screen === "find"), "Flat string meta must round-trip");
+
+// The two refusals that mean a client bug worth hearing about…
+result = await beacon(Array.from({ length: 26 }, (_, index) => ({ name: `event_${index}` })));
+assert(result.response.status === 422 && result.body.error.code === "TOO_MANY_EVENTS", "A 26th event in one batch must be refused");
+result = await beacon([{ name: "bad name!" }]);
+assert(result.response.status === 422 && result.body.error.code === "INVALID_EVENT_NAME", "A name outside the allowed alphabet must be refused");
+// …and everything else fails soft: a broken beacon must never break a page.
+result = await call("/api/analytics", { method: "POST", headers: jsonHeaders, body: "not json" });
+assert(result.response.status === 202, "A malformed beacon is acknowledged and dropped, never argued with");
+
+// The same beacon mounts on all three Workers, and each stores its own surface.
+async function beaconVia(surfaceWorker, surfaceEnv, headers, events) {
+  const response = await surfaceWorker.fetch(new Request("https://surface.timi.example/api/analytics", {
+    method: "POST", headers: { ...jsonHeaders, ...headers }, body: JSON.stringify({ events })
+  }), surfaceEnv);
+  return { response, body: await response.json() };
+}
+result = await beaconVia(vetWorker, { ...env, SURFACE: "clinic" }, { "user-agent": uaDesktop, "cf-connecting-ip": "192.0.2.9" }, [{ name: "dashboard_view", path: "/" }]);
+assert(result.response.status === 202, "The veterinary Worker must take the same beacon");
+result = await beaconVia(adminWorker, adminEnv, { "user-agent": uaDesktop, "cf-connecting-ip": "203.0.113.7" }, [{ name: "console_view", path: "/" }]);
+assert(result.response.status === 202, "The admin Worker must take the same beacon");
+assert(database.prepare("SELECT COUNT(*) AS c FROM analytics_events WHERE surface = 'clinic'").get().c === 1, "The clinic surface records as clinic");
+assert(database.prepare("SELECT COUNT(*) AS c FROM analytics_events WHERE surface = 'admin'").get().c === 1, "The admin surface records as admin");
+
+// The operator summary, and its arithmetic: 6 events today from 3 distinct
+// visitors (the admin beacon reused the desktop visitor's ip and user agent,
+// which must dedupe — the hash is per person per day, not per surface).
+result = await adminCall("/api/admin/analytics/summary?days=7", { headers: operatorHeaders });
+assert(result.response.status === 200, `The summary must be readable by an operator: ${JSON.stringify(result.body)}`);
+const today = new Date().toISOString().slice(0, 10);
+const todayRow = result.body.days.find((row) => row.date === today);
+assert(todayRow && todayRow.events === 6 && todayRow.visitors === 3, `Today must count 6 events from 3 visitors: ${JSON.stringify(result.body.days)}`);
+assert(result.body.names.find((row) => row.name === "page_view")?.count === 3, "page_view happened three times");
+assert(result.body.paths.find((row) => row.path === "/find")?.count === 2, "/find was visited twice, query strings collapsed");
+const surfaceSummary = Object.fromEntries(result.body.surfaces.map((row) => [row.surface, row]));
+assert(surfaceSummary.customer?.events === 4 && surfaceSummary.customer?.visitors === 2, `The customer surface counts 4 events from 2 visitors: ${JSON.stringify(result.body.surfaces)}`);
+assert(surfaceSummary.clinic?.events === 1 && surfaceSummary.admin?.events === 1, "The console surfaces each count their event");
+result = await adminCall("/api/admin/analytics/summary", { headers: { ...operatorHeaders, "x-demo-user-id": "user_random" } });
+assert(result.response.status === 403, "The summary sits behind the platform-admin gate");
+
+const tableChecks = ["tenants", "locations", "availability_reports", "tenant_policies", "intake_requests", "intake_events", "customer_observations", "notification_outbox", "care_searches", "care_search_targets", "care_offers", "pets", "provider_applications", "analytics_events"];
 for (const table of tableChecks) {
   const count = database.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get().count;
   assert(count > 0, `${table} should contain end-to-end test data`);
 }
 
 database.close();
-console.log("D1 end-to-end tests passed: five-offer search, atomic customer selection, clinic release, policy snapshot, deposit, travel, optional medications and allergies, pets on the account, veterinary-technician staffing notices, client error reporting, clinic calling preferences, observation, expiry, and audit.");
+console.log("D1 end-to-end tests passed: five-offer search, atomic customer selection, clinic release, policy snapshot, deposit, fee disclosure on /api/config, travel, optional medications and allergies, pets on the account, veterinary-technician staffing notices, client error reporting, clinic calling preferences, provider applications with operator triage, privacy-preserving analytics with the operator summary, observation, expiry, and audit.");
