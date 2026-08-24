@@ -1,3 +1,5 @@
+using System.ComponentModel;
+using System.Runtime.CompilerServices;
 using System.Text.Json.Serialization;
 
 namespace TimiVet.Models;
@@ -47,24 +49,103 @@ public sealed class ClinicPolicy
     public int NoShowPlatformFeeCents { get; set; }
 }
 
-public sealed class ClinicRequest
+/// <summary>
+/// One request on the queue.
+/// </summary>
+/// <remarks>
+/// Raises PropertyChanged so the console can refresh without rebuilding the
+/// list. The poll used to Clear() the collection and re-Add() everything, which
+/// tells WPF that every row it was showing is gone — so the queue tore itself
+/// down and rebuilt six seconds at a time, taking the scroll position, the
+/// selection and the keyboard focus with it. Merging into the existing rows
+/// only works if a row can say which of its own fields moved, which is what
+/// this is for: a request going from pending to offered redraws that badge and
+/// nothing else.
+/// </remarks>
+public sealed class ClinicRequest : INotifyPropertyChanged
 {
+    public event PropertyChangedEventHandler? PropertyChanged;
+
+    private void Raise([CallerMemberName] string? name = null)
+        => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
+
+    /// <summary>
+    /// Takes the server's latest version of this request without replacing the
+    /// object the list is bound to.
+    /// </summary>
+    /// <remarks>
+    /// Only fields that actually changed raise a notification. A poll that
+    /// brings back an identical request therefore does no UI work at all,
+    /// which is the difference between a console that sits still and one that
+    /// visibly reloads itself while somebody is reading it.
+    ///
+    /// Computed properties are named explicitly because WPF has no idea they
+    /// depend on the fields above them — PetLine will not refresh because
+    /// Pet did, and a row would keep the old animal's name beside the new
+    /// one's details.
+    /// </remarks>
+    public void CopyFrom(ClinicRequest latest)
+    {
+        if (ReferenceEquals(this, latest)) return;
+        SearchId = latest.SearchId;
+        PublicCode = latest.PublicCode;
+        LocationId = latest.LocationId;
+        TenantId = latest.TenantId;
+        Pet = latest.Pet;
+        Owner = latest.Owner;
+        ConcernSummary = latest.ConcernSummary;
+        Urgency = latest.Urgency;
+        RedFlags = latest.RedFlags;
+        TravelMinutes = latest.TravelMinutes;
+        Status = latest.Status;
+        RequestedAt = latest.RequestedAt;
+        RequestExpiresAt = latest.RequestExpiresAt;
+        UpdatedAt = latest.UpdatedAt;
+        SearchTarget = latest.SearchTarget;
+        foreach (var computed in new[] { nameof(PetLine), nameof(RequestType), nameof(TravelLabel), nameof(RequestedLabel), nameof(IsEmergency), nameof(OwnerSuppliedMedicalLine), nameof(HasOwnerSuppliedMedical) })
+        {
+            Raise(computed);
+        }
+    }
+
+    private void Set<T>(ref T field, T value, [CallerMemberName] string? name = null)
+    {
+        if (EqualityComparer<T>.Default.Equals(field, value)) return;
+        field = value;
+        Raise(name);
+    }
+
     public string Id { get; set; } = "";
-    public string? SearchId { get; set; }
-    public string? PublicCode { get; set; }
-    public string LocationId { get; set; } = "";
-    public string TenantId { get; set; } = "";
-    public PetSummary Pet { get; set; } = new();
-    public OwnerSummary Owner { get; set; } = new();
-    public string ConcernSummary { get; set; } = "";
-    public string Urgency { get; set; } = "urgent";
-    public List<string> RedFlags { get; set; } = [];
-    public int? TravelMinutes { get; set; }
-    public string Status { get; set; } = "pending";
-    public DateTimeOffset? RequestedAt { get; set; }
-    public DateTimeOffset? RequestExpiresAt { get; set; }
-    public DateTimeOffset? UpdatedAt { get; set; }
-    public bool SearchTarget { get; set; }
+    private string? _searchId;
+    public string? SearchId { get => _searchId; set => Set(ref _searchId, value); }
+    private string? _publicCode;
+    public string? PublicCode { get => _publicCode; set => Set(ref _publicCode, value); }
+    private string _locationId = "";
+    public string LocationId { get => _locationId; set => Set(ref _locationId, value); }
+    private string _tenantId = "";
+    public string TenantId { get => _tenantId; set => Set(ref _tenantId, value); }
+    private PetSummary _pet = new();
+    public PetSummary Pet { get => _pet; set => Set(ref _pet, value); }
+    private OwnerSummary _owner = new();
+    public OwnerSummary Owner { get => _owner; set => Set(ref _owner, value); }
+    private string _concernSummary = "";
+    public string ConcernSummary { get => _concernSummary; set => Set(ref _concernSummary, value); }
+    private string _urgency = "urgent";
+    public string Urgency { get => _urgency; set => Set(ref _urgency, value); }
+    private List<string> _redFlags = [];
+    public List<string> RedFlags { get => _redFlags; set => Set(ref _redFlags, value); }
+    private int? _travelMinutes;
+    public int? TravelMinutes { get => _travelMinutes; set => Set(ref _travelMinutes, value); }
+    private string _status = "pending";
+    public string Status { get => _status; set => Set(ref _status, value); }
+    private DateTimeOffset? _requestedAt;
+    public DateTimeOffset? RequestedAt { get => _requestedAt; set => Set(ref _requestedAt, value); }
+    private DateTimeOffset? _requestExpiresAt;
+    public DateTimeOffset? RequestExpiresAt { get => _requestExpiresAt; set => Set(ref _requestExpiresAt, value); }
+    private DateTimeOffset? _updatedAt;
+    public DateTimeOffset? UpdatedAt { get => _updatedAt; set => Set(ref _updatedAt, value); }
+    private bool _searchTarget;
+    public bool SearchTarget { get => _searchTarget; set => Set(ref _searchTarget, value); }
 
     [JsonIgnore] public string PetLine => $"{Pet.Name} · {Display(Pet.Species)}";
     [JsonIgnore] public string RequestType => SearchTarget ? "MULTI-CLINIC SEARCH" : "DIRECT INTAKE";
@@ -362,4 +443,78 @@ public sealed class CallPreferencesUpdate
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public bool? CallsEnabled { get; set; }
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public string? VoicePhone { get; set; }
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public QuietHours? QuietHours { get; set; }
+}
+
+// ---------------------------------------------------------------- payouts ---
+
+/// <summary>
+/// One line of the Tími ledger, as this clinic is allowed to see it.
+/// </summary>
+/// <remarks>
+/// A deliberately thin slice of `payment_ledger`: the clinic gets its own
+/// transfers and its own payouts and nothing else. It never sees what the
+/// customer's card was charged or what Tími retained — those are on the
+/// platform side of the transaction, and putting them on a clinic's screen
+/// invites an argument about a number the clinic cannot act on.
+/// </remarks>
+public sealed class ClinicLedgerEntry
+{
+    public string Id { get; set; } = "";
+    public string OccurredAt { get; set; } = "";
+    public string Kind { get; set; } = "";
+    public int AmountCents { get; set; }
+    public string Status { get; set; } = "";
+    /// <summary>The Stripe transfer or payout id, so a clinic reading its own
+    /// Express dashboard can match that line to this one.</summary>
+    public string? StripeObjectId { get; set; }
+    public string? IntakeId { get; set; }
+
+    [JsonIgnore] public string AmountLabel => ClinicMoney.Dollars(AmountCents);
+    [JsonIgnore] public string OccurredLabel => ClinicMoney.ShortDate(OccurredAt);
+    [JsonIgnore] public string Reference => string.IsNullOrWhiteSpace(StripeObjectId) ? "—" : StripeObjectId!;
+}
+
+/// <summary>
+/// What this clinic is owed and what Stripe has already sent it.
+/// </summary>
+/// <remarks>
+/// AwaitingPayoutCents is what Tími transferred less what Stripe paid out —
+/// not the clinic's Stripe balance, which moves for reasons Tími does not
+/// control and would turn this panel into an explanation of Stripe's
+/// arithmetic rather than ours.
+/// </remarks>
+public sealed class ClinicEarnings
+{
+    public int TransferredCents { get; set; }
+    public int PaidOutCents { get; set; }
+    public int AwaitingPayoutCents { get; set; }
+    public List<ClinicLedgerEntry> Transfers { get; set; } = [];
+    public List<ClinicLedgerEntry> Payouts { get; set; } = [];
+}
+
+/// <summary>Only what a clinic can act on. Stripe's requirements hash is an
+/// operator's problem and stays in the platform console.</summary>
+public sealed class ClinicConnectStatus
+{
+    public string OnboardingStatus { get; set; } = "not_started";
+    public bool TransfersEnabled { get; set; }
+    public bool PayoutsEnabled { get; set; }
+    public string? DisabledReason { get; set; }
+}
+
+public sealed class ClinicPayouts
+{
+    public ClinicEarnings Earnings { get; set; } = new();
+    public ClinicConnectStatus? Connect { get; set; }
+}
+
+/// <summary>Money and dates, formatted the way the macOS console formats them,
+/// so a clinic running one on the front desk and the other in the back office
+/// reads the same numbers in the same shape.</summary>
+public static class ClinicMoney
+{
+    public static string Dollars(int cents) => (cents / 100m).ToString("C", System.Globalization.CultureInfo.GetCultureInfo("en-US"));
+
+    public static string ShortDate(string iso)
+        => DateTimeOffset.TryParse(iso, out var parsed) ? parsed.LocalDateTime.ToString("d MMM, h:mm tt") : "—";
 }

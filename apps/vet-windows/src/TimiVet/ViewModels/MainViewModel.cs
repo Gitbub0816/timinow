@@ -64,10 +64,64 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     }
 
     public AppSettings Settings { get; }
+    /// Says whether the thing you just pressed worked, where you pressed it.
+    public ToastCenter Toasts { get; } = new(System.Windows.Application.Current?.Dispatcher ?? System.Windows.Threading.Dispatcher.CurrentDispatcher);
     public ObservableCollection<ClinicRequest> Requests { get; } = [];
     public ObservableCollection<ClinicRequest> PendingRequests { get; } = [];
     public IReadOnlyList<string> AvailabilityStatuses { get; } = ["available", "limited", "confirm_first", "critical_only", "diverting", "closed"];
     public IReadOnlyList<string> ResponseTypes { get; } = ["available_now", "available_at", "emergency_intake"];
+
+    private ClinicPayouts _payouts = new();
+    public ClinicPayouts Payouts { get => _payouts; set { _payouts = value; Raise(nameof(Payouts)); Raise(nameof(TransferredLabel)); Raise(nameof(PaidOutLabel)); Raise(nameof(AwaitingLabel)); Raise(nameof(HasSettlements)); Raise(nameof(PayoutsNotice)); } }
+    private bool _payoutsLoaded;
+    public bool PayoutsLoaded { get => _payoutsLoaded; set { _payoutsLoaded = value; Raise(nameof(PayoutsLoaded)); Raise(nameof(PayoutsNotice)); } }
+
+    public string TransferredLabel => ClinicMoney.Dollars(Payouts.Earnings.TransferredCents);
+    public string PaidOutLabel => ClinicMoney.Dollars(Payouts.Earnings.PaidOutCents);
+    public string AwaitingLabel => ClinicMoney.Dollars(Payouts.Earnings.AwaitingPayoutCents);
+    public bool HasSettlements => Payouts.Earnings.Transfers.Count > 0 || Payouts.Earnings.Payouts.Count > 0;
+
+    /// <summary>
+    /// What to say when there is nothing in the ledger.
+    /// </summary>
+    /// <remarks>
+    /// A clinic that cannot receive transfers fails nowhere else: deposits are
+    /// still collected and its share simply accumulates on Tími's side. This
+    /// panel is the only place a practice would ever find out, so the reason
+    /// goes here rather than an empty state that reads as "no business yet".
+    /// </remarks>
+    public string PayoutsNotice
+    {
+        get
+        {
+            if (!PayoutsLoaded) return "Loading…";
+            if (Payouts.Connect is { TransfersEnabled: false } connect)
+            {
+                return connect.DisabledReason is { Length: > 0 } reason
+                    ? $"Stripe has restricted this clinic's account ({reason}). Nothing can be paid out until that is resolved."
+                    : "This clinic's Stripe account is not finished, so Tími cannot pay it yet. Your Tími contact can send the onboarding form again.";
+            }
+            return HasSettlements
+                ? ""
+                : "Nothing has been settled yet. A deposit is paid out after the visit is recorded as completed, a no-show, or a late cancellation.";
+        }
+    }
+
+    public async Task LoadPayoutsAsync()
+    {
+        try
+        {
+            Payouts = await _api.GetPayoutsAsync(_lifetime.Token);
+        }
+        catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { }
+        catch (Exception)
+        {
+            // Silent. Money is not why this console is open, and a practice
+            // that has not finished Stripe onboarding should not be told the
+            // console is broken every fifteen seconds.
+        }
+        finally { PayoutsLoaded = true; }
+    }
 
     public event EventHandler<ClinicRequest>? NewRequestArrived;
     public event EventHandler? OpenPeopleRequested;
@@ -223,6 +277,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     {
         await RefreshAsync(true);
         _ = LoadCallPreferencesAsync();
+        _ = LoadPayoutsAsync();
         _ = PollLoopAsync(_lifetime.Token);
     }
 
@@ -354,10 +409,10 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     private async Task PublishAsync()
     {
-        if (StableWaitMin > StableWaitMax) { StatusMessage = "Minimum wait cannot exceed maximum wait."; return; }
+        if (StableWaitMin > StableWaitMax) { Fail("Minimum wait cannot exceed maximum wait."); return; }
         IsBusy = true;
-        try { await _api.PublishAvailabilityAsync(new AvailabilityUpdate { IntakeStatus = AvailabilityStatus, StableWaitMin = StableWaitMin, StableWaitMax = StableWaitMax, CapacityCount = CapacityCount, TtlMinutes = TtlMinutes, AcceptsCritical = AcceptsCritical, Note = PublicNote }, _lifetime.Token); StatusMessage = "Live intake status published."; await RefreshAsync(true); }
-        catch (Exception ex) { StatusMessage = ex.Message; }
+        try { await _api.PublishAvailabilityAsync(new AvailabilityUpdate { IntakeStatus = AvailabilityStatus, StableWaitMin = StableWaitMin, StableWaitMax = StableWaitMax, CapacityCount = CapacityCount, TtlMinutes = TtlMinutes, AcceptsCritical = AcceptsCritical, Note = PublicNote }, _lifetime.Token); Succeed("Live intake status published."); await RefreshAsync(true); }
+        catch (Exception ex) { Fail(ex.Message); }
         finally { IsBusy = false; }
     }
 
@@ -382,17 +437,17 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private async Task RespondAsync(ClinicRequest? request, bool decline)
     {
         if (request is null) return;
-        if (!decline && OfferWaitMin > OfferWaitMax) { StatusMessage = "Offer minimum wait cannot exceed maximum wait."; return; }
+        if (!decline && OfferWaitMin > OfferWaitMax) { Fail("Offer minimum wait cannot exceed maximum wait."); return; }
         IsBusy = true;
         try
         {
             var availableDateTime = AvailableAt ?? DateTime.Today;
             if (TimeSpan.TryParse(AvailableTimeText, out var time)) availableDateTime = availableDateTime.Date.Add(time);
             await _api.RespondAsync(request, new ClinicDecision { Decision = decline ? "decline" : "offer", ResponseType = ResponseType, AvailableAt = ResponseType == "available_at" ? new DateTimeOffset(availableDateTime) : null, ArrivalWindowMinutes = ArrivalWindowMinutes, HoldMinutes = HoldMinutes, WaitMin = OfferWaitMin, WaitMax = OfferWaitMax, Note = ClinicNote }, _lifetime.Token);
-            StatusMessage = decline ? $"Declined {request.Pet.Name}'s request." : request.SearchTarget ? $"Availability offer sent for {request.Pet.Name}." : $"Arrival accepted for {request.Pet.Name}.";
+            Succeed(decline ? $"Declined {request.Pet.Name}'s request." : request.SearchTarget ? $"Availability offer sent for {request.Pet.Name}." : $"Arrival accepted for {request.Pet.Name}.");
             SelectedRequest = null; ClinicNote = ""; await RefreshAsync(true);
         }
-        catch (Exception ex) { StatusMessage = ex.Message; }
+        catch (Exception ex) { Fail(ex.Message); }
         finally { IsBusy = false; }
     }
 
@@ -498,19 +553,19 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             QuietEnd = saved.QuietHours?.End ?? "";
             if (!string.IsNullOrWhiteSpace(saved.LocationPhone)) ListedPhone = saved.LocationPhone!;
             CallPreferencesLoaded = true;
-            StatusMessage = saved.CallsEnabled
+            Succeed(saved.CallsEnabled
                 ? "Tími will call this clinic about new requests."
-                : "Tími will not call this clinic. Requests still arrive in the console.";
+                : "Tími will not call this clinic. Requests still arrive in the console.");
         }
-        catch (Exception ex) { StatusMessage = ex.Message; }
+        catch (Exception ex) { Fail(ex.Message); }
         finally { IsBusy = false; }
     }
 
     private async Task SaveSettingsAsync()
     {
         IsBusy = true;
-        try { _settingsStore.Save(Settings); _api.UpdateSettings(Settings); StatusMessage = "Settings saved."; }
-        catch (Exception ex) { StatusMessage = ex.Message; }
+        try { _settingsStore.Save(Settings); _api.UpdateSettings(Settings); Succeed("Settings saved."); }
+        catch (Exception ex) { Fail(ex.Message); }
         finally { IsBusy = false; }
         await ReconnectNowAsync();
     }
@@ -522,7 +577,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     {
         IsBusy = true;
         try { StatusMessage = "Signing out…"; await _auth.SignOutAsync(_lifetime.Token); }
-        catch (Exception ex) { StatusMessage = ex.Message; }
+        catch (Exception ex) { Fail(ex.Message); }
         finally { IsBusy = false; SignedOut?.Invoke(this, EventArgs.Empty); }
     }
 
@@ -531,6 +586,19 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         AvailabilityStatus = value.IntakeStatus; StableWaitMin = value.StableWaitMin ?? 15; StableWaitMax = value.StableWaitMax ?? 35; CapacityCount = value.CapacityCount ?? 0; AcceptsCritical = value.AcceptsCritical; PublicNote = value.Note ?? "";
         OfferWaitMin = StableWaitMin; OfferWaitMax = StableWaitMax;
     }
+
+    /// <summary>
+    /// Reports an outcome where the operator is looking.
+    /// </summary>
+    /// <remarks>
+    /// StatusMessage is kept as well: it is what the connection panel shows and
+    /// what a screen reader announces. The toast is what a receptionist sees,
+    /// because the panel is at the top of a window whose buttons are at the
+    /// bottom of it.
+    /// </remarks>
+    private void Succeed(string message) { StatusMessage = message; Toasts.Success(message); }
+
+    private void Fail(string message) { StatusMessage = message; Toasts.Failure(message); }
 
     private void RaiseCommands()
     {

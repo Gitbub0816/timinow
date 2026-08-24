@@ -176,12 +176,27 @@
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="Button">
+                    <!--
+                        RenderTransform, not just Opacity. A button that only fades under the pointer
+                        gives nothing back on the press itself: the click lands, the work happens
+                        somewhere else on the screen, and from a front desk that is indistinguishable
+                        from a button that did nothing — which is why somebody presses it again.
+                        Shrinking a couple of percent and settling one pixel down is the whole of the
+                        feedback, and it is enough.
+                    -->
                     <Border x:Name="Shell"
                             Background="{TemplateBinding Background}"
                             BorderBrush="{TemplateBinding BorderBrush}"
                             BorderThickness="{TemplateBinding BorderThickness}"
-                            CornerRadius="8"
+                            CornerRadius="10"
+                            RenderTransformOrigin="0.5,0.5"
                             SnapsToDevicePixels="True">
+                        <Border.RenderTransform>
+                            <TransformGroup>
+                                <ScaleTransform x:Name="PressScale" ScaleX="1" ScaleY="1"/>
+                                <TranslateTransform x:Name="PressDrop" Y="0"/>
+                            </TransformGroup>
+                        </Border.RenderTransform>
                         <ContentPresenter Margin="{TemplateBinding Padding}"
                                           HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
                                           VerticalAlignment="{TemplateBinding VerticalContentAlignment}"
@@ -195,7 +210,10 @@
                             <Setter TargetName="Shell" Property="BorderBrush" Value="{StaticResource Blue}"/>
                         </Trigger>
                         <Trigger Property="IsPressed" Value="True">
-                            <Setter TargetName="Shell" Property="Opacity" Value="0.74"/>
+                            <Setter TargetName="Shell" Property="Opacity" Value="0.82"/>
+                            <Setter TargetName="PressScale" Property="ScaleX" Value="0.97"/>
+                            <Setter TargetName="PressScale" Property="ScaleY" Value="0.94"/>
+                            <Setter TargetName="PressDrop" Property="Y" Value="1"/>
                         </Trigger>
                         <!--
                             A disabled button has to look disabled. Accept and decline disable themselves
@@ -271,9 +289,49 @@
 
     <!-- ============================= Fields ============================= -->
 
+    <!--
+        These carried colours and padding but no Template, so WPF drew them with the stock Aero2
+        templates: square corners, a hairline border and an inner bevel. Every card in this console is
+        CornerRadius 14 and every button is 10, so each field read as a hard-edged rectangle dropped into
+        a rounded surface — which is exactly what an unfinished Win32 form looks like, and no amount of
+        palette work fixes it. A focus ring replaces the bevel: two pixels of Tími blue, which is also
+        the one piece of state a field has that somebody needs to see.
+    -->
     <Style TargetType="TextBox">
-        <Setter Property="MinHeight" Value="34"/>
-        <Setter Property="Padding" Value="9,6"/>
+        <Setter Property="MinHeight" Value="36"/>
+        <Setter Property="Padding" Value="11,7"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="TextBox">
+                    <Border x:Name="Shell"
+                            Background="{TemplateBinding Background}"
+                            BorderBrush="{TemplateBinding BorderBrush}"
+                            BorderThickness="{TemplateBinding BorderThickness}"
+                            CornerRadius="10"
+                            SnapsToDevicePixels="True">
+                        <ScrollViewer x:Name="PART_ContentHost"
+                                      Margin="{TemplateBinding Padding}"
+                                      VerticalAlignment="{TemplateBinding VerticalContentAlignment}"
+                                      Focusable="False"
+                                      HorizontalScrollBarVisibility="Hidden"
+                                      VerticalScrollBarVisibility="Hidden"/>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsKeyboardFocused" Value="True">
+                            <Setter TargetName="Shell" Property="BorderBrush" Value="{StaticResource Blue}"/>
+                            <Setter TargetName="Shell" Property="BorderThickness" Value="2"/>
+                        </Trigger>
+                        <MultiTrigger>
+                            <MultiTrigger.Conditions>
+                                <Condition Property="IsMouseOver" Value="True"/>
+                                <Condition Property="IsKeyboardFocused" Value="False"/>
+                            </MultiTrigger.Conditions>
+                            <Setter TargetName="Shell" Property="BorderBrush" Value="{StaticResource InkSoft}"/>
+                        </MultiTrigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
         <Setter Property="Background" Value="{StaticResource Paper}"/>
         <Setter Property="Foreground" Value="{StaticResource Ink}"/>
         <Setter Property="CaretBrush" Value="{StaticResource Ink}"/>
@@ -294,8 +352,33 @@
     </Style>
 
     <Style TargetType="PasswordBox">
-        <Setter Property="MinHeight" Value="34"/>
-        <Setter Property="Padding" Value="9,6"/>
+        <Setter Property="MinHeight" Value="36"/>
+        <Setter Property="Padding" Value="11,7"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="PasswordBox">
+                    <Border x:Name="Shell"
+                            Background="{TemplateBinding Background}"
+                            BorderBrush="{TemplateBinding BorderBrush}"
+                            BorderThickness="{TemplateBinding BorderThickness}"
+                            CornerRadius="10"
+                            SnapsToDevicePixels="True">
+                        <ScrollViewer x:Name="PART_ContentHost"
+                                      Margin="{TemplateBinding Padding}"
+                                      VerticalAlignment="{TemplateBinding VerticalContentAlignment}"
+                                      Focusable="False"
+                                      HorizontalScrollBarVisibility="Hidden"
+                                      VerticalScrollBarVisibility="Hidden"/>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsKeyboardFocused" Value="True">
+                            <Setter TargetName="Shell" Property="BorderBrush" Value="{StaticResource Blue}"/>
+                            <Setter TargetName="Shell" Property="BorderThickness" Value="2"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
         <Setter Property="Background" Value="{StaticResource Paper}"/>
         <Setter Property="Foreground" Value="{StaticResource Ink}"/>
         <Setter Property="CaretBrush" Value="{StaticResource Ink}"/>
@@ -304,19 +387,129 @@
         <Setter Property="VerticalContentAlignment" Value="Center"/>
     </Style>
 
+    <!--
+        The intake-status dropdown is the most-looked-at control in the window, and stock Aero2 draws it
+        as a grey gradient box with a Windows-8 chevron. Templated here to match the fields beside it: a
+        chevron drawn as a Path so it takes the palette, and the popup as a rounded card rather than a
+        bare white rectangle with a system border.
+    -->
+    <Style x:Key="ComboToggle" TargetType="ToggleButton">
+        <Setter Property="Focusable" Value="False"/>
+        <Setter Property="ClickMode" Value="Press"/>
+        <Setter Property="Background" Value="Transparent"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ToggleButton">
+                    <Border Background="Transparent"/>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
     <Style TargetType="ComboBox">
-        <Setter Property="MinHeight" Value="34"/>
-        <Setter Property="Padding" Value="8,5"/>
+        <Setter Property="MinHeight" Value="36"/>
+        <Setter Property="Padding" Value="11,7"/>
+        <Setter Property="Cursor" Value="Hand"/>
         <Setter Property="Background" Value="{StaticResource Paper}"/>
         <Setter Property="Foreground" Value="{StaticResource Ink}"/>
         <Setter Property="BorderBrush" Value="{StaticResource FieldBorder}"/>
         <Setter Property="BorderThickness" Value="1"/>
+        <Setter Property="HorizontalContentAlignment" Value="Left"/>
+        <Setter Property="VerticalContentAlignment" Value="Center"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ComboBox">
+                    <Grid>
+                        <Border x:Name="Shell"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="10"
+                                SnapsToDevicePixels="True"/>
+                        <ToggleButton Style="{StaticResource ComboToggle}"
+                                      IsChecked="{Binding IsDropDownOpen, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}"/>
+                        <ContentPresenter x:Name="Selected"
+                                          Margin="{TemplateBinding Padding}"
+                                          Content="{TemplateBinding SelectionBoxItem}"
+                                          ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}"
+                                          HorizontalAlignment="Left"
+                                          VerticalAlignment="Center"
+                                          IsHitTestVisible="False"/>
+                        <Path x:Name="Chevron"
+                              Data="M 0 0 L 5 5 L 10 0"
+                              Stroke="{StaticResource InkSoft}"
+                              StrokeThickness="1.6"
+                              StrokeEndLineCap="Round"
+                              StrokeStartLineCap="Round"
+                              HorizontalAlignment="Right"
+                              VerticalAlignment="Center"
+                              Margin="0,0,13,0"
+                              IsHitTestVisible="False"/>
+                        <Popup x:Name="PART_Popup"
+                               AllowsTransparency="True"
+                               Placement="Bottom"
+                               VerticalOffset="4"
+                               PopupAnimation="Fade"
+                               IsOpen="{Binding IsDropDownOpen, RelativeSource={RelativeSource TemplatedParent}}">
+                            <Border Background="{StaticResource Paper}"
+                                    BorderBrush="{StaticResource SectionBorder}"
+                                    BorderThickness="1"
+                                    CornerRadius="10"
+                                    Padding="4"
+                                    MinWidth="{TemplateBinding ActualWidth}"
+                                    MaxHeight="{TemplateBinding MaxDropDownHeight}">
+                                <ScrollViewer>
+                                    <ItemsPresenter/>
+                                </ScrollViewer>
+                            </Border>
+                        </Popup>
+                    </Grid>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Shell" Property="BorderBrush" Value="{StaticResource InkSoft}"/>
+                        </Trigger>
+                        <Trigger Property="IsDropDownOpen" Value="True">
+                            <Setter TargetName="Shell" Property="BorderBrush" Value="{StaticResource Blue}"/>
+                            <Setter TargetName="Shell" Property="BorderThickness" Value="2"/>
+                            <Setter TargetName="Chevron" Property="Stroke" Value="{StaticResource Blue}"/>
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter TargetName="Shell" Property="Background" Value="{StaticResource Canvas}"/>
+                            <Setter Property="Foreground" Value="{StaticResource Muted}"/>
+                            <Setter Property="Cursor" Value="Arrow"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
     </Style>
 
     <Style TargetType="ComboBoxItem">
-        <Setter Property="Padding" Value="8,5"/>
+        <Setter Property="Padding" Value="10,7"/>
         <Setter Property="Foreground" Value="{StaticResource Ink}"/>
         <Setter Property="Background" Value="{StaticResource Paper}"/>
+        <Setter Property="Cursor" Value="Hand"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ComboBoxItem">
+                    <Border x:Name="Row"
+                            Background="{TemplateBinding Background}"
+                            CornerRadius="7"
+                            Padding="{TemplateBinding Padding}"
+                            SnapsToDevicePixels="True">
+                        <ContentPresenter/>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Row" Property="Background" Value="{StaticResource RowHover}"/>
+                        </Trigger>
+                        <Trigger Property="IsSelected" Value="True">
+                            <Setter TargetName="Row" Property="Background" Value="{StaticResource BlueSoft}"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
     </Style>
 
     <Style TargetType="DatePicker">
@@ -352,6 +545,17 @@
         <Setter Property="BorderThickness" Value="1"/>
         <Setter Property="CornerRadius" Value="14"/>
         <Setter Property="Padding" Value="18"/>
+        <Setter Property="SnapsToDevicePixels" Value="True"/>
+    </Style>
+
+    <!-- One figure inside a card. Quieter than a Card so three of them in a row do not read as three
+         separate cards competing with the one holding them. -->
+    <Style x:Key="InnerCard" TargetType="Border">
+        <Setter Property="Background" Value="{StaticResource Canvas}"/>
+        <Setter Property="BorderBrush" Value="{StaticResource CardBorderAlt}"/>
+        <Setter Property="BorderThickness" Value="1"/>
+        <Setter Property="CornerRadius" Value="12"/>
+        <Setter Property="Padding" Value="14"/>
         <Setter Property="SnapsToDevicePixels" Value="True"/>
     </Style>
 

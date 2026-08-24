@@ -9,6 +9,37 @@ import Observation
     public var selectedRequest: ClinicRequest?
     public var isBusy = false
     public var statusMessage = "Connecting to Tími…"
+
+    /// Short-lived confirmations, newest first.
+    ///
+    /// Every action wrote its outcome into `statusMessage`, which is a line of
+    /// small grey text in the connection panel — and that panel is also where
+    /// the poll writes "Updated 8:20:33 PM · next check in 15 sec" every
+    /// fifteen seconds. So the confirmation for a button at the bottom of the
+    /// window appeared at the top of it, in the same grey as the countdown,
+    /// and was overwritten by the next poll within seconds. Nothing about that
+    /// tells a receptionist their offer was sent.
+    public var toasts: [ClinicToast] = []
+
+    /// Reports an outcome where the operator is looking.
+    ///
+    /// `statusMessage` is kept as well: it is what the connection panel shows
+    /// and what VoiceOver reads. The toast is what a receptionist sees.
+    func succeed(_ message: String) { statusMessage = message; show(ClinicToast(message: message, isFailure: false), seconds: 3) }
+
+    /// Failures linger. "Sent" needs a glance; "could not send" needs reading.
+    func fail(_ message: String) { statusMessage = message; show(ClinicToast(message: message, isFailure: true), seconds: 7) }
+
+    private func show(_ toast: ClinicToast, seconds: Double) {
+        // Three is the most that can be read before the first one goes. Past
+        // that they stop being confirmations and become a log.
+        toasts.insert(toast, at: 0)
+        if toasts.count > 3 { toasts.removeLast(toasts.count - 3) }
+        Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+            self?.toasts.removeAll { $0.id == toast.id }
+        }
+    }
     public var clinicName = "Tími veterinary console"
     public var clinicAddress = ""
     public var tenantName = ""
@@ -149,7 +180,7 @@ import Observation
     }
 
     public func publish() async {
-        if stableWaitMin > stableWaitMax { statusMessage = "Minimum wait cannot exceed maximum wait."; return }
+        if stableWaitMin > stableWaitMax { fail("Minimum wait cannot exceed maximum wait."); return }
         isBusy = true
         defer { isBusy = false }
         do {
@@ -157,10 +188,10 @@ import Observation
                 intakeStatus: availabilityStatus, stableWaitMin: stableWaitMin, stableWaitMax: stableWaitMax,
                 capacityCount: capacityCount, ttlMinutes: ttlMinutes, acceptsCritical: acceptsCritical, note: publicNote
             ))
-            statusMessage = "Live intake status published."
+            succeed("Live intake status published.")
             await refresh(initial: true)
-        } catch let error as ClinicAPIError { statusMessage = error.message }
-        catch { statusMessage = error.localizedDescription }
+        } catch let error as ClinicAPIError { fail(error.message) }
+        catch { fail(error.localizedDescription) }
     }
 
     public func offer() async { await respond(decline: false) }
@@ -185,7 +216,7 @@ import Observation
 
     private func respond(decline: Bool) async {
         guard let request = selectedRequest else { return }
-        if !decline && offerWaitMin > offerWaitMax { statusMessage = "Offer minimum wait cannot exceed maximum wait."; return }
+        if !decline && offerWaitMin > offerWaitMax { fail("Offer minimum wait cannot exceed maximum wait."); return }
         isBusy = true
         defer { isBusy = false }
         do {
@@ -195,14 +226,14 @@ import Observation
                 arrivalWindowMinutes: arrivalWindowMinutes, holdMinutes: holdMinutes, waitMin: offerWaitMin, waitMax: offerWaitMax, note: clinicNote
             )
             try await api.respond(to: request, decision: decision)
-            statusMessage = decline
+            succeed(decline
                 ? "Declined \(request.pet.name)'s request."
-                : (request.searchTarget ? "Availability offer sent for \(request.pet.name)." : "Arrival accepted for \(request.pet.name).")
+                : (request.searchTarget ? "Availability offer sent for \(request.pet.name)." : "Arrival accepted for \(request.pet.name)."))
             selectedRequest = nil
             clinicNote = ""
             await refresh(initial: true)
-        } catch let error as ClinicAPIError { statusMessage = error.message }
-        catch { statusMessage = error.localizedDescription }
+        } catch let error as ClinicAPIError { fail(error.message) }
+        catch { fail(error.localizedDescription) }
     }
 
     // MARK: - Calling preferences
@@ -214,8 +245,8 @@ import Observation
         do {
             callPreferences = try await api.getCallPreferences()
             callPreferencesLoaded = true
-        } catch let error as ClinicAPIError { statusMessage = error.message }
-        catch { statusMessage = error.localizedDescription }
+        } catch let error as ClinicAPIError { fail(error.message) }
+        catch { fail(error.localizedDescription) }
     }
 
     public func saveCallPreferences(callsEnabled: Bool, voicePhone: String, quietStart: String, quietEnd: String) async {
@@ -232,11 +263,11 @@ import Observation
             callPreferences = try await api.updateCallPreferences(
                 CallPreferencesUpdate(callsEnabled: callsEnabled, voicePhone: trimmedPhone, quietHours: quiet)
             )
-            statusMessage = callsEnabled
+            succeed(callsEnabled
                 ? "Tími will call this clinic about new requests."
-                : "Tími will not call this clinic. Requests still arrive in the console."
-        } catch let error as ClinicAPIError { statusMessage = error.message }
-        catch { statusMessage = error.localizedDescription }
+                : "Tími will not call this clinic. Requests still arrive in the console.")
+        } catch let error as ClinicAPIError { fail(error.message) }
+        catch { fail(error.localizedDescription) }
     }
 
     // MARK: - Payouts
@@ -252,8 +283,8 @@ import Observation
         do {
             payouts = try await api.getPayouts()
             payoutsLoaded = true
-        } catch let error as ClinicAPIError { statusMessage = error.message }
-        catch { statusMessage = error.localizedDescription }
+        } catch let error as ClinicAPIError { fail(error.message) }
+        catch { fail(error.localizedDescription) }
     }
 
     public func saveSettings() async {
@@ -262,7 +293,7 @@ import Observation
         settingsStore.save(settings)
         api.updateSettings(settings)
         connectionMode = api.isDemo ? "INTERACTIVE DEMO" : "LIVE CLOUDFLARE CONNECTION"
-        statusMessage = "Settings saved."
+        succeed("Settings saved.")
         await refresh(initial: true)
     }
 

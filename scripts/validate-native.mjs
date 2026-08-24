@@ -2155,6 +2155,74 @@ for (const [path, marker] of [
   }
 }
 
+// Both consoles reported every outcome into a status line at the top of the
+// window — in the same grey as the poll's own "next check in 15 sec", which
+// overwrites it within seconds. A button at the bottom of the decision
+// workspace therefore produced no visible change anywhere near the pointer,
+// and the honest response to a button that appears to do nothing is to press
+// it again. On "Send availability offer" that is a second offer.
+{
+  const store = await read("apps/vet-desktop/Sources/TimiVetCore/ClinicStore.swift");
+  if (!/func succeed\(/.test(store) || !/func fail\(/.test(store)) {
+    throw new Error("apps/vet-desktop/Sources/TimiVetCore/ClinicStore.swift no longer routes outcomes through succeed/fail, so nothing confirms an action where the operator is looking.");
+  }
+  const consoleView = await read("apps/vet-desktop/Sources/TimiVetUI/ConsoleView.swift");
+  if (!/ForEach\(store\.toasts\)/.test(consoleView)) {
+    throw new Error("apps/vet-desktop/Sources/TimiVetUI/ConsoleView.swift does not iterate store.toasts, so the confirmations are produced and never shown.");
+  }
+  if (!/overlay\(alignment: \.bottomTrailing\)/.test(consoleView)) {
+    throw new Error("apps/vet-desktop/Sources/TimiVetUI/ConsoleView.swift no longer overlays the toast layer. In the layout stack instead, a confirmation appearing shifts the queue underneath it at the moment somebody is reaching for a row.");
+  }
+
+  const viewModel = await read("apps/vet-windows/src/TimiVet/ViewModels/MainViewModel.cs");
+  if (!/private void Succeed\(/.test(viewModel) || !/private void Fail\(/.test(viewModel)) {
+    throw new Error("apps/vet-windows/src/TimiVet/ViewModels/MainViewModel.cs no longer routes outcomes through Succeed/Fail.");
+  }
+  const mainWindow = await read("apps/vet-windows/src/TimiVet/Views/MainWindow.xaml");
+  if (!/Toasts\.Toasts/.test(mainWindow)) {
+    throw new Error("apps/vet-windows/src/TimiVet/Views/MainWindow.xaml does not render the toast collection.");
+  }
+
+  // A press that only changes fill opacity, on a coloured button against a
+  // coloured card, is very close to no feedback at all.
+  const theme = await read("apps/vet-desktop/Sources/TimiVetUI/Theme.swift");
+  if (!/func timiVetPress\(/.test(theme) || !/scaleEffect/.test(theme)) {
+    throw new Error("apps/vet-desktop/Sources/TimiVetUI/Theme.swift: the button styles no longer move on press.");
+  }
+  const windowsTheme = await read("apps/vet-windows/src/TimiVet/Theme/Theme.xaml");
+  if (!/Property="IsPressed" Value="True"[\s\S]{0,400}PressScale/.test(windowsTheme)) {
+    throw new Error("apps/vet-windows/src/TimiVet/Theme/Theme.xaml: the pressed trigger no longer scales the button, so a press changes opacity and nothing else.");
+  }
+}
+
+// The Windows payouts panel. The macOS console has had one since Stripe landed
+// and this one did not, which is what two codebases for one product costs.
+{
+  const mainWindow = await read("apps/vet-windows/src/TimiVet/Views/MainWindow.xaml");
+  if (!/Payouts from Tími/.test(mainWindow) || !/Payouts\.Earnings\.Transfers/.test(mainWindow)) {
+    throw new Error("apps/vet-windows/src/TimiVet/Views/MainWindow.xaml has no payouts panel, so a clinic on Windows cannot see what Tími has sent it.");
+  }
+  const api = await read("apps/vet-windows/src/TimiVet/Services/ClinicApiClient.cs");
+  if (!/api\/clinic\/payouts/.test(api)) {
+    throw new Error("apps/vet-windows/src/TimiVet/Services/ClinicApiClient.cs no longer calls /api/clinic/payouts.");
+  }
+}
+
+// Clear() then Add() on every poll tells WPF that every row is gone, so the
+// queue rebuilt itself every few seconds — taking the scroll position, the
+// selection and the keyboard focus with it.
+{
+  const viewModel = await read("apps/vet-windows/src/TimiVet/ViewModels/MainViewModel.cs");
+  const refresh = viewModel.slice(viewModel.indexOf("public async Task RefreshAsync"), viewModel.indexOf("private static void Merge"));
+  if (/Requests\.Clear\(\)/.test(refresh) || /PendingRequests\.Clear\(\)/.test(refresh)) {
+    throw new Error("apps/vet-windows/src/TimiVet/ViewModels/MainViewModel.cs: RefreshAsync empties its collections again. That is a full teardown of the queue on every poll, which resets scroll, selection and focus under whoever is reading it.");
+  }
+  const models = await read("apps/vet-windows/src/TimiVet/Models/ClinicModels.cs");
+  if (!/class ClinicRequest : INotifyPropertyChanged/.test(models) || !/public void CopyFrom\(/.test(models)) {
+    throw new Error("apps/vet-windows/src/TimiVet/Models/ClinicModels.cs: ClinicRequest cannot report its own changes, so merging in place leaves rows showing stale values.");
+  }
+}
+
 const csharpFiles = await collectFiles("apps/vet-windows", ".cs");
 for (const path of csharpFiles) {
   const problems = bracketProblems(await read(path));

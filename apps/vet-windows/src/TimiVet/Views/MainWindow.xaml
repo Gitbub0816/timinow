@@ -152,6 +152,7 @@
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
 
                     <!-- ========== Public capacity + metrics ========== -->
@@ -446,8 +447,96 @@
                         </Border>
                     </Grid>
 
+                    <!-- ========== Payouts ==========
+                         The macOS console has had this since Stripe landed and this one never did, which
+                         is what two codebases for one product costs. Same endpoint, same three numbers,
+                         same wording. -->
+                    <Expander Grid.Row="2" Header="Payouts from Tími" Margin="0,20,0,0">
+                        <Border Style="{StaticResource Card}" Margin="0,10,0,0">
+                            <StackPanel>
+                                <UniformGrid Columns="3" Margin="0,0,0,14">
+                                    <Border Style="{StaticResource InnerCard}" Margin="0,0,7,0">
+                                        <StackPanel>
+                                            <TextBlock Text="TRANSFERRED TO YOU" Style="{StaticResource Eyebrow}"/>
+                                            <TextBlock Text="{Binding TransferredLabel}" FontFamily="Georgia" FontSize="26" Foreground="{StaticResource Ink}"/>
+                                        </StackPanel>
+                                    </Border>
+                                    <Border Style="{StaticResource InnerCard}" Margin="7,0">
+                                        <StackPanel>
+                                            <TextBlock Text="PAID OUT BY STRIPE" Style="{StaticResource Eyebrow}"/>
+                                            <TextBlock Text="{Binding PaidOutLabel}" FontFamily="Georgia" FontSize="26" Foreground="{StaticResource Ink}"/>
+                                        </StackPanel>
+                                    </Border>
+                                    <Border Style="{StaticResource InnerCard}" Margin="7,0,0,0">
+                                        <StackPanel>
+                                            <TextBlock Text="ON ITS WAY" Style="{StaticResource Eyebrow}"/>
+                                            <TextBlock Text="{Binding AwaitingLabel}" FontFamily="Georgia" FontSize="26" Foreground="{StaticResource Ink}"/>
+                                        </StackPanel>
+                                    </Border>
+                                </UniformGrid>
+
+                                <TextBlock Text="{Binding PayoutsNotice}"
+                                           Visibility="{Binding PayoutsNotice, Converter={StaticResource TextVisibility}}"
+                                           Foreground="{StaticResource Muted}" FontSize="11" TextWrapping="Wrap" Margin="0,0,0,12"/>
+
+                                <Grid Visibility="{Binding HasSettlements, Converter={StaticResource B2V}}">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="16"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0">
+                                        <TextBlock Text="SENT TO YOU BY TÍMI" Style="{StaticResource Eyebrow}"/>
+                                        <ItemsControl ItemsSource="{Binding Payouts.Earnings.Transfers}">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <Grid Margin="0,7,0,0">
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="*"/>
+                                                            <ColumnDefinition Width="Auto"/>
+                                                        </Grid.ColumnDefinitions>
+                                                        <StackPanel Grid.Column="0">
+                                                            <TextBlock Text="{Binding OccurredLabel}" FontWeight="SemiBold" FontSize="12"/>
+                                                            <!-- The Stripe id, so a line here can be matched to a line
+                                                                 in the clinic's own Express dashboard. -->
+                                                            <TextBlock Text="{Binding Reference}" Foreground="{StaticResource Muted}" FontSize="10" TextTrimming="CharacterEllipsis"/>
+                                                        </StackPanel>
+                                                        <TextBlock Grid.Column="1" Text="{Binding AmountLabel}" FontWeight="SemiBold" FontSize="13" VerticalAlignment="Center"/>
+                                                    </Grid>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="2">
+                                        <TextBlock Text="PAID TO YOUR BANK BY STRIPE" Style="{StaticResource Eyebrow}"/>
+                                        <ItemsControl ItemsSource="{Binding Payouts.Earnings.Payouts}">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <Grid Margin="0,7,0,0">
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="*"/>
+                                                            <ColumnDefinition Width="Auto"/>
+                                                        </Grid.ColumnDefinitions>
+                                                        <StackPanel Grid.Column="0">
+                                                            <TextBlock Text="{Binding OccurredLabel}" FontWeight="SemiBold" FontSize="12"/>
+                                                            <TextBlock Text="{Binding Reference}" Foreground="{StaticResource Muted}" FontSize="10" TextTrimming="CharacterEllipsis"/>
+                                                        </StackPanel>
+                                                        <TextBlock Grid.Column="1" Text="{Binding AmountLabel}" FontWeight="SemiBold" FontSize="13" VerticalAlignment="Center"/>
+                                                    </Grid>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </StackPanel>
+                                </Grid>
+
+                                <TextBlock Text="Each amount is one arrival deposit less the Tími fee agreed in your workspace policy. The clinic bills the customer directly for veterinary charges; Tími never handles those."
+                                           Foreground="{StaticResource Muted}" FontSize="10" TextWrapping="Wrap" Margin="0,14,0,0"/>
+                            </StackPanel>
+                        </Border>
+                    </Expander>
+
                     <!-- ========== Settings ========== -->
-                    <Expander Grid.Row="2" Header="Connection, calling, alerts, and startup settings" Margin="0,20,0,0">
+                    <Expander Grid.Row="3" Header="Connection, calling, alerts, and startup settings" Margin="0,20,0,0">
                         <Border Style="{StaticResource Card}" Margin="0,10,0,0">
                             <Grid>
                                 <Grid.ColumnDefinitions>
@@ -566,5 +655,54 @@
                 </Grid>
             </Border>
         </Grid>
+
+        <!--
+            Toasts. Bottom-right, over everything, outside the two-column grid so they do not shift the
+            layout when they appear. Every action used to report itself into StatusMessage — a line of
+            small grey text at the top of the window — so pressing a button at the bottom produced no
+            visible change anywhere near the pointer. From a front desk that is a button that does
+            nothing, and the honest response to that is to press it again.
+        -->
+        <ItemsControl Grid.ColumnSpan="2"
+                      ItemsSource="{Binding Toasts.Toasts}"
+                      HorizontalAlignment="Right"
+                      VerticalAlignment="Bottom"
+                      Margin="0,0,26,26"
+                      Panel.ZIndex="99"
+                      IsHitTestVisible="False">
+            <ItemsControl.ItemTemplate>
+                <DataTemplate>
+                    <Border x:Name="Pill" Margin="0,8,0,0" CornerRadius="12" Padding="16,12" MaxWidth="420"
+                            Background="{StaticResource Ink}" SnapsToDevicePixels="True">
+                        <Border.RenderTransform>
+                            <TranslateTransform x:Name="Slide" Y="10"/>
+                        </Border.RenderTransform>
+                        <Border.Triggers>
+                            <EventTrigger RoutedEvent="Loaded">
+                                <BeginStoryboard>
+                                    <Storyboard>
+                                        <DoubleAnimation Storyboard.TargetProperty="Opacity" From="0" To="1" Duration="0:0:0.18"/>
+                                        <DoubleAnimation Storyboard.TargetName="Slide" Storyboard.TargetProperty="Y" From="10" To="0" Duration="0:0:0.18"/>
+                                    </Storyboard>
+                                </BeginStoryboard>
+                            </EventTrigger>
+                        </Border.Triggers>
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock x:Name="Mark" Text="✓" FontSize="14" FontWeight="Bold" Margin="0,0,10,0"
+                                       Foreground="{StaticResource Gold}" VerticalAlignment="Center"/>
+                            <TextBlock Text="{Binding Message}" Foreground="White" FontSize="12.5" FontWeight="SemiBold"
+                                       TextWrapping="Wrap" VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </Border>
+                    <DataTemplate.Triggers>
+                        <DataTrigger Binding="{Binding IsFailure}" Value="True">
+                            <Setter TargetName="Pill" Property="Background" Value="{StaticResource CoralDark}"/>
+                            <Setter TargetName="Mark" Property="Text" Value="!"/>
+                            <Setter TargetName="Mark" Property="Foreground" Value="White"/>
+                        </DataTrigger>
+                    </DataTemplate.Triggers>
+                </DataTemplate>
+            </ItemsControl.ItemTemplate>
+        </ItemsControl>
     </Grid>
 </Window>

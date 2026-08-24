@@ -26,6 +26,37 @@ public struct ConsoleView: View {
     }
 
     public var body: some View {
+        // The console, with the toast layer over it. Overlaid rather than
+        // placed in the stack so a confirmation appearing never moves anything
+        // underneath it — a queue that shifts down by 40 points at the moment
+        // somebody is reaching for a row is worse than no confirmation at all.
+        consoleBody.overlay(alignment: .bottomTrailing) { toastLayer }
+    }
+
+    private var toastLayer: some View {
+        VStack(alignment: .trailing, spacing: 8) {
+            ForEach(store.toasts) { toast in
+                HStack(spacing: 9) {
+                    Text(toast.isFailure ? "!" : "✓")
+                        .font(TimiVetFont.ui(13, weight: .bold))
+                        .foregroundStyle(toast.isFailure ? .white : TimiVetColor.gold)
+                    Text(toast.message)
+                        .font(TimiVetFont.ui(12, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(.horizontal, 16).padding(.vertical, 12)
+                .frame(maxWidth: 420, alignment: .leading)
+                .background(toast.isFailure ? TimiVetColor.coralDark : TimiVetColor.ink, in: RoundedRectangle(cornerRadius: 12))
+                .transition(.move(edge: .trailing).combined(with: .opacity))
+            }
+        }
+        .padding(26)
+        .animation(.spring(response: 0.28, dampingFraction: 0.82), value: store.toasts)
+        .allowsHitTesting(false)
+    }
+
+    private var consoleBody: some View {
         HStack(spacing: 0) {
             sidebar.frame(width: 230)
             VStack(spacing: 0) {

@@ -421,3 +421,19 @@ enum ClinicDateFormat {
         return formatter.string(from: date)
     }
 }
+
+/// A short-lived confirmation shown over the console.
+///
+/// Identifiable by a fresh id rather than by its text, because two identical
+/// messages are two events — declining two requests for two animals with the
+/// same name should show two toasts, not silently collapse into one.
+public struct ClinicToast: Identifiable, Hashable, Sendable {
+    public let id = UUID()
+    public let message: String
+    public let isFailure: Bool
+
+    public init(message: String, isFailure: Bool) {
+        self.message = message
+        self.isFailure = isFailure
+    }
+}

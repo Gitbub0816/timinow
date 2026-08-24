@@ -57,6 +57,21 @@ public sealed class ClinicApiClient
     }
 
     /// <summary>
+    /// GET /api/clinic/payouts — what Tími has sent this clinic and what Stripe has paid on.
+    /// </summary>
+    /// <remarks>
+    /// Answers an empty set rather than throwing when payments are not configured. A practice that has
+    /// not finished Stripe onboarding still opens this panel, and an error where three zeroes belong
+    /// reads as a broken console rather than as an account that is not set up yet.
+    /// </remarks>
+    public async Task<ClinicPayouts> GetPayoutsAsync(CancellationToken cancellationToken)
+    {
+        if (IsDemo) return new ClinicPayouts();
+        using var response = await SendAsync(HttpMethod.Get, "/api/clinic/payouts", null, cancellationToken);
+        return await ReadAsync<ClinicPayouts>(response, cancellationToken);
+    }
+
+    /// <summary>
     /// GET /api/config — the Clerk publishable key, and therefore the first request the console ever
     /// makes. Answered to anyone by the Worker, and sent without a session by <see cref="CreateAsync"/>.
     /// </summary>

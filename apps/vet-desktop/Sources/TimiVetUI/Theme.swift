@@ -84,6 +84,7 @@ struct TimiVetPrimaryButtonStyle: ButtonStyle {
             .padding(.horizontal, 15)
             .background(color.opacity(configuration.isPressed ? 0.85 : 1), in: RoundedRectangle(cornerRadius: 8))
             .overlay(RoundedRectangle(cornerRadius: 8).stroke(TimiVetColor.ink, lineWidth: 1))
+            .timiVetPress(configuration.isPressed)
     }
 }
 
@@ -102,6 +103,27 @@ struct TimiVetQuietButtonStyle: ButtonStyle {
             .padding(.horizontal, 15)
             .background(Color.white.opacity(configuration.isPressed ? 0.7 : 1), in: RoundedRectangle(cornerRadius: 8))
             .overlay(RoundedRectangle(cornerRadius: 8).stroke(TimiVetColor.fieldBorder, lineWidth: 1))
+            .timiVetPress(configuration.isPressed)
+    }
+}
+
+extension View {
+    /// The press itself, given back.
+    ///
+    /// Both styles changed only their fill opacity, which on a coloured button
+    /// against a coloured card is very close to nothing. The work a button
+    /// starts happens elsewhere on the screen — a queue row disappears, a
+    /// number changes — so with no movement under the pointer there is a
+    /// moment where nothing observable has happened, and the reasonable
+    /// response to a button that did nothing is to press it again. Twice on
+    /// "Send availability offer" is a second offer.
+    ///
+    /// Two percent and one point down, snapping in and easing out: quick
+    /// enough that it reads as the button moving rather than as an animation.
+    func timiVetPress(_ pressed: Bool) -> some View {
+        scaleEffect(pressed ? 0.97 : 1)
+            .offset(y: pressed ? 1 : 0)
+            .animation(.spring(response: 0.18, dampingFraction: 0.6), value: pressed)
     }
 }
 
