@@ -650,7 +650,7 @@
                     </Grid.ColumnDefinitions>
                     <TextBlock Grid.Column="0" Text="Independent clinical triage controls all treatment priority."
                                Foreground="{StaticResource Muted}" FontSize="10" TextTrimming="CharacterEllipsis"/>
-                    <TextBlock Grid.Column="1" Text="Tími NOW · ClearKey Solutions, LLC"
+                    <TextBlock Grid.Column="1" Text="{Binding BuildStamp}"
                                Foreground="{StaticResource Muted}" FontSize="10"/>
                 </Grid>
             </Border>

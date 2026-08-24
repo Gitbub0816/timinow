@@ -25,6 +25,16 @@ public struct ConsoleView: View {
         self.onTestAlert = onTestAlert
     }
 
+    static let buildStamp: String = {
+        guard let url = Bundle.main.executableURL,
+              let date = try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate else {
+            return "unstamped"
+        }
+        let formatter = DateFormatter()
+        formatter.dateFormat = "d MMM HH:mm"
+        return formatter.string(from: date)
+    }()
+
     public var body: some View {
         // The console, with the toast layer over it. Overlaid rather than
         // placed in the stack so a confirmation appearing never moves anything
@@ -239,7 +249,10 @@ public struct ConsoleView: View {
             Text("Independent clinical triage controls all treatment priority.")
                 .font(TimiVetFont.ui(10)).foregroundStyle(TimiVetColor.muted)
             Spacer()
-            Text("Tími NOW · ClearKey Solutions, LLC").font(TimiVetFont.ui(10)).foregroundStyle(TimiVetColor.muted)
+            // The binary's own write time, for the same reason the iPhone app
+            // shows one: "is this the new build" has burned whole debugging
+            // rounds, and the executable cannot be wrong about itself.
+            Text("Tími NOW · ClearKey Solutions, LLC · built \(Self.buildStamp)").font(TimiVetFont.ui(10)).foregroundStyle(TimiVetColor.muted)
         }
         .padding(.horizontal, 22)
         .padding(.vertical, 10)

@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.IO;
 using System.Net.NetworkInformation;
 using System.Threading;
 using TimiVet.Models;
@@ -61,6 +62,32 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         // waiting out a sixty-second backoff after it does is a minute of a queue nobody is watching.
         NetworkChange.NetworkAvailabilityChanged += OnNetworkAvailabilityChanged;
         NetworkChange.NetworkAddressChanged += OnNetworkAddressChanged;
+    }
+
+    /// <summary>
+    /// Which binary this actually is, stamped into the footer.
+    /// </summary>
+    /// <remarks>
+    /// Three separate debugging rounds have been spent on a machine running a
+    /// stale copy of this console while everyone believed it was the new one -
+    /// a taskbar pin to an old exe, a publish that silently failed and left
+    /// the previous binary in place, a copy on a desktop. The executable's own
+    /// write time cannot be wrong about which build it is, and putting it
+    /// where the company name was costs nothing anyone will miss.
+    /// </remarks>
+    public string BuildStamp
+    {
+        get
+        {
+            try
+            {
+                var path = Environment.ProcessPath;
+                if (string.IsNullOrEmpty(path)) return "Tími NOW · ClearKey Solutions, LLC";
+                var written = File.GetLastWriteTime(path);
+                return $"Tími NOW · ClearKey Solutions, LLC · built {written:d MMM HH:mm}";
+            }
+            catch { return "Tími NOW · ClearKey Solutions, LLC"; }
+        }
     }
 
     public AppSettings Settings { get; }
