@@ -176,6 +176,49 @@ public final class TimiGateway: @unchecked Sendable {
         return try await send(baseURL.appendingPathComponent("api/intakes/\(intakeId)/payment-intent"), method: "POST", body: EmptyPayload())
     }
 
+    // MARK: - Pets
+
+    /// The account's pets. Empty in demo mode, where there is nothing stored.
+    public func pets() async throws -> [PetProfile] {
+        guard let baseURL else { return [] }
+        let envelope: PetsEnvelope = try await send(baseURL.appendingPathComponent("api/pets"))
+        return envelope.pets
+    }
+
+    /// Writes one pet under the id the phone already gave it.
+    ///
+    /// The id travels rather than being minted by the Worker, because a pet is
+    /// created on the phone — sometimes with no network — and the care draft
+    /// being filled in at that moment already refers to it.
+    @discardableResult
+    public func savePet(_ pet: PetProfile) async throws -> PetProfile {
+        guard let baseURL else { return pet }
+        let envelope: PetEnvelope = try await send(
+            baseURL.appendingPathComponent("api/pets/\(pet.id)"), method: "PUT", body: PetPayload(pet)
+        )
+        return envelope.pet
+    }
+
+    public func deletePet(id: String) async throws {
+        guard let baseURL else { return }
+        let _: RemovedEnvelope = try await send(baseURL.appendingPathComponent("api/pets/\(id)"), method: "DELETE")
+    }
+
+    /// The first sign-in after pets became an account thing.
+    ///
+    /// Hands over whatever is on this phone and takes back everything the
+    /// account holds. Pets already stored win: another device may have edited
+    /// one since, and a copy from a phone that has been in a pocket for a week
+    /// is the wrong winner.
+    public func syncPets(_ local: [PetProfile]) async throws -> [PetProfile] {
+        guard let baseURL else { return local }
+        let envelope: PetsEnvelope = try await send(
+            baseURL.appendingPathComponent("api/pets/sync"), method: "POST",
+            body: PetSyncPayload(pets: local.map(PetPayload.init))
+        )
+        return envelope.pets
+    }
+
     public func recordObservation(intake: CareIntake, milestone: String) async throws {
         guard let baseURL else { return }
         let _: ObservationEnvelope = try await send(baseURL.appendingPathComponent("api/observations"), method: "POST", body: ObservationPayload(intakeId: intake.id, locationId: intake.locationId, milestone: milestone))

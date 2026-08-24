@@ -52,8 +52,19 @@ Publish a self-contained Windows x64 build — one `TimiVet.exe` a clinic can co
 front-desk machine with no .NET runtime installed:
 
 ```powershell
-dotnet publish src\TimiVet\TimiVet.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true
+Stop-Process -Name TimiVet -Force -ErrorAction SilentlyContinue; dotnet publish src\TimiVet\TimiVet.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true
 ```
+
+The `Stop-Process` is not tidiness. A single-file publish rewrites `TimiVet.exe`
+in place, and Windows will not let it delete a running executable — so if the
+console is open, `GenerateBundle` fails with
+`System.UnauthorizedAccessException: Access to the path ... is denied`, several
+frames of MSBuild stack, and no sentence anywhere saying "the app is running".
+Everything before that step succeeds, including `TimiVet -> ...\TimiVet.dll`,
+so the output reads like a build that worked apart from something obscure at
+the end. The .exe left on disk is the previous one, which then starts normally
+and behaves like the previous one — testing an old binary while believing it is
+the new one.
 
 `IncludeNativeLibrariesForSelfExtract` is not optional here, whatever the flag name suggests.
 `PublishSingleFile` bundles managed assemblies only; WPF drags several native ones with it

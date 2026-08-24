@@ -59,6 +59,7 @@ database.exec(await readFile("migrations/0005_voice_calls.sql", "utf8"));
 database.exec(await readFile("migrations/0006_care_context.sql", "utf8"));
 database.exec(await readFile("migrations/0007_client_errors.sql", "utf8"));
 database.exec(await readFile("migrations/0008_payments_ledger.sql", "utf8"));
+database.exec(await readFile("migrations/0009_pets.sql", "utf8"));
 
 const env = {
   ASSETS: { fetch: async () => new Response("asset") },
@@ -293,11 +294,102 @@ assert(noShowRow.status === "no_show", "Scheduled cleanup must close elapsed arr
 assert(database.prepare("SELECT COUNT(*) AS count FROM intake_events WHERE intake_id = ? AND event_type = 'expired'").get(expiringId).count === 1, "Scheduled expiry must be audited");
 assert(database.prepare("SELECT COUNT(*) AS count FROM intake_events WHERE intake_id = ? AND event_type = 'no_show'").get(pendingId).count === 1, "Scheduled no-show must be audited");
 
-const tableChecks = ["tenants", "locations", "availability_reports", "tenant_policies", "intake_requests", "intake_events", "customer_observations", "notification_outbox", "care_searches", "care_search_targets", "care_offers"];
+/* ------------------------------------------------ pets on the account --- */
+
+// Pets lived in the phone's UserDefaults and nowhere else, which made them a
+// property of a device rather than of an account: reinstall, new phone, or a
+// second one, and they were gone. Every assertion below is a way that used to
+// go wrong.
+const maya = { "content-type": "application/json", "x-demo-user-id": "user_maya" };
+const dev = { "content-type": "application/json", "x-demo-user-id": "user_dev" };
+
+const otis = {
+  id: "pet_otis_local", name: "Otis", species: "dog", breed: "Golden retriever",
+  weightLbs: 72, birthYear: 2019, colorToken: 1,
+  medications: "Apoquel 5.4mg twice daily", allergies: "Penicillin"
+};
+
+result = await call("/api/pets", { headers: maya });
+assert(result.response.status === 200 && result.body.pets.length === 0, "A new account starts with no pets");
+
+result = await call(`/api/pets/${otis.id}`, { method: "PUT", headers: maya, body: JSON.stringify(otis) });
+assert(result.response.status === 200, "Saving a pet must succeed");
+assert(result.body.pet.id === otis.id, "The client's pet id is the id the account keeps");
+assert(result.body.pet.medications === "Apoquel 5.4mg twice daily", "Medications must round-trip verbatim");
+assert(result.body.pet.colorToken === 1, "The card colour travels with the pet");
+
+// The reinstall case, which is the whole point.
+result = await call("/api/pets", { headers: maya });
+assert(result.body.pets.length === 1 && result.body.pets[0].name === "Otis", "A fresh device reads the account's pets");
+
+// Editing writes through rather than adding a second animal with the same name.
+result = await call(`/api/pets/${otis.id}`, {
+  method: "PUT", headers: maya, body: JSON.stringify({ ...otis, name: "Otis Jr", weightLbs: 74 })
+});
+assert(result.response.status === 200 && result.body.pet.name === "Otis Jr", "Saving an existing id edits it");
+result = await call("/api/pets", { headers: maya });
+assert(result.body.pets.length === 1, "Editing must not create a duplicate");
+
+// Somebody else must not be able to write to a pet id they happen to know.
+result = await call(`/api/pets/${otis.id}`, {
+  method: "PUT", headers: dev, body: JSON.stringify({ ...otis, name: "Stolen" })
+});
+assert(result.response.status === 409, "A pet id belonging to another account is refused");
+result = await call("/api/pets", { headers: maya });
+assert(result.body.pets[0].name === "Otis Jr", "A refused write must not have changed anything");
+result = await call("/api/pets", { headers: dev });
+assert(result.body.pets.length === 0, "Pets are never visible to another account");
+
+// The upgrade case: a phone holding pets that the account has never seen.
+result = await call("/api/pets/sync", {
+  method: "POST", headers: maya,
+  body: JSON.stringify({ pets: [
+    { ...otis, name: "Stale local copy" },
+    { id: "pet_luna_local", name: "Luna", species: "cat", colorToken: 0 }
+  ] })
+});
+assert(result.response.status === 200, "Sync must succeed");
+assert(result.body.pets.length === 2, "Sync stores local pets the account has never seen");
+const synced = result.body.pets.find((pet) => pet.id === otis.id);
+assert(synced.name === "Otis Jr", "A stored pet wins over a stale local copy of itself");
+
+// Deleting has to stick across devices, which is why it is a soft delete: a
+// row that is simply gone cannot tell a second phone that anything happened.
+result = await call(`/api/pets/${otis.id}`, { method: "DELETE", headers: maya });
+assert(result.response.status === 200 && result.body.removed === true, "Deleting a pet must report it");
+result = await call("/api/pets", { headers: maya });
+assert(result.body.pets.length === 1 && result.body.pets[0].id === "pet_luna_local", "A deleted pet leaves the list");
+
+result = await call(`/api/pets/${otis.id}`, { method: "DELETE", headers: maya });
+assert(result.response.status === 200 && result.body.removed === false, "Deleting twice is not an error");
+
+// The bug this guards: a sync from a phone that still holds the deleted pet
+// must not bring it back, or a delete could never stick on more than one
+// device.
+result = await call("/api/pets/sync", {
+  method: "POST", headers: maya, body: JSON.stringify({ pets: [otis] })
+});
+assert(result.body.pets.length === 1, "Sync must not resurrect a pet deleted on another device");
+
+// Nonsense is refused with a reason rather than stored.
+result = await call("/api/pets/pet_bad", {
+  method: "PUT", headers: maya, body: JSON.stringify({ name: "Rex", species: "dragon" })
+});
+assert(result.response.status === 422 && result.body.error.code === "INVALID_SPECIES", "An unsupported species is refused");
+result = await call("/api/pets/pet_bad", {
+  method: "PUT", headers: maya, body: JSON.stringify({ name: "", species: "dog" })
+});
+assert(result.response.status === 422 && result.body.error.code === "PET_NAME_REQUIRED", "A nameless pet is refused");
+result = await call("/api/pets/pet_bad", {
+  method: "PUT", headers: maya, body: JSON.stringify({ name: "Rex", species: "dog", weightLbs: 9000 })
+});
+assert(result.response.status === 422 && result.body.error.code === "INVALID_WEIGHT", "An impossible weight is refused");
+
+const tableChecks = ["tenants", "locations", "availability_reports", "tenant_policies", "intake_requests", "intake_events", "customer_observations", "notification_outbox", "care_searches", "care_search_targets", "care_offers", "pets"];
 for (const table of tableChecks) {
   const count = database.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get().count;
   assert(count > 0, `${table} should contain end-to-end test data`);
 }
 
 database.close();
-console.log("D1 end-to-end tests passed: five-offer search, atomic customer selection, clinic release, policy snapshot, deposit, travel, optional medications and allergies, veterinary-technician staffing notices, client error reporting, clinic calling preferences, observation, expiry, and audit.");
+console.log("D1 end-to-end tests passed: five-offer search, atomic customer selection, clinic release, policy snapshot, deposit, travel, optional medications and allergies, pets on the account, veterinary-technician staffing notices, client error reporting, clinic calling preferences, observation, expiry, and audit.");

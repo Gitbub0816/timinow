@@ -105,6 +105,43 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
         self.auth.onCredentialStorageFailed = { [weak self] status in self?.reportKeychainFailure(status) }
     }
 
+    /// Brings this device's pets and the account's together.
+    ///
+    /// Called on every sign-in, and the reason a reinstall no longer loses
+    /// anything. Two directions, and the order matters:
+    ///
+    /// 1. Anything on this phone that the account has never heard of is pushed
+    ///    up. That is the upgrade case — somebody with three pets recorded
+    ///    before pets were stored anywhere, whose phone is the only copy that
+    ///    exists. It runs once and then finds nothing to do.
+    /// 2. Whatever the account holds afterwards replaces what is on screen.
+    ///    That is the reinstall and second-device case.
+    ///
+    /// A stored pet always wins over the local copy of the same pet: another
+    /// device may have edited it since, and a copy from a phone that has been
+    /// in a pocket for a week is the wrong winner. Locally deleted pets are
+    /// not resurrected, because the delete was written through at the time.
+    ///
+    /// Silent on failure by design. Somebody who opens the app on a train has
+    /// their pets — the device copy is still there and still authoritative for
+    /// this launch — and being told that a sync failed is neither actionable
+    /// nor true in any way they would care about.
+    func reconcilePets() async {
+        guard !gateway.isDemo else { return }
+        guard let merged = try? await gateway.syncPets(pets) else { return }
+        // An account that genuinely has no pets is a real state — a new
+        // customer — but so is a Worker that answered oddly, and replacing a
+        // phone full of pets with nothing is the one outcome worth refusing.
+        // Empty from the server after we sent some means the push failed; keep
+        // what we have and try again next launch.
+        if merged.isEmpty && !pets.isEmpty { return }
+        pets = merged
+        if !pets.contains(where: { $0.id == selectedPetId }) {
+            selectedPetId = pets.first?.id ?? ""
+        }
+        persistPets()
+    }
+
     /// A Keychain that will not hold the credential, said out loud.
     ///
     /// Not shown to the customer: there is nothing they can do about a
@@ -160,6 +197,8 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
             defaults.set(profile.userId, forKey: "timi.accountId")
             #endif
         }
+        // Pets belong to the account now, so this is where the two copies meet.
+        Task { [weak self] in await self?.reconcilePets() }
         if !profile.name.isEmpty { ownerName = profile.name }
         if !profile.phone.isEmpty { ownerPhone = profile.phone }
         if !profile.email.isEmpty { ownerEmail = profile.email }
@@ -287,6 +326,11 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
         selectedPetId = pet.id
         if draft.pet.id == pet.id { draft.pet = pet }
         persistPets()
+        // On screen first, stored second. The device copy is what the person
+        // is looking at and it is written synchronously; the account copy is
+        // what survives a new phone, and a failure to write it must not undo
+        // what they just typed. The next sign-in syncs anything that missed.
+        Task { [gateway] in try? await gateway.savePet(pet) }
     }
 
     /// Removes a profile. The last one may go too — an account with no pets is
@@ -295,6 +339,7 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
     public func deletePet(_ id: String) -> Bool {
         guard let index = pets.firstIndex(where: { $0.id == id }) else { return false }
         pets.remove(at: index)
+        Task { [gateway] in try? await gateway.deletePet(id: id) }
         if selectedPetId == id {
             selectedPetId = pets.first?.id ?? ""
             #if !os(Android)

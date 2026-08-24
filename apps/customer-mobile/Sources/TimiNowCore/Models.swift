@@ -218,6 +218,50 @@ public struct CareSearch: Identifiable, Codable, Hashable, Sendable {
     public var demo: Bool?
 }
 
+/// A pet on its way to the Worker. Separate from `PetProfile` because the wire
+/// shape is the Worker's to define — `species` is its string vocabulary, not
+/// this app's enum — and because a stored profile carries nothing the Worker
+/// should be told about.
+public struct PetPayload: Codable, Hashable, Sendable {
+    public var id: String
+    public var name: String
+    public var species: String
+    public var breed: String?
+    public var weightLbs: Double?
+    public var birthYear: Int?
+    public var colorToken: Int
+    public var medications: String?
+    public var allergies: String?
+
+    public init(_ pet: PetProfile) {
+        id = pet.id
+        name = pet.name
+        species = pet.species.rawValue
+        breed = pet.breed.isEmpty ? nil : pet.breed
+        weightLbs = pet.weightLbs
+        birthYear = pet.birthYear
+        colorToken = pet.colorToken
+        medications = pet.medications.isEmpty ? nil : pet.medications
+        allergies = pet.allergies.isEmpty ? nil : pet.allergies
+    }
+}
+
+public struct PetSyncPayload: Codable, Sendable {
+    public var pets: [PetPayload]
+}
+
+public struct PetsEnvelope: Decodable, Sendable {
+    public var pets: [PetProfile]
+}
+
+public struct PetEnvelope: Decodable, Sendable {
+    public var pet: PetProfile
+}
+
+public struct RemovedEnvelope: Decodable, Sendable {
+    public var removed: Bool?
+}
+
 public struct PetProfilePayload: Codable, Hashable, Sendable {
     public var name: String
     public var species: String

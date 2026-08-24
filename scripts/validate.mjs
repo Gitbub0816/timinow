@@ -97,12 +97,13 @@ for (const screen of expectedScreens) {
 
 const voiceMigration = await readFile("migrations/0005_voice_calls.sql", "utf8");
 const paymentsMigration = await readFile("migrations/0008_payments_ledger.sql", "utf8");
-const requiredTables = ["tenants", "locations", "availability_reports", "tenant_policies", "intake_requests", "intake_events", "customer_observations", "notification_outbox", "care_searches", "care_search_targets", "care_offers", "platform_admins", "tenant_members", "tenant_invitations", "admin_audit_log", "clinic_call_attempts", "stripe_accounts", "payment_ledger", "stripe_events"];
+const petsMigration = await readFile("migrations/0009_pets.sql", "utf8");
+const requiredTables = ["tenants", "locations", "availability_reports", "tenant_policies", "intake_requests", "intake_events", "customer_observations", "notification_outbox", "care_searches", "care_search_targets", "care_offers", "platform_admins", "tenant_members", "tenant_invitations", "admin_audit_log", "clinic_call_attempts", "stripe_accounts", "payment_ledger", "stripe_events", "pets"];
 for (const table of requiredTables) {
-  if (!`${migration}\n${multiOfferMigration}\n${tenancyMigration}\n${voiceMigration}\n${paymentsMigration}`.includes(`CREATE TABLE IF NOT EXISTS ${table}`)) throw new Error(`Missing D1 table: ${table}`);
+  if (!`${migration}\n${multiOfferMigration}\n${tenancyMigration}\n${voiceMigration}\n${paymentsMigration}\n${petsMigration}`.includes(`CREATE TABLE IF NOT EXISTS ${table}`)) throw new Error(`Missing D1 table: ${table}`);
 }
 
-const requiredRoutes = ["/api/config", "/api/locations", "/api/intakes", "/api/searches", "select-offer", "/api/observations", "/api/clinic/dashboard", "/api/clinic/availability", "search-targets", "/api/session", "/api/tenant/members"];
+const requiredRoutes = ["/api/config", "/api/locations", "/api/intakes", "/api/searches", "select-offer", "/api/observations", "/api/clinic/dashboard", "/api/clinic/availability", "search-targets", "/api/session", "/api/tenant/members", "/api/pets"];
 for (const route of requiredRoutes) {
   if (!worker.includes(route)) throw new Error(`Missing API route: ${route}`);
 }
@@ -331,6 +332,33 @@ if (!moments.some((moment) => PLAYFUL.test(TIMI_ANNOUNCEMENTS.calm[moment]))) {
   }
   if (!bootstrap.includes('>> "$NETRC"')) {
     throw new Error("scripts/bootstrap.sh no longer writes the Mapbox downloads token to ~/.netrc, so the iOS app silently builds the non-Mapbox fallback.");
+  }
+}
+
+// Pets are the first thing a customer owns that another customer could name.
+// A pet id travels in the URL, so `PUT /api/pets/{id}` is reachable by anybody
+// who learns one, and there are two defences: a lookup that answers 409 for
+// somebody else's pet, and the owner filter on the upsert's conflict branch.
+//
+// Guarded rather than tested, because the lookup shadows the SQL — the
+// end-to-end test cannot reach the second defence while the first one stands,
+// which is exactly why the second one is easy to delete believing it is
+// redundant. It is not: the lookup and the write are two round trips with no
+// transaction around them.
+{
+  const pets = await readFile("src/pets.js", "utf8");
+  if (!/ON CONFLICT\(id\) DO UPDATE/.test(pets)) {
+    throw new Error("src/pets.js no longer upserts pets by the client's id, so a pet edited offline arrives as a second animal with the same name.");
+  }
+  if (!/WHERE pets\.clerk_user_id = \?/.test(pets)) {
+    throw new Error("src/pets.js: the pet upsert's conflict branch has lost its owner filter, so a write to a pet id belonging to another account would overwrite that account's pet. The 409 lookup above it is not a substitute — they are two round trips with nothing holding them together.");
+  }
+  if (!/PET_ID_TAKEN/.test(pets)) {
+    throw new Error("src/pets.js no longer refuses a pet id that belongs to another account.");
+  }
+  // A hard delete cannot tell a second device that anything happened.
+  if (/DELETE FROM pets/.test(pets)) {
+    throw new Error("src/pets.js hard-deletes pets. A row that is simply gone cannot tell a phone that has been offline since before the deletion to remove its own copy, so the pet comes back at the next sync.");
   }
 }
 

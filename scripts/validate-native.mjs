@@ -2105,6 +2105,24 @@ for (const [path, marker] of [
   }
 }
 
+// A single-file publish rewrites TimiVet.exe in place, and Windows refuses to
+// delete a running executable. With the console open, GenerateBundle fails with
+// UnauthorizedAccessException and MSBuild stack frames — never the sentence
+// "the app is running" — after every earlier step has reported success. The
+// .exe left behind is the previous build, which starts fine and behaves like
+// the previous build.
+{
+  const readme = await read("apps/vet-windows/README.md");
+  const publishLine = readme.split("\n").find((line) => line.includes("dotnet publish") && line.includes("PublishSingleFile"));
+  if (!publishLine) throw new Error("apps/vet-windows/README.md no longer documents a single-file publish command.");
+  if (!/IncludeNativeLibrariesForSelfExtract=true/.test(publishLine)) {
+    throw new Error("apps/vet-windows/README.md's publish command omits IncludeNativeLibrariesForSelfExtract, so WPF's native libraries land beside the exe instead of inside it and the copied .exe will not start elsewhere.");
+  }
+  if (!/Stop-Process -Name TimiVet/.test(publishLine)) {
+    throw new Error("apps/vet-windows/README.md's publish command no longer stops a running TimiVet first, so publishing while the console is open fails with UnauthorizedAccessException and silently leaves the previous build in place.");
+  }
+}
+
 const csharpFiles = await collectFiles("apps/vet-windows", ".cs");
 for (const path of csharpFiles) {
   const problems = bracketProblems(await read(path));

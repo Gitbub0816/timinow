@@ -20,6 +20,7 @@ import {
 } from "./payments.js";
 import { stripeConfigured, StripeError, verifyWebhookSignature } from "./stripe.js";
 import { findEmergencyVeterinaryPlaces, phoneKey } from "./mapbox-places.js";
+import { listPets, savePet, removePet, syncPets, validatePet } from "./pets.js";
 import {
   getCareOffer,
   getCareSearch,
@@ -1071,6 +1072,56 @@ async function setCallPreferences(request, env, actor, tenantId) {
   return getCallPreferences(env, tenantId);
 }
 
+/**
+ * The customer's own pets: list, write one, remove one, and the bulk sync a
+ * phone does the first time it signs in holding pets that were only ever
+ * local.
+ *
+ * Every path is scoped to `actor.userId`. There is no route here that takes an
+ * owner id from the request — a pet belongs to whoever is signed in, and that
+ * is the only way to reach one.
+ */
+export async function handlePets(request, env, actor, path, method) {
+  if (!actor?.userId) return authRequiredResponse();
+  if (!hasDatabase(env)) {
+    // Demo mode has no D1. Answering "no pets" would read as an account whose
+    // animals had been lost, which is the exact fear this feature exists to
+    // remove, so it says plainly that nothing is stored.
+    return apiError(503, "DATABASE_REQUIRED", "Tími cannot reach the pet store right now. Your pets are safe on this device.");
+  }
+
+  if (path === "/api/pets") {
+    if (method === "GET") return json({ pets: await listPets(env, actor.userId) });
+    return apiError(405, "METHOD_NOT_ALLOWED", "Use GET to list pets, PUT /api/pets/{id} to save one.");
+  }
+
+  if (path === "/api/pets/sync") {
+    if (method !== "POST") return apiError(405, "METHOD_NOT_ALLOWED", "Use POST to sync pets.");
+    const body = await readJson(request).catch(() => null);
+    const result = await syncPets(env, actor.userId, body?.pets);
+    return json(result);
+  }
+
+  const petId = decodeURIComponent(path.slice("/api/pets/".length));
+  if (!petId || petId.includes("/")) return apiError(404, "NOT_FOUND", "The requested API route does not exist.");
+
+  if (method === "PUT") {
+    const body = await readJson(request).catch(() => null);
+    const validation = validatePet(body, { id: petId });
+    if (!validation.ok) return apiError(422, validation.code, validation.message);
+    const saved = await savePet(env, actor.userId, validation.pet);
+    if (!saved.ok) return apiError(saved.status, saved.code, saved.message);
+    return json({ pet: saved.pet });
+  }
+
+  if (method === "DELETE") {
+    const removed = await removePet(env, actor.userId, petId);
+    return json({ removed: removed.removed });
+  }
+
+  return apiError(405, "METHOD_NOT_ALLOWED", "Use PUT to save a pet or DELETE to remove one.");
+}
+
 export async function clinicDashboard(env, tenantId) {
   const location = await getClinicLocation(env, tenantId);
   if (!location) return apiError(404, "CLINIC_NOT_FOUND", "No clinic is mapped to the active Clerk organization.");
@@ -1528,6 +1579,11 @@ async function handleApi(request, env, ctx) {
     return response;
   }
   if (method === "POST" && path === "/api/observations") return recordObservation(request, env, actor);
+
+  if (path === "/api/pets" || path.startsWith("/api/pets/")) {
+    const petsResponse = await handlePets(request, env, actor, path, method);
+    if (petsResponse) return petsResponse;
+  }
 
   const searchMatch = path.match(/^\/api\/searches\/([^/]+)(?:\/(select-offer|status))?$/);
   if (searchMatch) {
