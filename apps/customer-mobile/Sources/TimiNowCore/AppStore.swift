@@ -150,6 +150,10 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
     /// else is a row an operator can read instead of asking for screenshots.
     func reportRestoreOutcome(_ outcome: String) {
         if outcome == "resumed the active session" { return }
+        // A pending resume recurs on every launch for every customer while
+        // the instance forces organization selection; reporting it would be
+        // one row per app open saying the same thing.
+        if outcome.hasPrefix("resumed a pending session") { return }
         if outcome.hasPrefix("no stored credential") { return }
         let report = ClientErrorReport(
             surface: "customer_ios",

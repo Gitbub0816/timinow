@@ -220,8 +220,23 @@ public struct AuthFactorOption: Identifiable, Hashable, Sendable {
                 resumeWithoutChecking()
                 return
             }
+            // "active" or "pending", and pending has earned its paragraph.
+            //
+            // This Clerk instance serves the veterinary consoles too, and has
+            // organizations switched on with force_organization_selection -
+            // so every sign-in is created as a *pending* session until an
+            // organization is chosen. Clinic staff choose a workspace and
+            // their session becomes active. A customer has no organization,
+            // is never offered one, and their session therefore stays pending
+            // for its whole life. It is not a lesser session: this entire app
+            // ran on one - Worker tokens minted from it, the Worker verified
+            // them - right up until this check read "pending", decided that
+            // was not "active", and signed the person out. At every launch.
+            // The Dashboard fix is to stop forcing organization selection;
+            // this line is what makes the customer app immune to the toggle.
+            let usable: Set<String> = ["active", "pending"]
             guard let sessionId = activeSessionId,
-                  sessions.contains(where: { $0.id == sessionId && $0.status == "active" }) else {
+                  sessions.contains(where: { $0.id == sessionId && usable.contains($0.status ?? "") }) else {
                 // Clerk answered, knows this device, and does not know this
                 // session. That is a real sign-out - and if it recurs at
                 // every launch, it is Clerk ending sessions server-side:
@@ -233,7 +248,10 @@ public struct AuthFactorOption: Identifiable, Hashable, Sendable {
                 return
             }
             _ = try await ensureFreshToken()
-            lastRestoreOutcome = "resumed the active session"
+            let status = sessions.first(where: { $0.id == sessionId })?.status ?? "active"
+            lastRestoreOutcome = status == "pending"
+                ? "resumed a pending session (Clerk wants an organization chosen; customers have none)"
+                : "resumed the active session"
             markSignedIn()
         } catch let error as TimiAPIError {
             if Self.isCredentialRejected(error) {

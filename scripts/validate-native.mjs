@@ -2017,6 +2017,15 @@ for (const [path, marker] of [
   if (!/if sessions\.isEmpty \{[\s\S]{0,400}resumeWithoutChecking\(\)/.test(code)) {
     throw new Error("apps/customer-mobile/Sources/TimiNowCore/AuthController.swift: an empty Clerk client is treated as a sign-out again. Clerk answers an unrecognised device token with an empty client and 200 OK, so that path signs somebody out on every launch and takes their pets with it.");
   }
+  // A customer's session is *pending*, not active, whenever the Clerk
+  // instance forces organization selection - customers have no organization
+  // to choose, so pending is the permanent state of every customer session
+  // under that toggle. A restore that accepts only "active" therefore signs
+  // every customer out at every launch, which is precisely the bug that
+  // survived four rounds of Keychain fixes.
+  if (!/\[\"active\", \"pending\"\]/.test(code)) {
+    throw new Error("apps/customer-mobile/Sources/TimiNowCore/AuthController.swift: session restore no longer accepts a pending session. Under force_organization_selection every customer session is pending forever, so this signs every customer out at every launch.");
+  }
   if (!/private func signOutLocally\(explicit: Bool\)/.test(code)) {
     throw new Error("apps/customer-mobile/Sources/TimiNowCore/AuthController.swift: signOutLocally no longer distinguishes a sign-out somebody asked for from one this code decided on. Only the first may clear device-local data — the second is a guess about a credential, and a guess must not delete somebody's animals.");
   }
