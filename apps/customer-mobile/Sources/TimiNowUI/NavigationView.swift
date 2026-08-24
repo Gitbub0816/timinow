@@ -202,24 +202,20 @@ final class NavigationHostController: UIViewController {
         }
     }
 
-    /// Builds the provider that carries our credentials and our custom voice.
+    /// The app's one provider, pointed at this drive.
+    ///
+    /// This built a new `MapboxNavigationProvider` on every press of Navigate,
+    /// because the provider carried the voice and the voice knew the pet's
+    /// name. The SDK supports one — see TimiNavigationStack — and the second
+    /// construction is not something this code can catch failing.
     private func makeNavigationProvider() -> MapboxNavigationProvider {
-        let speechSynthesizer = preferences.voiceEnabled
-            ? TimiSpeechStack.makeSynthesizer(
-                preferences: preferences,
-                mapToken: mapboxAccessToken,
-                clinicName: destination.name,
-                petName: petName,
-                clinicKind: destination.kind,
-                tone: tone
-            )
-            : nil
-        let coreConfig = CoreConfig(
-            credentials: NavigationCoreApiConfiguration(accessToken: mapboxAccessToken),
-            locale: Locale.current,
-            ttsConfig: speechSynthesizer.map { TTSConfig.custom(speechSynthesizer: $0) } ?? .localOnly
+        TimiNavigationStack.beginTrip(
+            clinicName: destination.name,
+            petName: petName,
+            clinicKind: destination.kind,
+            tone: tone
         )
-        return MapboxNavigationProvider(coreConfig: coreConfig)
+        return TimiNavigationStack.shared(mapToken: mapboxAccessToken, preferences: preferences)
     }
 
     /// Voice is installed through `CoreConfig.ttsConfig`, not through

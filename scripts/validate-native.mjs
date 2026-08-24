@@ -1965,6 +1965,24 @@ for (const [path, marker] of [
   }
 }
 
+// MapboxNavigationProvider owns the SDK's process-wide navigator, tile store
+// and billing session. There is meant to be one for the life of the app. This
+// app built one per route preview and another on every press of Navigate,
+// because the provider carried the trip's voice and the voice knew the pet's
+// name — and the second construction is not a failure this code can catch:
+// nothing throws, nothing returns nil, the app simply goes away.
+{
+  const built = [];
+  for (const path of swiftFiles) {
+    const source = await read(path);
+    const code = source.split("\n").filter((line) => !line.trim().startsWith("//") && !line.trim().startsWith("///")).join("\n");
+    if (/MapboxNavigationProvider\(/.test(code)) built.push(path);
+  }
+  if (built.length !== 1 || !built[0].endsWith("MapboxStack.swift")) {
+    throw new Error(`MapboxNavigationProvider is constructed in ${built.length} file(s) (${built.join(", ")}). There must be exactly one, in MapboxStack.swift: the SDK's navigator is process-wide and a second provider takes the app down with no catchable error.`);
+  }
+}
+
 // An automatic sign-out must not delete the customer's data.
 //
 // Clerk's native API does not refuse a device token it no longer recognises —

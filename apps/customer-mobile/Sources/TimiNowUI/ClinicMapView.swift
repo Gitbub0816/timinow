@@ -82,7 +82,7 @@ struct ClinicMapView: View {
 /// map card on the tracker screen, using MapboxNavigationCore's routing
 /// provider. Kept separate from full turn-by-turn (NavigationView.swift) —
 /// this is only ever a lightweight, cancellable preview.
-#if canImport(MapboxNavigationCore)
+#if canImport(MapboxNavigationCore) && os(iOS) && !SKIP
 import MapboxNavigationCore
 // Waypoint, RouteOptions, and RoadClasses live in MapboxDirections, which
 // MapboxNavigationCore depends on but does not re-export.
@@ -120,11 +120,11 @@ enum RoutePreviewFetcher {
         if preferences.avoidFerries { avoid.insert(.ferry) }
         options.roadClassesToAvoid = avoid
 
-        // The preview needs no voice, so this provider is configured with
-        // credentials only.
-        let provider = MapboxNavigationProvider(
-            coreConfig: CoreConfig(credentials: NavigationCoreApiConfiguration(accessToken: mapToken))
-        )
+        // The same provider the live drive uses. This built its own, which
+        // meant the tracker screen took the process-wide navigator before
+        // anybody had pressed Navigate — so the crash did not even need two
+        // presses to arrange.
+        let provider = TimiNavigationStack.shared(mapToken: mapToken, preferences: preferences)
         do {
             let navigationRoutes = try await provider.routingProvider().calculateRoutes(options: options).value
             let route = navigationRoutes.mainRoute.route

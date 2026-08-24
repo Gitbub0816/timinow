@@ -313,15 +313,32 @@ import Combine
 @MainActor
 public final class TimiSpeechSynthesizer: SpeechSynthesizing {
     private let inner: MultiplexedSpeechSynthesizer
-    private let clinicName: String
-    private let petName: String
-    private let clinicKind: String?
+    // Per-trip, and therefore variable. These were constants, which meant a new
+    // synthesizer — and so a new MapboxNavigationProvider — for every drive.
+    // See TimiNavigationStack: one provider is all the SDK supports.
+    private var clinicName: String
+    private var petName: String
+    private var clinicKind: String?
     /// Which register this trip speaks in — set from the care urgency, so an
     /// emergency run never hears a joke.
-    private let tone: NavigationTone
+    private var tone: NavigationTone
     /// The "look for the entrance" line is worth saying once, not on every
     /// instruction inside the last 400 metres.
     private var announcedApproach = false
+
+    /// Points the voice at a different drive without rebuilding anything.
+    ///
+    /// The alternative is a new synthesizer per trip, which means a new
+    /// provider per trip, which is the one thing the navigation SDK does not
+    /// allow. `announcedApproach` resets here because it is the one piece of
+    /// state that genuinely belongs to a single journey.
+    public func beginTrip(clinicName: String, petName: String, clinicKind: String?, tone: NavigationTone) {
+        self.clinicName = clinicName
+        self.petName = petName
+        self.clinicKind = clinicKind
+        self.tone = tone
+        announcedApproach = false
+    }
 
     public var voiceInstructions: AnyPublisher<VoiceInstructionEvent, Never> { inner.voiceInstructions }
     public var muted: Bool {

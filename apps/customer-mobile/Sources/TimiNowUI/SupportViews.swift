@@ -471,6 +471,7 @@ struct SettingsView: View {
             // used to fail silently: the Keychain has to accept the write, the
             // credential has to be worth writing, and it has to read back.
             labelled("Sign-in storage", store.auth.credentialDiagnostics)
+            labelled("Last crash", TimiBreadcrumb.lastCrash ?? "none recorded")
             Divider()
             Button("Replay guided onboarding") { store.resetOnboarding() }.buttonStyle(TimiQuietButtonStyle())
             Button("Hide developer settings") { store.developerModeEnabled = false; versionTaps = 0 }.buttonStyle(TimiQuietButtonStyle())

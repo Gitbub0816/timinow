@@ -21,6 +21,7 @@ import Foundation
 /// phone without anybody having to go looking.
 public enum TimiBreadcrumb {
     private static let key = "timi.breadcrumb"
+    private static let lastKey = "timi.breadcrumb.last"
 
     #if !os(Android)
     private static var defaults: UserDefaults { .standard }
@@ -51,8 +52,23 @@ public enum TimiBreadcrumb {
     public static func consume() -> String? {
         #if !os(Android)
         guard let stage = defaults.string(forKey: key), !stage.isEmpty else { return nil }
+        // Kept for the screen as well as the report. Analytics Data on the
+        // phone is empty whenever "Share iPhone Analytics" is off, which is
+        // most phones, and reading the Worker's log needs a terminal and a
+        // Cloudflare login. The app already knows; it may as well say.
+        defaults.set("\(stage) · \(TimiEnvironment.buildStamp)", forKey: lastKey)
         clear()
         return stage
+        #else
+        return nil
+        #endif
+    }
+
+    /// The last stage a launch died in, for the diagnostics panel. Survives
+    /// until the next crash replaces it.
+    public static var lastCrash: String? {
+        #if !os(Android)
+        return defaults.string(forKey: lastKey)
         #else
         return nil
         #endif
