@@ -99,6 +99,11 @@ struct TurnByTurnNavigationView: UIViewControllerRepresentable {
     var onEnd: () -> Void
 
     func makeUIViewController(context: Context) -> UIViewController {
+        // The first mark. A crash before viewDidLoad - SwiftUI presentation,
+        // host construction - was a crash before any breadcrumb existed, and
+        // the next launch reported "none recorded", which reads as innocence
+        // and is actually a blind spot.
+        TimiBreadcrumb.mark("nav:host_setup")
         TimiNowUIStyleSource.current = navigationStyleURL
         return NavigationHostController(
             destination: destination, origin: origin, preferences: preferences, petName: petName, tone: tone,
@@ -191,8 +196,6 @@ final class NavigationHostController: UIViewController {
             let routes = try await navigationProvider.routingProvider().calculateRoutes(options: options).value
             TimiBreadcrumb.mark("nav:present")
             presentNavigation(routes: routes, using: navigationProvider)
-            // Reached the live screen. Anything after this is somebody driving.
-            TimiBreadcrumb.clear()
         } catch {
             // A route that could not be calculated is a failure, not a crash:
             // the breadcrumb is cleared so the next launch does not report a
@@ -225,6 +228,7 @@ final class NavigationHostController: UIViewController {
     /// assembled from three members of the provider — `mapboxNavigation`,
     /// `routeVoiceController`, and `eventsManager()`.
     private func presentNavigation(routes: NavigationRoutes, using navigationProvider: MapboxNavigationProvider) {
+        TimiBreadcrumb.mark("nav:styles")
         let dayStyle = TimiDayStyle()
         let nightStyle = TimiNightStyle()
         let navigationOptions = NavigationOptions(
@@ -233,6 +237,7 @@ final class NavigationHostController: UIViewController {
             eventsManager: navigationProvider.eventsManager(),
             styles: [dayStyle, nightStyle]
         )
+        TimiBreadcrumb.mark("nav:vc_init")
         let vc = NavigationViewController(navigationRoutes: routes, navigationOptions: navigationOptions)
         vc.delegate = self
         vc.modalPresentationStyle = .fullScreen
@@ -242,9 +247,23 @@ final class NavigationHostController: UIViewController {
         view.addSubview(vc.view)
         vc.didMove(toParent: self)
         navigationViewController = vc
+        // NOT cleared here, and that is the lesson of "none recorded".
+        //
+        // The first version cleared the breadcrumb at this line - "anything
+        // after this is somebody driving" - and the crash turned out to live
+        // exactly there: the presented controller's first frames, where the
+        // style loads, Metal starts, the location engine spins up and the
+        // trip session begins. Clearing on present put the crash in the one
+        // window with no name on it, so the next launch reported nothing.
+        // The mark stays until navigation ends - finish, arrival, fallback -
+        // and a drive the app did not survive therefore names itself. A
+        // force-quit mid-drive leaves the mark too, which the report's
+        // wording already hedges: "killed or trapped".
+        TimiBreadcrumb.mark("nav:live")
     }
 
     private func presentFallback() {
+        TimiBreadcrumb.clear()
         // Route request failed (offline, misconfigured token, etc.) — hand
         // off to the plain maps.apple.com link rather than a blank screen.
         if let url = AppleMapsFallback.directionsURL(to: destination) {
@@ -265,6 +284,7 @@ final class NavigationHostController: UIViewController {
 // trip and the `arrived` milestone was never recorded on its own.
 extension NavigationHostController: NavigationViewControllerDelegate {
     func navigationViewController(_ navigationViewController: NavigationViewController, didArriveAt waypoint: Waypoint) {
+        TimiBreadcrumb.clear()
         onArrival()
     }
 
@@ -393,6 +413,7 @@ struct NavigationScreen: View {
     }
 
     private func finish() {
+        TimiBreadcrumb.clear()
         store.navigationDestination = nil
         store.updateNavigationProgress(step: nil, summary: nil)
         onFinish()

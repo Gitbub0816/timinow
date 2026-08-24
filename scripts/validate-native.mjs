@@ -1965,6 +1965,25 @@ for (const [path, marker] of [
   }
 }
 
+// The navigation breadcrumb must cover the live screen. The first version
+// cleared it the moment the controller presented, and the crash lived exactly
+// there - the presented map's first frames - so the next launch reported
+// "none recorded", which reads as innocence and was a blind spot.
+{
+  const nav = await read("apps/customer-mobile/Sources/TimiNowUI/NavigationView.swift");
+  const code = nav.split("\n").filter((line) => !line.trim().startsWith("//") && !line.trim().startsWith("///")).join("\n");
+  if (!code.includes('TimiBreadcrumb.mark("nav:live")')) {
+    throw new Error("apps/customer-mobile/Sources/TimiNowUI/NavigationView.swift no longer marks nav:live after presenting the navigation controller, so a crash in the live screen's first frames reports nothing.");
+  }
+  if (!code.includes('TimiBreadcrumb.mark("nav:host_setup")')) {
+    throw new Error("apps/customer-mobile/Sources/TimiNowUI/NavigationView.swift no longer marks nav:host_setup in makeUIViewController, so a crash before viewDidLoad reports nothing.");
+  }
+  const finish = code.slice(code.indexOf("private func finish()"));
+  if (!/TimiBreadcrumb\.clear\(\)/.test(finish.slice(0, 200))) {
+    throw new Error("apps/customer-mobile/Sources/TimiNowUI/NavigationView.swift: finish() no longer clears the breadcrumb, so every normally-ended drive reports itself as a crash at the next launch.");
+  }
+}
+
 // MapboxNavigationProvider owns the SDK's process-wide navigator, tile store
 // and billing session. There is meant to be one for the life of the app. This
 // app built one per route preview and another on every press of Navigate,
