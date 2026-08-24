@@ -351,6 +351,25 @@ if (!moments.some((moment) => PLAYFUL.test(TIMI_ANNOUNCEMENTS.calm[moment]))) {
   }
 }
 
+// The veterinary Worker is a second router over the same handlers, so every
+// clinic route has to be written twice. That is how PATCH /api/clinic/call-preferences
+// came to exist, be tested end to end, and be unreachable from the only two
+// clients that call it: the desktop consoles point at providers.timinow.pet,
+// which is this Worker, and it fell through to the 404 at the bottom.
+{
+  const customer = await readFile("src/index.js", "utf8");
+  const vet = await readFile("apps/vet-web/src/index.js", "utf8");
+  const clinicRoutes = (source) => {
+    const found = new Set();
+    for (const match of source.matchAll(/path === "(\/api\/clinic\/[^"]+)"/g)) found.add(match[1]);
+    return found;
+  };
+  const missing = [...clinicRoutes(customer)].filter((route) => !clinicRoutes(vet).has(route));
+  if (missing.length) {
+    throw new Error(`apps/vet-web/src/index.js does not route ${missing.join(", ")}, but src/index.js does. The desktop consoles talk to this Worker, so a clinic route that exists only on the customer Worker answers 404 to the only clients that call it.`);
+  }
+}
+
 // Pets are the first thing a customer owns that another customer could name.
 // A pet id travels in the URL, so `PUT /api/pets/{id}` is reachable by anybody
 // who learns one, and there are two defences: a lookup that answers 409 for

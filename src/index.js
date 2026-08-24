@@ -1000,7 +1000,7 @@ async function recordObservation(request, env, actor) {
  * at the desk and a phone that is already ringing has a real reason to say no,
  * and had no way to.
  */
-async function getCallPreferences(env, tenantId) {
+export async function getCallPreferences(env, tenantId) {
   if (!hasDatabase(env)) {
     return json({ preferences: { callsEnabled: true, voicePhone: null, quietHours: {}, locationPhone: null } });
   }
@@ -1025,7 +1025,7 @@ async function getCallPreferences(env, tenantId) {
   });
 }
 
-async function setCallPreferences(request, env, actor, tenantId) {
+export async function setCallPreferences(request, env, actor, tenantId) {
   if (!hasDatabase(env)) return apiError(503, "DATABASE_REQUIRED", "D1 is required to change calling preferences.");
   if (!isOrgAdmin(actor)) return apiError(403, "ADMIN_REQUIRED", "Only a workspace administrator can change calling preferences.");
   const body = await readJson(request).catch(() => null);

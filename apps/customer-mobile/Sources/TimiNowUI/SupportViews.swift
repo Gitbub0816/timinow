@@ -344,6 +344,24 @@ struct SettingsView: View {
                 Text("Signed in as").font(.caption).foregroundStyle(TimiColor.muted)
                 Text(signedInAs).font(.title3).fontWeight(.black)
             }
+            // Shown only when it is not working, and shown without seven taps.
+            //
+            // "It does not stay signed in" has cost several rounds of guessing
+            // between three indistinguishable causes: a Keychain that refuses
+            // the write, a Clerk instance that returned no client token to
+            // store, and a Worker that could not be reached at launch. The
+            // device knows which. There is nothing a customer can do about any
+            // of them, so this is worded as a fault report rather than an
+            // instruction — but a fault nobody can see is one nobody fixes.
+            if store.auth.credentialDiagnostics != "stored and readable" {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("This device may not stay signed in").font(.caption).fontWeight(.bold).foregroundStyle(TimiColor.coral)
+                    Text(store.auth.credentialDiagnostics).font(.caption).foregroundStyle(TimiColor.muted)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(11)
+                .background(TimiColor.coralSoft, in: RoundedRectangle(cornerRadius: 12))
+            }
             Button("Sign out") { Task { await store.auth.signOut() } }
                 .buttonStyle(TimiQuietButtonStyle())
         }

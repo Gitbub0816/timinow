@@ -150,6 +150,11 @@ final class NavigationHostController: UIViewController {
             presentFallback()
             return
         }
+        // Each stage is marked before it is entered and cleared after. If the
+        // app dies inside one, the next launch reports which — a crash inside
+        // a framework cannot be caught in process, so the only report that
+        // survives is one written before it happens.
+        TimiBreadcrumb.mark("nav:route_request")
         Task { await requestRouteAndPresent() }
     }
 
@@ -179,11 +184,20 @@ final class NavigationHostController: UIViewController {
         // the credentials and the custom voice configured on it apply to the
         // live session too. `MapboxRoutingProvider` is not publicly
         // constructible; `routingProvider()` is how a caller obtains one.
+        TimiBreadcrumb.mark("nav:provider")
         let navigationProvider = makeNavigationProvider()
         do {
+            TimiBreadcrumb.mark("nav:calculate_routes")
             let routes = try await navigationProvider.routingProvider().calculateRoutes(options: options).value
+            TimiBreadcrumb.mark("nav:present")
             presentNavigation(routes: routes, using: navigationProvider)
+            // Reached the live screen. Anything after this is somebody driving.
+            TimiBreadcrumb.clear()
         } catch {
+            // A route that could not be calculated is a failure, not a crash:
+            // the breadcrumb is cleared so the next launch does not report a
+            // handled error as one.
+            TimiBreadcrumb.clear()
             presentFallback()
         }
     }

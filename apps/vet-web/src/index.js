@@ -22,7 +22,9 @@ import {
   clinicDashboard,
   clinicPayouts,
   decideIntake,
+  getCallPreferences,
   respondToCareSearch,
+  setCallPreferences,
   setClinicAvailability
 } from "../../../src/index.js";
 import {
@@ -149,6 +151,17 @@ async function handleApi(request, env) {
     // consoles point at providers.timinow.pet, which is this one.
     if (method === "GET" && path === "/api/clinic/payouts") return clinicPayouts(env, tenantId);
     if (method === "POST" && path === "/api/clinic/availability") return setClinicAvailability(request, env, actor, tenantId);
+    // Also here, for the same reason payouts is. This Worker is a second router
+    // over the same handlers, and every route added to the customer Worker has
+    // to be added again — which is exactly how this one was missed. The macOS
+    // and Windows consoles point at providers.timinow.pet, so "Save calling
+    // preferences" reached this router, matched nothing, and fell through to
+    // the 404 at the bottom. Nothing was wrong with the handler; it was never
+    // reachable from the only clients that call it.
+    if (path === "/api/clinic/call-preferences") {
+      if (method === "GET") return getCallPreferences(env, tenantId);
+      if (method === "PATCH" || method === "POST") return setCallPreferences(request, env, actor, tenantId);
+    }
     const decisionMatch = path.match(/^\/api\/clinic\/intakes\/([^/]+)\/decision$/);
     if (method === "POST" && decisionMatch) return decideIntake(request, env, actor, tenantId, decodeURIComponent(decisionMatch[1]));
     const searchDecisionMatch = path.match(/^\/api\/clinic\/search-targets\/([^/]+)\/decision$/);

@@ -142,6 +142,24 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
         persistPets()
     }
 
+    /// Reports a stage the previous launch entered and never left.
+    ///
+    /// Called once at startup. Nothing is shown to the customer — they were
+    /// there, they know it closed — and the report is what turns "it crashes
+    /// when I press Navigate" into the name of the line it died on.
+    public func reportCrashBreadcrumb() {
+        guard let stage = TimiBreadcrumb.consume() else { return }
+        let report = ClientErrorReport(
+            surface: "customer_ios",
+            appVersion: TimiEnvironment.appVersion,
+            path: "/crash/\(stage)",
+            code: "CRASHED_IN_STAGE",
+            message: "The previous launch entered \(stage) and never left it — the app was killed or trapped inside that stage.",
+            detail: ["stage": stage, "build": TimiEnvironment.buildStamp]
+        )
+        Task { [gateway] in await gateway.reportFailure(report) }
+    }
+
     /// A Keychain that will not hold the credential, said out loud.
     ///
     /// Not shown to the customer: there is nothing they can do about a

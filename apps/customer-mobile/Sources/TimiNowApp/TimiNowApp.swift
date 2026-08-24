@@ -17,6 +17,10 @@ public struct RootView: View {
     public var body: some View {
         CustomerRootView(store: store)
             .task { logger.info("Tími customer app started") }
+            // First, before anything that could crash again: a stage the last
+            // launch entered and never left is the only evidence that survives
+            // a trap inside a framework.
+            .task { store.reportCrashBreadcrumb() }
             .task { await store.auth.start() }
             .task { await store.loadMapConfig() }
             .task { WatchBridge.shared.start(observing: store) }

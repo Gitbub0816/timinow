@@ -274,8 +274,24 @@ public final class ClinicAPIClient: @unchecked Sendable {
         return host == "localhost" || host == "127.0.0.1" || host == "::1"
     }
 
+    /// The Worker's own words, when it sent any.
+    ///
+    /// This looked for `message` at the top level and for `error` as a string.
+    /// The Worker sends neither: every failure is
+    /// `{"error": {"code": …, "message": …}}`, with `error` an object. So the
+    /// message was found by nothing and every failure in this console read
+    /// "Tími API error 404." — a number, with no route, no reason, and no way
+    /// to tell a missing endpoint from a missing clinic. That is how a route
+    /// the desktop consoles could not reach at all survived: the server said
+    /// exactly what was wrong on every attempt, and the client threw it away.
     private static func extractMessage(_ data: Data, status: Int) -> String {
         if let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            if let envelope = object["error"] as? [String: Any] {
+                let message = envelope["message"] as? String ?? ""
+                let code = envelope["code"] as? String ?? ""
+                if !message.isEmpty { return code.isEmpty ? message : "\(message) (\(code))" }
+                if !code.isEmpty { return code }
+            }
             if let message = object["message"] as? String, !message.isEmpty { return message }
             if let error = object["error"] as? String, !error.isEmpty { return error }
         }
