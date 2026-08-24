@@ -2236,8 +2236,15 @@ for (const [path, marker] of [
     throw new Error("apps/vet-desktop/Sources/TimiVetUI/Theme.swift: the button styles no longer move on press.");
   }
   const windowsTheme = await read("apps/vet-windows/src/TimiVet/Theme/Theme.xaml");
-  if (!/Property="IsPressed" Value="True"[\s\S]{0,400}PressScale/.test(windowsTheme)) {
+  if (!/Property="IsPressed" Value="True"[\s\S]{0,900}ScaleTransform/.test(windowsTheme)) {
     throw new Error("apps/vet-windows/src/TimiVet/Theme/Theme.xaml: the pressed trigger no longer scales the button, so a press changes opacity and nothing else.");
+  }
+  // A Trigger can only target an element in the template's name scope, and the
+  // contents of a RenderTransform are not in it. Naming the transform and
+  // pointing a Setter at it fails the XAML compile with MC4111 — a build error,
+  // not something the running app could have reported.
+  if (/<(?:Scale|Translate|Rotate|Skew)Transform x:Name=/.test(windowsTheme)) {
+    throw new Error("apps/vet-windows/src/TimiVet/Theme/Theme.xaml names a transform inside a RenderTransform. A Trigger cannot target it: the XAML compiler rejects it with MC4111. Set the whole RenderTransform property in the Setter instead.");
   }
 }
 
