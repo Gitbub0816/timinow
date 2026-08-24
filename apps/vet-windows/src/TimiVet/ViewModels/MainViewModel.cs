@@ -236,23 +236,22 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             Pending = dashboard.Metrics.Pending; ActiveArrivals = dashboard.Metrics.ActiveArrivals; CompletedToday = dashboard.Metrics.CompletedToday; DeclinedToday = dashboard.Metrics.DeclinedToday;
             ApplyAvailability(dashboard.Location.Availability);
 
-            var selectedId = SelectedRequest?.Id;
-            Requests.Clear(); PendingRequests.Clear();
             foreach (var request in dashboard.Requests)
             {
-                Requests.Add(request);
-                if (request.Status == "pending")
-                {
-                    PendingRequests.Add(request);
-                    if (_initialized && _knownPending.Add(request.Id)) NewRequestArrived?.Invoke(this, request);
-                    else _knownPending.Add(request.Id);
-                }
+                if (request.Status != "pending") continue;
+                if (_initialized && _knownPending.Add(request.Id)) NewRequestArrived?.Invoke(this, request);
+                else _knownPending.Add(request.Id);
             }
+            Merge(Requests, dashboard.Requests);
+            Merge(PendingRequests, dashboard.Requests.Where(r => r.Status == "pending").ToList());
             // Restored from the pending list, which is what the queue shows. Restoring
             // from Requests re-selected the request that had just been answered — no longer
             // in the list, so the ListBox immediately set SelectedItem back to null and the
             // decision workspace flickered through the row nobody had chosen.
-            SelectedRequest = PendingRequests.FirstOrDefault(r => r.Id == selectedId) ?? PendingRequests.FirstOrDefault();
+            if (SelectedRequest is null || !PendingRequests.Contains(SelectedRequest))
+            {
+                SelectedRequest = PendingRequests.FirstOrDefault();
+            }
             _initialized = true;
             MarkConnected();
             await EnsureSessionAppliedAsync();
@@ -395,6 +394,61 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         }
         catch (Exception ex) { StatusMessage = ex.Message; }
         finally { IsBusy = false; }
+    }
+
+    /// <summary>
+    /// Brings a collection up to date without emptying it first.
+    /// </summary>
+    /// <remarks>
+    /// This was Clear() then Add() for every row, every poll. To WPF that is
+    /// "every item you were showing is gone, here are some new ones", so every
+    /// six seconds the queue tore down and rebuilt its containers: the list
+    /// jumped back to the top under whoever was reading it, the selection was
+    /// dropped and reinstated, focus left any control inside a row, and the
+    /// whole panel flashed. On a front desk that reads as the app reloading
+    /// itself constantly, which is exactly what somebody watching it said.
+    ///
+    /// Merging touches only what changed. A request already on screen has its
+    /// fields updated in place and raises PropertyChanged for the ones that
+    /// moved, so a row whose status went pending -> offered redraws that badge
+    /// and nothing else. Rows that vanished are removed, new ones inserted at
+    /// their server-given position. A poll where nothing changed produces no
+    /// UI work at all.
+    /// </remarks>
+    private static void Merge(ObservableCollection<ClinicRequest> target, IReadOnlyList<ClinicRequest> latest)
+    {
+        var byId = new Dictionary<string, ClinicRequest>(target.Count);
+        foreach (var existing in target) byId[existing.Id] = existing;
+
+        // Gone from the server: removed here. Backwards, so the indexes of the
+        // items still to be examined do not shift under the loop.
+        var wanted = new HashSet<string>(latest.Select(r => r.Id));
+        for (var index = target.Count - 1; index >= 0; index -= 1)
+        {
+            if (!wanted.Contains(target[index].Id)) target.RemoveAt(index);
+        }
+
+        for (var index = 0; index < latest.Count; index += 1)
+        {
+            var incoming = latest[index];
+            if (byId.TryGetValue(incoming.Id, out var existing))
+            {
+                existing.CopyFrom(incoming);
+                var at = target.IndexOf(existing);
+                // Order can change — a request that becomes pending sorts to
+                // the top — and Move is how a ListBox animates that rather
+                // than rebuilding the row.
+                if (at != index && index < target.Count) target.Move(at, index);
+            }
+            else if (index <= target.Count)
+            {
+                target.Insert(index, incoming);
+            }
+            else
+            {
+                target.Add(incoming);
+            }
+        }
     }
 
     public async Task LoadCallPreferencesAsync()

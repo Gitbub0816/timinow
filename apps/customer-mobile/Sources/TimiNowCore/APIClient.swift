@@ -194,7 +194,7 @@ public final class TimiGateway: @unchecked Sendable {
     public func savePet(_ pet: PetProfile) async throws -> PetProfile {
         guard let baseURL else { return pet }
         let envelope: PetEnvelope = try await send(
-            baseURL.appendingPathComponent("api/pets/\(pet.id)"), method: "PUT", body: PetPayload(pet)
+            baseURL.appendingPathComponent("api/pets/\(pet.id)"), method: "PUT", body: StoredPetPayload(pet)
         )
         return envelope.pet
     }
@@ -214,7 +214,7 @@ public final class TimiGateway: @unchecked Sendable {
         guard let baseURL else { return local }
         let envelope: PetsEnvelope = try await send(
             baseURL.appendingPathComponent("api/pets/sync"), method: "POST",
-            body: PetSyncPayload(pets: local.map(PetPayload.init))
+            body: PetSyncPayload(pets: local.map(StoredPetPayload.init))
         )
         return envelope.pets
     }

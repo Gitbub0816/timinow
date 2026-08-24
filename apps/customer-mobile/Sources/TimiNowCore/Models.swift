@@ -218,11 +218,17 @@ public struct CareSearch: Identifiable, Codable, Hashable, Sendable {
     public var demo: Bool?
 }
 
-/// A pet on its way to the Worker. Separate from `PetProfile` because the wire
-/// shape is the Worker's to define — `species` is its string vocabulary, not
-/// this app's enum — and because a stored profile carries nothing the Worker
-/// should be told about.
-public struct PetPayload: Codable, Hashable, Sendable {
+/// A stored pet on its way to `/api/pets`.
+///
+/// Not to be confused with `PetPayload` in APIClient.swift, which is the pet
+/// *inside a care search* — no id, no card colour, and a different set of
+/// fields, because a clinic being asked about an animal needs different things
+/// from a record being filed against an account. Naming this one PetPayload
+/// too was a build error rather than a subtle bug, which was lucky.
+///
+/// Separate from `PetProfile` because the wire shape is the Worker's to define
+/// — `species` is its string vocabulary, not this app's enum.
+public struct StoredPetPayload: Codable, Hashable, Sendable {
     public var id: String
     public var name: String
     public var species: String
@@ -247,7 +253,7 @@ public struct PetPayload: Codable, Hashable, Sendable {
 }
 
 public struct PetSyncPayload: Codable, Sendable {
-    public var pets: [PetPayload]
+    public var pets: [StoredPetPayload]
 }
 
 public struct PetsEnvelope: Decodable, Sendable {

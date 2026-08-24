@@ -1965,6 +1965,38 @@ for (const [path, marker] of [
   }
 }
 
+// Two files in one module declaring the same type name.
+//
+// PetPayload existed in APIClient.swift as the pet inside a care search, and a
+// second PetPayload was added in Models.swift for a stored pet record — two
+// genuinely different shapes that happened to describe the same noun. Swift
+// rejects it, so it cost a device build rather than a subtle bug, but nothing
+// short of a compiler was looking: a Worker-side check passes, the unit tests
+// on the host do not build that module, and CI's Mapbox path is the only place
+// it surfaces.
+{
+  const modules = new Map();
+  for (const path of swiftFiles) {
+    // Sources/<Module>/File.swift
+    const module = path.split("/").slice(0, -1).join("/");
+    if (!modules.has(module)) modules.set(module, new Map());
+    const declarations = modules.get(module);
+    const source = await read(path);
+    for (const line of source.split("\n")) {
+      // Top-level only: an indented declaration is nested inside something and
+      // is namespaced by it, which the check above this one covers.
+      const match = line.match(/^(?:public |private |internal |fileprivate |final |)*(?:struct|enum|class|actor|protocol) ([A-Z]\w*)/);
+      if (!match) continue;
+      if (/^\s/.test(line)) continue;
+      const name = match[1];
+      if (declarations.has(name) && declarations.get(name) !== path) {
+        throw new Error(`${path} declares ${name}, and so does ${declarations.get(name)}. Two files in one Swift module cannot both declare a type of that name — the build fails with "invalid redeclaration". If they describe different things, name them differently.`);
+      }
+      declarations.set(name, path);
+    }
+  }
+}
+
 // A public type declared inside a class is a nested type: TimiGateway.ClientErrorReport,
 // not ClientErrorReport. Swift is happy with that right up until another file
 // in the same module names it unqualified, and then the failure is "cannot
