@@ -1965,6 +1965,58 @@ for (const [path, marker] of [
   }
 }
 
+// Sign-in is one-time codes and nothing else, on every native surface. The
+// owner removed passwords and OAuth deliberately; the fastest way for them to
+// come back is a well-meaning revert, and the second-fastest is dormant auth
+// code being wired back up "because it was already there".
+{
+  const signInView = await read("apps/customer-mobile/Sources/TimiNowUI/SignInView.swift");
+  if (/SecureField\(/.test(signInView)) {
+    throw new Error("apps/customer-mobile/Sources/TimiNowUI/SignInView.swift shows a password field again. Sign-in is email/phone one-time codes only.");
+  }
+  const macAuth = await read("apps/vet-desktop/Sources/TimiVetCore/AuthController.swift");
+  if (/ASWebAuthenticationSession|strategy=oauth|passkey/i.test(macAuth.split("\n").filter((l) => !l.trim().startsWith("//") && !l.trim().startsWith("///")).join("\n"))) {
+    throw new Error("apps/vet-desktop/Sources/TimiVetCore/AuthController.swift has OAuth or passkey plumbing again. The consoles sign in with one-time codes only.");
+  }
+  const winSignIn = await read("apps/vet-windows/src/TimiVet/Views/SignInWindow.xaml");
+  if (/PasswordBox/.test(winSignIn)) {
+    throw new Error("apps/vet-windows/src/TimiVet/Views/SignInWindow.xaml has a PasswordBox again. Sign-in is email/phone one-time codes only.");
+  }
+  const winAuth = await read("apps/vet-windows/src/TimiVet/Services/ClerkAuthService.cs");
+  if (/HttpListener|RunRedirectSignInAsync/.test(winAuth)) {
+    throw new Error("apps/vet-windows/src/TimiVet/Services/ClerkAuthService.cs has the loopback OAuth flow again.");
+  }
+}
+
+// The customer pays a $25 Tími service fee at the time of service, and the
+// one place that must say so is the screen where they pay. The full $50
+// schedule lives in the legal sections and the clinic payouts panels.
+{
+  const deposit = await read("apps/customer-mobile/Sources/TimiNowUI/DepositView.swift");
+  if (!/T\u00edmi service fee, charged at the time of service/.test(deposit) && !/Tími service fee, charged at the time of service/.test(deposit)) {
+    throw new Error("apps/customer-mobile/Sources/TimiNowUI/DepositView.swift no longer discloses the Tími service fee at checkout.");
+  }
+  for (const [path, needle] of [
+    ["apps/vet-desktop/Sources/TimiVetUI/ConsoleView.swift", "$50 per completed intake"],
+    ["apps/vet-windows/src/TimiVet/Views/MainWindow.xaml", "$50 per completed intake"],
+  ]) {
+    const source = await read(path);
+    if (!source.includes(needle)) {
+      throw new Error(`${path} no longer states the real service fee (${needle}) in the payouts panel, leaving clinics with the old vague wording.`);
+    }
+  }
+}
+
+// The splash exists to end the sign-in flash at launch: it must hold until
+// session restore has actually been attempted, not just for a fixed delay.
+{
+  const app = await read("apps/customer-mobile/Sources/TimiNowApp/TimiNowApp.swift");
+  const code = app.split("\n").filter((l) => !l.trim().startsWith("//") && !l.trim().startsWith("///")).join("\n");
+  if (!/SplashView/.test(code) || !/\bhasAttemptedRestore\b(?![A-Za-z0-9_])/.test(code)) {
+    throw new Error("apps/customer-mobile/Sources/TimiNowApp/TimiNowApp.swift no longer gates the splash on hasAttemptedRestore, so the launch flashes the sign-in screen again.");
+  }
+}
+
 // The two Mapbox preconditions that were killing Navigate, pulled from the
 // device's own log. Both are traps, not throws - nothing catchable, the app
 // simply goes away - so the only defence is making them impossible to ship.
