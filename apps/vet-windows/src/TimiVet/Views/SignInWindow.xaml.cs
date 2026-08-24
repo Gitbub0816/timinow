@@ -33,21 +33,15 @@ public partial class SignInWindow : Window
         _viewModel.PropertyChanged += (_, e) =>
         {
             if (e.PropertyName == nameof(SignInViewModel.IsCodeStep) && viewModel.IsCodeStep) ResetOtpBoxes();
-            if (e.PropertyName == nameof(SignInViewModel.IsPasswordStep) && viewModel.IsPasswordStep) PasswordInput.Clear();
         };
         _viewModel.SignedIn += (_, _) => { DialogResult = true; Close(); };
         // Resolving the Clerk instance from the default Worker is the first thing that happens, before the
-        // window is even interactive — so the ordinary case is a window that opens straight onto "email,
-        // username, or phone" rather than onto a Cloudflare URL nobody at a front desk should have to know.
+        // window is even interactive — so the ordinary case is a window that opens straight onto "email
+        // or phone" rather than onto a Cloudflare URL nobody at a front desk should have to know.
         Loaded += async (_, _) => await _viewModel.StartAsync();
     }
 
     public SessionDescriptor? Session => _viewModel.Session;
-
-    private void PasswordBox_PasswordChanged(object sender, RoutedEventArgs e)
-    {
-        if (sender is PasswordBox box) _viewModel.Password = box.Password;
-    }
 
     private void ResetOtpBoxes()
     {

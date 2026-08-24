@@ -226,6 +226,10 @@ import Observation
                 arrivalWindowMinutes: arrivalWindowMinutes, holdMinutes: holdMinutes, waitMin: offerWaitMin, waitMax: offerWaitMax, note: clinicNote
             )
             try await api.respond(to: request, decision: decision)
+            // The beacon carries the shape of the decision and nothing that
+            // names the clinic, the pet, or the request — /api/analytics is
+            // cookieless by contract.
+            api.trackEvent("decision_made", meta: ["decision": decline ? "decline" : "offer"])
             succeed(decline
                 ? "Declined \(request.pet.name)'s request."
                 : (request.searchTarget ? "Availability offer sent for \(request.pet.name)." : "Arrival accepted for \(request.pet.name)."))

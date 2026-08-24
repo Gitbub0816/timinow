@@ -444,6 +444,9 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             var availableDateTime = AvailableAt ?? DateTime.Today;
             if (TimeSpan.TryParse(AvailableTimeText, out var time)) availableDateTime = availableDateTime.Date.Add(time);
             await _api.RespondAsync(request, new ClinicDecision { Decision = decline ? "decline" : "offer", ResponseType = ResponseType, AvailableAt = ResponseType == "available_at" ? new DateTimeOffset(availableDateTime) : null, ArrivalWindowMinutes = ArrivalWindowMinutes, HoldMinutes = HoldMinutes, WaitMin = OfferWaitMin, WaitMax = OfferWaitMax, Note = ClinicNote }, _lifetime.Token);
+            // The beacon carries the shape of the decision and nothing that names the clinic, the pet,
+            // or the request — /api/analytics is cookieless by contract.
+            _api.TrackEvent("decision_made", new Dictionary<string, string> { ["decision"] = decline ? "decline" : "offer" });
             Succeed(decline ? $"Declined {request.Pet.Name}'s request." : request.SearchTarget ? $"Availability offer sent for {request.Pet.Name}." : $"Arrival accepted for {request.Pet.Name}.");
             SelectedRequest = null; ClinicNote = ""; await RefreshAsync(true);
         }

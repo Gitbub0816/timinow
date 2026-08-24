@@ -125,7 +125,7 @@ public struct ConsoleView: View {
                     payoutList("PAID TO YOUR BANK BY STRIPE", store.payouts.earnings.payouts)
                 }
 
-                Text("Each amount is one arrival deposit less the Tími fee agreed in your workspace policy. The clinic bills the customer directly for veterinary charges; Tími never handles those.")
+                Text("Tími's service fee is $50 per completed intake. The standard arrangement collects $25 from the customer at the time of service, with the remainder deducted from this payout — unless your workspace passes the full fee to customers, which is disclosed to them at checkout. The clinic bills the customer directly for veterinary charges; Tími never handles those.")
                     .font(TimiVetFont.ui(10)).foregroundStyle(TimiVetColor.muted)
             }
             .padding(.top, 10)

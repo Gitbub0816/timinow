@@ -3,6 +3,7 @@ using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Threading;
 using TimiVet.Models;
 
@@ -154,6 +155,54 @@ public sealed class ClinicApiClient
         var path = item.SearchTarget ? $"/api/clinic/search-targets/{Uri.EscapeDataString(item.Id)}/decision" : $"/api/clinic/intakes/{Uri.EscapeDataString(item.Id)}/decision";
         using var response = await SendAsync(HttpMethod.Post, path, payload, cancellationToken);
         await EnsureSuccessAsync(response, cancellationToken);
+    }
+
+    // ---- Analytics (POST /api/analytics) --------------------------------
+
+    /// <summary>
+    /// Fire-and-forget beacon to POST /api/analytics.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately not routed through <see cref="CreateAsync"/>: the endpoint is public and cookieless,
+    /// so the beacon must carry no Worker token, demo header, or any other identifier. It is never
+    /// awaited and every failure is swallowed whole — a metrics beacon that can surface an error, or
+    /// hold up an intake decision, in a clinic's console has its priorities backwards.
+    /// </remarks>
+    public void TrackEvent(string name, Dictionary<string, string>? meta = null)
+    {
+        if (IsDemo || string.IsNullOrWhiteSpace(_settings.ApiBaseUrl)) return;
+        var url = new Uri(new Uri(_settings.ApiBaseUrl.Trim().TrimEnd('/') + "/"), "api/analytics");
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                using var request = new HttpRequestMessage(HttpMethod.Post, url)
+                {
+                    Content = JsonContent.Create(new AnalyticsPayload { Events = [new AnalyticsEvent { Name = name, Meta = meta }] }, options: Json)
+                };
+                using var response = await _http.SendAsync(request, CancellationToken.None);
+            }
+            catch
+            {
+                // Silent by contract: a failed beacon must never reach a screen, a toast, or a log line
+                // somebody at a front desk might read as the console being broken.
+            }
+        });
+    }
+
+    /// <summary>The console-analytics wire shape: {events: [{name, path?, meta?}]}, at most 25 events,
+    /// and — because the endpoint is cookieless by design — nothing that identifies the operator or the
+    /// tenant.</summary>
+    private sealed class AnalyticsPayload
+    {
+        public List<AnalyticsEvent> Events { get; set; } = [];
+    }
+
+    private sealed class AnalyticsEvent
+    {
+        public string Name { get; set; } = "";
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public Dictionary<string, string>? Meta { get; set; }
     }
 
     private async Task SendAndDiscardAsync(HttpMethod method, string path, object? body, CancellationToken cancellationToken)

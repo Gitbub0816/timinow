@@ -143,6 +143,28 @@ public final class ClinicAPIClient: @unchecked Sendable {
         return try await send("GET", "/api/clinic/payouts")
     }
 
+    // MARK: - Analytics
+
+    /// Fire-and-forget beacon to `POST /api/analytics`.
+    ///
+    /// Deliberately not routed through `buildRequest`: the endpoint is public
+    /// and cookieless, so the beacon must carry no session token, demo header,
+    /// or any other identifier. Failures are swallowed whole and never awaited
+    /// — a metrics beacon that can surface an error, or hold up an intake
+    /// decision, in a clinic's console has its priorities backwards.
+    public func trackEvent(_ name: String, meta: [String: String]? = nil) {
+        guard !isDemo, let base = try? resolvedBase(),
+              let url = URL(string: "api/analytics", relativeTo: base)?.absoluteURL else { return }
+        guard let body = try? Self.json.encode(AnalyticsPayload(events: [AnalyticsEvent(name: name, meta: meta)])) else { return }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 10
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = body
+        let session = self.session
+        Task { _ = try? await session.data(for: request) }
+    }
+
     // MARK: - Tenant people management
 
     public func getMembers() async throws -> TenantRoster {
@@ -335,3 +357,9 @@ private struct IntakeDecisionPayload: Encodable {
 
 private struct AddMemberPayload: Encodable { var email: String; var role: String }
 private struct RolePayload: Encodable { var role: String }
+
+/// The console-analytics contract (POST /api/analytics): {events: [{name,
+/// path?, meta?}]}, at most 25 events, and — because the endpoint is
+/// cookieless by design — nothing that identifies the operator or the tenant.
+private struct AnalyticsEvent: Encodable { var name: String; var meta: [String: String]? }
+private struct AnalyticsPayload: Encodable { var events: [AnalyticsEvent] }

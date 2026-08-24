@@ -35,16 +35,15 @@ The app starts in **interactive demo mode** if no Worker URL is configured, back
 Every screen in this app is Tími-designed — `docs/PLATFORM-CONTRACT.md`'s "no mounted Clerk UI" rule applies to native clients too. `TimiVetCore/AuthController.swift` drives Clerk's Frontend API (`/v1/client/...`) directly over HTTPS, form-encoded, exactly like `@clerk/clerk-js` running headless on the web surfaces and like the Windows client's `ClerkAuthService.cs`:
 
 1. `GET /api/config` → `clerkPublishableKey` (or an explicit `clerkFrontendApi`, if the Worker ever starts returning one) → the Clerk Frontend API host, decoded as `pk_(test|live)_` + base64(`"<host>$"`).
-2. `POST /v1/client/sign_ins` with an identifier → Clerk's supported first factors for that account.
-3. Password → `attempt_first_factor` with `strategy=password`. Email/phone code → `prepare_first_factor` then `attempt_first_factor` with the code.
-4. Google/Apple → `ASWebAuthenticationSession` opens `firstFactorVerification.externalVerificationRedirectUrl` (the **system** Safari sheet, not a Clerk-branded modal) with the `timivet://auth-callback` scheme registered in `Darwin/Info.plist`; the app then polls `GET /v1/client` for the new session.
-5. On success, `POST /v1/client/sessions/{id}/tokens/timinow` mints the JWT-template token the Worker expects (falling back to the templateless `/tokens` endpoint if `timinow` isn't configured yet).
-6. If the account belongs to more than one Clerk organization, a custom workspace picker calls `POST /v1/client/sessions/{id}/touch` with `active_organization_id` — the Frontend API's non-UI equivalent of `clerk.setActive({ organization })` — then re-mints the token.
-7. `GET /api/session` reads back tenant/location/role and repairs Clerk metadata server-side, exactly as `docs/PLATFORM-CONTRACT.md` describes.
+2. `POST /v1/client/sign_ins` with an identifier → Clerk's supported first factors for that account, filtered to the only two this console offers: an emailed one-time code or a texted one-time code (`email_code` / `phone_code`). Passwords, Google/Apple OAuth and passkeys are deliberately not surfaced — every Tími sign-in surface offers exactly the two code strategies.
+3. `prepare_first_factor` sends the code, then `attempt_first_factor` verifies it.
+4. On success, `POST /v1/client/sessions/{id}/tokens/timinow` mints the JWT-template token the Worker expects (falling back to the templateless `/tokens` endpoint if `timinow` isn't configured yet).
+5. If the account belongs to more than one Clerk organization, a custom workspace picker calls `POST /v1/client/sessions/{id}/touch` with `active_organization_id` — the Frontend API's non-UI equivalent of `clerk.setActive({ organization })` — then re-mints the token.
+6. `GET /api/session` reads back tenant/location/role and repairs Clerk metadata server-side, exactly as `docs/PLATFORM-CONTRACT.md` describes.
 
 The session token refreshes proactively (re-minted once within 10 seconds of its JWT `exp`) and reactively — `ClinicAPIClient` retries once on a 401 by force-refreshing through `ClinicSessionTokenProviding`, the small protocol that lets the API client and the auth controller talk without a retain cycle.
 
-**Passkeys are not wired up in this build.** Clerk's Frontend API returns a WebAuthn challenge for `strategy=passkey`, not a browser redirect URL, so it cannot reuse the OAuth path above — a real implementation needs `ASAuthorizationPlatformPublicKeyCredentialProvider` + `ASAuthorizationController`, a `webcredentials:` associated-domain entitlement, and a hosted `apple-app-site-association` file, none of which can be exercised without a Mac and a live Clerk passkey configuration. The sign-in screen says so plainly instead of showing a button that would only ever fail.
+**One-time codes are the only sign-in methods.** Password entry, Google/Apple OAuth (the old `ASWebAuthenticationSession` browser round trip) and passkeys were removed from the UI and the flow on the owner's instruction: every sign-in surface offers email codes and phone codes only. The stored-credential resume and the workspace picker are unchanged.
 
 ## Where settings and tokens live
 
@@ -88,11 +87,9 @@ Everything below needs a Mac (and, where noted, Xcode or the Clerk dashboard) to
 
 1. **Xcode / macOS**: build once with `xcodegen generate && open Project.xcworkspace`, confirm the app launches, signs in, and every screen renders — this port has not been compiled or run.
 2. **Code signing & notarization**: set a Developer ID Application signing identity and team in `Darwin/project.yml`/Xcode, then notarize (`xcrun notarytool`) before distributing outside the Mac App Store. `Darwin/TimiVet.entitlements` already sandboxes the app (`com.apple.security.app-sandbox`, outgoing network only, a Keychain access group) — verify the Keychain access group's team-ID prefix once you have a real signing identity, since `$(AppIdentifierPrefix)` only resolves correctly once the app is actually signed.
-3. **Clerk dashboard — redirect URL**: add `timivet://auth-callback` to the Clerk instance's allowed redirect URLs, or Google/Apple sign-in will fail after the browser step with a redirect-mismatch error.
-4. **Clerk dashboard — JWT template**: confirm the `timinow` JWT template from `docs/PLATFORM-CONTRACT.md` exists; `AuthController` falls back to the templateless token endpoint if it does not, at the cost of an extra D1 read per request on the Worker.
-5. **Worker URL**: point Settings → "Cloudflare Worker HTTPS URL" at the real `timinow-vet` Worker (`wrangler.vet.jsonc`) before relying on anything beyond demo mode.
-6. **Passkeys**: implement the native WebAuthn ceremony described above, or leave the current "not available in this build" message in place.
-7. **`swift test`, a signed archive, and an accessibility pass** before shipping, matching the customer app's own checklist.
+3. **Clerk dashboard — JWT template**: confirm the `timinow` JWT template from `docs/PLATFORM-CONTRACT.md` exists; `AuthController` falls back to the templateless token endpoint if it does not, at the cost of an extra D1 read per request on the Worker. (No OAuth redirect URL needs configuring any more — the console signs in with one-time codes only, so the old `timivet://auth-callback` entry is no longer required.)
+4. **Worker URL**: point Settings → "Cloudflare Worker HTTPS URL" at the real `timinow-vet` Worker (`wrangler.vet.jsonc`) before relying on anything beyond demo mode.
+5. **`swift test`, a signed archive, and an accessibility pass** before shipping, matching the customer app's own checklist.
 
 ## Known limitations / follow-ups
 

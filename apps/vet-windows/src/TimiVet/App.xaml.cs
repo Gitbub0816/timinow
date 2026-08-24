@@ -39,6 +39,11 @@ public partial class App : System.Windows.Application
         _auth = new ClerkAuthService(_credentials);
         _api = new ClinicApiClient(_settings, _auth);
 
+        // Once per launch, from the one place WPF guarantees runs once — not from the view model,
+        // whose StartAsync re-runs on reconnects. Fire-and-forget by contract; sign-in has not
+        // happened yet and the beacon carries no identifier, so nothing here waits on it.
+        _api.TrackEvent("console_opened");
+
         var session = await EstablishSessionAsync();
         if (session is null)
         {
@@ -75,8 +80,8 @@ public partial class App : System.Windows.Application
     ///
     /// In order: resume the stored Clerk session silently; if the network is down but this machine has
     /// previously been confirmed as belonging to a veterinary workspace, open the console anyway and let
-    /// it reconnect in the background; otherwise show the sign-in window, which now starts at "email,
-    /// username, or phone" rather than at a Cloudflare Worker URL.
+    /// it reconnect in the background; otherwise show the sign-in window, which starts at "email or
+    /// phone" rather than at a Cloudflare Worker URL.
     ///
     /// The one thing that never happens here is a network failure erasing a credential. It used to: a
     /// blanket catch around the restore dropped straight through to interactive sign-in, so a console
@@ -118,7 +123,7 @@ public partial class App : System.Windows.Application
         {
             var signInViewModel = new SignInViewModel(_settings, _auth, _api, _store!);
             // Skip straight to the "no clinic access" outcome when Clerk itself is already signed in —
-            // no need to re-collect a Worker URL, identifier, or password that already resolved fine.
+            // no need to re-collect a Worker URL or identifier that already resolved fine.
             if (restoredButNotClinic) await signInViewModel.EnterAtSessionCheckAsync();
             restoredButNotClinic = false;
 

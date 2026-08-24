@@ -32,7 +32,7 @@ talk to the same Worker, default to the same address, and are meant to be indist
   can auto-show itself when a new pending request arrives
 - Minimize, hide-to-tray, restore, and start-with-Windows controls
 - A fully custom-UI Clerk sign-in flow (no Clerk-hosted or Clerk-branded surface is ever mounted) with
-  email/username/phone + password or one-time-code, and Google/Apple OAuth via the OS browser,
+  email/phone one-time codes as the only sign-in methods — no password step, no OAuth buttons —
   and a workspace picker for accounts in more than one organization
 - A tenant people console (roster, invite, role change, remove, revoke invitation) for workspace admins
 - Complete interactive fixture mode when no HTTPS Worker URL is configured
@@ -81,7 +81,7 @@ The executable is unsigned. Windows SmartScreen will show "Windows protected you
 until it is signed with an Authenticode certificate; **More info → Run anyway** gets past it for
 testing, but a code-signing certificate is the answer before any clinic installs this.
 
-On first launch the sign-in window opens straight onto **email, username, or phone**: the production
+On first launch the sign-in window opens straight onto **email or phone**: the production
 Worker address is the default and its Clerk instance is resolved before the window is interactive. The
 address step only appears if that address cannot be reached, and then it carries the reason rather than a
 blank field; **Connect to a different Tími Worker** on the identifier screen reaches it deliberately, for a
@@ -101,9 +101,10 @@ skip sign-in at startup.
   Frontend API directly over HTTPS (`/v1/client/sign_ins`, `prepare_first_factor`, `attempt_first_factor`,
   `/v1/client`, `/v1/client/sessions/{id}/tokens/timinow`, `/v1/me/organization_memberships`, `.../touch`).
   No Clerk-hosted or Clerk-branded surface is ever mounted — every screen in `Views/SignInWindow.xaml` is
-  Tími-designed WPF. OAuth (Google, Apple) sign-in opens the redirect URL Clerk returns in the
-  user's **default OS browser**, never an embedded Clerk widget, and complete against a one-shot loopback
-  `HttpListener` at `http://127.0.0.1:<port>/timivet-callback/`.
+  Tími-designed WPF. **One-time codes are the only first factors offered**: an emailed code or a texted
+  code. The password step (and its `PasswordBox`), the password-reset path, and the Google/Apple OAuth
+  browser round trip were all removed on the owner's instruction that every sign-in surface offers email
+  and phone codes only; any other strategy Clerk reports for an account is filtered out of the picker.
 - **Clerk is talked to as a native client, not as a browser.** Every Frontend API request carries
   `_is_native=true` and the Clerk client JWT in the `Authorization` header; cookies are off in that mode,
   and the two are never mixed (Clerk refuses a request carrying both, which is why there are two
@@ -154,22 +155,16 @@ skip sign-in at startup.
 
 - A JWT template named **`timinow`** (see `docs/PLATFORM-CONTRACT.md`) so the Worker can authorize without
   an extra Backend API round trip.
-- **`http://127.0.0.1/timivet-callback/`** (and the ephemeral loopback port range the OS hands out for it)
-  added as an allowed redirect origin/URL for OAuth — otherwise Google/Apple sign-in cannot complete back
-  into the desktop app.
-- Google and Apple OAuth connections enabled on the Clerk instance if those buttons are to work.
+- The OAuth redirect-URL entry this section used to require
+  (`http://127.0.0.1/timivet-callback/` plus the ephemeral loopback port range) is **no longer required**:
+  Google/Apple OAuth was removed from the sign-in flow, so nothing in this app ever opens a browser
+  redirect or listens on loopback. The entry can be deleted from the Clerk instance once no older build of
+  this console is still in use.
 
-### Known limitation: passkeys
+### Sign-in methods
 
-Passkeys are not offered in this desktop build, and the sign-in window says so rather than showing a button
-that cannot work.
-
-Clerk's Frontend API treats `strategy=passkey` differently from OAuth: it returns a WebAuthn challenge to be
-signed by an authenticator, not a browser redirect URL. Completing it from WPF would mean P/Invoking the
-Windows `webauthn.dll` FIDO2 API and marshalling the assertion back into
-`attempt_first_factor` — a meaningful amount of native interop that has not been built here.
-
-Everything else is available: email, username, or phone as the identifier, then password, an emailed code, a
-texted code, Google, or Apple. Staff who prefer passkeys can use them in the Tími web console, which gets
-WebAuthn from the browser for free. If desktop passkeys become a requirement, the work is contained to
-`ClerkAuthService` and the identifier step of `SignInWindow`.
+Email and phone one-time codes are the only sign-in methods this console offers, matching every other Tími
+sign-in surface. Passwords, Google/Apple OAuth, and passkeys are not offered — an account whose only Clerk
+factor is one of those must have an email address or phone number added by a workspace administrator before
+it can sign in here. (Passkeys additionally would need the Windows `webauthn.dll` FIDO2 interop that was
+never built for this app; that constraint is moot now that codes are the whole surface.)

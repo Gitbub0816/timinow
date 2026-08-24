@@ -7,11 +7,9 @@
         WindowStartupLocation="CenterScreen" ResizeMode="NoResize">
     <Window.Resources>
         <BooleanToVisibilityConverter x:Key="B2V"/>
-        <local:InverseBooleanToVisibilityConverter x:Key="InverseB2V"/>
         <local:StringEmptyToVisibilityConverter x:Key="StringToVisibility"/>
         <local:PositiveIntToVisibilityConverter x:Key="CooldownVisibility"/>
         <local:StrategyLabelConverter x:Key="StrategyLabel"/>
-        <local:NewPasswordLabelConverter x:Key="PasswordLabel"/>
     </Window.Resources>
     <Border Style="{StaticResource Card}" Margin="26">
         <StackPanel>
@@ -33,25 +31,23 @@
                 <Button Content="Continue" Command="{Binding ContinueWorkerUrlCommand}" Style="{StaticResource PrimaryButton}"/>
             </StackPanel>
 
-            <!-- Step 2: Identifier -->
+            <!-- Step 2: Identifier. One-time codes are the only sign-in methods this console offers —
+                 the password step and the Google/Apple OAuth buttons were removed on the owner's
+                 instruction that every sign-in surface offers email and phone codes only. -->
             <StackPanel Visibility="{Binding IsIdentifierStep, Converter={StaticResource B2V}}">
-                <TextBlock Text="Email, username, or phone" FontWeight="SemiBold"/>
-                <TextBox Text="{Binding Identifier, UpdateSourceTrigger=PropertyChanged}" Margin="0,6,0,14"/>
+                <TextBlock Text="Email or phone" FontWeight="SemiBold"/>
+                <TextBlock Text="We'll email or text you a one-time code." Foreground="{StaticResource Muted}" FontSize="11" Margin="0,2,0,8" TextWrapping="Wrap"/>
+                <TextBox Text="{Binding Identifier, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,14"/>
                 <Button Content="Continue" Command="{Binding ContinueIdentifierCommand}" Style="{StaticResource PrimaryButton}"/>
-                <Separator Margin="0,18,0,10"/>
-                <TextBlock Text="OR CONTINUE WITH" Style="{StaticResource Eyebrow}" HorizontalAlignment="Center" Margin="0,0,0,10"/>
-                <Button Content="Continue with Google" Command="{Binding GoogleCommand}" Style="{StaticResource QuietButton}" Margin="0,0,0,8"/>
-                <Button Content="Continue with Apple" Command="{Binding AppleCommand}" Style="{StaticResource QuietButton}" Margin="0,0,0,8"/>
-                <TextBlock Text="Passkeys need a WebAuthn authenticator, which this desktop build does not host. Sign in with a passkey in the Tími web console instead." TextWrapping="Wrap" Foreground="{StaticResource Muted}" FontSize="12" Margin="0,4,0,0"/>
                 <!-- The address step is skipped whenever the default Worker answers. This is the way back
                      to it for a private deployment or a loopback development Worker. -->
                 <Button Content="Connect to a different Tími Worker" Command="{Binding ChangeWorkerAddressCommand}" Style="{StaticResource QuietButton}"
                         Margin="0,12,0,0" BorderThickness="0" Background="Transparent" FontWeight="Normal" FontSize="11" Foreground="{StaticResource Muted}"/>
             </StackPanel>
 
-            <!-- Step 3: Strategy picker -->
+            <!-- Step 3: Strategy picker (email code or phone code — nothing else is ever listed) -->
             <StackPanel Visibility="{Binding IsStrategyStep, Converter={StaticResource B2V}}">
-                <TextBlock Text="How would you like to sign in?" FontWeight="SemiBold" Margin="0,0,0,10"/>
+                <TextBlock Text="Where should we send your code?" FontWeight="SemiBold" Margin="0,0,0,10"/>
                 <ItemsControl ItemsSource="{Binding StrategyOptions}">
                     <ItemsControl.ItemTemplate>
                         <DataTemplate>
@@ -69,16 +65,7 @@
                 <Button Content="Use a different account" Command="{Binding BackToIdentifierCommand}" Style="{StaticResource QuietButton}" Margin="0,8,0,0" BorderThickness="0" Background="Transparent"/>
             </StackPanel>
 
-            <!-- Step 4: Password -->
-            <StackPanel Visibility="{Binding IsPasswordStep, Converter={StaticResource B2V}}">
-                <TextBlock Text="{Binding AwaitingNewPassword, Converter={StaticResource PasswordLabel}}" FontWeight="SemiBold"/>
-                <PasswordBox x:Name="PasswordInput" PasswordChanged="PasswordBox_PasswordChanged" Margin="0,6,0,10"/>
-                <Button Content="Continue" Command="{Binding SubmitPasswordCommand}" Style="{StaticResource PrimaryButton}"/>
-                <Button Content="Forgot password?" Command="{Binding ForgotPasswordCommand}" Style="{StaticResource QuietButton}" Margin="0,8,0,0" BorderThickness="0" Background="Transparent"
-                        Visibility="{Binding AwaitingNewPassword, Converter={StaticResource InverseB2V}}"/>
-            </StackPanel>
-
-            <!-- Step 5: One-time code -->
+            <!-- Step 4: One-time code -->
             <StackPanel Visibility="{Binding IsCodeStep, Converter={StaticResource B2V}}">
                 <TextBlock Text="Enter the 6-digit code" FontWeight="SemiBold"/>
                 <TextBlock Text="{Binding SafeIdentifier, StringFormat='Sent to {0}'}" Foreground="{StaticResource Muted}" FontSize="11" Margin="0,2,0,12"/>
@@ -99,7 +86,7 @@
                            Visibility="{Binding ResendSecondsRemaining, Converter={StaticResource CooldownVisibility}}"/>
             </StackPanel>
 
-            <!-- Step 6: Workspace picker -->
+            <!-- Step 5: Workspace picker -->
             <StackPanel Visibility="{Binding IsWorkspaceStep, Converter={StaticResource B2V}}">
                 <TextBlock Text="Choose a workspace" FontWeight="SemiBold" Margin="0,0,0,10"/>
                 <ItemsControl ItemsSource="{Binding WorkspaceOptions}">
@@ -118,7 +105,7 @@
                 </ItemsControl>
             </StackPanel>
 
-            <!-- Step 7: Not a clinic workspace -->
+            <!-- Step 6: Not a clinic workspace -->
             <StackPanel Visibility="{Binding IsNotClinicStep, Converter={StaticResource B2V}}">
                 <TextBlock Text="This account is not part of a veterinary workspace" FontFamily="Georgia" FontSize="19" FontWeight="Bold" TextWrapping="Wrap"/>
                 <TextBlock TextWrapping="Wrap" Foreground="{StaticResource Muted}" FontSize="12" Margin="0,8,0,16"

@@ -60,6 +60,9 @@ import TimiVetUI
         // plus UIUserInterfaceStyle); this is the macOS half of that, and it
         // was never applied.
         NSApp.appearance = NSAppearance(named: .aqua)
+        // Once per launch, from the one callback macOS guarantees runs once —
+        // not from bootstrapAfterSignIn, which re-runs on every sign-out/in.
+        apiClient.trackEvent("console_opened")
         Task { @MainActor in await authController.start() }
     }
 

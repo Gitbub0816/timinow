@@ -529,7 +529,7 @@
                                     </StackPanel>
                                 </Grid>
 
-                                <TextBlock Text="Each amount is one arrival deposit less the Tími fee agreed in your workspace policy. The clinic bills the customer directly for veterinary charges; Tími never handles those."
+                                <TextBlock Text="Tími's service fee is $50 per completed intake. The standard arrangement collects $25 from the customer at the time of service, with the remainder deducted from this payout — unless your workspace passes the full fee to customers, which is disclosed to them at checkout. The clinic bills the customer directly for veterinary charges; Tími never handles those."
                                            Foreground="{StaticResource Muted}" FontSize="10" TextWrapping="Wrap" Margin="0,14,0,0"/>
                             </StackPanel>
                         </Border>

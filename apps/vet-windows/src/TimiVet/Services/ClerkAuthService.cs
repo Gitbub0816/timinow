@@ -1,8 +1,6 @@
-using System.Diagnostics;
 using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
-using System.Net.Sockets;
 using System.Text;
 using System.Threading;
 using System.Text.Json;
@@ -16,7 +14,6 @@ public static class ClerkSignInStatus
     public const string Complete = "complete";
     public const string NeedsFirstFactor = "needs_first_factor";
     public const string NeedsSecondFactor = "needs_second_factor";
-    public const string NeedsNewPassword = "needs_new_password";
 }
 
 public sealed class ClerkApiException(string message, HttpStatusCode statusCode) : Exception(message)
@@ -67,23 +64,12 @@ public sealed class ClerkFirstFactor
     public bool Primary { get; set; }
 }
 
-public sealed class ClerkVerificationResource
-{
-    public string? Status { get; set; }
-    public string? Strategy { get; set; }
-    [JsonPropertyName("external_verification_redirect_url")] public string? ExternalVerificationRedirectUrl { get; set; }
-}
-
 public sealed class ClerkSignInResource
 {
     public string? Id { get; set; }
     public string? Status { get; set; }
     [JsonPropertyName("supported_first_factors")] public List<ClerkFirstFactor>? SupportedFirstFactors { get; set; }
     [JsonPropertyName("created_session_id")] public string? CreatedSessionId { get; set; }
-    [JsonPropertyName("first_factor_verification")] public ClerkVerificationResource? FirstFactorVerification { get; set; }
-
-    [JsonIgnore]
-    public string? ExternalVerificationRedirectUrl => FirstFactorVerification?.ExternalVerificationRedirectUrl;
 }
 
 public sealed class ClerkSessionResource
@@ -345,16 +331,15 @@ public sealed class ClerkAuthService : IDisposable
         return TrackSignIn(Extract<ClerkSignInResource>(response));
     }
 
-    public async Task<ClerkAuthState> AttemptFirstFactorAsync(string signInId, string strategy, string? code, string? password, CancellationToken ct)
+    /// <summary>
+    /// Verifies a one-time code. Codes are the only first factor this console attempts — the password
+    /// and OAuth strategies were removed on the owner's instruction that every sign-in surface offers
+    /// email and phone codes only.
+    /// </summary>
+    public async Task<ClerkAuthState> AttemptFirstFactorAsync(string signInId, string strategy, string code, CancellationToken ct)
     {
         var response = await ClerkRequestAsync(HttpMethod.Post, $"/v1/client/sign_ins/{signInId}/attempt_first_factor",
-            [("strategy", strategy), ("code", code), ("password", password)], ct);
-        return await CompleteIfNeededAsync(Extract<ClerkSignInResource>(response), ct);
-    }
-
-    public async Task<ClerkAuthState> ResetPasswordAsync(string signInId, string newPassword, CancellationToken ct)
-    {
-        var response = await ClerkRequestAsync(HttpMethod.Post, $"/v1/client/sign_ins/{signInId}/reset_password", [("password", newPassword)], ct);
+            [("strategy", strategy), ("code", code)], ct);
         return await CompleteIfNeededAsync(Extract<ClerkSignInResource>(response), ct);
     }
 
@@ -390,38 +375,6 @@ public sealed class ClerkAuthService : IDisposable
         }
         await MintWorkerTokenAsync(ct);
         PersistState();
-    }
-
-    /// <summary>Begins Google/Apple OAuth (and, best-effort, passkey) via the OS browser against a one-shot loopback listener.</summary>
-    public async Task<bool> RunRedirectSignInAsync(string strategy, CancellationToken ct)
-    {
-        var prefix = ReserveLoopbackPrefix();
-        using var listener = new HttpListener();
-        listener.Prefixes.Add(prefix);
-        listener.Start();
-        try
-        {
-            var response = await ClerkRequestAsync(HttpMethod.Post, "/v1/client/sign_ins", [("strategy", strategy), ("redirect_url", prefix)], ct);
-            var signIn = Extract<ClerkSignInResource>(response);
-            TrackSignIn(signIn);
-            var redirectUrl = signIn.ExternalVerificationRedirectUrl;
-            if (string.IsNullOrWhiteSpace(redirectUrl))
-                throw new InvalidOperationException($"Clerk did not return a browser sign-in link for '{strategy}'. This build cannot complete that method from here.");
-
-            Process.Start(new ProcessStartInfo(redirectUrl) { UseShellExecute = true });
-
-            var contextTask = listener.GetContextAsync();
-            var winner = await Task.WhenAny(contextTask, Task.Delay(TimeSpan.FromMinutes(3), ct));
-            if (winner != contextTask) throw new TimeoutException("Sign-in was not completed in the browser within 3 minutes.");
-            var context = await contextTask;
-            await RespondLoopbackAsync(context, ct);
-
-            return await CompleteAfterRedirectAsync(ct);
-        }
-        finally
-        {
-            listener.Stop();
-        }
     }
 
     /// <summary>
@@ -477,38 +430,6 @@ public sealed class ClerkAuthService : IDisposable
     }
 
     // ---- internals -----------------------------------------------------
-
-    private async Task<bool> CompleteAfterRedirectAsync(CancellationToken ct)
-    {
-        var client = await GetClientAsync(ct);
-        var sessionId = client.LastActiveSessionId ?? client.Sessions.FirstOrDefault(s => string.Equals(s.Status, "active", StringComparison.OrdinalIgnoreCase))?.Id;
-        if (string.IsNullOrEmpty(sessionId)) return false;
-        _activeSessionId = sessionId;
-        await MintWorkerTokenAsync(ct);
-        PersistState();
-        return true;
-    }
-
-    private static async Task RespondLoopbackAsync(HttpListenerContext context, CancellationToken ct)
-    {
-        const string html = "<html><body style=\"font-family:'Segoe UI',sans-serif;background:#F3F5FA;color:#111B3B;padding:48px;text-align:center\">" +
-            "<h2 style=\"font-family:Georgia,serif\">Tími Vet sign-in complete</h2>" +
-            "<p>You can close this window and return to Tími Vet.</p></body></html>";
-        var buffer = Encoding.UTF8.GetBytes(html);
-        context.Response.ContentType = "text/html; charset=utf-8";
-        context.Response.ContentLength64 = buffer.Length;
-        await context.Response.OutputStream.WriteAsync(buffer, ct);
-        context.Response.OutputStream.Close();
-    }
-
-    private static string ReserveLoopbackPrefix()
-    {
-        var probe = new TcpListener(IPAddress.Loopback, 0);
-        probe.Start();
-        var port = ((IPEndPoint)probe.LocalEndpoint).Port;
-        probe.Stop();
-        return $"http://127.0.0.1:{port}/timivet-callback/";
-    }
 
     private async Task<ClerkAuthState> CompleteIfNeededAsync(ClerkSignInResource signIn, CancellationToken ct)
     {

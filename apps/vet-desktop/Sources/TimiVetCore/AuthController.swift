@@ -1,11 +1,5 @@
 import Foundation
 import Observation
-#if canImport(AuthenticationServices)
-import AuthenticationServices
-#endif
-#if canImport(AppKit)
-import AppKit
-#endif
 
 // Custom-UI Clerk sign-in, driven directly against Clerk's Frontend API
 // (`/v1/client/...`) exactly as docs/PLATFORM-CONTRACT.md's "Authentication
@@ -15,17 +9,20 @@ import AppKit
 // same endpoints, same request/response shapes, same "client cookie is the
 // long-lived credential, the Worker token is short-lived and re-minted from
 // it" persistence model — translated to Apple idioms (URLSession's cookie
-// storage instead of a CookieContainer, Keychain instead of DPAPI,
-// ASWebAuthenticationSession + a custom URL scheme instead of a loopback
-// HTTP listener for the OAuth browser round trip). Passkey sign-in is not
-// wired up in this build — see `beginPasskey()` below for why.
+// storage instead of a CookieContainer, Keychain instead of DPAPI).
+//
+// The only first factors this console offers are one-time codes — an emailed
+// code or a texted code. Passwords, Google/Apple OAuth and passkeys are
+// deliberately not surfaced: the owner's rule is that every sign-in surface
+// offers exactly the two code strategies, so a factor Clerk reports beyond
+// those is filtered out in `labelFactors` rather than rendered and disowned
+// later.
 
 // MARK: - Public surface
 
 public enum AuthStage: String, Sendable {
     case identifier
     case strategyPicker
-    case password
     case code
     case workspacePicker
     case signedIn
@@ -46,7 +43,6 @@ public struct AuthWorkspaceOption: Identifiable, Hashable, Sendable {
 @MainActor @Observable public final class AuthController: ClinicSessionTokenProviding, @unchecked Sendable {
     public var stage: AuthStage = .identifier
     public var identifierText = ""
-    public var passwordText = ""
     public var codeText = ""
     public var factorOptions: [AuthFactorOption] = []
     public var selectedFactor: AuthFactorOption?
@@ -56,9 +52,6 @@ public struct AuthWorkspaceOption: Identifiable, Hashable, Sendable {
     public var session: SessionDescriptor?
 
     public var isSignedIn: Bool { stage == .signedIn && session?.authenticated == true }
-    /// The OAuth buttons only make sense once the Clerk Frontend API
-    /// host is known; the identifier field works with just a Worker URL.
-    public var canUseExternalMethods: Bool { frontendAPIHost != nil }
 
     private let apiClient: ClinicAPIClient
     private let keychain = KeychainStore()
@@ -77,11 +70,6 @@ public struct AuthWorkspaceOption: Identifiable, Hashable, Sendable {
     /// Native Frontend API mode (`_is_native=true`). Flipped off for the rest
     /// of the launch if the instance answers `native_api_disabled`.
     private var clerkNativeMode = true
-
-    #if canImport(AuthenticationServices) && canImport(AppKit)
-    private var webAuthSession: ASWebAuthenticationSession?
-    private let presentationProvider = OAuthPresentationProvider()
-    #endif
 
     private static let clerkDecoder: JSONDecoder = {
         let decoder = JSONDecoder()
@@ -210,7 +198,7 @@ public struct AuthWorkspaceOption: Identifiable, Hashable, Sendable {
             if signIn.status == "complete" { try await completeIfNeeded(signIn); return }
             factorOptions = Self.labelFactors(pendingFactors)
             if factorOptions.isEmpty {
-                errorMessage = "This account has no supported sign-in method configured."
+                errorMessage = "This account has no email address or phone number Tími can send a code to. Ask your workspace administrator to add one."
             } else if factorOptions.count == 1, let only = factorOptions.first {
                 await choose(only)
             } else {
@@ -226,7 +214,6 @@ public struct AuthWorkspaceOption: Identifiable, Hashable, Sendable {
     public func choose(_ factor: AuthFactorOption) async {
         selectedFactor = factor
         errorMessage = nil
-        if factor.strategy == "password" { stage = .password; return }
         guard let signInId = pendingSignInId else { return }
         guard let wire = pendingFactors.first(where: { $0.strategy == factor.strategy }) else { stage = .strategyPicker; return }
         isBusy = true
@@ -246,29 +233,10 @@ public struct AuthWorkspaceOption: Identifiable, Hashable, Sendable {
         }
     }
 
-    public func submitPassword() async {
-        guard let signInId = pendingSignInId else { return }
-        guard !passwordText.isEmpty else { errorMessage = "Enter your password."; return }
-        isBusy = true; errorMessage = nil
-        defer { isBusy = false }
-        do {
-            let data = try await clerkRequest(
-                path: "/v1/client/sign_ins/\(signInId)/attempt_first_factor", method: "POST",
-                form: [("strategy", "password"), ("password", passwordText)]
-            )
-            let signIn = try Self.clerkDecoder.decode(ClerkWireSignIn.self, from: data)
-            try await completeIfNeeded(signIn)
-        } catch let error as ClinicAPIError {
-            errorMessage = error.message
-        } catch {
-            errorMessage = "That password was not accepted."
-        }
-    }
-
     public func submitCode() async {
         guard let signInId = pendingSignInId, let strategy = selectedFactor?.strategy else { return }
         let code = codeText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard code.count >= 4 else { errorMessage = "Enter the code Clerk sent you."; return }
+        guard code.count >= 4 else { errorMessage = "Enter the code we sent you."; return }
         isBusy = true; errorMessage = nil
         defer { isBusy = false }
         do {
@@ -361,22 +329,6 @@ public struct AuthWorkspaceOption: Identifiable, Hashable, Sendable {
         }
     }
 
-    /// Clerk's Frontend API returns a WebAuthn challenge for
-    /// `strategy=passkey`, not a browser redirect URL — the identifier-less
-    /// path OAuth uses does not apply here, so this is not routed through
-    /// `beginOAuth`. A real passkey ceremony needs
-    /// `ASAuthorizationPlatformPublicKeyCredentialProvider` +
-    /// `ASAuthorizationController` plus a `webcredentials:` associated-domain
-    /// entitlement and a hosted `apple-app-site-association` file, none of
-    /// which can be verified without a Mac and a live Clerk passkey
-    /// configuration — see this app's README. Rather than ship a button that
-    /// silently fails, this surfaces the same "use the web console instead"
-    /// message the Windows client shows for the strategies it cannot
-    /// complete either.
-    public func beginPasskey() async {
-        errorMessage = "Passkeys aren't available in this build yet — sign in with the Tími web console, or use email, phone, password, Google, or Apple here."
-    }
-
     public func signOut() async {
         isBusy = true
         defer { isBusy = false }
@@ -395,7 +347,7 @@ public struct AuthWorkspaceOption: Identifiable, Hashable, Sendable {
         pendingSignInId = nil; pendingFactors = []
         keychain.clear()
         session = nil
-        identifierText = ""; passwordText = ""; codeText = ""
+        identifierText = ""; codeText = ""
         factorOptions = []; workspaces = []
         stage = .identifier
     }
@@ -627,6 +579,10 @@ public struct AuthWorkspaceOption: Identifiable, Hashable, Sendable {
         return Data(base64Encoded: base64)
     }
 
+    /// Only the two one-time-code strategies are ever offered. Clerk reports
+    /// every first factor the account could use — password included — and
+    /// rendering one this console cannot honor puts a dead button on the very
+    /// first screen a clinic sees.
     private static func labelFactors(_ factors: [ClerkWireFactor]) -> [AuthFactorOption] {
         var seen = Set<String>()
         var options: [AuthFactorOption] = []
@@ -634,11 +590,9 @@ public struct AuthWorkspaceOption: Identifiable, Hashable, Sendable {
             guard seen.insert(factor.strategy).inserted else { continue }
             let label: String
             switch factor.strategy {
-            case "password": label = "Password"
-            case "email_code": label = "Email code"
-            case "phone_code": label = "Text message code"
-            case "reset_password_email_code": label = "Reset password by email"
-            default: label = factor.strategy.replacingOccurrences(of: "_", with: " ").capitalized
+            case "email_code": label = "Email me a code"
+            case "phone_code": label = "Text me a code"
+            default: continue
             }
             options.append(AuthFactorOption(strategy: factor.strategy, label: label))
         }
@@ -697,86 +651,6 @@ public struct AuthWorkspaceOption: Identifiable, Hashable, Sendable {
     }
 }
 
-// MARK: - OAuth via the system browser (macOS only)
-//
-// The window ASWebAuthenticationSession opens is Safari's shared web
-// credential UI — the *system* browser, not a Clerk-branded modal — which is
-// exactly what satisfies the platform contract's "no mounted Clerk UI" rule
-// while still letting every screen inside this app stay Tími-designed.
-
-#if canImport(AuthenticationServices) && canImport(AppKit)
-extension AuthController {
-    public func beginOAuth(provider: String) async {
-        guard frontendAPIHost != nil else {
-            errorMessage = errorMessage ?? "No Clerk instance resolved from \(apiClient.configuredAddress). Check the Worker address in Settings."
-            return
-        }
-        isBusy = true; errorMessage = nil
-        defer { isBusy = false }
-        do {
-            let callbackURLString = "timivet://auth-callback"
-            let data = try await clerkRequest(path: "/v1/client/sign_ins", method: "POST", form: [("strategy", provider), ("redirect_url", callbackURLString)])
-            let signIn = try Self.clerkDecoder.decode(ClerkWireSignIn.self, from: data)
-            track(signIn)
-            guard let redirect = signIn.firstFactorVerification?.externalVerificationRedirectUrl, let redirectURL = URL(string: redirect) else {
-                errorMessage = "Clerk did not return a browser sign-in link for that method in this configuration."
-                return
-            }
-            _ = try await presentExternalSession(url: redirectURL, callbackScheme: "timivet")
-            try await pollAfterExternalVerification()
-        } catch let error as ClinicAPIError {
-            errorMessage = error.message
-        } catch is CancellationError {
-            // The person closed the browser sheet — not an error worth showing.
-        } catch {
-            let name = provider.replacingOccurrences(of: "oauth_", with: "").capitalized
-            errorMessage = "Sign-in with \(name) did not complete."
-        }
-    }
-
-    private func presentExternalSession(url: URL, callbackScheme: String) async throws -> URL {
-        try await withCheckedThrowingContinuation { continuation in
-            let session = ASWebAuthenticationSession(url: url, callbackURLScheme: callbackScheme) { callbackURL, error in
-                if let callbackURL { continuation.resume(returning: callbackURL) }
-                else { continuation.resume(throwing: error ?? ClinicAPIError.invalidResponse) }
-            }
-            session.presentationContextProvider = presentationProvider
-            session.prefersEphemeralWebBrowserSession = false
-            webAuthSession = session
-            session.start()
-        }
-    }
-
-    private func pollAfterExternalVerification() async throws {
-        for _ in 0..<20 {
-            let client = try await getClient()
-            let sessionId = client.lastActiveSessionId ?? client.sessions?.first(where: { $0.status == "active" })?.id
-            if let sessionId {
-                activeSessionId = sessionId
-                try await mintWorkerToken()
-                saveCredential()
-                await proceedAfterSignIn()
-                return
-            }
-            try await Task.sleep(for: .milliseconds(500))
-        }
-        throw ClinicAPIError.server("Sign-in did not complete in time. Try again.")
-    }
-}
-
-@MainActor private final class OAuthPresentationProvider: NSObject, ASWebAuthenticationPresentationContextProviding {
-    func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
-        NSApp.keyWindow ?? NSApp.windows.first ?? ASPresentationAnchor()
-    }
-}
-#else
-extension AuthController {
-    public func beginOAuth(provider: String) async {
-        errorMessage = "Sign-in with that method is not available in this build."
-    }
-}
-#endif
-
 // MARK: - Clerk Frontend API wire model (private: implementation detail only)
 
 private struct ClerkWireFactor: Decodable {
@@ -786,18 +660,11 @@ private struct ClerkWireFactor: Decodable {
     var safeIdentifier: String?
 }
 
-private struct ClerkWireVerification: Decodable {
-    var status: String?
-    var strategy: String?
-    var externalVerificationRedirectUrl: String?
-}
-
 private struct ClerkWireSignIn: Decodable {
     var id: String?
     var status: String?
     var supportedFirstFactors: [ClerkWireFactor]?
     var createdSessionId: String?
-    var firstFactorVerification: ClerkWireVerification?
 }
 
 private struct ClerkWireSession: Decodable {

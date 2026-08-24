@@ -28,20 +28,13 @@ public sealed class PositiveIntToVisibilityConverter : IValueConverter
 
 public sealed class StrategyLabelConverter : IValueConverter
 {
+    // Only the two one-time-code strategies ever reach this converter: SignInViewModel filters
+    // everything else out of StrategyOptions, so a "Continue" fallback here is a bug's label, not a path.
     public object Convert(object? value, Type targetType, object parameter, CultureInfo culture) => (value as string) switch
     {
-        "password" => "Enter my password",
         "email_code" => "Email me a code",
         "phone_code" => "Text me a code",
-        "reset_password_email_code" => "Email me a reset code",
         _ => "Continue",
     };
-    public object ConvertBack(object? value, Type targetType, object parameter, CultureInfo culture) => throw new NotSupportedException();
-}
-
-public sealed class NewPasswordLabelConverter : IValueConverter
-{
-    public object Convert(object? value, Type targetType, object parameter, CultureInfo culture)
-        => value is bool b && b ? "Choose a new password" : "Enter your password";
     public object ConvertBack(object? value, Type targetType, object parameter, CultureInfo culture) => throw new NotSupportedException();
 }
