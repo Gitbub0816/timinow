@@ -27,6 +27,13 @@ import MapboxNavigationCore
 /// One provider, made on first use and kept. What used to vary per trip — the
 /// pet's name, the clinic, the register to speak in — is now handed to the
 /// synthesizer through `beginTrip` instead of being baked in at construction.
+/// `@MainActor` because `SpeechSynthesizing` is, and therefore so are
+/// `TimiSpeechSynthesizer` and `TimiSpeechStack.makeSynthesizer` — see the note
+/// above TimiSpeechSynthesizer. The provider is built alongside a synthesizer,
+/// so this is built where that one has to be. Everything that calls it is
+/// already there: `NavigationHostController` is a `UIViewController`, and the
+/// preview fetcher awaits.
+@MainActor
 enum TimiNavigationStack {
     private static var provider: MapboxNavigationProvider?
     private static var synthesizer: TimiSpeechSynthesizer?

@@ -124,7 +124,7 @@ enum RoutePreviewFetcher {
         // meant the tracker screen took the process-wide navigator before
         // anybody had pressed Navigate — so the crash did not even need two
         // presses to arrange.
-        let provider = TimiNavigationStack.shared(mapToken: mapToken, preferences: preferences)
+        let provider = await TimiNavigationStack.shared(mapToken: mapToken, preferences: preferences)
         do {
             let navigationRoutes = try await provider.routingProvider().calculateRoutes(options: options).value
             let route = navigationRoutes.mainRoute.route
