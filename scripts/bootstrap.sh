@@ -688,7 +688,28 @@ bold "3. Production database"
 if $DRY; then
   dim "    would run: npm run db:migrate:remote"
 else
-  npm run db:migrate:remote
+  # Cloudflare answers an unauthorized D1 request with code 7403 and the
+  # sentence "The given account is not valid or is not authorized to access
+  # this service", which names neither D1 nor the credential being used and
+  # reads like a broken account. It is almost always one of two things, and
+  # both are worth saying out loud rather than leaving to a search engine.
+  if ! npm run db:migrate:remote; then
+    warn ""
+    warn "  The migration was refused. Two things cause this and the message names neither:"
+    warn ""
+    warn "  1. CLOUDFLARE_API_TOKEN is set in this shell. wrangler prefers it over the"
+    warn "     account you logged in as, and a token with Workers Scripts:Edit but not"
+    warn "     D1:Edit deploys perfectly and cannot touch the database — which is exactly"
+    warn "     what a half-working setup looks like."
+    warn "       unset CLOUDFLARE_API_TOKEN   then run this again"
+    warn ""
+    warn "  2. The login predates D1, or belongs to another account."
+    warn "       npx wrangler login           then run this again"
+    warn ""
+    warn "  npx wrangler whoami prints which of the two you have: it names the account"
+    warn "  and, for a token, the permissions it carries."
+    die "  Nothing was deployed. The database has to be migrated before the Workers that read it."
+  fi
 fi
 echo
 

@@ -322,6 +322,22 @@ if (!moments.some((moment) => PLAYFUL.test(TIMI_ANNOUNCEMENTS.calm[moment]))) {
   }
 }
 
+// Migrating before deploying is the whole order of step 3 and step 4: a Worker
+// that reads a table the database does not have yet answers 500 to every call.
+// `npm run db:migrate:remote` failing used to leave the script running straight
+// on to the deploy prompt, because a failing command inside an if/else is not
+// an error the shell stops for.
+{
+  const bootstrap = await readFile("scripts/bootstrap.sh", "utf8");
+  const migrate = bootstrap.slice(bootstrap.indexOf('bold "3. Production database"'), bootstrap.indexOf('bold "4. Deploy"'));
+  if (!/if ! npm run db:migrate:remote; then/.test(migrate)) {
+    throw new Error("scripts/bootstrap.sh runs the production migration without checking whether it worked, so a refused migration is followed by the deploy prompt and four Workers go live against a database that is missing their tables.");
+  }
+  if (!/CLOUDFLARE_API_TOKEN/.test(migrate) || !/wrangler login/.test(migrate)) {
+    throw new Error("scripts/bootstrap.sh no longer names the two causes of a refused D1 migration. Cloudflare's own message (code 7403, \"the given account is not valid or is not authorized\") mentions neither D1 nor which credential was used.");
+  }
+}
+
 // ~/.netrc is shared with every other tool on the machine, so the Mapbox entry
 // has to be merged into it, never written over it.
 {
