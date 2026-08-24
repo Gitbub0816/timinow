@@ -1,5 +1,8 @@
 import Foundation
 import TimiNowCore
+#if canImport(MapboxMaps) && !SKIP && os(iOS)
+import MapboxMaps
+#endif
 
 #if canImport(MapboxNavigationCore) && os(iOS) && !SKIP
 import MapboxNavigationCore
@@ -46,6 +49,10 @@ enum TimiNavigationStack {
     /// worth a relaunch; constructing a second provider is worth an app that
     /// closes itself.
     static func shared(mapToken: String, preferences: NavigationPreferences) -> MapboxNavigationProvider {
+        // The map renderer's global, set here as well as at config time: the
+        // provider's CoreConfig token feeds routing and speech only, and the
+        // map inside NavigationViewController traps without this one.
+        TimiMapboxToken.apply(mapToken)
         if let provider, builtWithToken == mapToken { return provider }
 
         let speech = preferences.voiceEnabled
@@ -77,3 +84,29 @@ enum TimiNavigationStack {
     }
 }
 #endif
+
+/// Hands MapboxMaps the one token it will actually read.
+///
+/// Navigation v3 takes a token through `CoreConfig` and uses it for routing
+/// and speech - and the map renderer ignores it. Every map surface, including
+/// the map inside `NavigationViewController`, reads the process-wide
+/// `MapboxOptions.accessToken`, and nothing in this app ever set it. The
+/// result was `Fatal error: No access token provided` the first time a map
+/// pane rendered on a device - a trap, not a throw, so nothing caught it and
+/// the app simply went away. Pressing Navigate on the emergency list was the
+/// first render on the shortest path, which is why the crash wore that
+/// button's name.
+///
+/// Applied from CustomerRootView the moment /api/config supplies the token,
+/// and again defensively before the navigation provider is built. Setting a
+/// global twice is free; rendering once without it is fatal.
+public enum TimiMapboxToken {
+    public static func apply(_ token: String?) {
+        #if canImport(MapboxMaps) && !SKIP && os(iOS)
+        guard let token, !token.isEmpty else { return }
+        if MapboxOptions.accessToken != token {
+            MapboxOptions.accessToken = token
+        }
+        #endif
+    }
+}

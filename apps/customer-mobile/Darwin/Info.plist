@@ -28,6 +28,26 @@
     <key>CFBundleShortVersionString</key><string>$(MARKETING_VERSION)</string>
     <key>CFBundleVersion</key><string>$(CURRENT_PROJECT_VERSION)</string>
     <key>ITSAppUsesNonExemptEncryption</key><false/>
+    <!--
+      Both demanded by turn-by-turn, and one of them under threat of death.
+
+      "audio": MapboxNavigationCore's RouteVoiceController traps at init -
+      "Fatal error: This application's Info.plist file must include audio in
+      UIBackgroundModes" (RouteVoiceController.swift:114) - so without this
+      entry, pressing Navigate with voice enabled closes the app. It is not a
+      formality either: it is what lets spoken instructions keep speaking when
+      the phone locks in a cradle, which is the normal state of a phone that
+      is navigating.
+
+      "location": keeps route progress alive when the app is backgrounded
+      mid-drive - a customer who answers a call on the way to a clinic should
+      not lose their guidance.
+    -->
+    <key>UIBackgroundModes</key>
+    <array>
+        <string>audio</string>
+        <string>location</string>
+    </array>
     <key>NSLocationWhenInUseUsageDescription</key><string>Tími uses your location to find participating veterinary clinics near you and estimate travel distance.</string>
     <key>NSUserNotificationsUsageDescription</key><string>Tími can notify you when a clinic sends an availability offer or updates your arrival.</string>
     <key>UILaunchScreen</key><dict><key>UIColorName</key><string>LaunchBackground</string></dict>

@@ -31,6 +31,13 @@ public struct CustomerRootView: View {
         // list that vanishes because the screen underneath it changed would be
         // worse than not offering one.
         .sheet(isPresented: $store.showEmergencyList) { EmergencyCareSheet(store: store) }
+        // MapboxMaps reads one process-wide access token, and every map pane
+        // in the app - offers, tracker, live navigation - traps fatally if it
+        // renders before that global is set. The token arrives from
+        // /api/config after launch, so it is applied the moment it exists and
+        // re-applied if it ever changes. No-op on builds without Mapbox.
+        .task { TimiMapboxToken.apply(store.mapToken) }
+        .onChange(of: store.mapToken) { token in TimiMapboxToken.apply(token) }
     }
 
     @ViewBuilder var appContent: some View {

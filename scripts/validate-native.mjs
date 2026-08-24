@@ -1965,6 +1965,37 @@ for (const [path, marker] of [
   }
 }
 
+// The two Mapbox preconditions that were killing Navigate, pulled from the
+// device's own log. Both are traps, not throws - nothing catchable, the app
+// simply goes away - so the only defence is making them impossible to ship.
+{
+  // 1. "Fatal error: No access token provided". Navigation v3's CoreConfig
+  // token feeds routing and speech; every map pane reads the process-wide
+  // MapboxOptions.accessToken instead, and nothing set it.
+  const stack = await read("apps/customer-mobile/Sources/TimiNowUI/MapboxStack.swift");
+  if (!/MapboxOptions\.accessToken = token/.test(stack)) {
+    throw new Error("apps/customer-mobile/Sources/TimiNowUI/MapboxStack.swift no longer sets MapboxOptions.accessToken. The map inside NavigationViewController reads only that global and traps fatally without it: 'No access token provided', straight off the device log.");
+  }
+  const root = await read("apps/customer-mobile/Sources/TimiNowUI/CustomerRootView.swift");
+  if (!/TimiMapboxToken\.apply\(store\.mapToken\)/.test(root)) {
+    throw new Error("apps/customer-mobile/Sources/TimiNowUI/CustomerRootView.swift no longer applies the Mapbox token when /api/config supplies it, so the first map pane to render before navigation starts traps with 'No access token provided'.");
+  }
+
+  // 2. RouteVoiceController.swift:114 traps unless UIBackgroundModes has
+  // "audio". Parsed positionally, not by substring, so an entry under some
+  // other key cannot satisfy it.
+  const plist = await read("apps/customer-mobile/Darwin/Info.plist");
+  const at = plist.indexOf("<key>UIBackgroundModes</key>");
+  if (at < 0) {
+    throw new Error("apps/customer-mobile/Darwin/Info.plist has no UIBackgroundModes. MapboxNavigationCore's RouteVoiceController traps at init without 'audio' in it (RouteVoiceController.swift:114), so pressing Navigate with voice enabled closes the app.");
+  }
+  const arrayEnd = plist.indexOf("</array>", at);
+  const entries = plist.slice(at, arrayEnd);
+  if (!entries.includes("<string>audio</string>")) {
+    throw new Error("apps/customer-mobile/Darwin/Info.plist: UIBackgroundModes no longer contains 'audio', which RouteVoiceController requires on pain of a fatal trap.");
+  }
+}
+
 // The navigation breadcrumb must cover the live screen. The first version
 // cleared it the moment the controller presented, and the crash lived exactly
 // there - the presented map's first frames - so the next launch reported
