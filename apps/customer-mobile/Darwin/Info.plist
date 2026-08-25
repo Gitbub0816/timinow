@@ -27,6 +27,13 @@
     -->
     <key>CFBundleShortVersionString</key><string>$(MARKETING_VERSION)</string>
     <key>CFBundleVersion</key><string>$(CURRENT_PROJECT_VERSION)</string>
+    <!--
+      Spelled out for the same reason as the version keys above: actool
+      normally injects this when it compiles the app icon, but App Store
+      validation rejects the upload if anything about that merge goes
+      missing, and a device install never checks.
+    -->
+    <key>CFBundleIconName</key><string>AppIcon</string>
     <key>ITSAppUsesNonExemptEncryption</key><false/>
     <!--
       Both demanded by turn-by-turn, and one of them under threat of death.

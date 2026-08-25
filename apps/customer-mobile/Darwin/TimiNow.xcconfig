@@ -1,10 +1,20 @@
 #include "../Skip.env"
 
+// Skip.env says MARKETING_VERSION = 0.1.0, and this xcconfig outranks the
+// project-level 1.0 in project.yml — so without these lines the iPhone app
+// archives as 0.1.0 while the watch companion (which has no xcconfig) gets
+// 1.0, and App Store Connect rejects the pair for the mismatch. Keep both
+// values identical to project.yml. scripts/upload-testflight.sh still wins
+// on CURRENT_PROJECT_VERSION: a command-line override beats every file.
+MARKETING_VERSION = 1.0
+CURRENT_PROJECT_VERSION = 1
+
 SKIP_ACTION = launch
 GENERATE_INFOPLIST_FILE = NO
 INFOPLIST_FILE = Info.plist
 IPHONEOS_DEPLOYMENT_TARGET = 17.0
-TARGETED_DEVICE_FAMILY = 1,2
+// iPhone only — matches project.yml; see the note there on iPad orientations.
+TARGETED_DEVICE_FAMILY = 1
 SUPPORTS_MACCATALYST = NO
 SWIFT_EMIT_LOC_STRINGS = YES
 SWIFT_VERSION = 5.9

@@ -644,6 +644,80 @@ for (const path of await collectFiles("apps/customer-mobile/Sources", ".swift"))
   }
 }
 
+// App Store validation is stricter than a device install: the archive signs,
+// installs, and runs, and then "xcodebuild -exportArchive" with destination
+// upload rejects the bundle. Every rule below was learned from a rejected
+// upload on 2026-08-25, and no device build or CI compile exercises any of
+// them.
+{
+  const project = await read("apps/customer-mobile/Darwin/project.yml");
+  const info = await read("apps/customer-mobile/Darwin/Info.plist");
+  const xcconfig = await read("apps/customer-mobile/Darwin/TimiNow.xcconfig");
+
+  // Skip.env sets MARKETING_VERSION = 0.1.0 for the Skip tooling, and
+  // TimiNow.xcconfig includes it — an xcconfig outranks project.yml's
+  // project-level settings, so unless the xcconfig restates the version, the
+  // iPhone app archives as 0.1.0 while the watch companion (which has no
+  // xcconfig) archives as project.yml's value, and App Store Connect rejects
+  // the pair: "CFBundleShortVersionString Mismatch".
+  const projectVersion = project.match(/^\s*MARKETING_VERSION:\s*"?([\w.]+)"?\s*$/m)?.[1];
+  const xcconfigVersion = xcconfig.match(/^MARKETING_VERSION\s*=\s*(\S+)/m)?.[1];
+  if (!xcconfigVersion) {
+    throw new Error("apps/customer-mobile/Darwin/TimiNow.xcconfig does not set MARKETING_VERSION after including Skip.env, so Skip.env's 0.1.0 wins for the iPhone app while the watch app reads project.yml — App Store Connect rejects the version mismatch.");
+  }
+  if (projectVersion !== xcconfigVersion) {
+    throw new Error(`MARKETING_VERSION disagrees: project.yml says ${projectVersion} (what the watch app gets) but TimiNow.xcconfig says ${xcconfigVersion} (what the iPhone app gets). App Store Connect rejects a watch app whose version differs from its container.`);
+  }
+
+  // A watch app with no icon passes every build and every device install,
+  // then fails upload validation twice over: "Missing Icons" and a missing
+  // CFBundleIconName (actool writes that key only when it compiles an icon).
+  const watchIconContents = await read("apps/customer-mobile/Darwin/WatchAssets.xcassets/AppIcon.appiconset/Contents.json");
+  if (!watchIconContents.includes('"platform" : "watchos"')) {
+    throw new Error("WatchAssets.xcassets/AppIcon.appiconset is not a watchOS icon (Contents.json has no watchos platform entry). Upload validation reports Missing Icons for the watch app.");
+  }
+  await access(resolve(root, "apps/customer-mobile/Darwin/WatchAssets.xcassets/AppIcon.appiconset/icon-1024.png")).catch(() => {
+    throw new Error("WatchAssets.xcassets/AppIcon.appiconset/icon-1024.png is missing — the Contents.json points at a file that is not there, and the watch app uploads iconless.");
+  });
+  const watchTarget = project.slice(project.indexOf("TimiNowWatch:"));
+  if (!watchTarget.includes("WatchAssets.xcassets")) {
+    throw new Error("project.yml's TimiNowWatch target does not list WatchAssets.xcassets in sources, so the watch icon catalog never compiles into the bundle.");
+  }
+  if (!/ASSETCATALOG_COMPILER_APPICON_NAME:\s*AppIcon/.test(watchTarget)) {
+    throw new Error("project.yml's TimiNowWatch target does not set ASSETCATALOG_COMPILER_APPICON_NAME, so actool compiles the catalog without marking an app icon and CFBundleIconName is never written.");
+  }
+
+  // watchOS refuses portrait-only: a watch worn crown-left renders upside
+  // down, so validation demands both portrait orientations.
+  if (!/INFOPLIST_KEY_UISupportedInterfaceOrientations:.*UIInterfaceOrientationPortraitUpsideDown/.test(watchTarget)) {
+    throw new Error("project.yml's TimiNowWatch orientations omit UIInterfaceOrientationPortraitUpsideDown. Upload validation rejects a portrait-only watch app.");
+  }
+
+  // The iPhone app is portrait-only by design (Info.plist), which is legal
+  // for an iPhone-only app and illegal for one that also claims iPad:
+  // TARGETED_DEVICE_FAMILY "1,2" obliges all four orientations or
+  // UIRequiresFullScreen. Keep the family at 1 everywhere, or change the
+  // orientation story deliberately in both files at once.
+  const portraitOnly = info.includes("UIInterfaceOrientationPortrait") && !info.includes("UIInterfaceOrientationLandscapeLeft");
+  if (portraitOnly && !info.includes("UIRequiresFullScreen")) {
+    for (const [file, source, pattern] of [
+      ["project.yml", project, /TARGETED_DEVICE_FAMILY:\s*"?1\s*,\s*2"?/],
+      ["TimiNow.xcconfig", xcconfig, /^TARGETED_DEVICE_FAMILY\s*=\s*1\s*,\s*2/m]
+    ]) {
+      if (pattern.test(source)) {
+        throw new Error(`apps/customer-mobile/Darwin/${file} claims iPad (TARGETED_DEVICE_FAMILY 1,2) while Info.plist is portrait-only without UIRequiresFullScreen. Upload validation rejects the bundle; keep the family at 1 or add the orientations deliberately.`);
+      }
+    }
+  }
+
+  // Belt for the braces above: the iPhone app's Info.plist is hand-written
+  // (GENERATE_INFOPLIST_FILE = NO), so CFBundleIconName is spelled out there
+  // rather than trusted to actool's merge.
+  if (!info.includes("<key>CFBundleIconName</key>")) {
+    throw new Error("apps/customer-mobile/Darwin/Info.plist has no CFBundleIconName. Upload validation requires it and a device install never checks.");
+  }
+}
+
 // The Mapbox access token is optional exactly once, in AppStore, because it is
 // absent until /api/config answers. Every UI declaration below that is a plain
 // String, unwrapped at the one call site. Threading the optional deeper means

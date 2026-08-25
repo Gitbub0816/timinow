@@ -61,7 +61,11 @@ targets:
         # Apple issues no development profile carrying an entitlement it has
         # not granted, so a device build fails at signing without that. See
         # Darwin/TimiNow.entitlements and docs/NAVIGATION.md.
-        TARGETED_DEVICE_FAMILY: "1,2"
+        # iPhone only. Including iPad ("1,2") obliges the bundle to either
+        # support all four orientations or declare UIRequiresFullScreen —
+        # App Store validation enforces it — and this UI is portrait iPhone.
+        # iPads still run it in compatibility mode.
+        TARGETED_DEVICE_FAMILY: "1"
         SUPPORTS_MACCATALYST: NO
         SWIFT_VERSION: "5.9"
   TimiNowWatch:
@@ -69,6 +73,10 @@ targets:
     platform: watchOS
     sources:
       - ../Watch
+      # App Store validation refuses a watch app with no icon. actool compiles
+      # this and writes CFBundleIconName into the generated Info.plist; a
+      # device install never checks, so the gap only shows at upload.
+      - path: WatchAssets.xcassets
     settings:
       base:
         PRODUCT_NAME: TimiNowWatch
@@ -78,9 +86,12 @@ targets:
         TARGETED_DEVICE_FAMILY: "4"
         SWIFT_VERSION: "5.9"
         SDKROOT: watchos
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         INFOPLIST_KEY_WKApplication: YES
         INFOPLIST_KEY_WKCompanionAppBundleIdentifier: solutions.clearkey.timinow
-        INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait
+        # Both portrait orientations: watchOS validation rejects portrait-only
+        # (upside-down is how a watch renders on a wrist worn crown-left).
+        INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown
         INFOPLIST_KEY_CFBundleDisplayName: "Tími"
 schemes:
   TimiNow:
