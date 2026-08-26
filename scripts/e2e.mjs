@@ -63,6 +63,7 @@ database.exec(await readFile("migrations/0007_client_errors.sql", "utf8"));
 database.exec(await readFile("migrations/0008_payments_ledger.sql", "utf8"));
 database.exec(await readFile("migrations/0009_pets.sql", "utf8"));
 database.exec(await readFile("migrations/0010_provider_analytics.sql", "utf8"));
+database.exec(await readFile("migrations/0011_call_policy.sql", "utf8"));
 
 const env = {
   ASSETS: { fetch: async () => new Response("asset") },
@@ -163,12 +164,28 @@ const clinicHeaders = { "content-type": "application/json", "x-demo-role": "clin
 const clinicAdminHeaders = { ...clinicHeaders, "x-demo-role": "org:admin" };
 result = await call("/api/clinic/call-preferences", { headers: clinicHeaders });
 assert(result.response.status === 200 && result.body.preferences.callsEnabled === true, "Calling defaults to on, as every clinic has been");
+assert(result.body.preferences.callPolicy === "always", "The default policy is always — the pre-policy behavior");
 
 result = await call("/api/clinic/call-preferences", { method: "PATCH", headers: clinicAdminHeaders, body: JSON.stringify({ callsEnabled: false }) });
 assert(result.body.preferences.callsEnabled === false, "A clinic must be able to say no to the phone call");
-const tenantRow = database.prepare("SELECT voice_calls_enabled FROM tenants WHERE id = 'tenant_hearth'").get();
+assert(result.body.preferences.callPolicy === "never", "The legacy boolean off must map to the never policy, not sit beside it disagreeing");
+const tenantRow = database.prepare("SELECT voice_calls_enabled, voice_call_policy FROM tenants WHERE id = 'tenant_hearth'").get();
 const locationRow = database.prepare("SELECT voice_calls_enabled FROM locations WHERE tenant_id = 'tenant_hearth'").get();
 assert(tenantRow.voice_calls_enabled === 0 && locationRow.voice_calls_enabled === 0, "Both levels must be set, since the gateway requires both to be on");
+assert(tenantRow.voice_call_policy === "never", "The stored policy must match what the API reported");
+
+// The three-way policy: ring only while a console is open.
+result = await call("/api/clinic/call-preferences", { method: "PATCH", headers: clinicAdminHeaders, body: JSON.stringify({ callPolicy: "console_active" }) });
+assert(result.body.preferences.callPolicy === "console_active", "A clinic must be able to ask for calls only while its console is open");
+assert(result.body.preferences.callsEnabled === true, "console_active still counts as callable for pre-policy console builds");
+result = await call("/api/clinic/call-preferences", { method: "PATCH", headers: clinicAdminHeaders, body: JSON.stringify({ callPolicy: "sometimes" }) });
+assert(result.response.status === 422 && result.body.error.code === "INVALID_CALL_POLICY", "An unknown policy must be refused, not stored");
+
+// The dashboard poll is what "the console is open" means; it must leave a
+// timestamp behind for the voice gateway to read.
+await call("/api/clinic/dashboard", { headers: clinicHeaders });
+const presenceRow = database.prepare("SELECT console_last_seen_at FROM tenants WHERE id = 'tenant_hearth'").get();
+assert(presenceRow.console_last_seen_at && !Number.isNaN(Date.parse(presenceRow.console_last_seen_at)), "A dashboard fetch must stamp console presence");
 
 result = await call("/api/clinic/call-preferences", { method: "PATCH", headers: clinicAdminHeaders, body: JSON.stringify({ callsEnabled: true, voicePhone: "(510) 555-0199", quietHours: { start: "22:00", end: "07:00" } }) });
 assert(result.body.preferences.voicePhone === "(510) 555-0199", "A back line must be dialable instead of the public number");

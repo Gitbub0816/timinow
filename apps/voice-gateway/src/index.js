@@ -526,8 +526,23 @@ async function processOutboxRow(env, row, nowIso) {
   const tenantId = row.tenant_id;
   if (!tenantId || !targetId || !searchId || !locationId) return cancel("Malformed voice outbox payload");
 
-  const tenant = await env.DB.prepare("SELECT voice_calls_enabled, voice_quiet_hours_json FROM tenants WHERE id = ? LIMIT 1").bind(tenantId).first();
-  if (!tenant || !bool(tenant.voice_calls_enabled)) return cancel("Tenant has voice calling disabled");
+  const tenant = await env.DB.prepare("SELECT voice_calls_enabled, voice_call_policy, console_last_seen_at, voice_quiet_hours_json FROM tenants WHERE id = ? LIMIT 1").bind(tenantId).first();
+  if (!tenant) return cancel("Tenant has voice calling disabled");
+  // Three-way policy; the boolean is the pre-policy schema and still means a
+  // hard no when 0 (setCallPreferences keeps the two in step, but a database
+  // that predates migration 0011 has only the boolean).
+  const policy = ["always", "console_active", "never"].includes(tenant.voice_call_policy) ? tenant.voice_call_policy : "always";
+  if (policy === "never" || !bool(tenant.voice_calls_enabled)) return cancel("Tenant has voice calling disabled");
+  if (policy === "console_active") {
+    // "The console is open" means a Tími console polled the clinic dashboard
+    // in the last 90 seconds — they poll every 6, so this tolerates a dozen
+    // missed beats before deciding nobody is watching.
+    const lastSeenMs = Date.parse(tenant.console_last_seen_at || "");
+    const staleMs = Date.parse(nowIso) - (Number.isFinite(lastSeenMs) ? lastSeenMs : 0);
+    if (!Number.isFinite(lastSeenMs) || staleMs > 90_000) {
+      return cancel("Clinic only accepts calls while its console is open, and no console is active");
+    }
+  }
 
   const location = await env.DB.prepare("SELECT phone, voice_phone, voice_calls_enabled FROM locations WHERE id = ? AND active = 1 LIMIT 1").bind(locationId).first();
   if (!location || !bool(location.voice_calls_enabled)) return cancel("Location has voice calling disabled");

@@ -1062,21 +1062,27 @@ async function recordObservation(request, env, actor) {
  * at the desk and a phone that is already ringing has a real reason to say no,
  * and had no way to.
  */
+/** The three answers to "when may Tími ring this clinic's phone?". */
+export const CALL_POLICIES = ["always", "console_active", "never"];
+
 export async function getCallPreferences(env, tenantId) {
   if (!hasDatabase(env)) {
-    return json({ preferences: { callsEnabled: true, voicePhone: null, quietHours: {}, locationPhone: null } });
+    return json({ preferences: { callPolicy: "always", callsEnabled: true, voicePhone: null, quietHours: {}, locationPhone: null } });
   }
   const [tenant, location] = await Promise.all([
-    env.DB.prepare("SELECT voice_calls_enabled, voice_quiet_hours_json FROM tenants WHERE id = ?").bind(tenantId).first(),
+    env.DB.prepare("SELECT voice_calls_enabled, voice_call_policy, voice_quiet_hours_json FROM tenants WHERE id = ?").bind(tenantId).first(),
     env.DB.prepare("SELECT phone, voice_phone, voice_calls_enabled FROM locations WHERE tenant_id = ? AND active = 1 ORDER BY created_at LIMIT 1").bind(tenantId).first()
   ]);
   let quietHours = {};
   try { quietHours = JSON.parse(tenant?.voice_quiet_hours_json || "{}"); } catch { quietHours = {}; }
+  const callPolicy = CALL_POLICIES.includes(tenant?.voice_call_policy) ? tenant.voice_call_policy : "always";
   return json({
     preferences: {
-      // Both have to be on. A tenant-level "no" is the practice's decision and
-      // a location-level "no" is this site's; either one is a no.
-      callsEnabled: Boolean(tenant?.voice_calls_enabled) && Boolean(location?.voice_calls_enabled),
+      callPolicy,
+      // Legacy boolean for console builds that predate the policy. Both
+      // levels have to be on: a tenant-level "no" is the practice's decision
+      // and a location-level "no" is this site's; either one is a no.
+      callsEnabled: callPolicy !== "never" && Boolean(location?.voice_calls_enabled),
       tenantCallsEnabled: Boolean(tenant?.voice_calls_enabled),
       locationCallsEnabled: Boolean(location?.voice_calls_enabled),
       /** The number Tími dials. Null means the location's listed phone. */
@@ -1093,7 +1099,18 @@ export async function setCallPreferences(request, env, actor, tenantId) {
   const body = await readJson(request).catch(() => null);
   if (!body || typeof body !== "object") return apiError(400, "JSON_REQUIRED", "A valid JSON request body is required.");
 
-  const callsEnabled = body.callsEnabled === undefined ? null : body.callsEnabled === true;
+  // callPolicy is the real setting; callsEnabled is kept for console builds
+  // that predate it (true → always, false → never). When both arrive,
+  // callPolicy wins — it is the finer-grained statement of intent.
+  let callPolicy = null;
+  if (body.callPolicy !== undefined) {
+    if (!CALL_POLICIES.includes(body.callPolicy)) {
+      return apiError(422, "INVALID_CALL_POLICY", "callPolicy must be one of: always, console_active, never.");
+    }
+    callPolicy = body.callPolicy;
+  } else if (body.callsEnabled !== undefined) {
+    callPolicy = body.callsEnabled === true ? "always" : "never";
+  }
   const rawPhone = body.voicePhone === undefined ? undefined : cleanString(body.voicePhone, 30);
   if (rawPhone !== undefined && rawPhone !== "" && !/^\+?[0-9().\-\s]{7,24}$/.test(rawPhone)) {
     return apiError(422, "INVALID_PHONE", "Enter a phone number Tími can dial, or leave it blank to use the clinic's listed number.");
@@ -1115,11 +1132,13 @@ export async function setCallPreferences(request, env, actor, tenantId) {
   }
 
   const statements = [];
-  if (callsEnabled !== null) {
-    statements.push(env.DB.prepare("UPDATE tenants SET voice_calls_enabled = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
-      .bind(callsEnabled ? 1 : 0, tenantId));
+  if (callPolicy !== null) {
+    // The boolean stays in step with the policy so the voice gateway's
+    // location-level check and any older reader keep agreeing with it.
+    statements.push(env.DB.prepare("UPDATE tenants SET voice_call_policy = ?, voice_calls_enabled = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
+      .bind(callPolicy, callPolicy === "never" ? 0 : 1, tenantId));
     statements.push(env.DB.prepare("UPDATE locations SET voice_calls_enabled = ?, updated_at = CURRENT_TIMESTAMP WHERE tenant_id = ?")
-      .bind(callsEnabled ? 1 : 0, tenantId));
+      .bind(callPolicy === "never" ? 0 : 1, tenantId));
   }
   if (rawPhone !== undefined) {
     statements.push(env.DB.prepare("UPDATE locations SET voice_phone = ?, updated_at = CURRENT_TIMESTAMP WHERE tenant_id = ?")
@@ -1187,6 +1206,15 @@ export async function handlePets(request, env, actor, path, method) {
 export async function clinicDashboard(env, tenantId) {
   const location = await getClinicLocation(env, tenantId);
   if (!location) return apiError(404, "CLINIC_NOT_FOUND", "No clinic is mapped to the active Clerk organization.");
+  // Console presence, read by the voice gateway's 'console_active' call
+  // policy. Every console (Mac, Windows, web) polls this endpoint every few
+  // seconds, so "a console fetched the dashboard recently" is the definition
+  // of "the console is open" — no session registry, no goodbye message to
+  // miss when a laptop lid closes.
+  if (hasDatabase(env)) {
+    await env.DB.prepare("UPDATE tenants SET console_last_seen_at = ? WHERE id = ?")
+      .bind(new Date().toISOString(), tenantId).run();
+  }
   const [intakes, searchTargets] = await Promise.all([
     listClinicIntakes(env, tenantId),
     listClinicSearchTargets(env, tenantId)

@@ -373,6 +373,37 @@ if (!moments.some((moment) => PLAYFUL.test(TIMI_ANNOUNCEMENTS.calm[moment]))) {
   }
 }
 
+// The three-way calling policy is one setting spread across four places —
+// migration, preferences API, dashboard presence stamp, and the voice
+// gateway's decision — and it fails quietly if any of them drifts: a clinic
+// that chose "only while the console is open" is either rung anyway or never
+// rung at all, and nobody sees which.
+{
+  const migration = await readFile("migrations/0011_call_policy.sql", "utf8");
+  if (!/CHECK \(voice_call_policy IN \('always', 'console_active', 'never'\)\)/.test(migration)) {
+    throw new Error("migrations/0011_call_policy.sql no longer constrains voice_call_policy to always/console_active/never. The API and gateway both assume exactly these three.");
+  }
+  if (!migration.includes("console_last_seen_at")) {
+    throw new Error("migrations/0011_call_policy.sql no longer adds tenants.console_last_seen_at, which the console_active policy reads.");
+  }
+
+  const server = await readFile("src/index.js", "utf8");
+  if (!/INVALID_CALL_POLICY/.test(server)) {
+    throw new Error("src/index.js setCallPreferences no longer refuses an unknown callPolicy — a typo would be stored and read as 'always' forever.");
+  }
+  const dashboard = server.slice(server.indexOf("export async function clinicDashboard"));
+  if (!/UPDATE tenants SET console_last_seen_at/.test(dashboard.slice(0, dashboard.indexOf("export async function", 10)))) {
+    throw new Error("src/index.js clinicDashboard no longer stamps tenants.console_last_seen_at, so the console_active policy sees every console as closed and silently never calls.");
+  }
+
+  const gateway = await readFile("apps/voice-gateway/src/index.js", "utf8");
+  for (const needle of ["voice_call_policy", "console_last_seen_at", "console_active"]) {
+    if (!gateway.includes(needle)) {
+      throw new Error(`apps/voice-gateway/src/index.js no longer reads ${needle} — the drain would ring clinics that asked for console-only or no calls.`);
+    }
+  }
+}
+
 // Pets are the first thing a customer owns that another customer could name.
 // A pet id travels in the URL, so `PUT /api/pets/{id}` is reachable by anybody
 // who learns one, and there are two defences: a lookup that answers 409 for

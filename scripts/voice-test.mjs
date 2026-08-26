@@ -216,6 +216,9 @@ database.exec(await readFile("migrations/0005_voice_calls.sql", "utf8"));
 database.exec(await readFile("migrations/0006_care_context.sql", "utf8"));
 database.exec(await readFile("migrations/0007_client_errors.sql", "utf8"));
 database.exec(await readFile("migrations/0008_payments_ledger.sql", "utf8"));
+database.exec(await readFile("migrations/0009_pets.sql", "utf8"));
+database.exec(await readFile("migrations/0010_provider_analytics.sql", "utf8"));
+database.exec(await readFile("migrations/0011_call_policy.sql", "utf8"));
 
 // Shaped like the real thing — 32 hex characters — because placeCall now
 // checks that shape before it calls Twilio, and a fixture that could never be
@@ -304,6 +307,38 @@ assert(/disabled/i.test(disabledOutbox.last_error || ""), "The cancellation reas
 const acceptOutbox = database.prepare("SELECT status FROM notification_outbox WHERE id = 'notification_target_accept'").get();
 const declineOutbox = database.prepare("SELECT status FROM notification_outbox WHERE id = 'notification_target_decline'").get();
 assert(acceptOutbox.status === "sent" && declineOutbox.status === "sent", "Successfully placed calls must mark their outbox row sent");
+
+/* ------------------------------------------ 6b. three-way calling policy --- */
+// console_active with no console in sight: the call must be cancelled, and
+// the reason must say why so a clinic asking "why didn't you call us" gets an
+// answer instead of a shrug.
+database.prepare("UPDATE tenants SET voice_call_policy = 'console_active', console_last_seen_at = NULL WHERE id = 'tenant_juniper'").run();
+// never must win even when the legacy boolean says yes — a clinic that chose
+// the policy on a new console must not be rung because an old column agrees
+// with an old default.
+database.prepare("UPDATE tenants SET voice_call_policy = 'never', voice_calls_enabled = 1 WHERE id = 'tenant_bayview'").run();
+database.prepare("UPDATE locations SET voice_calls_enabled = 1 WHERE id = 'loc_bayview'").run();
+insertSearchAndTarget({ searchId: "search_stale", targetId: "target_stale", tenantId: "tenant_juniper", locationId: "loc_juniper", phone: "(510) 555-0161" });
+insertSearchAndTarget({ searchId: "search_never", targetId: "target_never", tenantId: "tenant_bayview", locationId: "loc_bayview", phone: "(510) 555-0138" });
+
+await worker.scheduled(null, env, { waitUntil: (promise) => { scheduledWork = promise; } });
+await scheduledWork;
+
+assert(capturedCalls.length === 2, `console_active with no console and a never policy must both place no call, got ${capturedCalls.length}`);
+const staleOutbox = database.prepare("SELECT status, last_error FROM notification_outbox WHERE id = 'notification_target_stale'").get();
+assert(staleOutbox.status === "cancelled", "console_active with no active console must cancel the outbox row");
+assert(/console/i.test(staleOutbox.last_error || ""), "The console_active cancellation must name the console in its reason");
+const neverOutbox = database.prepare("SELECT status, last_error FROM notification_outbox WHERE id = 'notification_target_never'").get();
+assert(neverOutbox.status === "cancelled", "A never policy must cancel the call even when the legacy boolean is on");
+
+// The same clinic with a console open (a dashboard poll 5 seconds ago) must
+// be called: presence is recency, nothing else.
+database.prepare("UPDATE tenants SET console_last_seen_at = ? WHERE id = 'tenant_juniper'").run(new Date(Date.now() - 5_000).toISOString());
+insertSearchAndTarget({ searchId: "search_fresh", targetId: "target_fresh", tenantId: "tenant_juniper", locationId: "loc_juniper", phone: "(510) 555-0161" });
+await worker.scheduled(null, env, { waitUntil: (promise) => { scheduledWork = promise; } });
+await scheduledWork;
+assert(capturedCalls.length === 3, `console_active with a console polled 5s ago must place the call, got ${capturedCalls.length}`);
+assert(database.prepare("SELECT status FROM notification_outbox WHERE id = 'notification_target_fresh'").get().status === "sent", "The console_active call that was placed must mark its outbox row sent");
 
 function callFor(targetId) {
   const call = capturedCalls.find((entry) => entry.body.Url.includes(`/api/voice/outbound/${targetId}?`));
@@ -537,4 +572,4 @@ database.close();
   }
 }
 
-console.log("Voice gateway tests passed: Twilio signature verification, call-script content, TwiML well-formedness and escaping, quiet-hours math, phone normalization, cron drain (tenant opt-out + successful placement), dual delivery (a target stays pending on the dashboard mid-call and its phone decision shows there), phone acceptance producing a byte-identical offer to the console path, and the inbound callback path.");
+console.log("Voice gateway tests passed: Twilio signature verification, call-script content, TwiML well-formedness and escaping, quiet-hours math, phone normalization, cron drain (tenant opt-out + successful placement), the three-way call policy (console_active skips with no console and calls with a fresh one, never wins over the legacy boolean), dual delivery (a target stays pending on the dashboard mid-call and its phone decision shows there), phone acceptance producing a byte-identical offer to the console path, and the inbound callback path.");
