@@ -244,11 +244,31 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     // ---- Calling preferences ---------------------------------------------
 
-    private bool _callsEnabled = true;
+    private string _callPolicy = "always";
     private string _voicePhone = "", _quietStart = "", _quietEnd = "", _listedPhone = "";
     private bool _callPreferencesLoaded;
 
-    public bool CallsEnabled { get => _callsEnabled; set => Set(ref _callsEnabled, value); }
+    /// <summary>"always", "console_active", or "never" — validated by the Worker.</summary>
+    public string CallPolicy
+    {
+        get => _callPolicy;
+        set
+        {
+            if (!Set(ref _callPolicy, value)) return;
+            // The three radio projections below are all views over this one
+            // string, so every change here has to re-announce all of them.
+            Raise(nameof(CallPolicyAlways));
+            Raise(nameof(CallPolicyConsoleActive));
+            Raise(nameof(CallPolicyNever));
+        }
+    }
+
+    // Radio-button projections of CallPolicy. WPF sets the newly-checked one to
+    // true and the previously-checked one to false; only the true write may
+    // move the policy, or the unchecking of the old button would clobber it.
+    public bool CallPolicyAlways { get => CallPolicy == "always"; set { if (value) CallPolicy = "always"; } }
+    public bool CallPolicyConsoleActive { get => CallPolicy == "console_active"; set { if (value) CallPolicy = "console_active"; } }
+    public bool CallPolicyNever { get => CallPolicy == "never"; set { if (value) CallPolicy = "never"; } }
     public string VoicePhone { get => _voicePhone; set => Set(ref _voicePhone, value); }
     public string QuietStart { get => _quietStart; set => Set(ref _quietStart, value); }
     public string QuietEnd { get => _quietEnd; set => Set(ref _quietEnd, value); }
@@ -543,7 +563,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             var preferences = await _api.GetCallPreferencesAsync(_lifetime.Token);
             // Copied into fields once, not rebound on every poll: a receptionist half-way through typing a
             // back-line number should not have it replaced under the cursor six seconds later.
-            CallsEnabled = preferences.CallsEnabled;
+            CallPolicy = preferences.CallPolicy;
             VoicePhone = preferences.VoicePhone ?? "";
             QuietStart = preferences.QuietHours?.Start ?? "";
             QuietEnd = preferences.QuietHours?.End ?? "";
@@ -573,19 +593,22 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                 : new QuietHours { Start = start, End = end };
             var saved = await _api.UpdateCallPreferencesAsync(new CallPreferencesUpdate
             {
-                CallsEnabled = CallsEnabled,
+                CallPolicy = CallPolicy,
                 VoicePhone = VoicePhone.Trim(),
                 QuietHours = quiet
             }, _lifetime.Token);
-            CallsEnabled = saved.CallsEnabled;
+            CallPolicy = saved.CallPolicy;
             VoicePhone = saved.VoicePhone ?? "";
             QuietStart = saved.QuietHours?.Start ?? "";
             QuietEnd = saved.QuietHours?.End ?? "";
             if (!string.IsNullOrWhiteSpace(saved.LocationPhone)) ListedPhone = saved.LocationPhone!;
             CallPreferencesLoaded = true;
-            Succeed(saved.CallsEnabled
-                ? "Tími will call this clinic about new requests."
-                : "Tími will not call this clinic. Requests still arrive in the console.");
+            Succeed(saved.CallPolicy switch
+            {
+                "never" => "Tími will not call this clinic. Requests still arrive in the console.",
+                "console_active" => "Tími will call only while a Tími console is open.",
+                _ => "Tími will call this clinic about new requests.",
+            });
         }
         catch (Exception ex) { Fail(ex.Message); }
         finally { IsBusy = false; }

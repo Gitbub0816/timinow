@@ -121,13 +121,16 @@ public final class ClinicAPIClient: @unchecked Sendable {
     // MARK: - Calling preferences
 
     public func getCallPreferences() async throws -> CallPreferences {
-        if isDemo { return CallPreferences(callsEnabled: true, voicePhone: nil, locationPhone: "(510) 555-0194", quietHours: nil) }
+        if isDemo { return CallPreferences(callPolicy: "always", callsEnabled: true, voicePhone: nil, locationPhone: "(510) 555-0194", quietHours: nil) }
         let envelope: CallPreferencesEnvelope = try await send("GET", "/api/clinic/call-preferences")
         return envelope.preferences
     }
 
     public func updateCallPreferences(_ update: CallPreferencesUpdate) async throws -> CallPreferences {
-        if isDemo { return CallPreferences(callsEnabled: update.callsEnabled ?? true, voicePhone: update.voicePhone, locationPhone: "(510) 555-0194") }
+        if isDemo {
+            let policy = update.callPolicy ?? "always"
+            return CallPreferences(callPolicy: policy, callsEnabled: policy != "never", voicePhone: update.voicePhone, locationPhone: "(510) 555-0194")
+        }
         let envelope: CallPreferencesEnvelope = try await send("PATCH", "/api/clinic/call-preferences", body: update)
         return envelope.preferences
     }
@@ -330,11 +333,13 @@ public final class ClinicAPIClient: @unchecked Sendable {
 /// Only the fields being changed are sent — an absent one is left alone, so
 /// two administrators editing different settings do not overwrite each other.
 public struct CallPreferencesUpdate: Encodable, Sendable {
-    public var callsEnabled: Bool?
+    /// "always", "console_active", or "never". The Worker validates the value;
+    /// `callsEnabled` is legacy and no longer sent.
+    public var callPolicy: String?
     public var voicePhone: String?
     public var quietHours: QuietHours?
-    public init(callsEnabled: Bool? = nil, voicePhone: String? = nil, quietHours: QuietHours? = nil) {
-        self.callsEnabled = callsEnabled; self.voicePhone = voicePhone; self.quietHours = quietHours
+    public init(callPolicy: String? = nil, voicePhone: String? = nil, quietHours: QuietHours? = nil) {
+        self.callPolicy = callPolicy; self.voicePhone = voicePhone; self.quietHours = quietHours
     }
 }
 

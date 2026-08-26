@@ -536,6 +536,75 @@
         <Setter Property="Cursor" Value="Hand"/>
     </Style>
 
+    <!--
+        Radio rows for the calling-policy group. Stock Aero2 draws a RadioButton as a bare grey circle
+        floating next to text, which next to the templated fields above reads as a control from a
+        different application. Each option is a rounded row instead — the same CornerRadius 10 and focus
+        treatment as the fields — with the dot drawn as two Ellipses so it takes the palette. The whole
+        row is the hit target, matching how the ComboBox popup rows behave.
+    -->
+    <Style TargetType="RadioButton">
+        <Setter Property="Foreground" Value="{StaticResource Ink}"/>
+        <Setter Property="Background" Value="{StaticResource Paper}"/>
+        <Setter Property="BorderBrush" Value="{StaticResource FieldBorder}"/>
+        <Setter Property="BorderThickness" Value="1"/>
+        <Setter Property="Padding" Value="11,8"/>
+        <Setter Property="Margin" Value="0,3"/>
+        <Setter Property="Cursor" Value="Hand"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="RadioButton">
+                    <Border x:Name="Shell"
+                            Background="{TemplateBinding Background}"
+                            BorderBrush="{TemplateBinding BorderBrush}"
+                            BorderThickness="{TemplateBinding BorderThickness}"
+                            CornerRadius="10"
+                            Padding="{TemplateBinding Padding}"
+                            SnapsToDevicePixels="True">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <Grid Grid.Column="0" Width="14" Height="14" VerticalAlignment="Center">
+                                <Ellipse x:Name="Ring" Stroke="{StaticResource FieldBorder}" StrokeThickness="1.5" Fill="{StaticResource Paper}"/>
+                                <Ellipse x:Name="Dot" Width="7" Height="7" Fill="{StaticResource Blue}" Visibility="Collapsed"/>
+                            </Grid>
+                            <ContentPresenter Grid.Column="1"
+                                              Margin="9,0,0,0"
+                                              VerticalAlignment="Center"
+                                              RecognizesAccessKey="True"/>
+                        </Grid>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsChecked" Value="True">
+                            <Setter TargetName="Shell" Property="Background" Value="{StaticResource BlueSoft}"/>
+                            <Setter TargetName="Shell" Property="BorderBrush" Value="{StaticResource Blue}"/>
+                            <Setter TargetName="Ring" Property="Stroke" Value="{StaticResource Blue}"/>
+                            <Setter TargetName="Dot" Property="Visibility" Value="Visible"/>
+                        </Trigger>
+                        <Trigger Property="IsKeyboardFocused" Value="True">
+                            <Setter TargetName="Shell" Property="BorderBrush" Value="{StaticResource Blue}"/>
+                            <Setter TargetName="Shell" Property="BorderThickness" Value="2"/>
+                        </Trigger>
+                        <MultiTrigger>
+                            <MultiTrigger.Conditions>
+                                <Condition Property="IsMouseOver" Value="True"/>
+                                <Condition Property="IsChecked" Value="False"/>
+                            </MultiTrigger.Conditions>
+                            <Setter TargetName="Shell" Property="BorderBrush" Value="{StaticResource InkSoft}"/>
+                        </MultiTrigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter TargetName="Shell" Property="Background" Value="{StaticResource Canvas}"/>
+                            <Setter Property="Foreground" Value="{StaticResource Muted}"/>
+                            <Setter Property="Cursor" Value="Arrow"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
     <Style TargetType="ProgressBar">
         <Setter Property="Background" Value="{StaticResource CardBorder}"/>
         <Setter Property="Foreground" Value="{StaticResource Blue}"/>

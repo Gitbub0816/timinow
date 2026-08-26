@@ -402,7 +402,14 @@ public sealed class AppConfig
 /// </summary>
 public sealed class CallPreferences
 {
-    /// <summary>Both the practice-level and site-level flags have to be on; the Worker reports the AND.</summary>
+    /// <summary>
+    /// "always", "console_active", or "never". The default covers a Worker that predates the field, so
+    /// an older server decodes as today's behavior rather than throwing.
+    /// </summary>
+    public string CallPolicy { get; set; } = "always";
+
+    /// <summary>Legacy flag (the Worker reports <c>policy != "never"</c>). Kept for decode compatibility;
+    /// the console reads <see cref="CallPolicy"/>.</summary>
     public bool CallsEnabled { get; set; } = true;
     public bool TenantCallsEnabled { get; set; } = true;
     public bool LocationCallsEnabled { get; set; } = true;
@@ -440,6 +447,9 @@ public sealed class CallPreferencesEnvelope
 /// </summary>
 public sealed class CallPreferencesUpdate
 {
+    /// <summary>"always", "console_active", or "never" — validated by the Worker. Replaces
+    /// <see cref="CallsEnabled"/>, which is legacy and no longer sent.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public string? CallPolicy { get; set; }
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public bool? CallsEnabled { get; set; }
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public string? VoicePhone { get; set; }
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public QuietHours? QuietHours { get; set; }

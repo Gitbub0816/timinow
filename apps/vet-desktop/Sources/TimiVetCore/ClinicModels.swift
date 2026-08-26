@@ -190,6 +190,11 @@ public enum TimiVetEnvironment {
 /// A practice with one person at the desk and a phone already ringing has a
 /// real reason to say no to an automated call, and until now had no way to.
 public struct CallPreferences: Codable, Hashable, Sendable {
+    /// "always", "console_active", or "never". Validated server-side; kept a
+    /// plain String here so the Core surface stays simple.
+    public var callPolicy: String
+    /// Legacy flag, still sent by the Worker (`policy !== "never"`). Kept for
+    /// decode compatibility; the console reads `callPolicy`.
     public var callsEnabled: Bool
     public var voicePhone: String?
     /// The location's listed number, shown as the fallback when no dedicated
@@ -197,9 +202,20 @@ public struct CallPreferences: Codable, Hashable, Sendable {
     public var locationPhone: String?
     public var quietHours: QuietHours?
 
-    public init(callsEnabled: Bool = true, voicePhone: String? = nil, locationPhone: String? = nil, quietHours: QuietHours? = nil) {
-        self.callsEnabled = callsEnabled; self.voicePhone = voicePhone
+    public init(callPolicy: String = "always", callsEnabled: Bool = true, voicePhone: String? = nil, locationPhone: String? = nil, quietHours: QuietHours? = nil) {
+        self.callPolicy = callPolicy; self.callsEnabled = callsEnabled; self.voicePhone = voicePhone
         self.locationPhone = locationPhone; self.quietHours = quietHours
+    }
+
+    /// Hand-written so a Worker that predates `callPolicy` still decodes:
+    /// absent fields fall back to today's behavior instead of throwing.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        callPolicy = try container.decodeIfPresent(String.self, forKey: .callPolicy) ?? "always"
+        callsEnabled = try container.decodeIfPresent(Bool.self, forKey: .callsEnabled) ?? true
+        voicePhone = try container.decodeIfPresent(String.self, forKey: .voicePhone)
+        locationPhone = try container.decodeIfPresent(String.self, forKey: .locationPhone)
+        quietHours = try container.decodeIfPresent(QuietHours.self, forKey: .quietHours)
     }
 }
 

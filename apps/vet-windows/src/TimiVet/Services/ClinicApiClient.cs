@@ -111,7 +111,7 @@ public sealed class ClinicApiClient
 
     public async Task<CallPreferences> GetCallPreferencesAsync(CancellationToken cancellationToken)
     {
-        if (IsDemo) return new CallPreferences { CallsEnabled = true, LocationPhone = "(510) 555-0148" };
+        if (IsDemo) return new CallPreferences { CallPolicy = "always", CallsEnabled = true, LocationPhone = "(510) 555-0148" };
         using var response = await SendAsync(HttpMethod.Get, "/api/clinic/call-preferences", null, cancellationToken);
         var envelope = await ReadAsync<CallPreferencesEnvelope>(response, cancellationToken);
         return envelope.Preferences;
@@ -126,9 +126,11 @@ public sealed class ClinicApiClient
     {
         if (IsDemo)
         {
+            var policy = update.CallPolicy ?? "always";
             return new CallPreferences
             {
-                CallsEnabled = update.CallsEnabled ?? true,
+                CallPolicy = policy,
+                CallsEnabled = policy != "never",
                 VoicePhone = string.IsNullOrWhiteSpace(update.VoicePhone) ? null : update.VoicePhone,
                 LocationPhone = "(510) 555-0148",
                 QuietHours = update.QuietHours

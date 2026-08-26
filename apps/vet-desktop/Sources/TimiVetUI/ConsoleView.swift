@@ -12,7 +12,7 @@ public struct ConsoleView: View {
     /// anybody should have to wait for a real patient to test.
     var onTestAlert: () -> Void
 
-    @State var callsEnabled = true
+    @State var callPolicy = "always"
     @State var voicePhone = ""
     @State var quietStart = ""
     @State var quietEnd = ""
@@ -90,7 +90,7 @@ public struct ConsoleView: View {
             await store.loadCallPreferences()
             // Copied into local state once, so typing in the field does not
             // fight the next poll.
-            callsEnabled = store.callPreferences.callsEnabled
+            callPolicy = store.callPreferences.callPolicy
             voicePhone = store.callPreferences.voicePhone ?? ""
             quietStart = store.callPreferences.quietHours?.start ?? ""
             quietEnd = store.callPreferences.quietHours?.end ?? ""
@@ -493,29 +493,36 @@ public struct ConsoleView: View {
                 }
                 VStack(alignment: .leading, spacing: 10) {
                     Text("Phone calls from Tími").font(TimiVetFont.ui(13, weight: .semibold))
-                    Toggle("Call this clinic about new requests", isOn: $callsEnabled)
-                    Text("When this is off, requests still arrive in this console and on the floating panel — Tími simply does not ring the phone. Some practices want the call; a single-handed front desk usually does not.")
+                    Text("Call this clinic about new requests").font(TimiVetFont.ui(12, weight: .semibold))
+                    VStack(alignment: .leading, spacing: 6) {
+                        policyRow("always", "Every request — call even while this console is open")
+                        policyRow("console_active", "Only while a console is open")
+                        policyRow("never", "Never — console and notifications only")
+                    }
+                    Text("Quiet hours below still silence calls in every mode.")
+                        .font(TimiVetFont.ui(10)).foregroundStyle(TimiVetColor.muted)
+                    Text("Requests always arrive in this console and on the floating panel — the choice is only about ringing the phone. Some practices want the call; a single-handed front desk usually does not.")
                         .font(TimiVetFont.ui(10)).foregroundStyle(TimiVetColor.muted)
                     Text("Number to call").font(TimiVetFont.ui(12, weight: .semibold))
                     TextField(store.callPreferences.locationPhone ?? "Clinic's listed number", text: $voicePhone)
                         .textFieldStyle(.roundedBorder)
-                        .disabled(!callsEnabled)
+                        .disabled(callPolicy == "never")
                     Text("Leave blank to use the clinic's listed number. A back line that is not the public one is usually the right answer.")
                         .font(TimiVetFont.ui(10)).foregroundStyle(TimiVetColor.muted)
                     HStack(spacing: 10) {
                         VStack(alignment: .leading, spacing: 4) {
                             Text("Quiet from").font(TimiVetFont.ui(12, weight: .semibold))
-                            TextField("22:00", text: $quietStart).textFieldStyle(.roundedBorder).disabled(!callsEnabled)
+                            TextField("22:00", text: $quietStart).textFieldStyle(.roundedBorder).disabled(callPolicy == "never")
                         }
                         VStack(alignment: .leading, spacing: 4) {
                             Text("Quiet until").font(TimiVetFont.ui(12, weight: .semibold))
-                            TextField("07:00", text: $quietEnd).textFieldStyle(.roundedBorder).disabled(!callsEnabled)
+                            TextField("07:00", text: $quietEnd).textFieldStyle(.roundedBorder).disabled(callPolicy == "never")
                         }
                     }
                     Text("24-hour times. Leave both blank for no quiet hours. Requests raised during quiet hours still appear in the console.")
                         .font(TimiVetFont.ui(10)).foregroundStyle(TimiVetColor.muted)
                     Button("Save calling preferences") {
-                        Task { await store.saveCallPreferences(callsEnabled: callsEnabled, voicePhone: voicePhone, quietStart: quietStart, quietEnd: quietEnd) }
+                        Task { await store.saveCallPreferences(callPolicy: callPolicy, voicePhone: voicePhone, quietStart: quietStart, quietEnd: quietEnd) }
                     }.buttonStyle(TimiVetPrimaryButtonStyle()).disabled(store.isBusy || !store.isAdmin)
                     if !store.isAdmin {
                         Text("Only a workspace administrator can change these. Ask whoever set up this clinic on Tími.")
@@ -543,6 +550,37 @@ public struct ConsoleView: View {
             .padding(.top, 10)
         }
         .timiVetCard()
+    }
+
+    /// One radio-style row of the call-policy group. A custom row rather than
+    /// a stock Picker so it takes the same rounded-10, Tími-blue look as the
+    /// fields around it.
+    private func policyRow(_ value: String, _ title: String) -> some View {
+        let selected = callPolicy == value
+        return Button {
+            callPolicy = value
+        } label: {
+            HStack(alignment: .center, spacing: 9) {
+                ZStack {
+                    Circle()
+                        .stroke(selected ? TimiVetColor.blue : TimiVetColor.fieldBorder, lineWidth: 1.5)
+                        .frame(width: 14, height: 14)
+                    if selected {
+                        Circle().fill(TimiVetColor.blue).frame(width: 8, height: 8)
+                    }
+                }
+                Text(title)
+                    .font(TimiVetFont.ui(12, weight: selected ? .semibold : .regular))
+                    .foregroundStyle(TimiVetColor.ink)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 10).padding(.vertical, 8)
+            .background(selected ? TimiVetColor.blueSoft : Color.white, in: RoundedRectangle(cornerRadius: 10))
+            .overlay(RoundedRectangle(cornerRadius: 10).stroke(selected ? TimiVetColor.blue : TimiVetColor.fieldBorder, lineWidth: 1))
+            .contentShape(RoundedRectangle(cornerRadius: 10))
+        }
+        .buttonStyle(.plain)
     }
 
     private func labeledIntField(_ title: String, value: Binding<Int>) -> some View {

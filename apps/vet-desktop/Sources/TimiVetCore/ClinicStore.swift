@@ -253,7 +253,9 @@ import Observation
         catch { fail(error.localizedDescription) }
     }
 
-    public func saveCallPreferences(callsEnabled: Bool, voicePhone: String, quietStart: String, quietEnd: String) async {
+    /// `callPolicy` is "always", "console_active", or "never" — a plain String
+    /// on purpose (validated server-side), so the Core surface stays simple.
+    public func saveCallPreferences(callPolicy: String, voicePhone: String, quietStart: String, quietEnd: String) async {
         isBusy = true
         defer { isBusy = false }
         let trimmedPhone = voicePhone.trimmingCharacters(in: .whitespaces)
@@ -265,11 +267,15 @@ import Observation
         let quiet = (start.isEmpty && end.isEmpty) ? QuietHours(start: "", end: "") : QuietHours(start: start, end: end)
         do {
             callPreferences = try await api.updateCallPreferences(
-                CallPreferencesUpdate(callsEnabled: callsEnabled, voicePhone: trimmedPhone, quietHours: quiet)
+                CallPreferencesUpdate(callPolicy: callPolicy, voicePhone: trimmedPhone, quietHours: quiet)
             )
-            succeed(callsEnabled
-                ? "Tími will call this clinic about new requests."
-                : "Tími will not call this clinic. Requests still arrive in the console.")
+            let message: String
+            switch callPolicy {
+            case "never": message = "Tími will not call this clinic. Requests still arrive in the console."
+            case "console_active": message = "Tími will call only while a Tími console is open."
+            default: message = "Tími will call this clinic about new requests."
+            }
+            succeed(message)
         } catch let error as ClinicAPIError { fail(error.message) }
         catch { fail(error.localizedDescription) }
     }

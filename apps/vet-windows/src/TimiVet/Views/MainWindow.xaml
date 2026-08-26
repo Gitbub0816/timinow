@@ -571,10 +571,20 @@
                                 <!-- Calling preferences -->
                                 <StackPanel Grid.Column="2">
                                     <TextBlock Text="PHONE CALLS FROM TÍMI" Style="{StaticResource Eyebrow}" Margin="0,0,0,10"/>
-                                    <CheckBox Content="Call this clinic about new requests" IsChecked="{Binding CallsEnabled}"
-                                              IsEnabled="{Binding IsAdmin}"/>
+                                    <TextBlock Text="Call this clinic about new requests" Style="{StaticResource FieldLabel}"/>
+                                    <RadioButton GroupName="CallPolicy" IsChecked="{Binding CallPolicyAlways}" IsEnabled="{Binding IsAdmin}">
+                                        <TextBlock Text="Every request — call even while this console is open" TextWrapping="Wrap"/>
+                                    </RadioButton>
+                                    <RadioButton GroupName="CallPolicy" IsChecked="{Binding CallPolicyConsoleActive}" IsEnabled="{Binding IsAdmin}">
+                                        <TextBlock Text="Only while a console is open" TextWrapping="Wrap"/>
+                                    </RadioButton>
+                                    <RadioButton GroupName="CallPolicy" IsChecked="{Binding CallPolicyNever}" IsEnabled="{Binding IsAdmin}">
+                                        <TextBlock Text="Never — console and notifications only" TextWrapping="Wrap"/>
+                                    </RadioButton>
                                     <TextBlock Style="{StaticResource Hint}"
-                                               Text="When this is off, requests still arrive in this console and on the floating panel — Tími simply does not ring the phone. Some practices want the call; a single-handed front desk usually does not."/>
+                                               Text="Quiet hours below still silence calls in every mode."/>
+                                    <TextBlock Style="{StaticResource Hint}"
+                                               Text="Requests always arrive in this console and on the floating panel — the choice is only about ringing the phone. Some practices want the call; a single-handed front desk usually does not."/>
 
                                     <TextBlock Text="Number to call" Style="{StaticResource FieldLabel}" Margin="0,12,0,5"/>
                                     <TextBox Text="{Binding VoicePhone, UpdateSourceTrigger=PropertyChanged}" IsEnabled="{Binding IsAdmin}"/>
