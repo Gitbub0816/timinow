@@ -274,6 +274,18 @@ for (const [index, target] of targets.entries()) {
 result = await call(`/api/searches/${careSearchId}`);
 assert(result.response.status === 200 && result.body.search.status === "offers_ready", "The search must become ready after five clinic offers");
 assert(result.body.search.offers.length === 5, "The customer must receive exactly five comparable active offers");
+
+// Nothing to drive to for free. Every offer still being compared must not
+// leak the address, phone, or exact name a customer could use to bypass
+// Tími's fee and go straight to the clinic without ever paying.
+for (const offer of result.body.search.offers) {
+  assert(offer.location.address === undefined, `An unselected offer must not disclose an address: ${JSON.stringify(offer.location)}`);
+  assert(offer.location.phone === undefined, `An unselected offer must not disclose a phone number: ${JSON.stringify(offer.location)}`);
+  assert(offer.location.latitude === undefined && offer.location.longitude === undefined, "An unselected offer must not disclose exact coordinates");
+  assert(/ in .+/.test(offer.location.name), `A masked offer's name must read as a general area, not a specific business: ${offer.location.name}`);
+  assert(offer.location.distanceMiles !== undefined, "A masked offer must still disclose distance — that is what comparing offers means");
+}
+
 const chosenOffer = result.body.search.offers[2];
 result = await call(`/api/searches/${careSearchId}/select-offer`, {
   method: "POST",
@@ -282,6 +294,18 @@ result = await call(`/api/searches/${careSearchId}/select-offer`, {
 });
 assert(result.response.status === 201 && result.body.intake.status === "accepted", `Offer selection must create one confirmed intake: ${JSON.stringify(result.body)}`);
 assert(result.body.intake.selectedOfferId === chosenOffer.id && result.body.intake.sourceSearchId === careSearchId, "The confirmed intake must retain search and offer provenance");
+
+// The clinic actually chosen (and paid for) must reveal its real address —
+// there is no navigating there otherwise, and the fee has been committed to.
+assert(typeof result.body.location.address === "string" && result.body.location.address.length > 0, "The selected offer's clinic must reveal its real address for navigation");
+assert(typeof result.body.location.phone === "string" && result.body.location.phone.length > 0, "The selected offer's clinic must reveal a real phone number");
+assert(typeof result.body.location.latitude === "number", "The selected offer's clinic must reveal exact coordinates for navigation");
+
+result = await call(`/api/searches/${careSearchId}`);
+// Released offers drop out of the query entirely (status filters to
+// 'active'/'selected'), so the only offer left to see is the one paid for.
+assert(result.body.search.offers.length === 1 && result.body.search.offers[0].id === chosenOffer.id, "Only the selected offer should remain visible after selection");
+assert(typeof result.body.search.offers[0].location.address === "string", "A selected offer must keep reporting its real address once chosen, not just in the one-time selection response");
 assert(database.prepare("SELECT COUNT(*) AS count FROM care_offers WHERE search_id = ? AND status = 'selected'").get(careSearchId).count === 1, "Exactly one offer must be selected");
 assert(database.prepare("SELECT COUNT(*) AS count FROM care_offers WHERE search_id = ? AND status = 'released'").get(careSearchId).count === 4, "Every unchosen offer must be released");
 assert(database.prepare("SELECT COUNT(*) AS count FROM care_search_targets WHERE search_id = ? AND status = 'selected'").get(careSearchId).count === 1, "Exactly one clinic target must be confirmed");
@@ -567,4 +591,4 @@ for (const table of tableChecks) {
 }
 
 database.close();
-console.log("D1 end-to-end tests passed: five-offer search, atomic customer selection, clinic release, policy snapshot, deposit, fee disclosure on /api/config, travel, optional medications and allergies, pets on the account, veterinary-technician staffing notices, client error reporting, clinic calling preferences, provider applications with operator triage, privacy-preserving analytics with the operator summary, observation, expiry, and audit.");
+console.log("D1 end-to-end tests passed: five-offer search with masked clinic details until selection, atomic customer selection, clinic release, policy snapshot, deposit, fee disclosure on /api/config, travel, optional medications and allergies, pets on the account, veterinary-technician staffing notices, client error reporting, clinic calling preferences, provider applications with operator triage, privacy-preserving analytics with the operator summary, observation, expiry, and audit.");

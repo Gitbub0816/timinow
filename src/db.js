@@ -95,6 +95,11 @@ function locationFromRow(row, coordinates) {
     slug: row.slug,
     kind: row.kind,
     address: `${row.address_line1}, ${row.city}, ${row.region} ${row.postal_code}`,
+    // Separate from the composed address above so a masked offer (see
+    // maskedOfferLocation) can say roughly where a clinic is without saying
+    // exactly where.
+    city: row.city,
+    region: row.region,
     phone: row.phone,
     latitude,
     longitude,
@@ -259,7 +264,41 @@ function normalizeCareSearchRow(row) {
   };
 }
 
-function normalizeOfferRow(row, location, search) {
+const OFFER_KIND_LABEL = {
+  emergency: "Emergency hospital",
+  urgent: "Urgent care clinic",
+  general: "Veterinary clinic",
+  specialty: "Specialty veterinary clinic"
+};
+
+/**
+ * What a customer sees for a clinic it has not yet chosen and has not paid
+ * Tími's fee for: enough to compare and decide, nothing that lets the trip
+ * happen without going through Tími. No exact address, no phone, no exact
+ * coordinates, no name that is one search away from an address — a chosen
+ * clinic's name and street are both trivially the same thing once a customer
+ * knows there is exactly one "Bayview Veterinary Emergency" in range.
+ *
+ * distanceMiles, wait, deposit and exam fee all stay: they are what "compare
+ * the offers" means, and none of them is a place to drive to.
+ */
+function maskedOfferLocation(location) {
+  if (!location) return location;
+  const label = OFFER_KIND_LABEL[location.kind] || "Veterinary clinic";
+  return {
+    id: location.id,
+    tenantId: location.tenantId,
+    name: location.city ? `${label} in ${location.city}` : label,
+    kind: location.kind,
+    city: location.city,
+    region: location.region,
+    distanceMiles: location.distanceMiles ?? null,
+    open24Hours: location.open24Hours,
+    acceptsWalkIns: location.acceptsWalkIns
+  };
+}
+
+function normalizeOfferRow(row, location, search, { revealLocation = true } = {}) {
   const latitude = Number(search?.customerLatitude);
   const longitude = Number(search?.customerLongitude);
   const hasCoordinates = Number.isFinite(latitude) && Number.isFinite(longitude);
@@ -284,7 +323,7 @@ function normalizeOfferRow(row, location, search) {
     baseExamFeeCents: row.base_exam_fee_cents,
     offeredAt: row.offered_at,
     expiresAt: row.expires_at,
-    location: enrichedLocation
+    location: revealLocation ? enrichedLocation : maskedOfferLocation(enrichedLocation)
   };
 }
 
@@ -302,7 +341,14 @@ export async function getCareSearch(env, identifier) {
       COALESCE(wait_min, 9999), offered_at
     LIMIT ?
   `).bind(search.id, search.maxOffers).all();
-  const offers = await Promise.all(offerResult.results.map(async (offer) => normalizeOfferRow(offer, await getLocation(env, offer.location_id), search)));
+  // Full clinic details reveal only for the offer the customer has actually
+  // selected (and, by then, paid Tími's fee for). Every offer still being
+  // compared shows a masked location — see maskedOfferLocation — so a
+  // customer cannot shop the app for a free address and then drive there
+  // without going through Tími at all.
+  const offers = await Promise.all(offerResult.results.map(async (offer) =>
+    normalizeOfferRow(offer, await getLocation(env, offer.location_id), search, { revealLocation: offer.status === "selected" })
+  ));
   const counts = await env.DB.prepare(`
     SELECT
       COUNT(*) AS contacted,

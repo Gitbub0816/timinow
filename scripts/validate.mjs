@@ -464,4 +464,25 @@ if (!moments.some((moment) => PLAYFUL.test(TIMI_ANNOUNCEMENTS.calm[moment]))) {
   }
 }
 
+// An offer a customer has not paid for must not disclose where to drive to
+// without going through Tími. Without this, a customer opens the app, reads
+// five clinic addresses off the comparison screen, and drives to whichever is
+// closest — never selecting an offer, never charged the fee.
+{
+  const db = await readFile("src/db.js", "utf8");
+  if (!db.includes("function maskedOfferLocation")) {
+    throw new Error("src/db.js no longer defines maskedOfferLocation. Without it, every offer a customer is still comparing discloses the clinic's real address and phone number before any fee is charged.");
+  }
+  const getCareSearchAt = db.indexOf("export async function getCareSearch");
+  if (getCareSearchAt === -1) throw new Error("src/db.js no longer defines getCareSearch.");
+  const getCareSearchBody = db.slice(getCareSearchAt, db.indexOf("\nexport ", getCareSearchAt + 1));
+  if (!/revealLocation:\s*offer\.status === ["']selected["']/.test(getCareSearchBody)) {
+    throw new Error("getCareSearch no longer gates revealLocation on the offer's own selected status, so an offer still being compared — or every offer, if the gate is gone entirely — would show its real address before any fee is paid.");
+  }
+  const e2e = await readFile("scripts/e2e.mjs", "utf8");
+  if (!e2e.includes("must not disclose an address")) {
+    throw new Error("scripts/e2e.mjs no longer asserts that an unselected offer's address is absent — the one test that would catch this masking silently breaking.");
+  }
+}
+
 console.log(`Validated ${requiredFiles.length} files, ${screens.length} screens, ${requiredTables.length} D1 tables, and ${requiredRoutes.length} API groups.`);
