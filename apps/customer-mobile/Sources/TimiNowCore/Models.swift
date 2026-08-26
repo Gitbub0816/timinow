@@ -27,6 +27,10 @@ public struct PetProfile: Identifiable, Codable, Hashable, Sendable {
     public var name: String
     public var species: PetSpecies
     public var breed: String
+    /// "male", "female", "unknown", or "" for never asked. A string rather
+    /// than an enum because the Worker owns the vocabulary — see
+    /// StoredPetPayload's species note.
+    public var sex: String
     public var weightLbs: Double?
     public var birthYear: Int?
     public var colorToken: Int
@@ -36,8 +40,8 @@ public struct PetProfile: Identifiable, Codable, Hashable, Sendable {
     public var medications: String
     public var allergies: String
 
-    public init(id: String = UUID().uuidString, name: String, species: PetSpecies, breed: String = "", weightLbs: Double? = nil, birthYear: Int? = nil, colorToken: Int = 0, medications: String = "", allergies: String = "") {
-        self.id = id; self.name = name; self.species = species; self.breed = breed; self.weightLbs = weightLbs; self.birthYear = birthYear; self.colorToken = colorToken
+    public init(id: String = UUID().uuidString, name: String, species: PetSpecies, breed: String = "", sex: String = "", weightLbs: Double? = nil, birthYear: Int? = nil, colorToken: Int = 0, medications: String = "", allergies: String = "") {
+        self.id = id; self.name = name; self.species = species; self.breed = breed; self.sex = sex; self.weightLbs = weightLbs; self.birthYear = birthYear; self.colorToken = colorToken
         self.medications = medications; self.allergies = allergies
     }
 
@@ -46,7 +50,7 @@ public struct PetProfile: Identifiable, Codable, Hashable, Sendable {
     // the key is absent — it throws — and every pet on every phone was written
     // without them.
     enum CodingKeys: String, CodingKey {
-        case id, name, species, breed, weightLbs, birthYear, colorToken, medications, allergies
+        case id, name, species, breed, sex, weightLbs, birthYear, colorToken, medications, allergies
     }
 
     public init(from decoder: Decoder) throws {
@@ -55,6 +59,7 @@ public struct PetProfile: Identifiable, Codable, Hashable, Sendable {
         name = try container.decode(String.self, forKey: .name)
         species = try container.decode(PetSpecies.self, forKey: .species)
         breed = try container.decodeIfPresent(String.self, forKey: .breed) ?? ""
+        sex = try container.decodeIfPresent(String.self, forKey: .sex) ?? ""
         weightLbs = try container.decodeIfPresent(Double.self, forKey: .weightLbs)
         birthYear = try container.decodeIfPresent(Int.self, forKey: .birthYear)
         colorToken = try container.decodeIfPresent(Int.self, forKey: .colorToken) ?? 0
@@ -233,6 +238,7 @@ public struct StoredPetPayload: Codable, Hashable, Sendable {
     public var name: String
     public var species: String
     public var breed: String?
+    public var sex: String?
     public var weightLbs: Double?
     public var birthYear: Int?
     public var colorToken: Int
@@ -244,6 +250,7 @@ public struct StoredPetPayload: Codable, Hashable, Sendable {
         name = pet.name
         species = pet.species.rawValue
         breed = pet.breed.isEmpty ? nil : pet.breed
+        sex = pet.sex.isEmpty ? nil : pet.sex
         weightLbs = pet.weightLbs
         birthYear = pet.birthYear
         colorToken = pet.colorToken

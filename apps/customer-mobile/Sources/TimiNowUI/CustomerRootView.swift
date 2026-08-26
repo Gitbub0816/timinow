@@ -13,13 +13,25 @@ public struct CustomerRootView: View {
 
     public var body: some View {
         ZStack(alignment: .top) {
-            if !store.hasCompletedOnboarding { OnboardingView(store: store) }
-            // Signing in comes after onboarding: the first screens explain what
-            // Tími is, and asking for an email before that is asking a stranger
-            // for their details. After it, the session is restored silently at
-            // every later launch, so this is seen once.
-            else if store.auth.signInRequired && !store.auth.isSignedIn {
-                SignInView(auth: store.auth).transition(.opacity)
+            // Onboarding runs BEFORE sign-in now: a stranger is asked their
+            // pet's name, not their email address, and the magic-code screen
+            // arrives as the flow's natural last step. A subtle reordering —
+            // better for conversion. Signed-in people never see any of it,
+            // and a signed-out person who already finished onboarding on this
+            // device lands straight on the auth step with their pets intact.
+            if store.auth.signInRequired && !store.auth.isSignedIn {
+                if store.hasCompletedOnboarding || store.onboardingSignInRequested {
+                    SignInView(
+                        auth: store.auth,
+                        // Warm last-step wording only when onboarding just
+                        // delivered pets here; the "Sign in" skip and a plain
+                        // signed-out relaunch keep the ordinary copy.
+                        handoff: store.hasCompletedOnboarding && store.hasPet,
+                        handoffPetName: store.pets.first?.name ?? ""
+                    ).transition(.opacity)
+                } else {
+                    OnboardingView(store: store)
+                }
             }
             else { appContent.transition(.opacity) }
             if let error = store.errorMessage { ErrorToast(message: error) { store.errorMessage = nil }.padding(.top, 8).transition(.move(edge: .top).combined(with: .opacity)).zIndex(20) }

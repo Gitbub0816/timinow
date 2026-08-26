@@ -32,7 +32,7 @@
 
 import { VALID_SPECIES } from "./catalog.js";
 
-const MAX_PETS = 40;
+const MAX_PETS = 99;
 
 function text(value, maxLength) {
   return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
@@ -52,6 +52,7 @@ export function normalizePetRow(row) {
     name: row.name,
     species: row.species,
     breed: row.breed || "",
+    sex: row.sex || "",
     weightLbs: row.weight_lbs === null || row.weight_lbs === undefined ? null : Number(row.weight_lbs),
     birthYear: row.birth_year === null || row.birth_year === undefined ? null : Number(row.birth_year),
     colorToken: Number(row.color_token || 0),
@@ -93,6 +94,11 @@ export function validatePet(body, { id } = {}) {
     return { ok: false, code: "INVALID_BIRTH_YEAR", message: `Birth year must be between 1970 and ${thisYear}.` };
   }
 
+  const sex = text(body?.sex, 10) || null;
+  if (sex !== null && !["male", "female", "unknown"].includes(sex)) {
+    return { ok: false, code: "INVALID_SEX", message: "Sex must be male, female, or unknown — or left out." };
+  }
+
   return {
     ok: true,
     pet: {
@@ -100,6 +106,7 @@ export function validatePet(body, { id } = {}) {
       name,
       species,
       breed: text(body?.breed, 80) || null,
+      sex,
       weightLbs,
       birthYear: birthYear === null ? null : Math.round(birthYear),
       colorToken: Math.max(0, Math.min(9, Math.round(Number(body?.colorToken) || 0))),
@@ -146,13 +153,14 @@ export async function savePet(env, clerkUserId, pet) {
   const now = new Date().toISOString();
   await env.DB.prepare(`
     INSERT INTO pets (
-      id, clerk_user_id, name, species, breed, weight_lbs, birth_year,
+      id, clerk_user_id, name, species, breed, sex, weight_lbs, birth_year,
       color_token, medications, allergies, deleted_at, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       name = excluded.name,
       species = excluded.species,
       breed = excluded.breed,
+      sex = excluded.sex,
       weight_lbs = excluded.weight_lbs,
       birth_year = excluded.birth_year,
       color_token = excluded.color_token,
@@ -164,7 +172,7 @@ export async function savePet(env, clerkUserId, pet) {
       updated_at = excluded.updated_at
     WHERE pets.clerk_user_id = ?
   `).bind(
-    pet.id, clerkUserId, pet.name, pet.species, pet.breed, pet.weightLbs, pet.birthYear,
+    pet.id, clerkUserId, pet.name, pet.species, pet.breed, pet.sex, pet.weightLbs, pet.birthYear,
     pet.colorToken, pet.medications, pet.allergies, now, now, clerkUserId
   ).run();
 

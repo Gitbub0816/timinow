@@ -718,6 +718,21 @@ for (const path of await collectFiles("apps/customer-mobile/Sources", ".swift"))
   }
 }
 
+// A pet field that exists on the server but not in the app's model is data
+// the phone silently drops on every save. Each field named here is stored by
+// src/pets.js; the Swift model and its wire payload must both carry it.
+{
+  const models = await read("apps/customer-mobile/Sources/TimiNowCore/Models.swift");
+  for (const field of ["breed", "sex", "weightLbs", "birthYear", "medications", "allergies"]) {
+    if (!new RegExp(`case id, name, species[^\\n]*\\b${field}\\b`).test(models)) {
+      throw new Error(`PetProfile's CodingKeys no longer carry "${field}", which src/pets.js stores. The phone would drop it on every decode.`);
+    }
+  }
+  if (!/sex = pet\.sex\.isEmpty \? nil : pet\.sex/.test(models)) {
+    throw new Error("StoredPetPayload no longer maps PetProfile.sex, so the field never reaches /api/pets and every phone forgets it on sync.");
+  }
+}
+
 // The Mapbox access token is optional exactly once, in AppStore, because it is
 // absent until /api/config answers. Every UI declaration below that is a plain
 // String, unwrapped at the one call site. Threading the optional deeper means

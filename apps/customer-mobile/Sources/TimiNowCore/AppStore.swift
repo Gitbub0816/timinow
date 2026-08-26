@@ -6,7 +6,20 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
 
 @MainActor @Observable public final class AppStore {
     public var hasCompletedOnboarding: Bool
-    public var onboardingPage = 0
+    /// Pet names typed on the first onboarding screen, in the order they were
+    /// given. Persisted while onboarding is underway so a killed app resumes
+    /// where it stood; cleared the moment onboarding completes.
+    public var onboardingNames: [String] = []
+    /// Which named pet the detail page is describing: -1 while names are
+    /// still being collected on the first screen.
+    public var onboardingPetIndex = -1
+    /// Set when "Sign in" is chosen from an onboarding screen — the skip for
+    /// people who already have an account. Deliberately not persisted: killed
+    /// before sign-in finishes, the app resumes onboarding instead.
+    public var onboardingSignInRequested = false
+    /// Ninety-nine name fields is already a refusal in practice; past it the
+    /// screen declines politely instead of scrolling forever.
+    public static let onboardingPetLimit = 99
     public var selectedTab = 0
     public var route: CustomerRoute = .home
     public var pets: [PetProfile]
@@ -63,6 +76,8 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
         let storedOwner = ("", "", "")
         let storedDeveloperMode = false
         let storedNavigationPreferences = NavigationPreferences.default
+        let storedOnboardingNames: [String] = []
+        let storedOnboardingIndex = -1
         #else
         let defaults = UserDefaults.standard
         self.defaults = defaults
@@ -85,6 +100,12 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
             defaults.string(forKey: "timi.owner.email") ?? ""
         )
         let storedNavigationPreferences = Self.decode(NavigationPreferences.self, from: defaults.data(forKey: "timi.navigation.preferences")) ?? .default
+        // Mid-onboarding progress, so being killed between screens is not
+        // starting over. Absent reads as -1 — the names screen — because
+        // integer(forKey:) answering 0 for "nothing stored" would otherwise
+        // resume on the first pet's detail page with no names collected.
+        let storedOnboardingNames = Self.decode([String].self, from: defaults.data(forKey: "timi.onboarding.names")) ?? []
+        let storedOnboardingIndex = defaults.object(forKey: "timi.onboarding.petIndex") == nil ? -1 : defaults.integer(forKey: "timi.onboarding.petIndex")
         #endif
         self.pets = storedPets
         self.selectedPetId = selectedPetId
@@ -92,6 +113,10 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
         self.draft = CareDraft(pet: selected)
         self.history = storedHistory
         self.hasCompletedOnboarding = completedOnboarding
+        self.onboardingNames = storedOnboardingNames
+        // Clamped rather than trusted: an index past the stored names would
+        // have every detail page describing nobody.
+        self.onboardingPetIndex = storedOnboardingNames.isEmpty ? -1 : max(-1, min(storedOnboardingIndex, storedOnboardingNames.count - 1))
         self.apiBaseURLText = apiBaseURLText
         self.developerModeEnabled = storedDeveloperMode
         self.ownerName = storedOwner.0
@@ -245,6 +270,10 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
             defaults.set(profile.userId, forKey: "timi.accountId")
             #endif
         }
+        // Signing in ends onboarding wherever it stood — through the flow's
+        // last step or through its "Sign in" skip. The account is the
+        // authority now, and a later sign-out must not replay the welcome.
+        if !hasCompletedOnboarding { completeOnboarding() }
         // Pets belong to the account now, so this is where the two copies meet.
         Task { [weak self] in await self?.reconcilePets() }
         if !profile.name.isEmpty { ownerName = profile.name }
@@ -284,20 +313,86 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
     }
     public var concernValidation: ConcernValidation { ConcernValidator.evaluate(summary: draft.summary, symptoms: draft.symptomKeys, startedWhen: draft.startedWhen) }
 
-    public func completeOnboarding(name: String, species: PetSpecies) {
-        // Creates the first profile rather than renaming a sample one. The
-        // old form only replaced the seeded pet, so with no seed the name
-        // typed during onboarding would have been dropped on the floor.
-        if !name.isEmpty, pets.isEmpty {
-            pets = [PetProfile(name: name, species: species, colorToken: 0)]
-            selectedPetId = pets[0].id
-            draft = CareDraft(pet: pets[0])
-        }
+    // MARK: - Onboarding
+    //
+    // Onboarding now runs before sign-in, not after it: the first thing a new
+    // person is asked is their pet's name, not their email address. Pets
+    // captured here go through savePet — the same device-local storage the
+    // post-sign-in reconcilePets sync reads — so the moment an account exists
+    // they upload to it with no extra wiring.
+
+    /// The pet the detail page is currently describing, or nil outside the
+    /// per-pet pages.
+    public var onboardingPetName: String? {
+        guard onboardingPetIndex >= 0, onboardingPetIndex < onboardingNames.count else { return nil }
+        return onboardingNames[onboardingPetIndex]
+    }
+
+    /// Whether the pet being described is the last one named.
+    public var onboardingIsLastPet: Bool { onboardingPetIndex >= onboardingNames.count - 1 }
+
+    /// The first screen's outcome: every name typed, in order. Blank fields
+    /// are dropped rather than refused — an empty extra field is somebody who
+    /// pressed "I have another pet" once too often.
+    public func beginOnboardingDetails(names: [String]) {
+        let cleaned = names.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+        guard !cleaned.isEmpty else { return }
+        onboardingNames = Array(cleaned.prefix(Self.onboardingPetLimit))
+        onboardingPetIndex = 0
+        persistOnboardingProgress()
+    }
+
+    /// Stores the pet currently being described. Goes through savePet so the
+    /// profile is on disk immediately — killed one second later, the pet is
+    /// still there — and so the sign-in sync picks it up like any other pet.
+    public func recordOnboardingPet(species: PetSpecies, breed: String, sex: String, weightLbs: Double?, birthYear: Int?, medications: String, allergies: String) {
+        guard let name = onboardingPetName else { return }
+        savePet(PetProfile(
+            name: name,
+            species: species,
+            breed: breed.trimmingCharacters(in: .whitespaces),
+            sex: sex,
+            weightLbs: weightLbs,
+            birthYear: birthYear,
+            colorToken: pets.count,
+            medications: medications.trimmingCharacters(in: .whitespacesAndNewlines),
+            allergies: allergies.trimmingCharacters(in: .whitespacesAndNewlines)
+        ))
+    }
+
+    /// Moves to the next named pet's detail page.
+    public func advanceOnboardingPet() {
+        guard onboardingPetIndex + 1 < onboardingNames.count else { return }
+        onboardingPetIndex += 1
+        persistOnboardingProgress()
+    }
+
+    /// Ends onboarding and clears its working state. Reached from the last
+    /// pet's detail page, and from sign-in when somebody skipped — either way
+    /// the flow never shows again on this device.
+    public func completeOnboarding() {
         hasCompletedOnboarding = true
+        onboardingNames = []
+        onboardingPetIndex = -1
+        // The first pet named is the one selected — the same animal the
+        // person led with when asked who they were here for.
+        if let first = pets.first {
+            selectedPetId = first.id
+            draft = CareDraft(pet: first)
+        }
         #if !os(Android)
         defaults.set(true, forKey: "timi.onboarding.complete")
+        defaults.removeObject(forKey: "timi.onboarding.names")
+        defaults.removeObject(forKey: "timi.onboarding.petIndex")
         #endif
         persistPets()
+    }
+
+    private func persistOnboardingProgress() {
+        #if !os(Android)
+        defaults.set(try? JSONEncoder().encode(onboardingNames), forKey: "timi.onboarding.names")
+        defaults.set(onboardingPetIndex, forKey: "timi.onboarding.petIndex")
+        #endif
     }
 
     /// Who to call, remembered.
@@ -626,9 +721,13 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
 
     public func resetOnboarding() {
         hasCompletedOnboarding = false
-        onboardingPage = 0
+        onboardingNames = []
+        onboardingPetIndex = -1
+        onboardingSignInRequested = false
         #if !os(Android)
         defaults.set(false, forKey: "timi.onboarding.complete")
+        defaults.removeObject(forKey: "timi.onboarding.names")
+        defaults.removeObject(forKey: "timi.onboarding.petIndex")
         #endif
     }
 

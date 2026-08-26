@@ -64,6 +64,7 @@ database.exec(await readFile("migrations/0008_payments_ledger.sql", "utf8"));
 database.exec(await readFile("migrations/0009_pets.sql", "utf8"));
 database.exec(await readFile("migrations/0010_provider_analytics.sql", "utf8"));
 database.exec(await readFile("migrations/0011_call_policy.sql", "utf8"));
+database.exec(await readFile("migrations/0012_pet_sex.sql", "utf8"));
 
 const env = {
   ASSETS: { fetch: async () => new Response("asset") },
@@ -336,7 +337,7 @@ const dev = { "content-type": "application/json", "x-demo-user-id": "user_dev" }
 
 const otis = {
   id: "pet_otis_local", name: "Otis", species: "dog", breed: "Golden retriever",
-  weightLbs: 72, birthYear: 2019, colorToken: 1,
+  sex: "male", weightLbs: 72, birthYear: 2019, colorToken: 1,
   medications: "Apoquel 5.4mg twice daily", allergies: "Penicillin"
 };
 
@@ -348,6 +349,15 @@ assert(result.response.status === 200, "Saving a pet must succeed");
 assert(result.body.pet.id === otis.id, "The client's pet id is the id the account keeps");
 assert(result.body.pet.medications === "Apoquel 5.4mg twice daily", "Medications must round-trip verbatim");
 assert(result.body.pet.colorToken === 1, "The card colour travels with the pet");
+assert(result.body.pet.sex === "male", "Sex must round-trip");
+
+// Sex is optional but never freeform.
+result = await call(`/api/pets/${otis.id}`, { method: "PUT", headers: maya, body: JSON.stringify({ ...otis, sex: "boy" }) });
+assert(result.response.status === 422 && result.body.error.code === "INVALID_SEX", "A freeform sex value is refused, not stored");
+result = await call(`/api/pets/${otis.id}`, { method: "PUT", headers: maya, body: JSON.stringify({ ...otis, sex: "" }) });
+assert(result.response.status === 200 && result.body.pet.sex === "", "Leaving sex out is always allowed");
+result = await call(`/api/pets/${otis.id}`, { method: "PUT", headers: maya, body: JSON.stringify(otis) });
+assert(result.body.pet.sex === "male", "Restoring the full record keeps sex");
 
 // The reinstall case, which is the whole point.
 result = await call("/api/pets", { headers: maya });

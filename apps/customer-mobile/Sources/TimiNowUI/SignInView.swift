@@ -19,6 +19,12 @@ import SwiftUI
 /// own phone number twice.
 struct SignInView: View {
     @Bindable var auth: AuthController
+    /// True when this screen is the last step of onboarding — the person just
+    /// described their pets and the account is where those profiles get kept.
+    /// Same flow, same code, warmer words: a doorway, not a wall.
+    var handoff = false
+    /// The first onboarding pet's name, for the handoff copy to greet.
+    var handoffPetName = ""
 
     var body: some View {
         ZStack {
@@ -62,7 +68,7 @@ struct SignInView: View {
 
     private var headline: String {
         switch auth.stage {
-        case .identifier: return "Who should we\nkeep this for?"
+        case .identifier: return handoff ? "Last step —\nsave \(possessivePetName) profile" : "Who should we\nkeep this for?"
         case .profile: return "Let's set up\nyour account"
         case .strategyPicker: return "How would you\nlike to sign in?"
         case .password: return "Sign in with\na code instead"
@@ -71,10 +77,17 @@ struct SignInView: View {
         }
     }
 
+    /// "Momo's", or "your pet's" if the name somehow went missing.
+    private var possessivePetName: String {
+        handoffPetName.isEmpty ? "your pet's" : "\(handoffPetName)'s"
+    }
+
     private var subhead: String {
         switch auth.stage {
         case .identifier:
-            return "Your pets, your details, and every request stay with your account — so you never type them twice."
+            return handoff
+                ? "Enter your phone number or email — we'll text or email you a code. No password to invent, and \(possessivePetName) profile stays with your account on any phone."
+                : "Your pets, your details, and every request stay with your account — so you never type them twice."
         case .profile:
             return "Clinics need a name and a number to expect you by. Tími asks once, then fills it in for every request."
         case .strategyPicker:

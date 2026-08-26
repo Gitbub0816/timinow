@@ -219,6 +219,7 @@ database.exec(await readFile("migrations/0008_payments_ledger.sql", "utf8"));
 database.exec(await readFile("migrations/0009_pets.sql", "utf8"));
 database.exec(await readFile("migrations/0010_provider_analytics.sql", "utf8"));
 database.exec(await readFile("migrations/0011_call_policy.sql", "utf8"));
+database.exec(await readFile("migrations/0012_pet_sex.sql", "utf8"));
 
 // Shaped like the real thing — 32 hex characters — because placeCall now
 // checks that shape before it calls Twilio, and a fixture that could never be

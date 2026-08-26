@@ -124,6 +124,7 @@ struct PetEditor: View {
     @State var name = ""
     @State var species: PetSpecies = .dog
     @State var breed = ""
+    @State var sex = ""
     @State var weight = ""
     @State var medications = ""
     @State var allergies = ""
@@ -172,6 +173,13 @@ struct PetEditor: View {
 
                     field("Breed") {
                         TextField("Optional", text: $breed).timiField()
+                    }
+                    field("Sex") {
+                        HStack(spacing: 10) {
+                            sexChip("male", "Male")
+                            sexChip("female", "Female")
+                            sexChip("unknown", "Not sure")
+                        }
                     }
                     field("Weight in pounds") {
                         TextField("Optional", text: $weight).timiKeyboard(.decimal).timiField()
@@ -224,6 +232,7 @@ struct PetEditor: View {
                 name = pet.name
                 species = pet.species
                 breed = pet.breed
+                sex = pet.sex
                 weight = pet.weightLbs.map { String(format: "%.0f", $0) } ?? ""
                 medications = pet.medications
                 allergies = pet.allergies
@@ -244,6 +253,18 @@ struct PetEditor: View {
         }
     }
 
+    /// Same skippable chips as onboarding: tapping the selected one clears it.
+    func sexChip(_ value: String, _ title: String) -> some View {
+        let selected = sex == value
+        return Button { sex = selected ? "" : value } label: {
+            Text(title)
+                .font(.caption).fontWeight(.bold)
+                .frame(maxWidth: .infinity, minHeight: 44)
+                .background(selected ? TimiColor.blueSoft : .white, in: RoundedRectangle(cornerRadius: 14))
+                .overlay(RoundedRectangle(cornerRadius: 14).stroke(selected ? TimiColor.blue : TimiColor.ink.faded(0.14), lineWidth: CGFloat(selected ? 2 : 1)))
+        }.buttonStyle(.plain)
+    }
+
     func save() {
         let trimmed = name.trimmingCharacters(in: .whitespaces)
         let existing = editing
@@ -252,6 +273,7 @@ struct PetEditor: View {
             name: trimmed,
             species: species,
             breed: breed.trimmingCharacters(in: .whitespaces),
+            sex: sex,
             weightLbs: Double(weight),
             birthYear: existing?.birthYear,
             colorToken: existing?.colorToken ?? store.pets.count,
@@ -373,11 +395,28 @@ struct SettingsView: View {
         return store.ownerName.isEmpty ? "This device" : store.ownerName
     }
 
+    /// The onboarding flow no longer primes OS permissions — it asks about
+    /// the pet, not the phone — so flipping these on is now what actually
+    /// requests them. The toggle settles to what the system granted, so a
+    /// refusal reads as the switch declining rather than lying on.
     var permissions: some View {
         card("PERMISSIONS") {
             toggle("Offer notifications", "Tell me when a clinic answers.", $store.notificationsEnabled)
             Divider()
             toggle("Use precise location", "Rank clinics by how far you actually have to drive.", $store.locationEnabled)
+        }
+        .onChange(of: store.notificationsEnabled) { enabled in
+            guard enabled else { return }
+            Task { store.notificationsEnabled = await PlatformPermissions.requestNotifications() }
+        }
+        .onChange(of: store.locationEnabled) { enabled in
+            guard enabled else { return }
+            Task {
+                store.locationEnabled = await PlatformPermissions.requestLocation()
+                if let point = await PlatformPermissions.currentLocation() {
+                    store.setLocation(latitude: point.0, longitude: point.1)
+                }
+            }
         }
     }
 
