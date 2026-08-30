@@ -15,6 +15,7 @@
 import { readFile } from "node:fs/promises";
 import { DatabaseSync } from "node:sqlite";
 import { fundSummary, ledgerIntegrity, accountBalance } from "../src/ledger.js";
+import { createContributionPayment } from "../src/fund.js";
 import { sponsorshipQuote, activePricingPolicy, validateContributionAmount } from "../src/pricing.js";
 import {
   checkFundAvailability,
@@ -616,5 +617,54 @@ for (const table of tableChecks) {
 }
 
 const transactions = Number(database.prepare("SELECT COUNT(*) AS c FROM ledger_transactions").get().c);
+/* ------------------------------------------- the contribution payment call --- */
+
+// Minting the charge is separate from creating the contribution: a
+// contributor who abandons the payment sheet leaves a DRAFT row and no
+// charge, which is the honest record of what happened.
+{
+  const draft = await recordContribution(env, { amountCents: 2000, source: "STANDALONE", receiptEmail: "gift@example.com" });
+  assert(draft.ok, "A $20 standalone contribution is valid");
+
+  const post = (id) => new Request(`https://timi.example/api/fund/contributions/${id}/payment`, { method: "POST" });
+
+  // With no Stripe key the caller is told plainly. A portal must never be
+  // able to show a success page for a payment that did not happen.
+  let response = await createContributionPayment(post(draft.contributionId), env, null, draft.contributionId);
+  let body = await response.json();
+  assert(response.status === 200 && body.mode === "demo", `An unconfigured deployment must say so: ${JSON.stringify(body)}`);
+  assert(body.clientSecret === null, "The demo path must not invent a client secret");
+  assert(/no card was charged/i.test(body.message), "The demo path must say no card was charged");
+
+  // Nothing has been posted to the fund. A created PaymentIntent is not money
+  // anybody has given.
+  const beforeCents = (await fundSummary(env)).availableCents;
+  await createContributionPayment(post(draft.contributionId), env, null, draft.contributionId);
+  assert((await fundSummary(env)).availableCents === beforeCents, "Starting a payment must not credit the fund");
+
+  response = await createContributionPayment(post("contribution_nope"), env, null, "contribution_nope");
+  assert(response.status === 404, "An unknown contribution is a 404");
+
+  // A contribution attached to an account belongs to that account.
+  const owned = await recordContribution(env, { amountCents: 2000, source: "STANDALONE", contributorUserId: "user_maya", receiptEmail: "maya@example.com" });
+  response = await createContributionPayment(post(owned.contributionId), env, { userId: "user_dev" }, owned.contributionId);
+  assert(response.status === 403, "One account must not be able to pay another's contribution");
+  response = await createContributionPayment(post(owned.contributionId), env, { userId: "user_maya" }, owned.contributionId);
+  assert(response.status === 200, "The owner may pay their own contribution");
+
+  // An already-posted contribution cannot be charged a second time.
+  database.prepare("UPDATE contributions SET status = 'POSTED' WHERE id = ?").run(owned.contributionId);
+  response = await createContributionPayment(post(owned.contributionId), env, { userId: "user_maya" }, owned.contributionId);
+  body = await response.json();
+  assert(response.status === 409 && body.error.code === "CONTRIBUTION_ALREADY_PAID", "A paid contribution cannot be charged again");
+
+  const wrongMethod = new Request(`https://timi.example/api/fund/contributions/${draft.contributionId}/payment`, { method: "GET" });
+  response = await createContributionPayment(wrongMethod, env, null, draft.contributionId);
+  assert(response.status === 405, "GET is not how a payment starts");
+
+  assert((await ledgerIntegrity(env)).ok, "The ledger stays sound across the payment call");
+}
+
+
 database.close();
-console.log(`Paw It Forward fund tests passed: ${transactions} balanced journal transactions across whole-dollar contribution validation, contributions posting whole with the processor fee borne separately, duplicate webhooks posting once, approval moving no money, atomic $35 reservation, two concurrent reservations unable to overspend, release and expiry recognizing $0, verified completion recognizing $35 once with a non-cash $10 match, replayed completion recognizing nothing further, a founding clinic's sponsorship costing the fund $10 rather than $35, controlled reversal, delayed and thresholded public impact counting only consumed sponsorships, pause/cap/household controls, contributor-scoped history, and a ledger that balanced after every one of them.`);
+console.log(`Paw It Forward fund tests passed: ${transactions} balanced journal transactions across whole-dollar contribution validation, contributions posting whole with the processor fee borne separately, duplicate webhooks posting once, approval moving no money, atomic $35 reservation, two concurrent reservations unable to overspend, release and expiry recognizing $0, verified completion recognizing $35 once with a non-cash $10 match, replayed completion recognizing nothing further, a founding clinic's sponsorship costing the fund $10 rather than $35, controlled reversal, delayed and thresholded public impact counting only consumed sponsorships, pause/cap/household controls, contributor-scoped history, a contribution payment call that credits nothing until Stripe confirms and never fakes a success, and a ledger that balanced after every one of them.`);

@@ -775,6 +775,48 @@ export function applicantView({ state, decision, pricing, policy }) {
  * applicant id from the request — an application belongs to whoever is signed
  * in, which is the only way to reach one.
  */
+/** What the evidence pipeline will accept. Documents and photographs of them. */
+const ACCEPTED_EVIDENCE_MIME = new Set([
+  "application/pdf",
+  "image/jpeg",
+  "image/png",
+  "image/heic",
+  "image/heif",
+  "image/webp"
+]);
+
+/** 12 MB. A phone photograph of a pay stub is well under; a video is not. */
+const MAX_EVIDENCE_BYTES = 12 * 1024 * 1024;
+
+/**
+ * Whether the bytes are what the upload claims they are.
+ *
+ * A content-type header is a claim by the client, and this pipeline hands
+ * files to an extraction service. Checking the leading bytes is not a
+ * security boundary by itself, but it costs nothing and stops the ordinary
+ * case of a file that is not remotely what it says.
+ */
+function magicMatchesMime(bytes, mime) {
+  const starts = (...signature) => signature.every((byte, index) => bytes[index] === byte);
+  switch (mime) {
+    case "application/pdf":
+      return starts(0x25, 0x50, 0x44, 0x46); // %PDF
+    case "image/jpeg":
+      return starts(0xFF, 0xD8, 0xFF);
+    case "image/png":
+      return starts(0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A);
+    case "image/webp":
+      return starts(0x52, 0x49, 0x46, 0x46) // RIFF
+        && bytes[8] === 0x57 && bytes[9] === 0x45 && bytes[10] === 0x42 && bytes[11] === 0x50; // WEBP
+    case "image/heic":
+    case "image/heif":
+      // ISO base media: a length prefix, then "ftyp", then a brand.
+      return bytes[4] === 0x66 && bytes[5] === 0x74 && bytes[6] === 0x79 && bytes[7] === 0x70;
+    default:
+      return false;
+  }
+}
+
 export async function handleHardship(request, env, actor, path, method, options = {}) {
   if (!path.startsWith("/api/hardship")) return null;
   if (!actor?.userId) return apiError(401, "AUTHENTICATION_REQUIRED", "Sign in is required to continue.");
@@ -804,7 +846,7 @@ export async function handleHardship(request, env, actor, path, method, options 
     });
   }
 
-  const match = path.match(/^\/api\/hardship\/applications\/([^/]+)(?:\/(identity-session|evidence|submit|appeal))?$/);
+  const match = path.match(/^\/api\/hardship\/applications\/([^/]+)(?:\/(identity-session|evidence|uploads|submit|appeal))?$/);
   if (!match) return apiError(404, "NOT_FOUND", "The requested API route does not exist.");
   const applicationId = decodeURIComponent(match[1]);
   const action = match[2] || null;
@@ -829,6 +871,75 @@ export async function handleHardship(request, env, actor, path, method, options 
       if (error instanceof ProviderError) return apiError(503, "IDENTITY_UNAVAILABLE", "Identity verification is unavailable right now. Please try again shortly.");
       throw error;
     }
+  }
+
+  /**
+   * The document itself. Bytes go to a private R2 bucket and never into D1,
+   * which holds only a reference, a hash and a retention deadline — so the
+   * retention sweep can delete a pay stub while the decision it produced
+   * stays reproducible.
+   *
+   * The upload streams through the Worker rather than a presigned URL. It is
+   * one fewer credential to hold and one fewer public URL to leak, and these
+   * are single-page documents rather than video. Every byte is checked
+   * against a declared type and a size ceiling before it is stored.
+   */
+  if (action === "uploads") {
+    if (method !== "POST") return apiError(405, "METHOD_NOT_ALLOWED", "Use POST to upload a document.");
+    if (application.state !== "DRAFT" && application.state !== "TECHNICAL_RETRY") {
+      return apiError(409, "APPLICATION_NOT_OPEN", "This application is no longer accepting documents.");
+    }
+    if (!env.EVIDENCE || typeof env.EVIDENCE.put !== "function") {
+      return apiError(503, "EVIDENCE_STORAGE_UNAVAILABLE", "Document upload is not available on this deployment.");
+    }
+
+    const evidenceType = cleanString(request.headers.get("x-timi-evidence-type"), 60);
+    if (!evidenceType) return apiError(422, "EVIDENCE_TYPE_REQUIRED", "Say which kind of document this is.");
+
+    const contentType = cleanString(request.headers.get("content-type"), 100).split(";")[0].toLowerCase();
+    if (!ACCEPTED_EVIDENCE_MIME.has(contentType)) {
+      return apiError(415, "EVIDENCE_TYPE_UNSUPPORTED", "Upload a PDF, JPEG, PNG, HEIC, or WebP document.");
+    }
+
+    const bytes = new Uint8Array(await request.arrayBuffer());
+    if (!bytes.byteLength) return apiError(422, "EVIDENCE_EMPTY", "That file was empty.");
+    if (bytes.byteLength > MAX_EVIDENCE_BYTES) {
+      return apiError(413, "EVIDENCE_TOO_LARGE", `Documents must be under ${Math.floor(MAX_EVIDENCE_BYTES / 1_000_000)} MB.`);
+    }
+    // The declared type must match the actual bytes. A renamed executable is
+    // the oldest trick there is, and this pipeline hands files to an
+    // extraction service.
+    if (!magicMatchesMime(bytes, contentType)) {
+      return apiError(415, "EVIDENCE_CONTENT_MISMATCH", "That file's contents do not match its type.");
+    }
+
+    const digest = await crypto.subtle.digest("SHA-256", bytes);
+    const contentSha256 = [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+    // Keyed by application and content hash: the same document uploaded twice
+    // occupies one object, and the hash is what duplicate-reuse detection
+    // compares across applications later.
+    const objectRef = `applications/${application.id}/${contentSha256}`;
+
+    await env.EVIDENCE.put(objectRef, bytes, {
+      httpMetadata: { contentType },
+      customMetadata: { applicationId: application.id, evidenceType }
+    });
+
+    const attached = await attachEvidence(env, application, {
+      evidenceType,
+      storageBucket: "EVIDENCE",
+      storageObjectRef: objectRef,
+      contentSha256,
+      mimeType: contentType,
+      byteSize: bytes.byteLength
+    }, { now });
+    if (!attached.ok) return apiError(422, attached.code, attached.message);
+    return json({
+      evidenceId: attached.evidenceId,
+      retentionDeadline: attached.retentionDeadline,
+      byteSize: bytes.byteLength,
+      contentSha256
+    }, { status: 201 });
   }
 
   if (action === "evidence") {

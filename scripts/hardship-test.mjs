@@ -613,5 +613,81 @@ for (const table of ["eligibility_applications", "eligibility_evidence", "eviden
   assert(database.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get().count > 0, `${table} should contain end-to-end test data`);
 }
 
+/* ------------------------------------------------ evidence upload to R2 --- */
+
+// The document itself. Bytes reach a private bucket; D1 keeps a reference, a
+// hash and a retention deadline, so the retention sweep can delete a pay stub
+// while the decision it produced stays reproducible.
+{
+  const stored = new Map();
+  const bucketEnv = {
+    ...env,
+    EVIDENCE: {
+      async put(key, value, options) { stored.set(key, { bytes: value, options }); return { key }; }
+    }
+  };
+
+  async function upload(actor, applicationId, { bytes, contentType, evidenceType = "PAY_STUB" }) {
+    const path = `/api/hardship/applications/${applicationId}/uploads`;
+    const request = new Request(`https://timi.example${path}`, {
+      method: "POST",
+      headers: { "content-type": contentType, "x-timi-evidence-type": evidenceType },
+      body: bytes
+    });
+    const response = await handleHardship(request, bucketEnv, actor, path, "POST", { providerSet, now: NOW });
+    return { response, body: await response.json() };
+  }
+
+  const created = await call(maya, "/api/hardship/applications", {
+    method: "POST",
+    body: { selectedPathway: "MEANS_TESTED_BENEFIT", householdSize: 2, householdAttested: true, termsVersion: "2026-01", attestationVersion: "2026-01" }
+  });
+  const uploadAppId = created.body.application.id;
+
+  const pdf = new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2D, 0x31, 0x2E, 0x37, 0x0A, 0x41, 0x42, 0x43]);
+  let uploaded = await upload(maya, uploadAppId, { bytes: pdf, contentType: "application/pdf" });
+  assert(uploaded.response.status === 201, `A PDF must upload: ${JSON.stringify(uploaded.body)}`);
+  assert(uploaded.body.evidenceId, "An upload returns the evidence id the application now carries");
+  assert(/^[0-9a-f]{64}$/.test(uploaded.body.contentSha256), "An upload records a SHA-256 of the bytes, which is what duplicate-reuse detection compares later");
+  assert(uploaded.body.retentionDeadline, "An upload records when the raw document must be deleted");
+
+  // The bytes are in the bucket and not in the database.
+  assert(stored.size === 1, "The document reaches object storage");
+  const [objectRef] = [...stored.keys()];
+  assert(objectRef.includes(uploadAppId) && objectRef.includes(uploaded.body.contentSha256), "The object is keyed by application and content hash, so one document occupies one object");
+  const evidenceRow = database.prepare("SELECT * FROM eligibility_evidence WHERE id = ?").get(uploaded.body.evidenceId);
+  assert(evidenceRow.storage_object_ref === objectRef, "The database keeps only a reference to the document");
+  assert(!Object.values(evidenceRow).some((value) => typeof value === "string" && value.includes("%PDF")), "No document content may be stored in the database");
+
+  // A file that is not what it claims. The pipeline hands these to an
+  // extraction service, so a renamed something-else must not get that far.
+  const notAPdf = new Uint8Array([0x4D, 0x5A, 0x90, 0x00, 0x03, 0x00, 0x00, 0x00]);
+  let refusedUpload = await upload(maya, uploadAppId, { bytes: notAPdf, contentType: "application/pdf" });
+  assert(refusedUpload.response.status === 415 && refusedUpload.body.error.code === "EVIDENCE_CONTENT_MISMATCH", "A file whose bytes contradict its declared type is refused");
+
+  refusedUpload = await upload(maya, uploadAppId, { bytes: pdf, contentType: "application/zip" });
+  assert(refusedUpload.response.status === 415, "An unsupported document type is refused");
+
+  refusedUpload = await upload(maya, uploadAppId, { bytes: new Uint8Array(0), contentType: "application/pdf" });
+  assert(refusedUpload.response.status === 422, "An empty file is refused");
+
+  const huge = new Uint8Array(13 * 1024 * 1024);
+  huge.set([0x25, 0x50, 0x44, 0x46]);
+  refusedUpload = await upload(maya, uploadAppId, { bytes: huge, contentType: "application/pdf" });
+  assert(refusedUpload.response.status === 413, "A document past the size ceiling is refused");
+
+  // Somebody else's application is not a place to put a document.
+  refusedUpload = await upload(dana, uploadAppId, { bytes: pdf, contentType: "application/pdf" });
+  assert(refusedUpload.response.status === 404, "An application belonging to another account is not visible, let alone writable");
+
+  // Without a bucket bound, the upload says so rather than pretending.
+  const noBucket = new Request(`https://timi.example/api/hardship/applications/${uploadAppId}/uploads`, {
+    method: "POST", headers: { "content-type": "application/pdf", "x-timi-evidence-type": "PAY_STUB" }, body: pdf
+  });
+  const unavailable = await handleHardship(noBucket, env, maya, `/api/hardship/applications/${uploadAppId}/uploads`, "POST", { providerSet, now: NOW });
+  assert(unavailable.status === 503, "A deployment with no evidence bucket says the upload is unavailable rather than failing obscurely");
+}
+
+
 database.close();
 console.log("Hardship engine tests passed: continuous shock threshold with no bracket cliffs across every anchor, mixed invoice line-item taxonomy, 30-day aggregation with day-31 exclusion, ambiguity refused rather than guessed, verified zero income, no-income-detected and bank balance and disability alone all rejected, deterministic replay, embedded-first identity sessions, retryable provider failures, per-identity rolling limit, prospective revocation, and the exact soft-denial copy priced from the active policy.");

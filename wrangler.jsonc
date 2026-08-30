@@ -46,6 +46,17 @@
       "migrations_dir": "migrations"
     }
   ],
+  // Hardship evidence: pay stubs, benefit letters, repair invoices. Private,
+  // separate from every other stored object, and read only by the hardship
+  // pipeline. The bucket holds the documents themselves; D1 holds only
+  // references, hashes and the retention deadline, so a retention sweep can
+  // delete the bytes while the decision stays reproducible.
+  "r2_buckets": [
+    {
+      "binding": "EVIDENCE",
+      "bucket_name": "timinow-hardship-evidence"
+    }
+  ],
   "assets": {
     "directory": "./public",
     "binding": "ASSETS",

@@ -22,7 +22,7 @@ import { stripeConfigured, StripeError, verifyWebhookSignature } from "./stripe.
 import { findEmergencyVeterinaryPlaces, phoneKey } from "./mapbox-places.js";
 import { recordAnalyticsEvents } from "./analytics.js";
 import { listPets, savePet, removePet, syncPets, validatePet } from "./pets.js";
-import { createStandaloneContribution, getContributorHistory, getFundImpact } from "./fund.js";
+import { createContributionPayment, createStandaloneContribution, getContributorHistory, getFundImpact } from "./fund.js";
 import { handleHardship } from "./hardship/index.js";
 import { handleClinicApplicationSubmit, handleClinicBillingSummary } from "./clinic-billing.js";
 import {
@@ -1692,6 +1692,10 @@ async function handleApi(request, env, ctx) {
   if (method === "POST" && path === "/api/fund/contributions") return createStandaloneContribution(request, env, actor);
   if (method === "GET" && path === "/api/fund/impact") return getFundImpact(request, env);
   if (method === "GET" && path === "/api/fund/contributions") return getContributorHistory(request, env, actor);
+  const contributionPaymentMatch = path.match(/^\/api\/fund\/contributions\/([^/]+)\/payment$/);
+  if (method === "POST" && contributionPaymentMatch) {
+    return createContributionPayment(request, env, actor, decodeURIComponent(contributionPaymentMatch[1]));
+  }
 
   // The hardship application. handleHardship answers null for anything that is
   // not its own, so one mount covers the whole surface.

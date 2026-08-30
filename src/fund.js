@@ -60,6 +60,7 @@
  */
 
 import { hasDatabase } from "./db.js";
+import { createPaymentIntent, idempotencyKey, stripeConfigured, StripeError } from "./stripe.js";
 import {
   accountBalance,
   fundSummary,
@@ -1208,4 +1209,99 @@ export async function getContributorHistory(request, env, actor) {
     return apiError(401, "SIGN_IN_REQUIRED", "Sign in to see your contributions.");
   }
   return json(await contributorHistory(env, actor.userId));
+}
+
+/**
+ * POST /api/fund/contributions/{id}/payment — mint the charge.
+ *
+ * Split from creating the contribution on purpose. The row exists first, in
+ * DRAFT, carrying the amount and the recognition choice the contributor
+ * actually picked; this call attaches money to it. A contributor who
+ * abandons the payment sheet leaves a DRAFT row and no charge, which is the
+ * honest record of what happened.
+ *
+ * Nothing is posted to the ledger here. The fund is credited when Stripe says
+ * the payment succeeded — see postContribution — because a PaymentIntent that
+ * has been created is not money anybody has given.
+ */
+export async function createContributionPayment(request, env, actor, contributionId) {
+  if (request.method !== "POST") {
+    return apiError(405, "METHOD_NOT_ALLOWED", "Use POST to start a contribution payment.");
+  }
+  if (!hasDatabase(env)) return apiError(503, "DATABASE_REQUIRED", "D1 is required to take a contribution.");
+
+  const contribution = await getContribution(env, contributionId);
+  if (!contribution) return apiError(404, "CONTRIBUTION_NOT_FOUND", "That contribution was not found.");
+
+  // A contribution belongs to whoever created it. A guest one is claimable by
+  // its token alone, which is what makes giving without an account possible;
+  // one attached to an account is not claimable by anybody else.
+  if (contribution.contributorUserId && contribution.contributorUserId !== actor?.userId) {
+    return apiError(403, "CONTRIBUTION_ACCESS_DENIED", "That contribution belongs to another account.");
+  }
+  if (contribution.status === "POSTED" || contribution.status === "SUCCEEDED") {
+    return apiError(409, "CONTRIBUTION_ALREADY_PAID", "That contribution has already been paid. Thank you.");
+  }
+  if (!["DRAFT", "REQUIRES_PAYMENT", "FAILED"].includes(contribution.status)) {
+    return apiError(409, "CONTRIBUTION_NOT_PAYABLE", "That contribution can no longer be paid.");
+  }
+
+  const amountCents = Number(contribution.amountCents);
+  if (!Number.isFinite(amountCents) || amountCents <= 0) {
+    return apiError(422, "CONTRIBUTION_AMOUNT_INVALID", "That contribution has no amount to charge.");
+  }
+
+  // Without Stripe configured there is no pretending: the caller is told this
+  // is the demo path explicitly, so a portal cannot show a success page for a
+  // payment that never happened.
+  if (!stripeConfigured(env)) {
+    await env.DB.prepare("UPDATE contributions SET status = 'REQUIRES_PAYMENT' WHERE id = ? AND status = 'DRAFT'")
+      .bind(contribution.id).run();
+    return json({
+      mode: "demo",
+      contributionId: contribution.id,
+      amountCents,
+      clientSecret: null,
+      message: "Payments are not configured on this deployment, so no card was charged."
+    });
+  }
+
+  try {
+    const intent = await createPaymentIntent(env, {
+      amountCents,
+      currency: contribution.currency || "usd",
+      description: "Tími NOW — Paw It Forward contribution",
+      statementDescriptorSuffix: "PAW IT FWD",
+      // Derived from the contribution id, not generated: a contributor who
+      // taps twice, or a network retry, must reach the same PaymentIntent
+      // rather than opening a second charge against the same card.
+      idempotencyKey: idempotencyKey("contribution", contribution.id, amountCents),
+      metadata: {
+        timi_purpose: "FUND_CONTRIBUTION_ONLY",
+        timi_contribution_id: contribution.id,
+        timi_payment_order_id: contribution.paymentOrderId || ""
+      }
+    });
+
+    await env.DB.batch([
+      env.DB.prepare("UPDATE contributions SET status = 'REQUIRES_PAYMENT', stripe_payment_intent_id = ? WHERE id = ?")
+        .bind(intent.id, contribution.id),
+      env.DB.prepare("UPDATE payment_orders SET status = 'REQUIRES_CONFIRMATION', stripe_payment_intent_id = ? WHERE id = ?")
+        .bind(intent.id, contribution.paymentOrderId || null)
+    ]);
+
+    return json({
+      mode: "stripe",
+      contributionId: contribution.id,
+      amountCents,
+      paymentIntentId: intent.id,
+      clientSecret: intent.client_secret
+    });
+  } catch (error) {
+    if (error instanceof StripeError) {
+      console.warn(JSON.stringify({ event: "contribution_payment_failed", contributionId: contribution.id, message: error.message }));
+      return apiError(502, "PAYMENT_PROVIDER_ERROR", "The payment provider could not start this contribution. Please try again.");
+    }
+    throw error;
+  }
 }
