@@ -22,6 +22,9 @@ import { stripeConfigured, StripeError, verifyWebhookSignature } from "./stripe.
 import { findEmergencyVeterinaryPlaces, phoneKey } from "./mapbox-places.js";
 import { recordAnalyticsEvents } from "./analytics.js";
 import { listPets, savePet, removePet, syncPets, validatePet } from "./pets.js";
+import { createStandaloneContribution, getContributorHistory, getFundImpact } from "./fund.js";
+import { handleHardship } from "./hardship/index.js";
+import { handleClinicApplicationSubmit, handleClinicBillingSummary } from "./clinic-billing.js";
 import {
   getCareOffer,
   getCareSearch,
@@ -163,7 +166,7 @@ function authRequiredResponse() {
 }
 
 async function handleConfig(env) {
-  return json(publicConfig(env));
+  return json(await publicConfig(env));
 }
 
 async function handleLocationSearch(url, env) {
@@ -1680,6 +1683,26 @@ async function handleApi(request, env, ctx) {
     const petsResponse = await handlePets(request, env, actor, path, method);
     if (petsResponse) return petsResponse;
   }
+
+  /**
+   * Paw It Forward. Contributions are public on purpose: a guest may fund
+   * somebody else's access without an account, and requiring one would cost
+   * more contributions than it would prevent abuse.
+   */
+  if (method === "POST" && path === "/api/fund/contributions") return createStandaloneContribution(request, env, actor);
+  if (method === "GET" && path === "/api/fund/impact") return getFundImpact(request, env);
+  if (method === "GET" && path === "/api/fund/contributions") return getContributorHistory(request, env, actor);
+
+  // The hardship application. handleHardship answers null for anything that is
+  // not its own, so one mount covers the whole surface.
+  if (path.startsWith("/api/hardship")) {
+    const hardshipResponse = await handleHardship(request, env, actor, path, method, {});
+    if (hardshipResponse) return hardshipResponse;
+  }
+
+  // A clinic asking to join. Public and self-rate-limiting; the operator
+  // triage side lives on the admin Worker.
+  if (method === "POST" && path === "/api/clinic-applications") return handleClinicApplicationSubmit(request, env);
 
   const searchMatch = path.match(/^\/api\/searches\/([^/]+)(?:\/(select-offer|status))?$/);
   if (searchMatch) {

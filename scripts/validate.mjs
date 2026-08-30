@@ -101,9 +101,13 @@ const voiceMigration = await readFile("migrations/0005_voice_calls.sql", "utf8")
 const paymentsMigration = await readFile("migrations/0008_payments_ledger.sql", "utf8");
 const petsMigration = await readFile("migrations/0009_pets.sql", "utf8");
 const providerAnalyticsMigration = await readFile("migrations/0010_provider_analytics.sql", "utf8");
-const requiredTables = ["tenants", "locations", "availability_reports", "tenant_policies", "intake_requests", "intake_events", "customer_observations", "notification_outbox", "care_searches", "care_search_targets", "care_offers", "platform_admins", "tenant_members", "tenant_invitations", "admin_audit_log", "clinic_call_attempts", "stripe_accounts", "payment_ledger", "stripe_events", "pets", "provider_applications", "analytics_events"];
+const pricingMigration = await readFile("migrations/0013_pricing_and_ledger.sql", "utf8");
+const fundMigration = await readFile("migrations/0014_fund.sql", "utf8");
+const hardshipMigration = await readFile("migrations/0015_hardship.sql", "utf8");
+const clinicBillingMigration = await readFile("migrations/0016_clinic_billing_and_aliases.sql", "utf8");
+const requiredTables = ["tenants", "locations", "availability_reports", "tenant_policies", "intake_requests", "intake_events", "customer_observations", "notification_outbox", "care_searches", "care_search_targets", "care_offers", "platform_admins", "tenant_members", "tenant_invitations", "admin_audit_log", "clinic_call_attempts", "stripe_accounts", "payment_ledger", "stripe_events", "pets", "provider_applications", "analytics_events", "pricing_policies", "clinic_pricing_assignments", "payment_orders", "payment_allocations", "ledger_accounts", "ledger_transactions", "ledger_entries", "audit_events", "contributions", "fund_reservations", "sponsorships", "eligibility_applications", "eligibility_decisions", "match_aliases", "search_match_aliases", "clinic_fee_receivables"];
 for (const table of requiredTables) {
-  if (!`${migration}\n${multiOfferMigration}\n${tenancyMigration}\n${voiceMigration}\n${paymentsMigration}\n${petsMigration}\n${providerAnalyticsMigration}`.includes(`CREATE TABLE IF NOT EXISTS ${table}`)) throw new Error(`Missing D1 table: ${table}`);
+  if (!`${migration}\n${multiOfferMigration}\n${tenancyMigration}\n${voiceMigration}\n${paymentsMigration}\n${petsMigration}\n${providerAnalyticsMigration}\n${pricingMigration}\n${fundMigration}\n${hardshipMigration}\n${clinicBillingMigration}`.includes(`CREATE TABLE IF NOT EXISTS ${table}`)) throw new Error(`Missing D1 table: ${table}`);
 }
 
 const requiredRoutes = ["/api/config", "/api/locations", "/api/intakes", "/api/searches", "select-offer", "/api/observations", "/api/clinic/dashboard", "/api/clinic/availability", "search-targets", "/api/session", "/api/tenant/members", "/api/pets", "/api/provider-applications", "/api/analytics"];
@@ -470,8 +474,27 @@ if (!moments.some((moment) => PLAYFUL.test(TIMI_ANNOUNCEMENTS.calm[moment]))) {
 // closest — never selecting an offer, never charged the fee.
 {
   const db = await readFile("src/db.js", "utf8");
-  if (!db.includes("function maskedOfferLocation")) {
-    throw new Error("src/db.js no longer defines maskedOfferLocation. Without it, every offer a customer is still comparing discloses the clinic's real address and phone number before any fee is charged.");
+  if (!db.includes("maskedMatchCard(enrichedLocation")) {
+    throw new Error("src/db.js no longer builds a masked match card for unselected offers. Without it, every offer a customer is still comparing discloses the clinic's real name, address and phone before any fee is charged.");
+  }
+  // The clinic id resolves to the business as surely as its name does.
+  if (!/locationId: revealLocation \? row\.location_id : undefined/.test(db)) {
+    throw new Error("src/db.js emits the clinic id on a masked offer. The alias is pointless if the payload beside it identifies the clinic.");
+  }
+  const aliasModule = await readFile("src/match-alias.js", "utf8");
+  if (!aliasModule.includes("Temporary TímiNOW match name")) {
+    throw new Error("src/match-alias.js no longer carries the persistent disclosure label. A match card that does not say the name is temporary is a card that misleads.");
+  }
+  // Imported rather than pattern-matched: the library is built from word
+  // arrays, so counting "slug:" in the source counts the one line that writes
+  // it. The question is how many aliases actually exist at runtime.
+  const { ALIAS_LIBRARY } = await import("../src/alias-library.js");
+  if (ALIAS_LIBRARY.length !== 250) {
+    throw new Error(`src/alias-library.js holds ${ALIAS_LIBRARY.length} aliases; the approved library is exactly 250. A short library means repeats within a market.`);
+  }
+  const uniqueSlugs = new Set(ALIAS_LIBRARY.map((alias) => alias.slug.toLowerCase()));
+  if (uniqueSlugs.size !== ALIAS_LIBRARY.length) {
+    throw new Error(`src/alias-library.js has ${ALIAS_LIBRARY.length - uniqueSlugs.size} duplicate alias slug(s). Two clinics in one result set could then wear the same name.`);
   }
   const getCareSearchAt = db.indexOf("export async function getCareSearch");
   if (getCareSearchAt === -1) throw new Error("src/db.js no longer defines getCareSearch.");
@@ -480,8 +503,72 @@ if (!moments.some((moment) => PLAYFUL.test(TIMI_ANNOUNCEMENTS.calm[moment]))) {
     throw new Error("getCareSearch no longer gates revealLocation on the offer's own selected status, so an offer still being compared — or every offer, if the gate is gone entirely — would show its real address before any fee is paid.");
   }
   const e2e = await readFile("scripts/e2e.mjs", "utf8");
-  if (!e2e.includes("must not disclose an address")) {
-    throw new Error("scripts/e2e.mjs no longer asserts that an unselected offer's address is absent — the one test that would catch this masking silently breaking.");
+  for (const [needle, why] of [
+    ["must not disclose an address", "an unselected offer's address is absent"],
+    ["must not carry the clinic or tenant id", "the clinic id does not travel beside the alias"],
+    ["leaked a seeded clinic name", "no real clinic name appears anywhere in a masked payload"],
+    ["renamed an offer from", "the alias stays stable while the customer is deciding"]
+  ]) {
+    if (!e2e.includes(needle)) {
+      throw new Error(`scripts/e2e.mjs no longer asserts that ${why} — one of the few tests that would catch this masking silently breaking.`);
+    }
+  }
+}
+
+// The money invariants. Each of these is a way the Paw It Forward fund could
+// quietly stop being trustworthy — not by crashing, but by reporting a number
+// that is wrong and looks fine.
+{
+  const ledger = await readFile("src/ledger.js", "utf8");
+  const pricing = await readFile("src/pricing.js", "utf8");
+  const migration = await readFile("migrations/0013_pricing_and_ledger.sql", "utf8");
+
+  // Every posting balances, or it is refused. A journal that stores an
+  // unbalanced transaction has not deferred the problem, it has hidden it.
+  if (!/if \(debits !== credits\)/.test(ledger)) {
+    throw new Error("src/ledger.js no longer refuses an unbalanced transaction. An unbalanced journal reports wrong fund totals with no error anywhere.");
+  }
+  // Without a required idempotency key, a redelivered Stripe webhook posts a
+  // second copy and the fund appears to hold money nobody gave it.
+  if (!/requires an idempotencyKey/.test(ledger)) {
+    throw new Error("src/ledger.js no longer requires an idempotencyKey on every transaction, so a redelivered webhook can post twice.");
+  }
+  // The balance must be a sum over postings. The moment a cached column
+  // becomes the answer, it can disagree with the journal and nothing notices.
+  if (!/SUM\(e\.debit_cents\)/.test(ledger) || !/SUM\(e\.credit_cents\)/.test(ledger)) {
+    throw new Error("src/ledger.js no longer computes balances by summing ledger_entries. A cached balance column cannot be audited or rebuilt.");
+  }
+  if (!/negativeRestricted/.test(ledger)) {
+    throw new Error("src/ledger.js no longer checks for a negative restricted balance — the one condition meaning Tími has spent money it was holding for somebody else.");
+  }
+
+  // Exactly one active price, enforced by the database rather than by hoping.
+  if (!/CREATE UNIQUE INDEX[^;]*idx_pricing_policies_one_active[^;]*WHERE active = 1/s.test(migration)) {
+    throw new Error("migrations/0013_pricing_and_ledger.sql no longer guarantees a single active pricing policy, so which price a customer is quoted would depend on row order.");
+  }
+
+  // The founding-clinic rule, which is the one piece of this arithmetic with a
+  // real temptation attached: inflating a donor statistic by charging the fund
+  // for a $25 clinic fee that a founding clinic would never have paid.
+  if (!/Math\.min\(Math\.max\(0, Math\.trunc\(Number\(timiMatchCents\) \|\| 0\)\), applicableValueCents\)/.test(pricing)) {
+    throw new Error("src/pricing.js no longer caps Tími's match at the value actually forgone, so a sponsored booking at a $0 clinic could bill the fund for a fee nobody would have charged.");
+  }
+  if (!/applicableValueCents - matchCents/.test(pricing)) {
+    throw new Error("src/pricing.js no longer derives the fund's share from the applicable value. Hardcoding $35 would overcharge the fund for every founding-clinic sponsorship.");
+  }
+
+  // The demo path and the production path must quote the same price.
+  const fallbackOwner = pricing.match(/ownerFeeCents:\s*(\d+)/)?.[1];
+  const fallbackClinic = pricing.match(/clinicFeeCents:\s*(\d+)/)?.[1];
+  const seeded = migration.match(/VALUES \(\s*'pricing_v1',\s*1,\s*(\d+),\s*(\d+),\s*(\d+)/s);
+  if (!seeded) throw new Error("migrations/0013_pricing_and_ledger.sql no longer seeds the launch pricing row in the shape this guard reads.");
+  if (fallbackOwner !== seeded[1] || fallbackClinic !== seeded[2]) {
+    throw new Error(`src/pricing.js FALLBACK_PRICING ($${fallbackOwner}/$${fallbackClinic} in cents) disagrees with the seeded pricing_v1 row ($${seeded[1]}/$${seeded[2]}). A demo that quotes a different price than production is a demo that lies.`);
+  }
+
+  // Contributions are whole dollars: the processor fee on $2.37 is most of it.
+  if (!/cents % 100 !== 0/.test(pricing)) {
+    throw new Error("src/pricing.js no longer rejects fractional-dollar contributions.");
   }
 }
 

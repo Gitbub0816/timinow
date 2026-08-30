@@ -14,6 +14,9 @@
 
 import { actorForRequest, signInRequired } from "../../../src/auth.js";
 import { publicConfig } from "../../../src/config.js";
+import { handleClinicApplicationList, handleClinicApplicationDecision } from "../../../src/clinic-billing.js";
+import { fundDashboard } from "../../../src/fund.js";
+import { ledgerIntegrity } from "../../../src/ledger.js";
 import { recordAnalyticsEvents } from "../../../src/analytics.js";
 import { describeSession } from "../../../src/session.js";
 import {
@@ -148,7 +151,7 @@ async function authenticatedActor(request, env) {
 /* ------------------------------------------------------------ /api/config --- */
 
 async function handleConfig(env) {
-  return json(publicConfig(env));
+  return json(await publicConfig(env));
 }
 
 /* --------------------------------------------------------- /api/admin/* --- */
@@ -1041,6 +1044,13 @@ async function handleApi(request, env) {
     if (method === "GET" && path === "/api/admin/provider-applications") return handleProviderApplications(env);
     const applicationMatch = path.match(/^\/api\/admin\/provider-applications\/([^/]+)$/);
     if (method === "PATCH" && applicationMatch) return updateProviderApplication(request, env, decodeURIComponent(applicationMatch[1]));
+    // Clinics asking to join, and the fund's own books. Operator-only.
+    if (method === "GET" && path === "/api/admin/clinic-applications") return handleClinicApplicationList(request, env);
+    const clinicApplicationMatch = path.match(/^\/api\/admin\/clinic-applications\/([^/]+)$/);
+    if (method === "POST" && clinicApplicationMatch) return handleClinicApplicationDecision(request, env, actor, decodeURIComponent(clinicApplicationMatch[1]));
+    if (method === "GET" && path === "/api/admin/fund") return json(await fundDashboard(env));
+    if (method === "GET" && path === "/api/admin/fund/integrity") return json(await ledgerIntegrity(env));
+
     if (method === "GET" && path === "/api/admin/ledger") return handleLedger(url, env);
     if (method === "POST" && path === "/api/admin/ledger/reconcile") return reconcileLedger(request, env, actor);
 

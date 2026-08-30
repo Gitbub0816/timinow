@@ -16,6 +16,7 @@
 
 import { actorForRequest, roleAllows, signInRequired } from "../../../src/auth.js";
 import { publicConfig } from "../../../src/config.js";
+import { handleClinicBillingSummary } from "../../../src/clinic-billing.js";
 import { recordAnalyticsEvents } from "../../../src/analytics.js";
 import { describeSession } from "../../../src/session.js";
 import { hasDatabase, tenantIdForClerkOrg } from "../../../src/db.js";
@@ -78,7 +79,7 @@ async function authenticatedActor(request, env) {
 }
 
 async function handleConfig(env) {
-  return json(publicConfig(env));
+  return json(await publicConfig(env));
 }
 
 /**
@@ -168,6 +169,10 @@ async function handleApi(request, env) {
       if (method === "GET") return getCallPreferences(env, tenantId);
       if (method === "PATCH" || method === "POST") return setCallPreferences(request, env, actor, tenantId);
     }
+    // What this clinic owes Tími and what it has been billed. Mounted here
+    // because this is the Worker the consoles actually talk to — see the note
+    // above about every customer-Worker route needing a second home.
+    if (method === "GET" && path === "/api/clinic/billing") return handleClinicBillingSummary(env, tenantId);
     const decisionMatch = path.match(/^\/api\/clinic\/intakes\/([^/]+)\/decision$/);
     if (method === "POST" && decisionMatch) return decideIntake(request, env, actor, tenantId, decodeURIComponent(decisionMatch[1]));
     const searchDecisionMatch = path.match(/^\/api\/clinic\/search-targets\/([^/]+)\/decision$/);

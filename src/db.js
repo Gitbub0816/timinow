@@ -1,4 +1,5 @@
 import { DEMO_LOCATIONS } from "./catalog.js";
+import { assignAliases, maskedMatchCard, ratingModuleEnabled } from "./match-alias.js";
 
 export function hasDatabase(env) {
   return Boolean(env.DB && typeof env.DB.prepare === "function");
@@ -264,41 +265,21 @@ function normalizeCareSearchRow(row) {
   };
 }
 
-const OFFER_KIND_LABEL = {
-  emergency: "Emergency hospital",
-  urgent: "Urgent care clinic",
-  general: "Veterinary clinic",
-  specialty: "Specialty veterinary clinic"
-};
-
 /**
- * What a customer sees for a clinic it has not yet chosen and has not paid
+ * What a customer sees for a clinic they have not chosen and have not paid
  * Tími's fee for: enough to compare and decide, nothing that lets the trip
- * happen without going through Tími. No exact address, no phone, no exact
- * coordinates, no name that is one search away from an address — a chosen
- * clinic's name and street are both trivially the same thing once a customer
- * knows there is exactly one "Bayview Veterinary Emergency" in range.
+ * happen without going through Tími.
  *
- * distanceMiles, wait, deposit and exam fee all stay: they are what "compare
- * the offers" means, and none of them is a place to drive to.
+ * The card carries a temporary match alias — "Sequoia" — assigned per search
+ * session, never permanently. A generic label like "Urgent care clinic in
+ * Hayward" was the first attempt and gave up more than it looked: in a town
+ * with one urgent-care clinic it is a name. The alias carries no information
+ * about the clinic at all, and `maskedMatchCard` in src/match-alias.js is
+ * what decides which fields survive — including keeping Google's rating in
+ * its own attributed container, well away from Tími's own claims.
  */
-function maskedOfferLocation(location) {
-  if (!location) return location;
-  const label = OFFER_KIND_LABEL[location.kind] || "Veterinary clinic";
-  return {
-    id: location.id,
-    tenantId: location.tenantId,
-    name: location.city ? `${label} in ${location.city}` : label,
-    kind: location.kind,
-    city: location.city,
-    region: location.region,
-    distanceMiles: location.distanceMiles ?? null,
-    open24Hours: location.open24Hours,
-    acceptsWalkIns: location.acceptsWalkIns
-  };
-}
 
-function normalizeOfferRow(row, location, search, { revealLocation = true } = {}) {
+function normalizeOfferRow(row, location, search, { revealLocation = true, alias = null, ratingsEnabled = false } = {}) {
   const latitude = Number(search?.customerLatitude);
   const longitude = Number(search?.customerLongitude);
   const hasCoordinates = Number.isFinite(latitude) && Number.isFinite(longitude);
@@ -323,7 +304,21 @@ function normalizeOfferRow(row, location, search, { revealLocation = true } = {}
     baseExamFeeCents: row.base_exam_fee_cents,
     offeredAt: row.offered_at,
     expiresAt: row.expires_at,
-    location: revealLocation ? enrichedLocation : maskedOfferLocation(enrichedLocation)
+    /**
+     * The clinic id is deliberately absent from a masked offer: the whole
+     * point is that the pre-confirmation payload cannot be resolved to a
+     * business. The offer's own id is the token the client sends back on
+     * selection, and the server resolves it.
+     */
+    locationId: revealLocation ? row.location_id : undefined,
+    tenantId: revealLocation ? row.tenant_id : undefined,
+    location: revealLocation
+      ? enrichedLocation
+      : maskedMatchCard(enrichedLocation, alias, {
+          matchToken: row.id,
+          travelMinutes: row.travel_minutes ?? null,
+          ratingsEnabled
+        })
   };
 }
 
@@ -341,14 +336,48 @@ export async function getCareSearch(env, identifier) {
       COALESCE(wait_min, 9999), offered_at
     LIMIT ?
   `).bind(search.id, search.maxOffers).all();
-  // Full clinic details reveal only for the offer the customer has actually
-  // selected (and, by then, paid Tími's fee for). Every offer still being
-  // compared shows a masked location — see maskedOfferLocation — so a
-  // customer cannot shop the app for a free address and then drive there
-  // without going through Tími at all.
-  const offers = await Promise.all(offerResult.results.map(async (offer) =>
-    normalizeOfferRow(offer, await getLocation(env, offer.location_id), search, { revealLocation: offer.status === "selected" })
-  ));
+  /**
+   * Full clinic details reveal only for the offer the customer has actually
+   * chosen. Everything still being compared wears a temporary match alias, so
+   * a customer cannot shop the app for a free address and drive there without
+   * going through Tími at all.
+   *
+   * The search's own id is the alias session id, which is what makes the
+   * mapping stable: this endpoint is polled every few seconds while offers
+   * arrive, and a card that renamed itself on every poll would be unusable as
+   * well as untrustworthy. A different search gets different aliases even for
+   * the same clinics.
+   */
+  const locations = await Promise.all(offerResult.results.map((offer) => getLocation(env, offer.location_id)));
+  let aliases = { byClinicId: {} };
+  try {
+    aliases = await assignAliases(env, {
+      searchSessionId: search.id,
+      searchId: search.id,
+      userId: search.customerUserId || null,
+      clinicIds: offerResult.results.map((offer) => offer.location_id),
+      // Screened against the offered clinics' own names so an alias can never
+      // accidentally be the name of the clinic it is concealing.
+      candidateNames: locations.filter(Boolean).map((location) => location.name)
+    });
+  } catch (error) {
+    /**
+     * A search must survive the alias table being unavailable, and it must
+     * fail toward concealment rather than away from it: the card below is
+     * built the same way either way, so a missing alias costs a friendly
+     * label and nothing else. Reversing that — revealing the clinic because
+     * naming it failed — would turn a cosmetic outage into a bypass.
+     */
+    console.warn(JSON.stringify({ event: "match_alias_assignment_failed", searchId: search.id, message: error.message }));
+  }
+  const ratingsEnabled = ratingModuleEnabled(env);
+  const offers = offerResult.results.map((offer, index) =>
+    normalizeOfferRow(offer, locations[index], search, {
+      revealLocation: offer.status === "selected",
+      alias: aliases.byClinicId?.[offer.location_id] || null,
+      ratingsEnabled
+    })
+  );
   const counts = await env.DB.prepare(`
     SELECT
       COUNT(*) AS contacted,

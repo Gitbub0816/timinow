@@ -330,3 +330,36 @@ label.field { display: grid; gap: .35rem; font-size: .72rem; font-weight: 700; c
 .boot-splash strong { font-family: var(--serif); font-size: 1.4rem; letter-spacing: -.02em; }
 .boot-splash p { margin: 0; color: var(--muted); font-size: .68rem; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
 .boot-splash.is-hidden { opacity: 0; pointer-events: none; }
+
+/* --------------------------------------------------------- sponsored --- */
+/* Three lines, and nothing behind them: a clinic sees that a booking is
+   sponsored and that its fee is zero. Why the pet owner qualified is not on
+   this surface and never arrives in its payload. */
+.sponsored-badge { display: inline-block; margin: 2px 0 6px; padding: 3px 8px; border-radius: 999px; background: var(--blue-soft); color: var(--blue-dark); font-size: 10px; font-weight: 800; }
+.sponsored-notice { display: grid; gap: 3px; margin: 8px 0 12px; padding: 10px 12px; border-left: 3px solid var(--blue); border-radius: 8px; background: var(--blue-soft); font-size: 12px; line-height: 1.5; }
+.sponsored-notice strong { font-size: 12.5px; }
+
+/* ----------------------------------------------------------- billing --- */
+.billing-screen.is-active { display: grid; grid-template-columns: 230px minmax(0, 1fr); min-height: 100svh; background: var(--canvas); }
+.billing-main { min-width: 0; padding: clamp(1.25rem, 3vw, 2.5rem); max-width: 1100px; }
+.billing-main h1 { font-family: var(--serif); font-size: 2rem; margin: 0 0 .35rem; }
+.billing-note { color: var(--muted); font-size: 12.5px; line-height: 1.6; max-width: 68ch; }
+.billing-note a { color: var(--blue); text-decoration: underline; }
+.billing-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; margin: 18px 0 22px; }
+.billing-tile small { display: block; color: var(--muted); font-size: 10.5px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+.billing-tile strong { display: block; margin: 8px 0 4px; font-family: var(--serif); font-size: 1.7rem; }
+.billing-tile span { color: var(--muted); font-size: 11.5px; line-height: 1.5; }
+.billing-card { margin-bottom: 18px; }
+.billing-card-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+.billing-card-head h2 { font-family: var(--serif); font-size: 1.15rem; margin: 0; }
+.billing-card-head span { color: var(--muted); font-size: 11.5px; font-weight: 700; }
+.billing-empty { color: var(--muted); font-size: 12.5px; margin: 0; }
+.billing-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.billing-table th { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--card-border); color: var(--muted); font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase; }
+.billing-table td { padding: 9px 8px; border-bottom: 1px solid #eef0f4; }
+.billing-table tr:last-child td { border-bottom: 0; }
+.billing-id { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; color: var(--muted); }
+.billing-state { display: inline-block; padding: 2px 8px; border: 1px solid var(--card-border); border-radius: 999px; font-size: 10.5px; font-weight: 800; }
+.billing-state.is-paid { border-color: var(--blue); background: var(--blue-soft); color: var(--blue-dark); }
+.billing-state.is-past_due, .billing-state.is-restricted, .billing-state.is-uncollectible { border-color: var(--coral-dark); background: var(--coral-soft); color: var(--coral-dark); }
+@media (max-width: 900px) { .billing-screen.is-active { grid-template-columns: 1fr; } }

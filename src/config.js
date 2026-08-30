@@ -5,8 +5,9 @@
  * others. Nothing secret belongs in here: this response is readable by anyone.
  */
 
-import { LEGAL_VERSION, TIMI_CUSTOMER_FEE_CENTS, TIMI_TOTAL_SERVICE_FEE_CENTS } from "./catalog.js";
+import { LEGAL_VERSION } from "./catalog.js";
 import { hasDatabase } from "./db.js";
+import { activePricingPolicy } from "./pricing.js";
 import { signInRequired } from "./auth.js";
 
 /** The one production map style. Overridable per Worker, identical in practice. */
@@ -25,9 +26,16 @@ const APP_NAMES = {
   admin: "Tími NOW — Platform Console"
 };
 
-export function publicConfig(env) {
+/**
+ * Async because the fees are a versioned database row rather than a constant:
+ * a price change must not need a deploy, and every surface must quote the
+ * same number the ledger will charge. Falls back to the seeded launch policy
+ * when there is no database, which is the same set of numbers.
+ */
+export async function publicConfig(env) {
   const surface = env.SURFACE || "customer";
   const authenticated = signInRequired(env);
+  const pricing = await activePricingPolicy(env);
   return {
     appName: APP_NAMES[surface] || APP_NAMES.customer,
     version: "1.2.0-platform",
@@ -51,9 +59,24 @@ export function publicConfig(env) {
      * split and the disclosure rule when a clinic passes the whole fee on.
      */
     fees: {
-      customerFeeCents: TIMI_CUSTOMER_FEE_CENTS,
-      totalServiceFeeCents: TIMI_TOTAL_SERVICE_FEE_CENTS,
-      currency: "usd"
+      /** What the pet owner pays Tími for a completed connection. */
+      ownerFeeCents: pricing.ownerFeeCents,
+      /** What a standard clinic pays. Founding clinics pay nothing. */
+      clinicFeeCents: pricing.clinicFeeCents,
+      /** Tími's own share of a sponsored connection. */
+      timiMatchCents: pricing.timiMatchCents,
+      /**
+       * The community fund's share of a standard sponsored connection. Sent
+       * so the Paw It Forward copy can say "$35 funds one connection" without
+       * a client doing arithmetic that could drift from the ledger's.
+       */
+      sponsorshipFundCents: pricing.ownerFeeCents + pricing.clinicFeeCents - pricing.timiMatchCents,
+      minBookingContributionCents: pricing.minBookingContributionCents,
+      minStandaloneContributionCents: pricing.minStandaloneContributionCents,
+      maxBookingContributionCents: pricing.maxBookingContributionCents,
+      maxStandaloneContributionCents: pricing.maxStandaloneContributionCents,
+      pricingVersion: pricing.version,
+      currency: pricing.currency
     },
     database: hasDatabase(env) ? "d1" : "fixtures",
     map: {

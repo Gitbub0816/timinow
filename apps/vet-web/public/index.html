@@ -54,6 +54,7 @@
         </div>
         <nav class="rail-nav">
           <a href="#console" data-nav="console">Operations</a>
+          <a href="#billing" data-nav="billing">Billing</a>
           <a href="#people" data-nav="people">People</a>
           <a href="#legal?section=clinics" data-nav="legal">Legal</a>
         </nav>
@@ -175,6 +176,41 @@
       </div>
     </section>
 
+    <!-- ============================================================== billing -->
+    <section class="screen billing-screen" data-screen="billing" aria-labelledby="billing-title">
+      <aside class="vet-rail">
+        <div>
+          <img class="brand-mark" src="/assets/brand/timinow-wordmark.svg" alt="Tími NOW">
+          <p class="rail-kicker">VETERINARY OPERATIONS</p>
+        </div>
+        <nav class="rail-nav" style="margin-top:42px">
+          <a href="#console" data-nav="console">Operations</a>
+          <a href="#billing" data-nav="billing">Billing</a>
+          <a href="#people" data-nav="people">People</a>
+          <a href="#legal?section=clinics" data-nav="legal">Legal</a>
+        </nav>
+        <div class="rail-spacer"></div>
+        <div class="rail-footer">
+          <button class="button rail-signout" type="button" data-action="sign-out">Sign out</button>
+        </div>
+      </aside>
+      <div class="billing-main">
+        <p class="eyebrow">YOUR TÍMI NOW ACCOUNT</p>
+        <h1 id="billing-title">Billing and statements</h1>
+        <p class="billing-note">Tími NOW charges your clinic only for a connection that reached verified completion. Deposits and veterinary charges you bill your own patients never pass through this page.</p>
+        <div class="billing-summary" data-billing-summary></div>
+        <section class="card billing-card">
+          <div class="billing-card-head"><h2>Monthly statements</h2><span data-billing-invoice-count>—</span></div>
+          <div data-billing-invoices><p class="billing-empty">Loading…</p></div>
+        </section>
+        <section class="card billing-card">
+          <div class="billing-card-head"><h2>Completed bookings and fees</h2><span data-billing-receivable-count>—</span></div>
+          <div data-billing-receivables><p class="billing-empty">Loading…</p></div>
+        </section>
+        <p class="billing-note">Questions about a line item or a payment: <a href="mailto:billing@clearkey.solutions">billing@clearkey.solutions</a>. A completion or fee can be disputed inside the window set out in the <a href="#legal?section=clinics">clinic participation terms</a>.</p>
+      </div>
+    </section>
+
     <!-- =============================================================== people -->
     <section class="screen people-screen" data-screen="people" aria-labelledby="people-title">
       <aside class="vet-rail">
@@ -184,6 +220,7 @@
         </div>
         <nav class="rail-nav" style="margin-top:42px">
           <a href="#console" data-nav="console">Operations</a>
+          <a href="#billing" data-nav="billing">Billing</a>
           <a href="#people" data-nav="people">People</a>
           <a href="#legal?section=clinics" data-nav="legal">Legal</a>
         </nav>
@@ -216,8 +253,8 @@
           <p>An availability response is a temporary operational offer for the displayed hold period. The customer may compare up to five offers. Only the clinic selected by the customer receives confirmation; all other offers are automatically released. Emergency-intake responses remain subject to independent triage and do not reserve examination priority.</p>
           <p>Clinic users may access intake information only for evaluating and providing requested care, must protect credentials, and must follow applicable privacy and security obligations. A clinic may not present a Tími status as a guarantee of examination time.</p>
           <p>Where Stripe Connect is enabled, the clinic must complete Stripe onboarding, accept the applicable Stripe Connected Account Agreement, and authorize the disclosed payment, refund, fee, and payout flows. Tími provides a policy snapshot and monthly settlement record; the clinic remains responsible for its own taxes and veterinary invoices.</p>
-          <p>Tími's service fee is $50 per completed intake. Under the standard arrangement, $25 is collected from the customer at the time of service and the remainder is deducted from the clinic payout. A clinic may instead elect to pass the entire $50 service fee to its customers; where it does, the full amount is disclosed to the customer at checkout before payment. The service fee is a platform charge, not a veterinary charge, and is never billed to insurance.</p>
-          <p style="margin-top:1.5rem;color:var(--muted);font-size:.72rem">Tími NOW is operated by ClearKey Solutions, LLC. Effective August 24, 2026.</p>
+          <p>Tími NOW charges a fee per completed connection: the pet owner pays <span data-fee-owner>the disclosed booking fee</span> at confirmation, and your clinic pays <span data-fee-clinic>the disclosed clinic fee</span>, invoiced monthly for connections that reached verified completion. Founding clinics pay $0 while participating and in good standing. The fee is a platform charge, not a veterinary charge, and is never billed to insurance. Declined, expired, and cancelled requests carry no fee.</p><p>Where a booking is sponsored by the Paw It Forward Fund, your Tími NOW referral fee for that booking is $0 and the pet owner pays no Tími NOW fee. The patient remains responsible for your normal deposit and veterinary charges. Tími NOW does not disclose to a clinic why a booking is sponsored, and a clinic must not ask a patient about it: income, benefits, hardship reasons, and supporting documents are never shared with clinics.</p>
+          <p style="margin-top:1.5rem;color:var(--muted);font-size:.72rem">Tími NOW is operated by ClearKey Solutions, LLC. Effective terms version <span data-legal-version>—</span>.</p>
         </article>
       </div>
     </section>

@@ -1,4 +1,5 @@
-import { LEGAL_VERSION, TIMI_CUSTOMER_FEE_CENTS, TIMI_TOTAL_SERVICE_FEE_CENTS } from "../src/catalog.js";
+import { LEGAL_VERSION } from "../src/catalog.js";
+import { FALLBACK_PRICING } from "../src/pricing.js";
 import { readFile } from "node:fs/promises";
 import { DatabaseSync } from "node:sqlite";
 import worker from "../src/index.js";
@@ -65,6 +66,10 @@ database.exec(await readFile("migrations/0009_pets.sql", "utf8"));
 database.exec(await readFile("migrations/0010_provider_analytics.sql", "utf8"));
 database.exec(await readFile("migrations/0011_call_policy.sql", "utf8"));
 database.exec(await readFile("migrations/0012_pet_sex.sql", "utf8"));
+database.exec(await readFile("migrations/0013_pricing_and_ledger.sql", "utf8"));
+database.exec(await readFile("migrations/0014_fund.sql", "utf8"));
+database.exec(await readFile("migrations/0015_hardship.sql", "utf8"));
+database.exec(await readFile("migrations/0016_clinic_billing_and_aliases.sql", "utf8"));
 
 const env = {
   ASSETS: { fetch: async () => new Response("asset") },
@@ -106,10 +111,17 @@ assert(result.response.status === 200 && result.body.locations.length === 5, "D1
 // so this test can never disagree with the Worker, and against the literal
 // dollar figures, because the numbers themselves are the commercial contract.
 result = await call("/api/config");
-assert(result.response.status === 200 && result.body.legalVersion === LEGAL_VERSION && result.body.legalVersion === "2026-08-24", "/api/config must serve legal version 2026-08-24, the one the Worker validates intakes against");
-assert(result.body.fees?.customerFeeCents === TIMI_CUSTOMER_FEE_CENTS && result.body.fees.customerFeeCents === 2500, "/api/config must disclose the $25 customer fee");
-assert(result.body.fees?.totalServiceFeeCents === TIMI_TOTAL_SERVICE_FEE_CENTS && result.body.fees.totalServiceFeeCents === 5000, "/api/config must disclose the $50 total service fee");
+assert(result.response.status === 200 && result.body.legalVersion === LEGAL_VERSION && result.body.legalVersion === "2026-08-29", "/api/config must serve legal version 2026-08-29, the one the Worker validates intakes against");
+assert(result.body.fees?.ownerFeeCents === 2000, "/api/config must disclose the $20 owner fee");
+assert(result.body.fees?.clinicFeeCents === 2500, "/api/config must disclose the $25 clinic fee");
+assert(result.body.fees?.timiMatchCents === 1000, "/api/config must disclose Tími's $10 match");
+// The community fund's share is derived, not sent independently: a client
+// that computed it itself could drift from what the ledger actually reserves.
+assert(result.body.fees?.sponsorshipFundCents === 3500, "A standard sponsored connection asks the fund for $35");
 assert(result.body.fees?.currency === "usd", "The fee currency travels with the amounts");
+// The seeded launch policy and the no-database fallback must agree, or a
+// demo quotes a different price than production charges.
+assert(result.body.fees.ownerFeeCents === FALLBACK_PRICING.ownerFeeCents && result.body.fees.clinicFeeCents === FALLBACK_PRICING.clinicFeeCents, "The database policy and the fallback constant must be the same numbers");
 
 result = await call("/api/intakes", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ...intakePayload, concernSummary: "My dog isn't acting like himself.", symptoms: ["energy_or_behavior"] }) });
 assert(result.response.status === 422 && result.body.error.details.some((detail) => detail.includes("observable")), "Vague concern descriptions must be rejected without AI");
@@ -275,15 +287,42 @@ result = await call(`/api/searches/${careSearchId}`);
 assert(result.response.status === 200 && result.body.search.status === "offers_ready", "The search must become ready after five clinic offers");
 assert(result.body.search.offers.length === 5, "The customer must receive exactly five comparable active offers");
 
-// Nothing to drive to for free. Every offer still being compared must not
-// leak the address, phone, or exact name a customer could use to bypass
-// Tími's fee and go straight to the clinic without ever paying.
+// Nothing to drive to for free. Every offer still being compared wears a
+// temporary match alias and must not leak anything a customer could use to
+// bypass Tími's fee and go straight to the clinic without ever paying.
+const seenAliases = new Set();
 for (const offer of result.body.search.offers) {
-  assert(offer.location.address === undefined, `An unselected offer must not disclose an address: ${JSON.stringify(offer.location)}`);
-  assert(offer.location.phone === undefined, `An unselected offer must not disclose a phone number: ${JSON.stringify(offer.location)}`);
-  assert(offer.location.latitude === undefined && offer.location.longitude === undefined, "An unselected offer must not disclose exact coordinates");
-  assert(/ in .+/.test(offer.location.name), `A masked offer's name must read as a general area, not a specific business: ${offer.location.name}`);
-  assert(offer.location.distanceMiles !== undefined, "A masked offer must still disclose distance — that is what comparing offers means");
+  const card = offer.location;
+  const serialized = JSON.stringify(card);
+  assert(card.address === undefined, `An unselected offer must not disclose an address: ${serialized}`);
+  assert(card.phone === undefined, `An unselected offer must not disclose a phone number: ${serialized}`);
+  assert(card.latitude === undefined && card.longitude === undefined, "An unselected offer must not disclose exact coordinates");
+  assert(card.name === undefined, `An unselected offer must not disclose the clinic's real name: ${serialized}`);
+  // The clinic id is the other way to resolve the business, and it used to
+  // travel on the card. It must not.
+  assert(offer.locationId === undefined && offer.tenantId === undefined, `A masked offer must not carry the clinic or tenant id: ${JSON.stringify(offer).slice(0, 400)}`);
+  assert(!/\b(Bayview|Hearth|Juniper|Cedar|Solano)\b/.test(serialized), `A masked offer leaked a seeded clinic name: ${serialized}`);
+
+  assert(card.alias?.displayName, `A masked offer must carry a temporary match alias: ${serialized}`);
+  // The disclosure must be on the card itself, not hidden behind a tooltip.
+  assert(card.alias.label === "Temporary TímiNOW match name", "Every match card must say, in words, that the alias is temporary");
+  assert(card.alias.isTemporaryAlias === true, "The card must mark itself as carrying an alias rather than a name");
+  assert(!seenAliases.has(card.alias.displayName), `Two clinics in one result set share the alias ${card.alias.displayName}`);
+  seenAliases.add(card.alias.displayName);
+
+  // Comparing offers is the whole point, so the operational facts stay.
+  assert(card.timinow?.distanceMiles !== undefined, "A masked offer must still disclose distance — that is what comparing offers means");
+  assert(card.timinow?.kindLabel, "A masked offer must say what kind of clinic it is");
+}
+assert(seenAliases.size === 5, `Five clinics require five distinct aliases; got ${seenAliases.size}`);
+
+// The mapping must be stable while the customer is deciding: this endpoint is
+// polled every few seconds, and a card that renamed itself each time would be
+// unusable as well as untrustworthy.
+const secondPoll = await call(`/api/searches/${careSearchId}`);
+const firstByOffer = new Map(result.body.search.offers.map((offer) => [offer.id, offer.location.alias.displayName]));
+for (const offer of secondPoll.body.search.offers) {
+  assert(firstByOffer.get(offer.id) === offer.location.alias.displayName, `Polling the same search renamed an offer from ${firstByOffer.get(offer.id)} to ${offer.location.alias.displayName}`);
 }
 
 const chosenOffer = result.body.search.offers[2];

@@ -80,8 +80,53 @@ const STORAGE_KEYS = {
   search: "timi_current_search_v1",
   clinicAvailability: "timi_demo_clinic_availability_v1",
   clinicDecisions: "timi_demo_clinic_decisions_v1",
-  navigation: "timi_navigation_preferences_v1"
+  navigation: "timi_navigation_preferences_v1",
+  matchAliases: "timi_match_aliases_v1",
+  postVisitContribution: "timi_post_visit_contribution_v1"
 };
+
+/* ---------------------------------------------------------------------- */
+/* Temporary match aliases.                                                */
+/*                                                                         */
+/* A clinic a customer has not yet chosen is shown under a temporary       */
+/* TímiNOW match name, never its business name — see the alias library     */
+/* specification. The server owns assignment; every offer may carry        */
+/* `offer.matchAlias`. This local library is the presentation fallback for */
+/* a deployment whose search service has not started sending one yet, and  */
+/* it follows the same rules: a mapping is created once per search         */
+/* session from a cryptographically random shuffle, is stable for the life */
+/* of that session (refresh, back-navigation, payment entry), is unique    */
+/* within a result set, is never seeded from a clinic id, and never        */
+/* survives into a new search. Aliases are presentation only: selection,    */
+/* payment, and routing all use the offer and location ids.                */
+/* ---------------------------------------------------------------------- */
+const ALIAS_LIBRARY = [
+  "Alder", "Aspen", "Banyan", "Birch", "Bramble", "Canopy", "Cedar", "Cypress", "Dogwood", "Elmwood",
+  "Fernwood", "Grove", "Hawthorn", "Hemlock", "Hickory", "Juniper", "Linden", "Magnolia", "Maple", "Oakwood",
+  "Pinecrest", "Redwood", "Sequoia", "Sycamore", "Willow", "Amaranth", "Aster", "Azalea", "Bluebell", "Camellia",
+  "Clover", "Dahlia", "Dandelion", "Flora", "Gardenia", "Heather", "Hibiscus", "Hollyhock", "Hyacinth", "Iris",
+  "Jasmine", "Lavender", "Lilac", "Lotus", "Marigold", "Orchid", "Peony", "Primrose", "Verbena", "Wisteria",
+  "Basil", "Briar", "Bulrush", "Chamomile", "Chicory", "Coriander", "Fennel", "Fern", "Flax", "Ginger",
+  "Ivy", "Laurel", "Lemongrass", "Meadowgrass", "Mintleaf", "Moss", "Nettle", "Oregano", "Parsley", "Reed",
+  "Rosemary", "Sagebrush", "Sorrel", "Thyme", "Yarrow", "Afterglow", "Aurora", "Beacon", "Bluehour", "Borealis",
+  "Celestial", "Cirrus", "Comet", "Daybreak", "Daylight", "Eclipse", "Equinox", "Halo", "Horizon", "Lumen",
+  "Meridian", "Moonbeam", "Nova", "Radiance", "Skylark", "Solstice", "Starlight", "Sunbeam", "Sundial", "Twilight",
+  "Brook", "Cascade", "Cove", "Current", "Delta", "Dewdrop", "Estuary", "Fjord", "Harbor", "Headwater",
+  "Lagoon", "Lakeshore", "Marina", "Mist", "Oasis", "Pebble", "Rainfall", "Ripple", "Riverbend", "Seabreeze",
+  "Shoal", "Springtide", "Stream", "Tidepool", "Waterfall", "Arroyo", "Bluff", "Canyon", "Canyonland", "Cliffside",
+  "Crest", "Dune", "Fieldstone", "Foothill", "Glen", "Granite", "Highland", "Hillcrest", "Meadow", "Mesa",
+  "Moorland", "Overlook", "Prairie", "Ridgeline", "Sandstone", "Sierra", "Summit", "Timberline", "Vale", "Wildland",
+  "Autumn", "Breeze", "Cloudburst", "Cloudlet", "Coolwind", "Drizzle", "Evergreen", "Fairweather", "Frost", "Goldleaf",
+  "Hailstone", "Midsummer", "Monsoon", "Northwind", "Raincloud", "Raindrop", "Snowdrop", "Snowfall", "Spring", "Starfall",
+  "Sunshower", "Tempest", "Tradewind", "Westwind", "Wintergreen", "Amber", "Amethyst", "Basalt", "Copper", "Coral",
+  "Crystal", "Ember", "Flint", "Garnet", "Goldstone", "Ironwood", "Jade", "Jasper", "Limestone", "Marble",
+  "Moonstone", "Obsidian", "Onyx", "Opal", "Pearl", "Quartz", "Riverstone", "Slate", "Topaz", "Travertine",
+  "Accord", "Amity", "Brightway", "Candor", "Compass", "Everwell", "Flourish", "Harmony", "Haven", "Hearth",
+  "Kindred", "Lantern", "Lucent", "Mosaic", "Northstar", "Openway", "Promise", "Quietude", "Reverie", "Serenade",
+  "Stillwater", "Tranquil", "Unity", "Vantage", "Wayfinder", "Cadence", "Chime", "Drift", "Echo", "Feather",
+  "Firefly", "Glide", "Hummingbird", "Lilt", "Melody", "Murmur", "Nightingale", "Overture", "Passage", "Rhapsody",
+  "Rhythm", "Skylight", "Sparrow", "Tapestry", "Tempo", "Wander", "Whimsy", "Wingspan", "Zephyr", "Zenith"
+];
 
 const state = {
   route: "home",
@@ -109,6 +154,17 @@ const state = {
   selectedLocation: null,
   currentIntake: readStorage(STORAGE_KEYS.intake, null),
   currentSearch: readStorage(STORAGE_KEYS.search, null),
+  /** searchId → { locationId: aliasName }. Presentation only; see ALIAS_LIBRARY. */
+  matchAliases: readStorage(STORAGE_KEYS.matchAliases, {}),
+  /** The offer sitting on the pre-confirmation screen, with its checkout choices. */
+  pendingMatch: null,
+  /** The in-flight hardship application, if the customer opened one. */
+  assistance: null,
+  /** The standalone contribution being paid from the public portal. */
+  contribution: null,
+  /** Amount choices on the two non-checkout contribution surfaces. */
+  portalContribution: { choice: null, cents: 0 },
+  postVisitContribution: { choice: null, cents: 0 },
   trackerTimer: null,
   clinicTimer: null,
   deferredInstall: null,
@@ -160,10 +216,113 @@ function formatMoney(cents) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format((cents || 0) / 100);
 }
 
-/** The customer-paid share of Tími's service fee, disclosed wherever amounts show. */
+/**
+ * Cents, always. Rounding $49.95 to "$50" is tolerable in a summary tile and
+ * indefensible in an itemized order the customer is about to authorize.
+ */
+function formatMoneyExact(cents) {
+  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 2 }).format((cents || 0) / 100);
+}
+
+/* ---------------------------------------------------------------------- */
+/* Prices.                                                                 */
+/*                                                                         */
+/* Every amount this client shows comes from /api/config's versioned       */
+/* pricing policy. Nothing here hard-codes a dollar figure into copy: a    */
+/* price change is a database row, and a screen quoting yesterday's number */
+/* is a screen that lies to somebody about to pay.                         */
+/* ---------------------------------------------------------------------- */
+const FEE_FALLBACK = { ownerFeeCents: 2000, clinicFeeCents: 2500, timiMatchCents: 1000, sponsorshipFundCents: 3500, minBookingContributionCents: 100, minStandaloneContributionCents: 1000, maxBookingContributionCents: 500000, maxStandaloneContributionCents: 2500000, currency: "usd" };
+
+function fees() {
+  return { ...FEE_FALLBACK, ...(state.config?.fees || {}) };
+}
+
+/** What the pet owner pays Tími for this connection. */
+function ownerFeeCents() {
+  return fees().ownerFeeCents;
+}
+
+/** The customer-paid Tími fee, disclosed wherever amounts show. */
 function serviceFeeSentence() {
-  const cents = state.config?.fees?.customerFeeCents ?? 2500;
-  return `Includes a ${formatMoney(cents)} Tími service fee, charged at the time of service.`;
+  return `Tími’s ${formatMoney(ownerFeeCents())} booking fee is charged separately from any clinic deposit and is itemized before you pay.`;
+}
+
+/** Is the Google-sourced rating module switched on for this deployment? */
+function googleRatingsEnabled() {
+  const config = state.config || {};
+  if (config.googleRatingsEnabled !== undefined) return config.googleRatingsEnabled !== false;
+  return config.features?.googleRatings !== false;
+}
+
+/**
+ * The Google Maps rating for an offer, or null when there is none to show.
+ * Never falls back to a stale or Tími-derived number: the module simply
+ * disappears, which is what acceptance test 18 requires it to survive.
+ */
+function googleRatingFor(offer) {
+  if (!googleRatingsEnabled()) return null;
+  const source = matchCard(offer)?.google || offer?.google || offer?.googleRating || null;
+  const rating = Number(source?.rating);
+  const count = Number(source?.userRatingCount ?? source?.ratingCount);
+  if (!Number.isFinite(rating) || !Number.isFinite(count) || count <= 0) return null;
+  return { rating: rating.toFixed(1), count, attribution: source.attribution?.text || "Google Maps" };
+}
+
+/** The server's masked match-card payload for an offer, when it sends one. */
+function matchCard(offer) {
+  return offer?.matchCard || (offer?.alias && offer?.timinow ? offer : null);
+}
+
+/* --------------------------------------------------------------------- */
+/* Temporary match alias assignment (fallback — see ALIAS_LIBRARY).       */
+/* --------------------------------------------------------------------- */
+
+function shuffledAliases(count) {
+  const pool = [...ALIAS_LIBRARY];
+  const random = new Uint32Array(pool.length);
+  try { crypto.getRandomValues(random); }
+  catch { for (let index = 0; index < random.length; index += 1) random[index] = Math.floor(Math.random() * 2 ** 32); }
+  for (let index = pool.length - 1; index > 0; index -= 1) {
+    const swap = random[index] % (index + 1);
+    [pool[index], pool[swap]] = [pool[swap], pool[index]];
+  }
+  return pool.slice(0, count);
+}
+
+/**
+ * The alias for one offer within one search session.
+ *
+ * Assigned the first time a candidate appears and then never reassigned, so
+ * a withdrawn candidate cannot rename the others and a late arrival takes an
+ * unused name rather than shuffling the board mid-decision.
+ */
+function aliasForOffer(searchId, offer) {
+  const card = matchCard(offer);
+  const supplied = card?.alias?.displayName || offer?.matchAlias?.displayName || offer?.matchAlias || offer?.alias?.displayName || offer?.alias;
+  if (typeof supplied === "string" && supplied.trim()) return supplied.trim();
+  if (!searchId) return "Match";
+  const key = offer?.locationId || offer?.location?.id || offer?.id;
+  const mapping = state.matchAliases[searchId] || {};
+  if (mapping[key]) return mapping[key];
+  const taken = new Set(Object.values(mapping));
+  const next = shuffledAliases(ALIAS_LIBRARY.length).find((name) => !taken.has(name)) || `Match ${taken.size + 1}`;
+  mapping[key] = next;
+  // One search session's mappings are kept at a time. Nothing reloads an old
+  // search, and retaining them is how a clinic drifts toward a stable alias
+  // across sessions — exactly what the library forbids.
+  state.matchAliases = { [searchId]: mapping };
+  writeStorage(STORAGE_KEYS.matchAliases, state.matchAliases);
+  return next;
+}
+
+/** The alias attached to the booking the customer actually confirmed. */
+function aliasForIntake(intake) {
+  if (!intake) return "";
+  if (intake.matchAlias) return intake.matchAlias;
+  const searchId = intake.sourceSearchId;
+  const mapping = searchId ? state.matchAliases[searchId] : null;
+  return mapping?.[intake.locationId] || "";
 }
 
 function timestampMs(value) {
@@ -292,6 +451,7 @@ async function renderRoute() {
     tracker: "Live intake request · Tími NOW",
     pets: "Pet profile · Tími NOW",
     vets: "For veterinary teams · Tími NOW",
+    "paw-it-forward": "Paw It Forward Fund · Tími NOW",
     clinic: "Clinic console · Tími NOW",
     legal: "Legal center · Tími NOW",
     "sign-in": "Sign in · Tími NOW"
@@ -316,6 +476,7 @@ async function renderRoute() {
     hydrateIntakeForm();
     renderIntakeStep();
   }
+  if (route === "paw-it-forward") await enterPawItForward();
   if (route === "results") await loadLocations();
   if (route === "tracker") {
     await refreshCurrentIntake();
@@ -368,7 +529,28 @@ async function loadConfig() {
     state.config = { signInRequired: false, demoMode: true, database: "fixtures" };
   }
   configureMap(state.config.map);
+  applyPricingCopy();
   if (state.config.signInRequired) await initializeClerk();
+}
+
+/**
+ * Every price and version the static markup leaves blank.
+ *
+ * The HTML ships placeholders rather than numbers so that a screen can never
+ * outlive the pricing policy behind it — a page that says "$25" after the fee
+ * became $20 is a page that misquotes a charge somebody is about to authorize.
+ */
+function applyPricingCopy() {
+  const fee = fees();
+  $$("[data-fee-owner]").forEach((node) => { node.textContent = formatMoney(fee.ownerFeeCents); });
+  $$("[data-fee-clinic]").forEach((node) => { node.textContent = formatMoney(fee.clinicFeeCents); });
+  $$("[data-fee-disclosure]").forEach((node) => { node.textContent = serviceFeeSentence(); });
+  const ownerFee = $("[data-vets-owner-fee]");
+  if (ownerFee) ownerFee.textContent = formatMoney(fee.ownerFeeCents);
+  const clinicFee = $("[data-vets-clinic-fee]");
+  if (clinicFee) clinicFee.textContent = formatMoney(fee.clinicFeeCents);
+  const version = $("[data-legal-version]");
+  if (version && state.config?.legalVersion) version.textContent = `Version ${state.config.legalVersion}`;
 }
 
 async function initializeClerk() {
@@ -935,7 +1117,7 @@ async function startCareSearch() {
         customerLongitude: draft.position.longitude,
         consentToContact: draft.contactConsent === true,
         legalConsent: draft.legalConsent === true,
-        legalVersion: state.config?.legalVersion || "2026-08-24"
+        legalVersion: state.config?.legalVersion || ""
       })
     });
     state.currentSearch = data.search;
@@ -976,7 +1158,7 @@ async function submitIntake(locationId) {
         travelMinutes: Math.max(5, Math.round((location.distanceMiles || 2) * 4)),
         consentToContact: draft.contactConsent === true,
         legalConsent: draft.legalConsent === true,
-        legalVersion: state.config?.legalVersion || "2026-08-24"
+        legalVersion: state.config?.legalVersion || ""
       })
     });
     state.currentIntake = { ...data.intake, location: data.location };
@@ -1093,20 +1275,223 @@ function renderCareSearch() {
     list.innerHTML = `<div class="empty-state offer-waiting">${search.status === "expired" ? "" : '<span class="evander evander-sm" aria-hidden="true"></span>'}<strong>${search.status === "expired" ? "No active offers remain" : "Waiting for clinic responses"}</strong><p>${search.status === "expired" ? "Capacity changes quickly. Please start a new search." : "You may leave this page open; responses update automatically."}</p></div>`;
     return;
   }
-  list.innerHTML = offers.map((offer) => {
-    const clinic = offer.location || {};
-    const emergency = offer.responseType === "emergency_intake";
-    const canSelect = ["collecting", "offers_ready"].includes(search.status) && timestampMs(offer.expiresAt) > Date.now();
-    return `<article class="offer-card ${emergency ? "is-emergency" : ""}">
-      <div class="offer-card-heading"><div class="hospital-avatar">${escapeHtml(initials(clinic.name || "Clinic"))}</div><div><span class="hospital-kind">${escapeHtml(offerTypeLabel(offer))}</span><h2>${escapeHtml(clinic.name || "Veterinary clinic")}</h2><p>${escapeHtml(clinic.address || "Address available on confirmation")}</p></div></div>
-      <dl class="offer-facts"><div><dt>Travel</dt><dd>${clinic.distanceMiles ?? "—"} mi</dd></div><div><dt>${emergency ? "Estimated wait" : "Reported wait"}</dt><dd>${escapeHtml(offerWaitText(offer))}</dd></div><div><dt>Deposit</dt><dd>${offer.depositAmountCents ? formatMoney(offer.depositAmountCents) : "None"}</dd></div><div><dt>Exam fee</dt><dd>${offer.baseExamFeeCents ? `From ${formatMoney(offer.baseExamFeeCents)}` : "Not supplied"}</dd></div></dl>
-      <p class="offer-note">${escapeHtml(offer.clinicNote || (emergency ? "Open for emergency intake; treatment order is determined by clinical triage." : "The clinic reports capacity for this arrival window."))}</p>
-      <div class="offer-card-actions"><small>Held until ${escapeHtml(formatClock(offer.expiresAt))}</small><button class="button button-primary" type="button" data-select-offer="${escapeHtml(offer.id)}" ${canSelect ? "" : "disabled"}>Choose this clinic</button></div>
-    </article>`;
-  }).join("");
+  list.innerHTML = offers.map((offer) => matchCardHtml(search, offer)).join("");
 }
 
-async function selectCareOffer(offerId) {
+/**
+ * One match card.
+ *
+ * Three regions, in this order and visually separated on purpose:
+ *
+ *   1. the temporary match name, with its disclosure in plain persistent
+ *      text directly beneath it — not a tooltip, not an icon;
+ *   2. Tími's own operational facts (acceptance, travel, wait, capabilities,
+ *      species) in their own panel;
+ *   3. Google Maps content — the aggregate rating and its count — alone in a
+ *      bordered sub-container carrying the Google Maps attribution inside it.
+ *
+ * The attribution belongs to the rating and nothing else: it never sits under
+ * the whole card, never beside the alias, and never implies Google named,
+ * supplied, verified, or approved anything. Region 3 is emitted only when
+ * there is a live Google rating to show, so switching the module off leaves a
+ * complete, usable card behind.
+ */
+function matchCardHtml(search, offer) {
+  const clinic = offer.location || {};
+  const emergency = offer.responseType === "emergency_intake";
+  const canSelect = ["collecting", "offers_ready"].includes(search.status) && timestampMs(offer.expiresAt) > Date.now();
+  const alias = aliasForOffer(search.id, offer);
+  const rating = googleRatingFor(offer);
+  const facts = matchCard(offer)?.timinow || {};
+  const distanceMiles = facts.distanceMiles ?? clinic.distanceMiles;
+  const travel = Number.isFinite(Number(facts.travelMinutes))
+    ? `${facts.travelMinutes} min away`
+    : (distanceMiles == null ? "Travel time not supplied" : `${distanceMiles} mi away`);
+  const capabilities = (facts.capabilities || clinic.capabilities || []).slice(0, 3).map((capability) => humanize(capability));
+  const species = (facts.species || clinic.species || []).map((entry) => humanize(entry)).join(" & ");
+  const accessibleName = [
+    `${alias}, temporary TímiNOW match name`,
+    rating ? `rating ${rating.rating} based on ${rating.count} Google Maps ratings` : null,
+    travel
+  ].filter(Boolean).join(", ");
+
+  return `<article class="match-card ${emergency ? "is-emergency" : ""}" aria-label="${escapeHtml(accessibleName)}">
+      <div class="match-identity">
+        <h3 class="match-alias">${escapeHtml(alias.toUpperCase())}</h3>
+        <p class="match-alias-label">Temporary TímiNOW match name</p>
+      </div>
+      <div class="match-facts">
+        <p class="match-facts-source">From Tími NOW</p>
+        <p class="match-availability"><span class="signal ${emergency ? "limited" : "available"}" aria-hidden="true"></span>${escapeHtml(offerTypeLabel(offer))} · ${escapeHtml(travel)}</p>
+        <dl class="offer-facts">
+          <div><dt>${emergency ? "Estimated wait" : "Reported wait"}</dt><dd>${escapeHtml(offerWaitText(offer))}</dd></div>
+          <div><dt>Clinic deposit</dt><dd>${offer.depositAmountCents ? formatMoney(offer.depositAmountCents) : "None"}</dd></div>
+          <div><dt>Exam fee</dt><dd>${offer.baseExamFeeCents ? `From ${formatMoney(offer.baseExamFeeCents)}` : "Not supplied"}</dd></div>
+          <div><dt>Patients seen</dt><dd>${escapeHtml(species || "Dogs & cats")}</dd></div>
+        </dl>
+        ${capabilities.length ? `<p class="match-capabilities">${capabilities.map((capability) => `<span>${escapeHtml(capability)}</span>`).join("")}</p>` : ""}
+        <p class="offer-note">${escapeHtml(offer.clinicNote || (emergency ? "Open for emergency intake; treatment order is determined by clinical triage." : "The clinic reports capacity for this arrival window."))}</p>
+      </div>
+      ${rating ? `<div class="google-rating"><p class="google-rating-value"><span aria-hidden="true">★</span> ${escapeHtml(rating.rating)} <span class="google-rating-count">(${rating.count.toLocaleString("en-US")} ratings)</span></p><p class="google-rating-attribution">${escapeHtml(rating.attribution)}</p></div>` : ""}
+      <div class="offer-card-actions"><small>Held until ${escapeHtml(formatClock(offer.expiresAt))}</small><button class="button button-primary" type="button" data-select-offer="${escapeHtml(offer.id)}" aria-label="Select ${escapeHtml(alias)}, temporary TímiNOW match name" ${canSelect ? "" : "disabled"}>Select this match</button></div>
+    </article>`;
+}
+
+/* ---------------------------------------------------------------------- */
+/* Pre-confirmation.                                                       */
+/*                                                                         */
+/* Selecting a match never books it. This screen stands between the two,   */
+/* always: it names what the customer is about to buy, says plainly that   */
+/* the name they chose is temporary and when the real one appears, itemizes */
+/* every amount, and requires an explicit press. A saved payment method is  */
+/* not a reason to skip a disclosure — there is no path around this screen. */
+/* ---------------------------------------------------------------------- */
+
+const BOOKING_CONTRIBUTION_CHOICES = [200, 500, 1000, 2000];
+
+function openMatchConfirmation(offerId) {
+  const search = state.currentSearch;
+  const offer = search?.offers?.find((candidate) => candidate.id === offerId);
+  if (!search || !offer) return;
+  state.pendingMatch = {
+    offerId,
+    alias: aliasForOffer(search.id, offer),
+    contributionCents: 0,
+    contributionChoice: null,
+    assistance: state.assistance?.decision?.result === "APPROVED" ? state.assistance : null
+  };
+  const toggle = $("[data-booking-contribution-toggle]");
+  if (toggle) toggle.checked = false;
+  const custom = $("[data-booking-contribution-custom]");
+  if (custom) custom.value = "";
+  renderMatchConfirmation();
+  refreshAssistanceGrant();
+  track("match_confirmation_viewed");
+  const dialog = $("[data-match-confirm-dialog]");
+  dialog.showModal();
+  document.body.classList.add("dialog-open");
+}
+
+function pendingOffer() {
+  const offerId = state.pendingMatch?.offerId;
+  return state.currentSearch?.offers?.find((candidate) => candidate.id === offerId) || null;
+}
+
+/** True when the customer's Tími fee is covered by an approved application. */
+function assistanceCoversFee() {
+  return state.pendingMatch?.assistance?.decision?.result === "APPROVED";
+}
+
+function renderMatchConfirmation() {
+  const pending = state.pendingMatch;
+  const offer = pendingOffer();
+  if (!pending || !offer) return;
+  const covered = assistanceCoversFee();
+  const feeCents = covered ? 0 : ownerFeeCents();
+  const contributionCents = pending.contributionCents || 0;
+  const depositCents = offer.depositAmountCents || 0;
+  const chargedToday = feeCents + contributionCents;
+
+  $("[data-match-confirm-lede]").innerHTML =
+    `You selected <strong>${escapeHtml(pending.alias)}</strong>, a temporary match name. You’ll see the clinic’s real name, address, phone number, and directions immediately after confirmation.`;
+
+  const rows = [
+    `<div><dt>Tími NOW booking fee</dt><dd>${covered ? `${formatMoneyExact(0)} <small>covered by Paw It Forward</small>` : formatMoneyExact(feeCents)}</dd></div>`,
+    contributionCents ? `<div><dt>Paw It Forward contribution</dt><dd>${formatMoneyExact(contributionCents)}</dd></div>` : "",
+    depositCents ? `<div><dt>Clinic deposit</dt><dd>${formatMoneyExact(depositCents)} <small>charged separately by the clinic after it confirms your arrival window</small></dd></div>` : "",
+    `<div class="order-total"><dt>Total charged today</dt><dd>${formatMoneyExact(chargedToday)}</dd></div>`
+  ].filter(Boolean).join("");
+
+  $("[data-match-confirm-summary]").innerHTML = `<dl class="order-summary">${rows}</dl>${
+    depositCents
+      ? `<p class="order-charges">This is <strong>two separate charges</strong>: ${formatMoneyExact(chargedToday)} to Tími NOW now, and the clinic’s ${formatMoneyExact(depositCents)} deposit as its own charge once the clinic confirms your arrival window. Veterinary charges are billed by the clinic.</p>`
+      : `<p class="order-charges">One charge of ${formatMoneyExact(chargedToday)} to Tími NOW. The clinic bills any veterinary charges directly.</p>`
+  }`;
+
+  renderContributionChoices($("[data-booking-contribution-amounts]"), BOOKING_CONTRIBUTION_CHOICES, pending.contributionChoice, "booking-contribution");
+  const customField = $("[data-booking-contribution-custom-field]");
+  if (customField) customField.hidden = pending.contributionChoice !== "custom";
+  const customInput = $("[data-booking-contribution-custom]");
+  if (customInput) {
+    customInput.min = String(Math.ceil(fees().minBookingContributionCents / 100));
+    customInput.max = String(Math.floor(fees().maxBookingContributionCents / 100));
+  }
+
+  const assistanceState = $("[data-assistance-state]");
+  const assistanceEntry = $("[data-open-assistance]");
+  if (covered) {
+    assistanceEntry.hidden = true;
+    assistanceState.hidden = false;
+    assistanceState.textContent = "Paw It Forward assistance approved for this booking.";
+  } else {
+    assistanceEntry.hidden = false;
+    assistanceState.hidden = true;
+  }
+
+  $("[data-match-confirm-legal]").innerHTML = covered
+    ? `Your Tími NOW fee is covered for this booking and the clinic will not be charged a Tími referral fee. You remain responsible for the clinic’s deposit and veterinary charges. <a href="#legal?section=fees">Service fee</a> · <a href="#legal?section=deposits">Deposits and refunds</a>`
+    : `Tími NOW charges a platform fee for the connection; it is not a veterinary charge and is never billed to insurance. Payment processing is provided by Stripe. <a href="#legal?section=fees">Service fee</a> · <a href="#legal?section=deposits">Deposits and refunds</a>`;
+
+  $("[data-match-confirm-submit]").textContent = chargedToday
+    ? `Confirm and pay ${formatMoneyExact(chargedToday)}`
+    : "Confirm this match";
+}
+
+/** The quick-choice row shared by every contribution surface. */
+function renderContributionChoices(container, amounts, selected, name) {
+  if (!container) return;
+  container.innerHTML = [
+    ...amounts.map((cents) => `<button class="pif-amount ${selected === cents ? "is-selected" : ""}" type="button" data-contribution-choice="${cents}" data-contribution-group="${name}" aria-pressed="${selected === cents}">${formatMoney(cents)}</button>`),
+    `<button class="pif-amount ${selected === "custom" ? "is-selected" : ""}" type="button" data-contribution-choice="custom" data-contribution-group="${name}" aria-pressed="${selected === "custom"}">Custom</button>`
+  ].join("");
+}
+
+/** Whole dollars only, and never below the configured minimum. */
+function wholeDollarCents(value) {
+  const dollars = Math.floor(Number(value));
+  return Number.isFinite(dollars) && dollars > 0 ? dollars * 100 : 0;
+}
+
+function setBookingContribution(choice) {
+  const pending = state.pendingMatch;
+  if (!pending) return;
+  pending.contributionChoice = choice;
+  pending.contributionCents = choice === "custom" ? wholeDollarCents($("[data-booking-contribution-custom]")?.value) : Number(choice) || 0;
+  renderMatchConfirmation();
+  if (choice === "custom") $("[data-booking-contribution-custom]")?.focus();
+}
+
+async function confirmMatchSelection(event) {
+  event.preventDefault();
+  const pending = state.pendingMatch;
+  if (!pending) return;
+  const limits = fees();
+  if (pending.contributionCents && pending.contributionCents < limits.minBookingContributionCents) {
+    return showToast(`A contribution added to a booking starts at ${formatMoney(limits.minBookingContributionCents)}.`);
+  }
+  if (pending.contributionCents > limits.maxBookingContributionCents) {
+    return showToast(`The largest contribution we can take here is ${formatMoney(limits.maxBookingContributionCents)}.`);
+  }
+  const button = $("[data-match-confirm-submit]");
+  button.disabled = true;
+  const label = button.textContent;
+  button.textContent = "Confirming…";
+  try {
+    await selectCareOffer(pending.offerId, {
+      contributionCents: pending.contributionCents,
+      assistanceApplicationId: pending.assistance?.application?.id || null
+    });
+    if (pending.contributionCents) track("booking_contribution_added", { cents: pending.contributionCents });
+    $("[data-match-confirm-dialog]").close();
+    document.body.classList.remove("dialog-open");
+    state.pendingMatch = null;
+  } catch {
+    button.disabled = false;
+    button.textContent = label;
+  }
+}
+
+async function selectCareOffer(offerId, checkout = {}) {
   const search = state.currentSearch;
   const offer = search?.offers?.find((candidate) => candidate.id === offerId);
   if (!search || !offer) return;
@@ -1145,18 +1530,39 @@ async function selectCareOffer(offerId) {
       };
       state.currentSearch = { ...search, status: "selected", selectedOfferId: offer.id, selectedIntakeId: data.intake.id, offers: search.offers.map((item) => ({ ...item, status: item.id === offer.id ? "selected" : "released" })) };
     } else {
-      data = await api(`/api/searches/${encodeURIComponent(search.id)}/select-offer`, { method: "POST", body: JSON.stringify({ offerId }) });
+      data = await api(`/api/searches/${encodeURIComponent(search.id)}/select-offer`, {
+        method: "POST",
+        body: JSON.stringify({
+          offerId,
+          // The pre-confirmation screen was shown and pressed. Sent so the
+          // server can refuse a selection that never passed through it.
+          matchConfirmed: true,
+          contributionCents: checkout.contributionCents || 0,
+          assistanceApplicationId: checkout.assistanceApplicationId || null,
+          legalVersion: state.config?.legalVersion || null
+        })
+      });
       state.currentSearch = data.search;
     }
-    state.currentIntake = { ...data.intake, location: data.location || offer.location };
+    // Kept for the quiet continuity line on the confirmed booking only. The
+    // alias never stands in for the clinic in a receipt or any transactional
+    // message — those carry the real identity revealed below.
+    const alias = state.pendingMatch?.offerId === offerId ? state.pendingMatch.alias : aliasForOffer(search.id, offer);
+    state.currentIntake = {
+      ...data.intake,
+      location: data.location || offer.location,
+      matchAlias: data.intake?.matchAlias || alias,
+      contributionCents: checkout.contributionCents || data.intake?.contributionCents || 0
+    };
     writeStorage(STORAGE_KEYS.search, state.currentSearch);
     writeStorage(STORAGE_KEYS.intake, state.currentIntake);
     track("offer_selected");
-    showToast("Clinic selected. The other offers were released.");
+    showToast("Match confirmed. The clinic's details are below and the other offers were released.");
     renderTracker();
   } catch (error) {
     showToast(error.message);
-    if (button) { button.disabled = false; button.textContent = "Choose this clinic"; }
+    if (button) { button.disabled = false; button.textContent = "Select this match"; }
+    throw error;
   }
 }
 
@@ -1179,10 +1585,35 @@ function renderTracker() {
   $("[data-confirmed-stage]").hidden = false;
   renderTrackerMap();
   const location = intake.location || state.locations.find((candidate) => candidate.id === intake.locationId) || {};
+  // The reveal. Everything concealed while the customer was comparing —
+  // real name, full address, phone, directions — appears here, together,
+  // the moment the booking is confirmed.
   $("[data-tracker-hospital]").textContent = location.name || "Veterinary hospital";
   $("[data-tracker-address]").textContent = location.address || "Location available after confirmation";
   $("[data-tracker-initials]").textContent = initials(location.name || "Veterinary hospital");
   $("[data-tracker-phone]").href = `tel:${String(location.phone || "").replace(/[^0-9+]/g, "")}`;
+  const phoneText = $("[data-tracker-phone-text]");
+  if (phoneText) phoneText.textContent = location.phone || "";
+  const directions = $("[data-tracker-directions]");
+  if (directions) {
+    const destination = location.latitude && location.longitude
+      ? `${location.latitude},${location.longitude}`
+      : `${location.name || ""} ${location.address || ""}`.trim();
+    directions.href = destination ? `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(destination)}` : "#tracker";
+    directions.target = "_blank";
+    directions.hidden = !destination;
+  }
+  // A quiet continuity line, for this booking only, so somebody who chose
+  // "Sequoia" ten seconds ago can see that this is the same match. The real
+  // clinic identity above it is what every receipt and message uses.
+  const continuity = $("[data-match-continuity]");
+  const alias = aliasForIntake(intake);
+  if (continuity) {
+    continuity.hidden = !alias || !location.name;
+    continuity.textContent = alias ? `Your “${alias}” match` : "";
+  }
+  renderBookingReceipt(intake, location);
+  renderPostVisitContribution(intake);
   $("[data-request-time]").textContent = `Sent ${formatRelativeTime(intake.requestedAt)}`;
   const decision = $("[data-timeline-decision]");
   const arrival = $("[data-timeline-arrival]");
@@ -1215,6 +1646,32 @@ function renderTracker() {
   }
 }
 
+/**
+ * The in-app receipt for a confirmed booking (§16).
+ *
+ * Named by the clinic's real identity, never by the alias, and honest about
+ * who charges what: Tími's fee and any contribution are one charge from Tími
+ * NOW, and the clinic's deposit is the clinic's own.
+ */
+function renderBookingReceipt(intake, location) {
+  const panel = $("[data-booking-receipt]");
+  if (!panel) return;
+  const confirmed = !["pending", "declined", "cancelled", "expired"].includes(intake.status);
+  panel.hidden = !confirmed;
+  if (panel.hidden) return;
+  const sponsored = Boolean(intake.sponsored || intake.sponsorshipId);
+  const feeCents = sponsored ? 0 : (intake.ownerFeeCents ?? ownerFeeCents());
+  const contributionCents = intake.contributionCents || 0;
+  const depositCents = intake.depositAmountCents || 0;
+  $("[data-booking-receipt-rows]").innerHTML = [
+    `<div><dt>Tími NOW booking fee</dt><dd>${formatMoneyExact(feeCents)}${sponsored ? " <small>covered by Paw It Forward</small>" : ""}</dd></div>`,
+    contributionCents ? `<div><dt>Paw It Forward contribution</dt><dd>${formatMoneyExact(contributionCents)}</dd></div>` : "",
+    depositCents ? `<div><dt>Clinic deposit</dt><dd>${formatMoneyExact(depositCents)} <small>charged by ${escapeHtml(location.name || "the clinic")}${intake.paymentStatus === "paid" ? " · paid" : ""}</small></dd></div>` : "",
+    `<div class="order-total"><dt>Charged by Tími NOW</dt><dd>${formatMoneyExact(feeCents + contributionCents)}</dd></div>`
+  ].filter(Boolean).join("");
+  $("[data-booking-receipt-note]").innerHTML = `${escapeHtml(location.name || "The clinic")} bills its own deposit and all veterinary charges${sponsored ? ", which remain your responsibility" : ""}. ${contributionCents ? "This contribution is not represented by TímiNOW as tax deductible. " : ""}Questions about a charge: <a href="mailto:billing@clearkey.solutions">billing@clearkey.solutions</a>.`;
+}
+
 function maybePresentPayment(intake) {
   const paymentButton = $("[data-pay-deposit]");
   const paymentNote = $("[data-payment-note]");
@@ -1226,6 +1683,569 @@ function maybePresentPayment(intake) {
   paymentNote.textContent = intake.paymentStatus === "paid"
     ? "Deposit paid and credited to the clinic invoice."
     : `The clinic requires an arrival deposit before departure. ${serviceFeeSentence()}`;
+}
+
+/* ---------------------------------------------------------------------- */
+/* Paw It Forward — assistance with the Tími NOW fee.                      */
+/*                                                                         */
+/* Branch first, then collect. The application asks what the applicant     */
+/* would like to verify with, and then asks only for that pathway's        */
+/* documents — nobody is made to hand over a tax return to prove a         */
+/* termination notice. A refusal is a soft no in plain words, with the     */
+/* ordinary paid path offered in the same breath, no error styling and no  */
+/* implication that the person is lying.                                   */
+/* ---------------------------------------------------------------------- */
+
+/**
+ * The four branches the customer chooses between, mapped to the engine's
+ * pathway ids. Each branch names only the documents its own pathway needs:
+ * once one passes, nothing further is collected.
+ */
+const ASSISTANCE_PATHWAYS = [
+  {
+    id: "MEANS_TESTED_BENEFIT",
+    label: "A government benefit I currently receive",
+    detail: "SNAP, TANF, SSI, a means-tested Medicaid category, or a housing-assistance award.",
+    documents: [{ evidenceType: "BENEFIT_AWARD_LETTER", label: "Your current award letter or benefit statement" }]
+  },
+  {
+    id: "RECENT_JOB_LOSS",
+    label: "A recent job loss or unemployment benefit",
+    detail: "A separation dated within the last 30 days, or a current unemployment determination.",
+    documents: [{ evidenceType: "EMPLOYER_TERMINATION_NOTICE", label: "Your termination or separation notice, or your unemployment determination" }]
+  },
+  {
+    id: "AREA_ADJUSTED_INCOME",
+    label: "An income or tax document",
+    detail: "An IRS return transcript, a payroll verification, or recent consecutive pay stubs.",
+    documents: [{ evidenceType: "IRS_RETURN_TRANSCRIPT", label: "Your IRS return transcript, payroll verification, or three most recent consecutive pay stubs" }],
+    household: true,
+    geography: true
+  },
+  {
+    id: "FINANCIAL_SHOCK",
+    label: "An unexpected essential financial obligation",
+    detail: "An unexpected essential cost in the last 30 days — medical or dental, an essential vehicle repair, an urgent home safety repair, a funeral, or a disaster loss.",
+    documents: [
+      { evidenceType: "ITEMIZED_INVOICE", label: "The itemized invoice or bill showing what the charge was for" },
+      { evidenceType: "RECEIPT_ITEMIZED", label: "Proof it was paid, or a statement showing it is currently owed" }
+    ],
+    household: true
+  }
+];
+
+function assistancePathways() {
+  const supplied = state.assistance?.availability?.pathways;
+  return Array.isArray(supplied) && supplied.length ? supplied : ASSISTANCE_PATHWAYS;
+}
+
+function assistanceBody() {
+  return $("[data-assistance-body]");
+}
+
+function openAssistanceDialog() {
+  const dialog = $("[data-assistance-dialog]");
+  if (!dialog.open) { dialog.showModal(); document.body.classList.add("dialog-open"); }
+}
+
+/**
+ * An approval already on file. Checked when the confirmation screen opens so
+ * somebody approved five minutes ago is not asked to apply again — and so the
+ * order summary quotes the covered fee rather than one that will not be
+ * charged.
+ */
+async function refreshAssistanceGrant() {
+  if (!state.config?.signInRequired) return;
+  try {
+    const data = await api("/api/hardship/eligibility");
+    if (!data.eligible) return;
+    state.assistance = { ...(state.assistance || {}), grant: data.grant, decision: { result: "APPROVED", expiresAt: data.grant?.expiresAt || null } };
+    if (state.pendingMatch) {
+      state.pendingMatch.assistance = state.assistance;
+      renderMatchConfirmation();
+    }
+  } catch { /* no grant, or the service is unavailable: the standard fee stands */ }
+}
+
+async function startAssistance() {
+  state.assistance = { availability: null, pathway: null, application: null, decision: null };
+  $("[data-assistance-heading]").textContent = "Need help with the Tími NOW fee?";
+  assistanceBody().innerHTML = '<p class="assistance-loading">Checking whether assistance is available right now…</p>';
+  openAssistanceDialog();
+  track("assistance_opened");
+  try {
+    const eligibility = await api("/api/hardship/eligibility");
+    state.assistance.availability = { available: true, ...eligibility };
+    if (eligibility.eligible) {
+      state.assistance.decision = { result: "APPROVED", expiresAt: eligibility.grant?.expiresAt || null, visitsRemaining: eligibility.grant?.visitsRemaining };
+      return renderAssistanceDecision();
+    }
+  } catch (error) {
+    // No assistance service on this deployment, or it is down. Say so plainly
+    // and ask for nothing — soliciting documents we cannot evaluate is worse
+    // than saying no.
+    state.assistance.availability = { available: false, reason: error.message };
+    assistanceBody().innerHTML = `<p>Paw It Forward assistance is unavailable right now, so we can’t start an application.</p>
+      <p class="assistance-note">Nothing was submitted and no documents are needed. Your booking can continue at the standard ${escapeHtml(formatMoney(ownerFeeCents()))} fee.</p>
+      <button class="button button-primary" type="button" data-assistance-continue>Back to my booking</button>`;
+    return;
+  }
+  renderAssistanceScope();
+}
+
+function renderAssistanceScope() {
+  assistanceBody().innerHTML = `<p>Paw It Forward can cover the Tími NOW access fees for this booking — the ${escapeHtml(formatMoney(ownerFeeCents()))} you would pay and the referral fee the clinic would pay.</p>
+    <p class="assistance-note">It does not cover the clinic’s deposit or your veterinary charges. Those stay with you, and the clinic sets them.</p>
+    <p class="assistance-note">We ask for one kind of proof, and we stop as soon as it checks out. Your documents are never shown to a clinic.</p>
+    <div class="assistance-actions"><button class="button button-primary" type="button" data-assistance-submit="scope">Start</button><button class="button button-quiet" type="button" data-assistance-continue>Not now</button></div>`;
+}
+
+function renderAssistancePathways() {
+  state.assistance.pathway = null;
+  assistanceBody().innerHTML = `<p class="assistance-question">What would you like to use to verify eligibility?</p>
+    <div class="assistance-pathways">${assistancePathways().map((pathway) => `
+      <button class="assistance-pathway" type="button" data-assistance-pathway="${escapeHtml(pathway.id)}">
+        <strong>${escapeHtml(pathway.label)}</strong><small>${escapeHtml(pathway.detail || "")}</small>
+      </button>`).join("")}</div>
+    <p class="assistance-note">Pick one. We only ask for the documents that pathway needs.</p>`;
+}
+
+async function chooseAssistancePathway(pathwayId) {
+  const pathway = assistancePathways().find((candidate) => candidate.id === pathwayId);
+  if (!pathway) return;
+  state.assistance.pathway = pathway;
+  assistanceBody().innerHTML = '<p class="assistance-loading">Opening your application…</p>';
+  try {
+    const created = await api("/api/hardship/applications", {
+      method: "POST",
+      body: JSON.stringify({
+        selectedPathway: pathway.id,
+        intakeId: state.currentIntake?.id || undefined,
+        termsVersion: state.config?.legalVersion || undefined,
+        attestationVersion: state.config?.legalVersion || undefined
+      })
+    });
+    state.assistance.application = created.application;
+  } catch (error) {
+    state.assistance.decision = { result: "NOT_VERIFIED", technical: true, message: error.message };
+    return renderAssistanceDecision();
+  }
+  renderAssistanceIdentity();
+}
+
+/**
+ * Identity, before documents.
+ *
+ * The rules will not verify anybody whose identity is unconfirmed, so asking
+ * for a benefit letter first would mean collecting a sensitive document that
+ * could never have decided anything. The session is embedded by design — see
+ * src/hardship/providers.js; bouncing somebody with a sick animal to a
+ * vendor's domain is where this flow loses the people it exists for.
+ */
+async function renderAssistanceIdentity() {
+  const application = state.assistance?.application;
+  if (!application) return renderAssistancePathways();
+  if (application.identityVerified) return renderAssistanceEvidence();
+  assistanceBody().innerHTML = '<p class="assistance-loading">Preparing identity verification…</p>';
+  try {
+    const { session } = await api(`/api/hardship/applications/${encodeURIComponent(application.id)}/identity-session`, {
+      method: "POST",
+      body: JSON.stringify({ mode: "EMBEDDED", returnUrl: `${location.origin}/#tracker` })
+    });
+    state.assistance.identitySession = session;
+    assistanceBody().innerHTML = `<p class="assistance-question">First, confirm who you are</p>
+      <p class="assistance-note">Assistance is one visit per household, so we verify a real, unique person before looking at any document. This checks identity only — never income, and no document image reaches this step.</p>
+      <div id="assistance-identity-mount" class="assistance-identity" data-identity-session="${escapeHtml(session?.sessionId || "")}" data-identity-mode="${escapeHtml(session?.mode || "EMBEDDED")}"></div>
+      ${session?.mode === "HOSTED" && session?.hostedUrl ? `<p><a class="button button-quiet" href="${escapeHtml(session.hostedUrl)}" target="_blank" rel="noopener">Open identity check</a></p>` : ""}
+      <div class="assistance-actions"><button class="button button-primary" type="button" data-assistance-submit="identity">I’ve finished verifying</button><button class="button button-quiet" type="button" data-assistance-back>Choose something else</button></div>`;
+  } catch (error) {
+    state.assistance.decision = { result: "NOT_VERIFIED", technical: true, message: error.message };
+    renderAssistanceDecision();
+  }
+}
+
+function renderAssistanceEvidence() {
+  const pathway = state.assistance?.pathway;
+  if (!pathway) return renderAssistancePathways();
+  const documents = pathway.documents || [];
+  assistanceBody().innerHTML = `<p class="assistance-question">${escapeHtml(pathway.label)}</p>
+    <p class="assistance-note">${escapeHtml(pathway.detail || "")}</p>
+    <div class="assistance-uploads">${documents.map((document_, index) => `
+      <label class="assistance-upload">${escapeHtml(document_.label)}
+        <input type="file" accept="image/*,application/pdf" data-assistance-file="${index}" data-evidence-type="${escapeHtml(document_.evidenceType)}">
+      </label>`).join("")}</div>
+    ${pathway.household ? `<div class="assistance-household">
+      <label>People in your household<input type="number" min="1" max="20" step="1" value="1" data-assistance-household></label>
+      ${pathway.geography ? '<label>ZIP code<input type="text" inputmode="numeric" maxlength="10" data-assistance-zip></label>' : ""}
+      <label class="inline-check"><input type="checkbox" data-assistance-attestation> I confirm every material source of household income is included.</label>
+    </div>` : ""}
+    <p class="assistance-note">Documents are used only to decide this application. A clinic is never shown them, and is never told why a booking is sponsored.</p>
+    <div class="assistance-actions"><button class="button button-primary" type="button" data-assistance-submit="evidence">Check eligibility</button><button class="button button-quiet" type="button" data-assistance-back>Choose something else</button></div>`;
+}
+
+/** SHA-256 of the exact bytes, which is what the evidence record is keyed on. */
+async function fileDigest(file) {
+  const digest = await crypto.subtle.digest("SHA-256", await file.arrayBuffer());
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+/**
+ * Documents go to storage first and the application records the reference.
+ * The upload URL is minted per file by the assistance service; the bytes
+ * never pass through the application API.
+ */
+async function uploadAssistanceDocument(applicationId, input) {
+  const file = input.files[0];
+  const contentSha256 = await fileDigest(file);
+  const ticket = await api(`/api/hardship/applications/${encodeURIComponent(applicationId)}/uploads`, {
+    method: "POST",
+    body: JSON.stringify({ evidenceType: input.dataset.evidenceType, mimeType: file.type || "application/octet-stream", byteSize: file.size, contentSha256 })
+  });
+  const upload = await fetch(ticket.uploadUrl, { method: ticket.method || "PUT", headers: ticket.headers || { "content-type": file.type || "application/octet-stream" }, body: file });
+  if (!upload.ok) throw new Error("That document could not be uploaded. Please try again.");
+  return api(`/api/hardship/applications/${encodeURIComponent(applicationId)}/evidence`, {
+    method: "POST",
+    body: JSON.stringify({
+      evidenceType: input.dataset.evidenceType,
+      storageBucket: ticket.bucket,
+      storageObjectRef: ticket.objectRef,
+      encryptionKeyId: ticket.encryptionKeyId || null,
+      contentSha256,
+      mimeType: file.type || null,
+      byteSize: file.size
+    })
+  });
+}
+
+async function submitAssistanceApplication(stage) {
+  const step = stage || document.activeElement?.dataset?.assistanceSubmit;
+  if (step === "scope") return renderAssistancePathways();
+  if (step === "identity") return renderAssistanceEvidence();
+  const pathway = state.assistance?.pathway;
+  if (!pathway) return renderAssistancePathways();
+  const files = $$("[data-assistance-file]");
+  if (files.some((input) => !input.files?.length)) return showToast("Add each document listed so we can check it.");
+  const household = $("[data-assistance-household]")?.value;
+  const postalCode = $("[data-assistance-zip]")?.value;
+  const attested = $("[data-assistance-attestation]");
+  if (pathway.household && attested && !attested.checked) return showToast("Confirm the household income statement to continue.");
+
+  assistanceBody().innerHTML = '<p class="assistance-loading">Reading your documents and applying the eligibility rules…</p>';
+  try {
+    const application = state.assistance.application;
+    if (!application) throw new Error("This application is no longer open.");
+    for (const input of files) await uploadAssistanceDocument(application.id, input);
+    const result = await api(`/api/hardship/applications/${encodeURIComponent(application.id)}/submit`, {
+      method: "POST",
+      body: JSON.stringify({
+        householdSize: household ? Number(household) : undefined,
+        householdAttested: Boolean(attested?.checked),
+        geography: postalCode ? { areaId: postalCode } : undefined
+      })
+    });
+    state.assistance.application = result.application || application;
+    state.assistance.view = result.view || null;
+    state.assistance.decision = { result: result.view?.status === "APPROVED" ? "APPROVED" : "NOT_VERIFIED", expiresAt: result.view?.expiresAt, visitsRemaining: result.view?.sponsoredVisitLimit, view: result.view };
+  } catch (error) {
+    // Anything that stops the check — an upload failure, a provider outage,
+    // an application the service refused — lands on the same neutral outcome.
+    // The applicant is never shown a reason code or a suspicion.
+    state.assistance.decision = { result: "NOT_VERIFIED", technical: true, message: error.message };
+  }
+  renderAssistanceDecision();
+}
+
+function renderAssistanceDecision() {
+  const decision = state.assistance?.decision || { result: "NOT_VERIFIED" };
+  const view = decision.view || state.assistance?.view || null;
+  const approved = decision.result === "APPROVED";
+  track("assistance_decision", { result: approved ? "approved" : "not_verified" });
+  if (approved) {
+    if (state.pendingMatch) state.pendingMatch.assistance = state.assistance;
+    $("[data-assistance-heading]").textContent = view?.title || "Paw It Forward assistance approved";
+    assistanceBody().innerHTML = `<p>${escapeHtml(view?.message || `Your ${formatMoney(ownerFeeCents())} TímiNOW fee is covered for this booking, and the clinic will not be charged a TímiNOW referral fee. You remain responsible for the clinic's deposit and veterinary charges.`)}</p>
+      ${decision.expiresAt ? `<p class="assistance-note">This approval applies to bookings confirmed before ${escapeHtml(new Intl.DateTimeFormat("en-US", { dateStyle: "long" }).format(new Date(timestampMs(decision.expiresAt))))}.</p>` : ""}
+      ${Number.isFinite(decision.visitsRemaining) ? `<p class="assistance-note">Sponsored visits available: ${decision.visitsRemaining}.</p>` : ""}
+      <button class="button button-primary" type="button" data-assistance-continue>Back to my booking</button>`;
+    return;
+  }
+  // The exact program copy, served by the assistance service where it exists
+  // and reproduced here where it does not. The fee inside it is built from the
+  // live pricing policy: a hardcoded amount would quote a price the ledger no
+  // longer charges. No red, no error styling, no implication of dishonesty —
+  // and the ordinary paid path is offered in the same breath.
+  const fee = formatMoney(ownerFeeCents());
+  const message = view?.message
+    || `TímiNOW could not independently verify your hardship at this time. This booking will require our standard ${fee} fee. We know this isn’t what you wanted to hear; if you feel we’ve made a mistake, email hardship@timinow.pet and we will have a human evaluate your case for future bookings.`;
+  $("[data-assistance-heading]").textContent = view?.title || "We could not verify your hardship";
+  assistanceBody().innerHTML = `<p class="assistance-soft-no">${escapeHtml(message).replace("hardship@timinow.pet", '<a href="mailto:hardship@timinow.pet">hardship@timinow.pet</a>')}</p>
+    <div class="assistance-actions"><button class="button button-primary" type="button" data-assistance-continue>Pay ${escapeHtml(fee)} &amp; continue</button></div>
+    <p class="assistance-note">Your saved payment method is used at confirmation. Nothing is charged until you press confirm on your booking.</p>`;
+}
+
+/* ---------------------------------------------------------------------- */
+/* Paw It Forward — contributions.                                         */
+/* ---------------------------------------------------------------------- */
+
+const POST_VISIT_CHOICES = [200, 500, 1000, 2000];
+const PORTAL_CHOICES = [1000, 2000, 3500, 7000, 10000];
+
+/**
+ * One contribution endpoint for both the portal and the after-visit card.
+ *
+ * The record is created first and paid second: the fund only ever posts money
+ * Stripe has confirmed, so a draft contribution with no successful payment is
+ * simply a draft, not a number in anybody's total.
+ */
+async function createContribution(payload) {
+  const created = await api("/api/fund/contributions", { method: "POST", body: JSON.stringify({ consent: true, ...payload }) });
+  const contribution = created.contribution || created;
+  const payment = await api(`/api/fund/contributions/${encodeURIComponent(contribution.contributionId || contribution.id)}/payment`, { method: "POST" });
+  return { contribution, ...payment };
+}
+
+function renderPostVisitContribution(intake) {
+  const panel = $("[data-post-visit-contribution]");
+  if (!panel) return;
+  const finished = ["seen", "completed"].includes(intake.status);
+  const alreadyGave = (intake.contributionCents || 0) > 0;
+  const dismissed = Boolean(readStorage(STORAGE_KEYS.postVisitContribution, {})[intake.id]);
+  panel.hidden = !finished || alreadyGave || dismissed;
+  if (panel.hidden) return;
+  renderContributionChoices($("[data-post-visit-amounts]"), POST_VISIT_CHOICES, state.postVisitContribution.choice, "post-visit-contribution");
+  $("[data-post-visit-custom-field]").hidden = state.postVisitContribution.choice !== "custom";
+  $("[data-post-visit-submit]").disabled = !state.postVisitContribution.cents;
+  $("[data-post-visit-submit]").textContent = state.postVisitContribution.cents ? `Contribute ${formatMoney(state.postVisitContribution.cents)}` : "Contribute";
+}
+
+function setPostVisitContribution(choice) {
+  state.postVisitContribution.choice = choice;
+  state.postVisitContribution.cents = choice === "custom" ? wholeDollarCents($("[data-post-visit-custom]")?.value) : Number(choice) || 0;
+  if (state.currentIntake) renderPostVisitContribution(state.currentIntake);
+  if (choice === "custom") $("[data-post-visit-custom]")?.focus();
+}
+
+function dismissPostVisitContribution() {
+  const intake = state.currentIntake;
+  if (!intake) return;
+  writeStorage(STORAGE_KEYS.postVisitContribution, { ...readStorage(STORAGE_KEYS.postVisitContribution, {}), [intake.id]: true });
+  $("[data-post-visit-contribution]").hidden = true;
+}
+
+async function submitPostVisitContribution() {
+  const intake = state.currentIntake;
+  const amountCents = state.postVisitContribution.cents;
+  if (!intake || !amountCents) return;
+  const minimum = fees().minBookingContributionCents;
+  if (amountCents < minimum) return showToast(`Contributions attached to a booking start at ${formatMoney(minimum)}.`);
+  const button = $("[data-post-visit-submit]");
+  button.disabled = true;
+  try {
+    const data = await createContribution({
+      amountCents,
+      source: "STANDALONE",
+      intakeId: intake.id,
+      receiptEmail: intake.owner?.email || undefined,
+      recognition: "ANONYMOUS",
+      termsVersion: state.config?.legalVersion || null
+    });
+    track("post_visit_contribution", { cents: amountCents });
+    await presentContribution(data, { context: "post-visit", amountCents });
+  } catch (error) {
+    showToast(error.message);
+    button.disabled = false;
+  }
+}
+
+/**
+ * A created contribution either needs a card or it does not: a demo
+ * deployment and a wallet-completed Checkout both come back settled, and
+ * only a Stripe client secret opens the payment dialog.
+ */
+async function presentContribution(data, options) {
+  const { context, amountCents } = options;
+  state.contribution = { ...data, ...options };
+  if (!data?.clientSecret) {
+    // No card needed: a demo deployment, or a contribution the service has
+    // already settled. Anything else would have thrown before reaching here.
+    completeContribution(data, options);
+    return;
+  }
+  $("[data-contribution-summary]").textContent = `${formatMoney(amountCents)} to the Tími NOW Paw It Forward Fund.`;
+  $("[data-contribution-submit]").textContent = `Pay ${formatMoney(amountCents)}`;
+  $("[data-contribution-element]").replaceChildren();
+  const dialog = $("[data-contribution-dialog]");
+  dialog.showModal();
+  document.body.classList.add("dialog-open");
+  try {
+    const Stripe = await loadStripe();
+    if (!state.config?.stripePublishableKey) throw new Error("Payments are not configured on this deployment.");
+    state.stripe = Stripe(state.config.stripePublishableKey);
+    state.stripeElements = state.stripe.elements({ clientSecret: data.clientSecret, appearance: { theme: "stripe", variables: { colorPrimary: "#2357d9", borderRadius: "10px" } } });
+    state.stripeElements.create("payment").mount("[data-contribution-element]");
+  } catch (error) {
+    showToast(error.message);
+    dialog.close();
+    document.body.classList.remove("dialog-open");
+  }
+}
+
+async function confirmContributionPayment(event) {
+  event.preventDefault();
+  const button = $("[data-contribution-submit]");
+  button.disabled = true;
+  const label = button.textContent;
+  button.textContent = "Processing…";
+  try {
+    if (!state.stripeElements) throw new Error("The payment form is not ready yet.");
+    const result = await state.stripe.confirmPayment({ elements: state.stripeElements, confirmParams: { return_url: `${location.origin}/#paw-it-forward` }, redirect: "if_required" });
+    if (result.error) throw new Error(result.error.message);
+    $("[data-contribution-dialog]").close();
+    document.body.classList.remove("dialog-open");
+    completeContribution(state.contribution, state.contribution);
+    track("contribution_paid", { cents: state.contribution?.amountCents || 0 });
+  } catch (error) {
+    showToast(error.message);
+  } finally {
+    button.disabled = false;
+    button.textContent = label;
+  }
+}
+
+function completeContribution(data, { context, amountCents }) {
+  if (context === "post-visit") {
+    const intake = state.currentIntake;
+    if (intake) {
+      state.currentIntake = { ...intake, contributionCents: (intake.contributionCents || 0) + amountCents };
+      writeStorage(STORAGE_KEYS.intake, state.currentIntake);
+      renderPostVisitContribution(state.currentIntake);
+    }
+    showToast("Thank you. Your contribution helps cover Tími NOW access for another pet owner.");
+    return;
+  }
+  const contribution = data?.contribution || {};
+  $("[data-pif-form]").hidden = true;
+  const success = $("[data-pif-success]");
+  success.hidden = false;
+  $("[data-pif-success-amount]").textContent = formatMoneyExact(contribution.amountCents || amountCents);
+  const receiptEmail = contribution.receiptEmail || state.contribution?.receiptEmail;
+  $("[data-pif-success-receipt]").textContent = receiptEmail ? `Emailed to ${receiptEmail}` : "A receipt is on its way to the address you gave us.";
+  const recognitionName = contribution.recognitionName || state.contribution?.recognitionName;
+  $("[data-pif-success-recognition]").textContent = ({
+    ANONYMOUS: "Anonymous — no public attribution",
+    FIRST_NAME_LAST_INITIAL: recognitionName ? `Listed as ${recognitionName}` : "First name and last initial",
+    ORGANIZATION: recognitionName ? `Listed as ${recognitionName}` : "Organization name"
+  })[contribution.recognition || state.contribution?.recognition || "ANONYMOUS"];
+  success.scrollIntoView({ block: "start" });
+}
+
+/* -------------------------------------------------- the public portal --- */
+
+async function enterPawItForward() {
+  const fee = fees();
+  $("[data-pif-impact-explainer]").textContent =
+    `Community contributions combine to cover Tími NOW access for pet owners experiencing verified financial hardship. ${formatMoney(fee.sponsorshipFundCents)} funds the community portion of one completed sponsored connection, and Tími NOW contributes the remaining ${formatMoney(fee.timiMatchCents)}.`;
+  $("[data-pif-limits]").textContent = `Whole dollars only. Minimum ${formatMoney(fee.minStandaloneContributionCents)}, maximum ${formatMoney(fee.maxStandaloneContributionCents)}.`;
+  const custom = $("[data-pif-custom]");
+  if (custom) {
+    custom.min = String(Math.ceil(fee.minStandaloneContributionCents / 100));
+    custom.max = String(Math.floor(fee.maxStandaloneContributionCents / 100));
+  }
+  renderContributionChoices($("[data-pif-amounts]"), PORTAL_CHOICES, state.portalContribution.choice, "portal-contribution");
+  await loadFundImpact();
+}
+
+/**
+ * Impact totals are whatever the server chose to publish, rendered as they
+ * arrive. The client computes nothing here: a reservation is not a visit,
+ * and only the reconciliation that produced these numbers knows which is
+ * which.
+ */
+async function loadFundImpact() {
+  const mount = $("[data-pif-impact]");
+  const note = $("[data-pif-impact-note]");
+  try {
+    const data = await api("/api/fund/impact");
+    const impact = data.impact || data;
+    const tiles = [
+      Number.isFinite(impact.completedConnections) ? { label: "Completed sponsored connections", value: impact.completedConnections.toLocaleString("en-US") } : null,
+      Number.isFinite(impact.communityDollarsConsumedCents) ? { label: "Community dollars used for completed connections", value: formatMoney(impact.communityDollarsConsumedCents) } : null,
+      Number.isFinite(impact.timiMatchTotalCents) ? { label: "Tími NOW match value", value: formatMoney(impact.timiMatchTotalCents) } : null
+    ].filter(Boolean);
+    if (impact.explanation) $("[data-pif-impact-explainer]").textContent = impact.explanation;
+    if (impact.published === false || !tiles.length) {
+      mount.innerHTML = `<p class="microcopy">Totals are published once at least ${escapeHtml(String(impact.minimumConnections || 5))} completed connections have been reconciled — below that, a public number could identify the people it counts.</p>`;
+      return;
+    }
+    mount.innerHTML = tiles.map((tile) => `<article><small>${escapeHtml(tile.label)}</small><strong>${escapeHtml(tile.value)}</strong></article>`).join("");
+    if (impact.asOf) note.textContent = `Completed, reconciled connections only, as of ${new Intl.DateTimeFormat("en-US", { dateStyle: "long" }).format(new Date(timestampMs(impact.asOf)))}${impact.delayHours ? ` (published on a ${impact.delayHours}-hour delay)` : ""}. Reservations, pending bookings, and applications are never counted as visits funded.`;
+  } catch {
+    mount.innerHTML = '<p class="microcopy">Impact totals are unavailable right now. Contributions are unaffected.</p>';
+  }
+}
+
+function setPortalContribution(choice) {
+  state.portalContribution.choice = choice;
+  state.portalContribution.cents = choice === "custom" ? wholeDollarCents($("[data-pif-custom]")?.value) : Number(choice) || 0;
+  renderContributionChoices($("[data-pif-amounts]"), PORTAL_CHOICES, choice, "portal-contribution");
+  $("[data-pif-custom-field]").hidden = choice !== "custom";
+  if (choice === "custom") $("[data-pif-custom]")?.focus();
+}
+
+function resetPortalContribution() {
+  state.portalContribution = { choice: null, cents: 0 };
+  const form = $("[data-pif-form]");
+  form.reset();
+  form.hidden = false;
+  $("[data-pif-success]").hidden = true;
+  $("[data-pif-recognition-name]").hidden = true;
+  $("[data-pif-custom-field]").hidden = true;
+  renderContributionChoices($("[data-pif-amounts]"), PORTAL_CHOICES, null, "portal-contribution");
+  form.scrollIntoView({ block: "start" });
+}
+
+async function submitPortalContribution(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const error = $("[data-pif-error]");
+  const limits = fees();
+  const amountCents = state.portalContribution.choice === "custom"
+    ? wholeDollarCents(form.elements.customAmount.value)
+    : state.portalContribution.cents;
+  const email = form.elements.email.value.trim();
+  const recognition = form.elements.recognition.value;
+  const recognitionName = form.elements.recognitionName.value.trim();
+  const fail = (message) => { error.hidden = false; error.textContent = message; };
+  error.hidden = true;
+
+  if (!amountCents) return fail("Choose an amount to contribute.");
+  if (amountCents < limits.minStandaloneContributionCents) return fail(`Contributions here start at ${formatMoney(limits.minStandaloneContributionCents)}.`);
+  if (amountCents > limits.maxStandaloneContributionCents) return fail(`For a contribution above ${formatMoney(limits.maxStandaloneContributionCents)}, email hello@timinow.pet and we will arrange it.`);
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return fail("Add an email address so we can send your receipt.");
+  if (recognition !== "ANONYMOUS" && !recognitionName) return fail("Add the name you would like shown, or choose Anonymous.");
+  if (!form.elements.consent.checked) return fail("Please accept the program terms to continue.");
+
+  const button = form.querySelector("button[type='submit']");
+  button.disabled = true;
+  button.textContent = "Preparing payment…";
+  try {
+    const data = await createContribution({
+      amountCents,
+      source: "STANDALONE",
+      receiptEmail: email,
+      recognition,
+      recognitionName: recognition === "ANONYMOUS" ? null : recognitionName,
+      termsVersion: state.config?.legalVersion || null,
+      consent: true
+    });
+    track("portal_contribution_started", { cents: amountCents });
+    await presentContribution(data, { context: "portal", amountCents, receiptEmail: email, recognition, recognitionName });
+  } catch (requestError) {
+    fail(requestError.message);
+  } finally {
+    button.disabled = false;
+    button.textContent = "Continue to secure payment";
+  }
 }
 
 async function updateIntakeStatus(status) {
@@ -1421,13 +2441,26 @@ async function enableClinicAlerts() {
   showToast(permission === "granted" ? "Clinic intake alerts are enabled." : "Notification permission was not granted.");
 }
 
+/**
+ * What a clinic is told about a sponsored booking, and the whole of it.
+ *
+ * Three lines: that it is sponsored, that the referral fee is zero, and that
+ * the patient still owes the clinic its deposit and charges. A clinic never
+ * sees income, benefit type, documents, hardship reason, or the application —
+ * so none of that is fetched, held, or rendered anywhere on this surface.
+ */
+function sponsoredNoticeHtml(intake) {
+  if (!intake?.sponsored && intake?.sponsorship?.state !== "RESERVED" && !intake?.sponsorshipId) return "";
+  return `<p class="sponsored-notice"><strong>Paw It Forward sponsored booking</strong><span>Tími NOW referral fee: $0</span><span>Patient remains responsible for your normal deposit and veterinary charges.</span></p>`;
+}
+
 function renderClinicRequests(requests) {
   const list = $("[data-request-list]");
   if (!requests.length) {
     list.innerHTML = '<div class="empty-state"><strong>No requests waiting.</strong><p>New requests appear here and can be accepted in one tap.</p></div>';
     return;
   }
-  list.innerHTML = requests.slice(0, 12).map((intake) => `<article class="request-card"><span class="request-urgency">${escapeHtml(intake.urgency === "emergency" ? "ER" : "NOW")}</span><div><h3>${escapeHtml(intake.pet.name)} · ${escapeHtml(humanize(intake.species || intake.pet.species))}</h3><p>${escapeHtml(intake.concernSummary)}</p><small>${escapeHtml(intake.owner.name)} · ${escapeHtml(intake.travelMinutes ? `${intake.travelMinutes} min away` : "travel time unknown")} · ${escapeHtml(intake.searchTarget ? "Multi-clinic search" : humanize(intake.status))}</small></div>${intake.status === "pending" ? `<button type="button" data-review-intake="${escapeHtml(intake.id)}" data-pet-name="${escapeHtml(intake.pet.name)}" data-search-target="${intake.searchTarget ? "true" : "false"}">Review</button>` : `<span class="hospital-kind">${escapeHtml(humanize(intake.status))}</span>`}</article>`).join("");
+  list.innerHTML = requests.slice(0, 12).map((intake) => `<article class="request-card"><span class="request-urgency">${escapeHtml(intake.urgency === "emergency" ? "ER" : "NOW")}</span><div><h3>${escapeHtml(intake.pet.name)} · ${escapeHtml(humanize(intake.species || intake.pet.species))}</h3>${sponsoredNoticeHtml(intake)}<p>${escapeHtml(intake.concernSummary)}</p><small>${escapeHtml(intake.owner.name)} · ${escapeHtml(intake.travelMinutes ? `${intake.travelMinutes} min away` : "travel time unknown")} · ${escapeHtml(intake.searchTarget ? "Multi-clinic search" : humanize(intake.status))}</small></div>${intake.status === "pending" ? `<button type="button" data-review-intake="${escapeHtml(intake.id)}" data-pet-name="${escapeHtml(intake.pet.name)}" data-search-target="${intake.searchTarget ? "true" : "false"}">Review</button>` : `<span class="hospital-kind">${escapeHtml(humanize(intake.status))}</span>`}</article>`).join("");
 }
 
 async function publishAvailability(event) {
@@ -1532,7 +2565,42 @@ document.addEventListener("click", (event) => {
   const confirmRequest = event.target.closest("[data-confirm-request]");
   if (confirmRequest) submitIntake(confirmRequest.dataset.confirmRequest);
   const selectOffer = event.target.closest("[data-select-offer]");
-  if (selectOffer) selectCareOffer(selectOffer.dataset.selectOffer);
+  if (selectOffer) openMatchConfirmation(selectOffer.dataset.selectOffer);
+  const aliasExplainer = event.target.closest("[data-alias-explainer]");
+  if (aliasExplainer) {
+    const panel = $("#alias-explainer");
+    const open = panel.hidden;
+    panel.hidden = !open;
+    aliasExplainer.setAttribute("aria-expanded", String(open));
+    if (open) track("alias_explainer_opened");
+  }
+  const contributionChoice = event.target.closest("[data-contribution-choice]");
+  if (contributionChoice) {
+    const raw = contributionChoice.dataset.contributionChoice;
+    const choice = raw === "custom" ? "custom" : Number(raw);
+    if (contributionChoice.dataset.contributionGroup === "booking-contribution") setBookingContribution(choice);
+    if (contributionChoice.dataset.contributionGroup === "portal-contribution") setPortalContribution(choice);
+    if (contributionChoice.dataset.contributionGroup === "post-visit-contribution") setPostVisitContribution(choice);
+  }
+  const openAssistance = event.target.closest("[data-open-assistance]");
+  if (openAssistance) startAssistance();
+  const assistancePathway = event.target.closest("[data-assistance-pathway]");
+  if (assistancePathway) chooseAssistancePathway(assistancePathway.dataset.assistancePathway);
+  const assistanceBack = event.target.closest("[data-assistance-back]");
+  if (assistanceBack) renderAssistancePathways();
+  const assistanceSubmit = event.target.closest("[data-assistance-submit]");
+  if (assistanceSubmit) submitAssistanceApplication(assistanceSubmit.dataset.assistanceSubmit);
+  const assistanceClose = event.target.closest("[data-assistance-continue]");
+  if (assistanceClose) {
+    $("[data-assistance-dialog]").close();
+    renderMatchConfirmation();
+  }
+  const postVisitSubmit = event.target.closest("[data-post-visit-submit]");
+  if (postVisitSubmit) submitPostVisitContribution();
+  const postVisitDismiss = event.target.closest("[data-post-visit-dismiss]");
+  if (postVisitDismiss) dismissPostVisitContribution();
+  const pifReset = event.target.closest("[data-pif-reset]");
+  if (pifReset) resetPortalContribution();
   const cancelSearch = event.target.closest("[data-cancel-search]");
   if (cancelSearch && confirm("Cancel this search and release every clinic offer?")) cancelCareSearch();
   const startTrip = event.target.closest("[data-start-trip]");
@@ -1733,6 +2801,40 @@ $("[data-provider-form]")?.addEventListener("submit", async (event) => {
 $("[data-sort-results]")?.addEventListener("change", renderLocations);
 $("[data-availability-form]")?.addEventListener("submit", publishAvailability);
 $("[data-decision-form]")?.addEventListener("submit", submitDecision);
+$("[data-match-confirm-form]")?.addEventListener("submit", confirmMatchSelection);
+$("[data-assistance-form]")?.addEventListener("submit", (event) => event.preventDefault());
+$("[data-contribution-form]")?.addEventListener("submit", confirmContributionPayment);
+$("[data-pif-form]")?.addEventListener("submit", submitPortalContribution);
+$("[data-booking-contribution-toggle]")?.addEventListener("change", (event) => {
+  $("[data-booking-contribution-body]").hidden = !event.target.checked;
+  if (!event.target.checked && state.pendingMatch) {
+    state.pendingMatch.contributionChoice = null;
+    state.pendingMatch.contributionCents = 0;
+  }
+  renderMatchConfirmation();
+});
+$("[data-booking-contribution-custom]")?.addEventListener("input", () => {
+  if (state.pendingMatch?.contributionChoice === "custom") {
+    state.pendingMatch.contributionCents = wholeDollarCents($("[data-booking-contribution-custom]").value);
+    renderMatchConfirmation();
+    $("[data-booking-contribution-custom]").focus();
+  }
+});
+$("[data-post-visit-custom]")?.addEventListener("input", (event) => {
+  if (state.postVisitContribution.choice !== "custom") return;
+  state.postVisitContribution.cents = wholeDollarCents(event.target.value);
+  const submit = $("[data-post-visit-submit]");
+  submit.disabled = !state.postVisitContribution.cents;
+  submit.textContent = state.postVisitContribution.cents ? `Contribute ${formatMoney(state.postVisitContribution.cents)}` : "Contribute";
+});
+$("[data-pif-custom]")?.addEventListener("input", (event) => {
+  if (state.portalContribution.choice === "custom") state.portalContribution.cents = wholeDollarCents(event.target.value);
+});
+$("[data-pif-form]")?.addEventListener("change", (event) => {
+  if (event.target.name !== "recognition") return;
+  $("[data-pif-recognition-name]").hidden = event.target.value === "ANONYMOUS";
+});
+
 $("[data-decision-form]")?.addEventListener("change", (event) => {
   if (event.target.matches('[name="decision"], [name="responseType"]')) syncDecisionFields();
 });

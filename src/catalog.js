@@ -203,21 +203,28 @@ export const TECHNICIAN_NOTICE =
  *
  * 2026-08-24 adds the service-fee disclosure: Tími's $50 fee per completed
  * intake, the standard $25 customer share, and the required checkout notice
- * when a clinic passes the whole fee to the customer. See the fee constants
- * below and `fees` on /api/config.
+ * when a clinic passes the whole fee to the customer.
+ *
+ * 2026-08-29 replaces that fee model. The pet owner pays $20 and a
+ * participating clinic pays $25 per completed connection; founding clinics
+ * pay nothing. It also introduces the Paw It Forward Fund: optional
+ * contributions that cover Tími's access fees for owners with independently
+ * verified financial hardship, never veterinary treatment, and never
+ * represented as tax deductible. Prices are versioned rows now — see
+ * src/pricing.js and `fees` on /api/config.
  */
-export const LEGAL_VERSION = "2026-08-24";
+export const LEGAL_VERSION = "2026-08-29";
 export const VALID_INTAKE_STATUS = new Set(["available", "limited", "confirm_first", "critical_only", "diverting", "closed", "unverified"]);
 
 /**
- * Tími's service fee is $50 per completed intake. The standard arrangement
- * charges the customer $25 at the time of service and deducts the remainder
- * from the clinic payout; a clinic may elect to pass the entire $50 to the
- * customer, which must then be disclosed at checkout.
+ * Tími's own prices moved out of this file on 2026-08-29.
  *
- * Constants rather than tenant policy fields, because this is Tími's own
- * price: the same on every surface, served by /api/config so no client
- * carries a copy that can drift from what is actually charged.
+ * They are now versioned rows in `pricing_policies` (migration 0013), read
+ * through src/pricing.js and served on /api/config. Two constants could not
+ * express what the business actually needed: a founding clinic that pays
+ * nothing, a price change that does not require a deploy, and a booking that
+ * can still report the price it was quoted a year later.
+ *
+ * The launch policy is $20 owner + $25 clinic. Nothing here; see
+ * migrations/0013_pricing_and_ledger.sql and src/pricing.js.
  */
-export const TIMI_CUSTOMER_FEE_CENTS = 2500;
-export const TIMI_TOTAL_SERVICE_FEE_CENTS = 5000;

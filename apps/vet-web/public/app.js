@@ -17,7 +17,7 @@ const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 
 const SETTINGS_KEY = "timi_vet_settings_v1";
 const RETURN_ROUTE_KEY = "timi_vet_return_route";
-const KNOWN_SCREENS = new Set(["sign-in", "workspace", "console", "people", "legal"]);
+const KNOWN_SCREENS = new Set(["sign-in", "workspace", "console", "billing", "people", "legal"]);
 const DEFAULT_SETTINGS = { pollSeconds: 6, alertsEnabled: true, playSound: true, autoOpenMini: true };
 
 const state = {
@@ -28,6 +28,7 @@ const state = {
   settings: readSettings(),
   dashboard: null,
   dashboardInitialized: false,
+  billing: null,
   knownPendingIds: new Set(),
   selectedRequestId: null,
   offerFormEdited: false,
@@ -223,7 +224,30 @@ async function loadConfig() {
   } catch {
     state.config = { signInRequired: true, demoMode: false, database: "fixtures" };
   }
+  applyPricingCopy();
   if (state.config.signInRequired) await initializeClerk();
+}
+
+/**
+ * Prices and the terms version come from /api/config, never from the markup.
+ * A console quoting a fee the ledger no longer charges is how a clinic ends
+ * up arguing with an invoice.
+ */
+function applyPricingCopy() {
+  const fee = clinicFees();
+  $$("[data-fee-owner]").forEach((node) => { node.textContent = formatMoney(fee.ownerFeeCents); });
+  $$("[data-fee-clinic]").forEach((node) => { node.textContent = formatMoney(fee.clinicFeeCents); });
+  $$("[data-legal-version]").forEach((node) => { node.textContent = state.config?.legalVersion || "current"; });
+}
+
+const FEE_FALLBACK = { ownerFeeCents: 2000, clinicFeeCents: 2500, currency: "usd" };
+
+function clinicFees() {
+  return { ...FEE_FALLBACK, ...(state.config?.fees || {}) };
+}
+
+function formatMoney(cents) {
+  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: Number(cents || 0) % 100 === 0 ? 0 : 2 }).format((cents || 0) / 100);
 }
 
 async function initializeClerk() {
@@ -458,7 +482,7 @@ async function renderRoute() {
   $$("[data-nav]").forEach((link) => link.classList.toggle("active", link.dataset.nav === route));
   document.title = ({
     "sign-in": "Sign in · Tími Vet", workspace: "Choose a workspace · Tími Vet",
-    console: "Clinic operations · Tími Vet", people: "People · Tími Vet", legal: "Legal · Tími Vet"
+    console: "Clinic operations · Tími Vet", billing: "Billing · Tími Vet", people: "People · Tími Vet", legal: "Legal · Tími Vet"
   })[route] || "Tími Vet";
 
   if (route === "sign-in") { renderSignIn(); return; }
@@ -481,6 +505,7 @@ async function renderRoute() {
   }
 
   if (route === "console") await enterConsole();
+  if (route === "billing") await enterBilling();
   if (route === "people") await enterPeople();
   if (route === "legal") {
     const section = routeQuery().get("section") || "clinics";
@@ -568,6 +593,34 @@ function hydrateAvailabilityForm(availability) {
   form.elements.acceptsCritical.checked = availability.acceptsCritical !== false;
 }
 
+/**
+ * Whether this booking is sponsored by the Paw It Forward Fund.
+ *
+ * The clinic is told three things and no more: that the booking is sponsored,
+ * that its Tími NOW referral fee is $0, and that the patient still owes the
+ * clinic its normal deposit and veterinary charges. Income, benefit type,
+ * hardship reason, documents, and the assistance application itself are not
+ * in this payload, are never requested by this console, and must never be
+ * rendered here — a clinic that can see why somebody qualified can treat them
+ * differently for it.
+ */
+function isSponsored(request) {
+  return request?.sponsored === true || request?.sponsorship?.state === "RESERVED" || Boolean(request?.sponsorshipId);
+}
+
+function sponsoredBadge(request) {
+  return isSponsored(request) ? '<span class="sponsored-badge">Paw It Forward sponsored booking</span>' : "";
+}
+
+function sponsoredNotice(request) {
+  if (!isSponsored(request)) return "";
+  return `<div class="sponsored-notice">
+      <strong>Paw It Forward sponsored booking</strong>
+      <span>TímiNOW referral fee: $0</span>
+      <span>Patient remains responsible for your normal deposit and veterinary charges.</span>
+    </div>`;
+}
+
 function renderQueue(requests) {
   const list = $("[data-queue-list]");
   const pending = requests.filter((r) => r.status === "pending");
@@ -581,6 +634,7 @@ function renderQueue(requests) {
       <span class="queue-avatar">${escapeHtml(initials(request.pet?.name))}</span>
       <span class="queue-main">
         <h3>${escapeHtml(petLine(request))}</h3>
+        ${sponsoredBadge(request)}
         <p>${escapeHtml(request.concernSummary)}</p>
         <span class="request-type">${requestTypeLabel(request)}</span>
       </span>
@@ -617,6 +671,7 @@ function renderDecisionWorkspace() {
 
   mount.innerHTML = `
     <h2>${escapeHtml(petLine(request))}</h2>
+    ${sponsoredNotice(request)}
     <p style="font-size:.85rem">${escapeHtml(request.concernSummary)}</p>
     ${ownerSuppliedMedical(request)}
     <div class="workspace-facts">
@@ -959,6 +1014,93 @@ function closeMiniWindow() {
   try { state.miniWin?.close(); } catch { /* already closed */ }
   state.miniWin = null;
   state.miniKind = null;
+}
+
+/* --------------------------------------------------------------- billing --- */
+
+const RECEIVABLE_STATE_LABEL = {
+  DUE: "Due", RETRYING: "Retrying", PAST_DUE: "Past due", RESTRICTED: "Restricted",
+  INVOICED: "On a statement", PAID: "Paid", VOID: "Voided", WAIVED: "Waived"
+};
+
+const INVOICE_STATE_LABEL = {
+  DRAFT: "Draft", OPEN: "Sent", SENT: "Sent", PAID: "Paid", PAST_DUE: "Past due", VOID: "Voided", UNCOLLECTIBLE: "Uncollectible"
+};
+
+const FEE_REASON_LABEL = {
+  STANDARD_RATE: "Standard rate",
+  FOUNDING_CLINIC_RATE: "Founding clinic · $0",
+  SPONSORED_VISIT: "Paw It Forward sponsored · $0"
+};
+
+function billingDate(value) {
+  if (!value) return "—";
+  const ms = timestampMs(value);
+  return Number.isFinite(ms) ? new Intl.DateTimeFormat("en-US", { dateStyle: "medium" }).format(new Date(ms)) : "—";
+}
+
+/**
+ * The clinic's own money, and only its own.
+ *
+ * Everything here is the clinic's relationship with Tími NOW: what completed,
+ * what it owes for those completions, which statement each line landed on,
+ * and whether that statement is paid. A sponsored line shows $0 and the fact
+ * that it was sponsored — never who was helped or why.
+ */
+async function enterBilling() {
+  const summary = $("[data-billing-summary]");
+  try {
+    const data = await api("/api/clinic/billing");
+    state.billing = data.billing || data;
+  } catch (error) {
+    state.billing = null;
+    summary.innerHTML = `<p class="billing-empty">Billing is unavailable right now — ${escapeHtml(error.message)}</p>`;
+    $("[data-billing-invoices]").innerHTML = '<p class="billing-empty">Unavailable.</p>';
+    $("[data-billing-receivables]").innerHTML = '<p class="billing-empty">Unavailable.</p>';
+    return;
+  }
+  renderBilling();
+}
+
+function renderBilling() {
+  const billing = state.billing || {};
+  const receivables = billing.receivables || [];
+  const invoices = billing.invoices || [];
+  const fee = clinicFees();
+  // Founding status is whatever the server says it is; where it says nothing,
+  // the most recent priced line is the honest answer rather than a guess.
+  const plan = billing.plan || billing.pricingPlan || receivables.find((row) => row.plan)?.plan || null;
+  const founding = plan === "FOUNDING";
+  const completed = receivables.length;
+  const paidCents = receivables.filter((row) => row.state === "PAID").reduce((total, row) => total + row.amountCents, 0);
+
+  $("[data-billing-summary]").innerHTML = [
+    { label: "Your fee per completed connection", value: founding ? formatMoney(0) : formatMoney(fee.clinicFeeCents), note: founding ? "Founding clinic rate, while participating and in good standing" : "Charged only on a verified completion" },
+    { label: "Outstanding", value: formatMoney(billing.outstandingCents || 0), note: billing.restricted ? `${billing.restrictedCount || 1} line restricted — new availability acceptances are paused until it is settled` : "Nothing past due" },
+    { label: "Completed connections billed", value: String(completed), note: `${formatMoney(paidCents)} settled to date` },
+    { label: "Statements", value: String(invoices.length), note: invoices[0] ? `Latest ${billingDate(invoices[0].periodStart)} · ${INVOICE_STATE_LABEL[invoices[0].status] || humanize(invoices[0].status)}` : "No statement yet" }
+  ].map((tile) => `<article class="card billing-tile"><small>${escapeHtml(tile.label)}</small><strong>${escapeHtml(tile.value)}</strong><span>${escapeHtml(tile.note)}</span></article>`).join("");
+
+  $("[data-billing-invoice-count]").textContent = invoices.length ? `${invoices.length} statement${invoices.length === 1 ? "" : "s"}` : "None yet";
+  $("[data-billing-invoices]").innerHTML = invoices.length
+    ? `<table class="billing-table"><thead><tr><th>Period</th><th>Connections</th><th>Total</th><th>Status</th><th>Paid</th></tr></thead><tbody>${invoices.map((invoice) => `
+        <tr><td>${escapeHtml(billingDate(invoice.periodStart))} – ${escapeHtml(billingDate(invoice.periodEnd))}</td>
+        <td>${invoice.lineCount}</td>
+        <td>${escapeHtml(formatMoney(invoice.totalCents))}</td>
+        <td><span class="billing-state is-${escapeHtml(String(invoice.status || "").toLowerCase())}">${escapeHtml(INVOICE_STATE_LABEL[invoice.status] || humanize(invoice.status || "—"))}</span></td>
+        <td>${escapeHtml(invoice.paidAt ? billingDate(invoice.paidAt) : "—")}</td></tr>`).join("")}</tbody></table>`
+    : '<p class="billing-empty">Your first monthly statement appears here once a connection completes.</p>';
+
+  $("[data-billing-receivable-count]").textContent = completed ? `${completed} completed` : "None yet";
+  $("[data-billing-receivables]").innerHTML = completed
+    ? `<table class="billing-table"><thead><tr><th>Completed</th><th>Booking</th><th>Fee</th><th>Basis</th><th>Status</th><th>Statement</th></tr></thead><tbody>${receivables.map((row) => `
+        <tr><td>${escapeHtml(billingDate(row.completedAt))}</td>
+        <td class="billing-id">${escapeHtml(row.intakeId)}</td>
+        <td>${escapeHtml(formatMoney(row.amountCents))}</td>
+        <td>${escapeHtml(FEE_REASON_LABEL[row.reason] || humanize(row.reason || "—"))}</td>
+        <td><span class="billing-state is-${escapeHtml(String(row.state || "").toLowerCase())}">${escapeHtml(RECEIVABLE_STATE_LABEL[row.state] || humanize(row.state || "—"))}</span></td>
+        <td>${escapeHtml(row.invoiceId || "—")}</td></tr>`).join("")}</tbody></table>`
+    : '<p class="billing-empty">A completed connection appears here with the fee it carried, including sponsored connections at $0.</p>';
 }
 
 /* ---------------------------------------------------------------- people --- */
