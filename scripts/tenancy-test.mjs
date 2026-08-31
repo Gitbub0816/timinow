@@ -9,6 +9,7 @@ import { readFile } from "node:fs/promises";
 import { DatabaseSync } from "node:sqlite";
 import { isPlatformAdmin, listTenantMembers, recordAudit, slugify, upsertTenantMember, countTenantAdmins } from "../src/tenancy.js";
 import { normalizeRole, requireTenantAdmin } from "../src/tenant-admin.js";
+import { applyMigrations } from "./lib/migrations.mjs";
 
 class D1StatementMock {
   constructor(database, sql) { this.database = database; this.sql = sql; this.values = []; }
@@ -43,10 +44,7 @@ function assert(condition, message) {
 }
 
 const database = new DatabaseSync(":memory:");
-database.exec(await readFile("migrations/0001_initial.sql", "utf8"));
-database.exec(await readFile("migrations/0002_seed.sql", "utf8"));
-database.exec(await readFile("migrations/0003_multi_offer_search.sql", "utf8"));
-database.exec(await readFile("migrations/0004_tenancy_admin.sql", "utf8"));
+await applyMigrations(database);
 
 const env = { DB: new D1Mock(database) };
 const operator = { userId: "user_operator", email: "operator@example.com" };

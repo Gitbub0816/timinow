@@ -288,6 +288,15 @@ const PATHWAY_EVALUATORS = {
     // evidence of a means test, and treating them as such would be the
     // disability-equals-eligible rule both specs prohibit.
     if (!config.acceptedPrograms.includes(benefit.programCode)) return fail(["PROGRAM_NOT_MEANS_TESTED"]);
+    /**
+     * A benefit broad enough that receiving it does not by itself establish
+     * hardship — SNAP above all, which the addendum names specifically.
+     * This is not a denial: the applicant continues to the income and shock
+     * pathways, which may well pass on evidence already collected.
+     */
+    if (Array.isArray(config.standalonePrograms) && !config.standalonePrograms.includes(benefit.programCode)) {
+      return fail(["BENEFIT_REQUIRES_CORROBORATION"], { programCode: benefit.programCode });
+    }
     if (benefit.statusCurrent !== true) return fail(["BENEFIT_NOT_CURRENT"]);
     if (config.identityMatchRequired && benefit.recipientMatch !== true) return fail(["RECIPIENT_IDENTITY_MISMATCH"]);
 

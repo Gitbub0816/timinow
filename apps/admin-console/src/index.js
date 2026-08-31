@@ -15,6 +15,18 @@
 import { actorForRequest, signInRequired } from "../../../src/auth.js";
 import { publicConfig } from "../../../src/config.js";
 import { handleClinicApplicationList, handleClinicApplicationDecision } from "../../../src/clinic-billing.js";
+import { handleClinicContractList, handleClinicContractProfile, handleClinicContractUpdate } from "../../../src/clinic-contracts.js";
+import { handleAdminDepositPolicyGet, handleAdminDepositPolicySave } from "../../../src/deposit-policy.js";
+import { handleDepositGuaranteeAction, handleDepositGuaranteeGet, handleDepositGuaranteeReserve } from "../../../src/deposit-guarantee.js";
+import { handleCustodyStatus, handleCustodySweep, handleCustodyTransfers } from "../../../src/fund-custody.js";
+import {
+  handleReconciliationExceptions,
+  handleReconciliationRun,
+  handleReconciliationRuns,
+  handleResolveException,
+  handleRunReconciliation
+} from "../../../src/reconciliation.js";
+import { authorizeAdminAction } from "../../../src/admin-roles.js";
 import { fundDashboard } from "../../../src/fund.js";
 import { ledgerIntegrity } from "../../../src/ledger.js";
 import { recordAnalyticsEvents } from "../../../src/analytics.js";
@@ -1048,6 +1060,79 @@ async function handleApi(request, env) {
     if (method === "GET" && path === "/api/admin/clinic-applications") return handleClinicApplicationList(request, env);
     const clinicApplicationMatch = path.match(/^\/api\/admin\/clinic-applications\/([^/]+)$/);
     if (method === "POST" && clinicApplicationMatch) return handleClinicApplicationDecision(request, env, actor, decodeURIComponent(clinicApplicationMatch[1]));
+    /**
+     * Role-gated actions. Every operator can read; changing a clinic's
+     * commercial terms, moving restricted money, or overriding a guarantee
+     * needs the role that owns that domain — and the high-risk ones need a
+     * second operator's approval before they take effect.
+     */
+    const gate = async (action) => {
+      const decision = await authorizeAdminAction(env, actor, action);
+      return decision.allowed ? null : apiError(403, decision.code, decision.message);
+    };
+
+    // Clinic contracts, founding status, and lifecycle.
+    if (method === "GET" && path === "/api/admin/clinic-contracts") return handleClinicContractList(request, env);
+    const contractMatch = path.match(/^\/api\/admin\/clinics\/([^/]+)\/contract$/);
+    if (contractMatch) {
+      const contractTenantId = decodeURIComponent(contractMatch[1]);
+      if (method === "GET") return handleClinicContractProfile(request, env, contractTenantId);
+      if (method === "POST") {
+        const refused = await gate("clinic.profile.edit");
+        if (refused) return refused;
+        return handleClinicContractUpdate(request, env, actor, contractTenantId);
+      }
+    }
+
+    // The deposit election. Admin-set from an executed document, never a
+    // clinic-portal toggle.
+    const depositPolicyMatch = path.match(/^\/api\/admin\/clinics\/([^/]+)\/deposit-policy$/);
+    if (depositPolicyMatch) {
+      const depositTenantId = decodeURIComponent(depositPolicyMatch[1]);
+      if (method === "GET") return handleAdminDepositPolicyGet(request, env, actor, depositTenantId);
+      if (method === "PUT" || method === "POST") {
+        const refused = await gate("clinic.deposit_election.set");
+        if (refused) return refused;
+        return handleAdminDepositPolicySave(request, env, actor, depositTenantId);
+      }
+    }
+
+    // Deposit guarantees.
+    const guaranteeReserveMatch = path.match(/^\/api\/admin\/bookings\/([^/]+)\/deposit-guarantee$/);
+    if (method === "POST" && guaranteeReserveMatch) {
+      return handleDepositGuaranteeReserve(request, env, actor, decodeURIComponent(guaranteeReserveMatch[1]));
+    }
+    const guaranteeMatch = path.match(/^\/api\/admin\/deposit-guarantees\/([^/]+)$/);
+    if (guaranteeMatch) {
+      const guaranteeId = decodeURIComponent(guaranteeMatch[1]);
+      if (method === "GET") return handleDepositGuaranteeGet(request, env, actor, guaranteeId);
+      if (method === "POST") {
+        const refused = await gate("deposit_guarantee.override");
+        if (refused) return refused;
+        return handleDepositGuaranteeAction(request, env, actor, guaranteeId);
+      }
+    }
+
+    // Protected custody and the daily reconciliation.
+    if (method === "GET" && path === "/api/admin/pif/custody") return handleCustodyStatus(request, env);
+    if (method === "GET" && path === "/api/admin/pif/custody/transfers") return handleCustodyTransfers(request, env);
+    if (method === "POST" && path === "/api/admin/pif/custody/sweep") {
+      const refused = await gate("fund.treasury.release");
+      if (refused) return refused;
+      return handleCustodySweep(request, env, actor);
+    }
+    if (method === "POST" && path === "/api/admin/pif/reconciliation/runs") return handleRunReconciliation(request, env, actor);
+    if (method === "GET" && path === "/api/admin/pif/reconciliation/runs") return handleReconciliationRuns(request, env);
+    const reconciliationRunMatch = path.match(/^\/api\/admin\/pif\/reconciliation\/runs\/([^/]+)$/);
+    if (method === "GET" && reconciliationRunMatch) return handleReconciliationRun(request, env, decodeURIComponent(reconciliationRunMatch[1]));
+    if (method === "GET" && path === "/api/admin/pif/reconciliation/exceptions") return handleReconciliationExceptions(request, env);
+    const exceptionMatch = path.match(/^\/api\/admin\/pif\/reconciliation\/exceptions\/([^/]+)$/);
+    if (method === "POST" && exceptionMatch) {
+      const refused = await gate("fund.reconciliation.resolve");
+      if (refused) return refused;
+      return handleResolveException(request, env, actor, decodeURIComponent(exceptionMatch[1]));
+    }
+
     if (method === "GET" && path === "/api/admin/fund") return json(await fundDashboard(env));
     if (method === "GET" && path === "/api/admin/fund/integrity") return json(await ledgerIntegrity(env));
 

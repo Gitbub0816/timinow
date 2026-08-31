@@ -572,4 +572,105 @@ if (!moments.some((moment) => PLAYFUL.test(TIMI_ANNOUNCEMENTS.calm[moment]))) {
   }
 }
 
+// The August 29 addendum overrides the earlier Paw It Forward spec on one
+// point that is easy to lose: a SNAP letter alone must not waive the fee.
+// SNAP reaches households well above the poverty line in several states, so
+// it corroborates hardship rather than establishing it — the applicant
+// continues to the income and shock pathways, which may still approve.
+{
+  const policy = await readFile("src/hardship/policy.js", "utf8");
+  const engine = await readFile("src/hardship/engine.js", "utf8");
+  const standalone = policy.match(/standalonePrograms:\s*\[([^\]]*)\]/);
+  if (!standalone) {
+    throw new Error("src/hardship/policy.js no longer separates standalone from corroborating benefit programs, so any accepted benefit would approve on its own.");
+  }
+  if (/["']SNAP["']/.test(standalone[1])) {
+    throw new Error("src/hardship/policy.js lists SNAP as a standalone approving benefit. The addendum and its acceptance test 36 are explicit that SNAP alone does not approve.");
+  }
+  if (!engine.includes("BENEFIT_REQUIRES_CORROBORATION")) {
+    throw new Error("src/hardship/engine.js no longer refuses a corroborating-only benefit, so SNAP alone would approve again.");
+  }
+  const hardshipTest = await readFile("scripts/hardship-test.mjs", "utf8");
+  if (!hardshipTest.includes("SNAP alone must not approve")) {
+    throw new Error("scripts/hardship-test.mjs no longer asserts that SNAP alone is refused — the test that would catch this reverting.");
+  }
+}
+
+// The addendum's structural rules — each one an arithmetic error the ledger
+// exists to prevent, or a commitment nobody should be able to make alone.
+{
+  const custody = await readFile("src/fund-custody.js", "utf8");
+  const guarantee = await readFile("src/deposit-guarantee.js", "utf8");
+  const adminWorkerSource = await readFile("apps/admin-console/src/index.js", "utf8");
+
+  // Two modules can each describe a guarantee being funded. Mounting both
+  // posts the cash leg twice.
+  if (adminWorkerSource.includes("fundGuaranteeFromCustody")) {
+    throw new Error("The admin Worker mounts fundGuaranteeFromCustody while src/deposit-guarantee.js already funds guarantees from processor_cash. Exactly one may be wired, or every guarantee posts its cash leg twice.");
+  }
+  if (!custody.includes("NOT WIRED, DELIBERATELY")) {
+    throw new Error("src/fund-custody.js no longer explains that fundGuaranteeFromCustody is the unwired half of a pair. Someone will wire it alongside the other one.");
+  }
+
+  // Fail closed: an unavailable Treasury rail must refuse, never pretend.
+  if (!custody.includes("TREASURY_RAIL_UNAVAILABLE")) {
+    throw new Error("src/fund-custody.js no longer refuses when the Treasury rail is unavailable. Faking a transfer state is the one thing §5 forbids outright.");
+  }
+
+  // Reconciliation to the penny. A tolerance is how a real discrepancy hides.
+  const reconciliation = await readFile("src/reconciliation.js", "utf8");
+  if (!reconciliation.includes("CRITICAL")) {
+    throw new Error("src/reconciliation.js no longer raises a critical exception, so a penny of unexplained difference would pass unnoticed.");
+  }
+  // The word appears in the file's own explanation of why there is no such
+  // thing, so look for the mechanism instead: a tolerance that actually
+  // exists is a value something is compared against.
+  const executableReconciliation = reconciliation
+    .split("\n")
+    .filter((line) => !/^\s*(\*|\/\/|\/\*)/.test(line))
+    .join("\n");
+  const toleranceMechanism = executableReconciliation.match(/\b(?:const|let|var)\s+\w*tolerance\w*\s*=|\btolerance\w*\s*[<>]=?|Math\.abs\([^)]*\)\s*[<>]=?\s*\d/i);
+  if (toleranceMechanism) {
+    throw new Error(`src/reconciliation.js compares a difference against a tolerance (${toleranceMechanism[0].trim()}). §21 reconciles to the penny: $0.01 unexplained is an exception, and a tolerance is where a real loss hides.`);
+  }
+
+  // A guarantee is never automatically treatment payment, and never both
+  // returned and forfeited.
+  for (const [needle, why] of [
+    ["OUT_OF_SCOPE_DEPOSIT_KINDS", "treatment, hospitalization and surgery deposits are refused rather than auto-covered"],
+    ["authorizeGuaranteeAsTreatmentAssistance", "applying a guarantee to a veterinary bill needs separate express authorization"]
+  ]) {
+    if (!guarantee.includes(needle)) {
+      throw new Error(`src/deposit-guarantee.js no longer ensures that ${why}.`);
+    }
+  }
+
+  // The deposit election is ClearKey's to record, not a clinic toggle.
+  const vetWorkerSource = await readFile("apps/vet-web/src/index.js", "utf8");
+  if (/handleAdminDepositPolicySave|saveDepositPolicy/.test(vetWorkerSource)) {
+    throw new Error("The veterinary Worker exposes a writable deposit election. §8 requires it to be admin-set from an executed document; a clinic-portal toggle can contradict the signed contract.");
+  }
+
+  // Restricted money cannot be netted against ordinary clinic debt.
+  const ledgerSource = await readFile("src/ledger.js", "utf8");
+  if (!ledgerSource.includes("fund_deposit_guarantee_reserved")) {
+    throw new Error("src/ledger.js RESTRICTED_ACCOUNTS omits fund_deposit_guarantee_reserved, so a clinic's ordinary debt could be offset against guarantee money that belongs to the program.");
+  }
+
+  // The sponsorship reservation and the guarantee reservation draw on one
+  // pool; the availability check must see both.
+  const fundSource = await readFile("src/fund.js", "utf8");
+  if (!fundSource.includes("pif_deposit_guarantees")) {
+    throw new Error("src/fund.js reserveSponsorship no longer subtracts pending deposit guarantees, so a sponsorship can commit money a guarantee has already claimed.");
+  }
+
+  // High-risk operator actions need a second pair of eyes.
+  const roles = await readFile("src/admin-roles.js", "utf8");
+  for (const action of ["fund.ledger.adjust", "fund.treasury.release", "clinic.pricing.set", "clinic.founding.grant"]) {
+    if (!roles.includes(action)) {
+      throw new Error(`src/admin-roles.js no longer gates "${action}". §20 lists it as high-risk.`);
+    }
+  }
+}
+
 console.log(`Validated ${requiredFiles.length} files, ${screens.length} screens, ${requiredTables.length} D1 tables, and ${requiredRoutes.length} API groups.`);

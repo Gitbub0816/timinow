@@ -29,6 +29,10 @@ function newId(prefix) {
 export const RESTRICTED_ACCOUNTS = new Set([
   "fund_available",
   "fund_reserved",
+  // Deposit-guarantee money is program cash sitting at a clinic awaiting
+  // return. It belongs to Paw It Forward, not to Tími, which is exactly what
+  // makes offsetting a clinic's ordinary debt against it unacceptable.
+  "fund_deposit_guarantee_reserved",
   "contribution_refunds_payable",
   "clinic_payable"
 ]);

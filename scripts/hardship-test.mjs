@@ -12,6 +12,7 @@
  * dollar change in income, anywhere between $0 and $300,000.
  */
 
+import { applyMigrations } from "./lib/migrations.mjs";
 import { readFile } from "node:fs/promises";
 import { DatabaseSync } from "node:sqlite";
 
@@ -182,16 +183,50 @@ assert(zeroIncomeDecision.decision === "APPROVED" && zeroIncomeDecision.pathway 
 assert(Number.isFinite(zeroIncomeDecision.explanation.thresholdCents), "The zero-income threshold must be a real number");
 
 // ── 20. A current means-tested benefit approves and stops collection. ──
+// SSI is means- and asset-tested at a low threshold, so it stands alone.
 const benefitFacts = baseFacts({
   benefit: {
-    evidenceId: "evid_benefit", documentType: "BENEFIT_AWARD_LETTER", issuer: "CalFresh",
-    programCode: "SNAP", statusCurrent: true, recipientName: "Maya Morgan", recipientMatch: true,
+    evidenceId: "evid_benefit", documentType: "SSI_AWARD_LETTER", issuer: "Social Security Administration",
+    programCode: "SSI", statusCurrent: true, recipientName: "Maya Morgan", recipientMatch: true,
     documentDate: daysAgo(20), extractionConfidence: 0.93
   }
 });
 const benefitDecision = evaluate(benefitFacts, policy, { now: NOW });
 assert(benefitDecision.decision === "APPROVED" && benefitDecision.pathway === "MEANS_TESTED_BENEFIT",
-  `A current SNAP award approves: ${JSON.stringify(benefitDecision.reasonCodes)}`);
+  `A current SSI award approves: ${JSON.stringify(benefitDecision.reasonCodes)}`);
+
+// ── 36 (addendum). SNAP alone does not approve. ──
+// The August 29 addendum overrides the earlier spec, which listed SNAP among
+// the benefits that qualify outright. SNAP reaches households well above the
+// poverty line in several states, so the letter alone does not establish that
+// $20 is out of reach.
+const snapOnly = baseFacts({
+  benefit: {
+    evidenceId: "evid_snap", documentType: "SNAP_NOTICE_OF_ACTION", issuer: "CalFresh",
+    programCode: "SNAP", statusCurrent: true, recipientName: "Maya Morgan", recipientMatch: true,
+    documentDate: daysAgo(20), extractionConfidence: 0.95
+  }
+});
+const snapDecision = evaluate(snapOnly, policy, { now: NOW });
+assert(snapDecision.decision === "NOT_VERIFIED", "SNAP alone must not approve");
+assert(snapDecision.reasonCodes.some((code) => code.includes("BENEFIT_REQUIRES_CORROBORATION")),
+  `Refusing SNAP alone must say why, internally: ${JSON.stringify(snapDecision.reasonCodes)}`);
+
+// It is a pathway that did not pass, not a judgement about the applicant:
+// the same SNAP letter beside a qualifying income record still approves.
+const snapWithIncome = baseFacts({
+  benefit: snapOnly.benefit,
+  income: {
+    evidenceId: "evid_income", documentType: "IRS_RETURN_TRANSCRIPT", status: "VERIFIED_INCOME",
+    annualCents: 1_800_000, taxpayerName: "Maya Morgan", taxpayerMatch: true, householdSize: 3,
+    annualHouseholdIncomeCents: 1_800_000, documentDate: daysAgo(40), extractionConfidence: 0.95
+  }
+});
+const snapWithIncomeDecision = evaluate(snapWithIncome, policy, { now: NOW });
+assert(snapWithIncomeDecision.decision === "APPROVED",
+  `SNAP beside verified qualifying income must still approve, by the income pathway: ${JSON.stringify(snapWithIncomeDecision.reasonCodes)}`);
+assert(snapWithIncomeDecision.pathway === "AREA_ADJUSTED_INCOME",
+  `The approval must come from the income pathway, not the benefit one: ${snapWithIncomeDecision.pathway}`);
 assert(benefitDecision.expiresAt === "2027-02-26T12:00:00.000Z", `Six months of eligibility, got ${benefitDecision.expiresAt}`);
 assert(benefitDecision.sponsoredVisitLimit === 1, "One sponsored visit under the launch policy");
 assert(!benefitDecision.reasonCodes.some((code) => code.startsWith("FINANCIAL_SHOCK") || code.startsWith("AREA_ADJUSTED_INCOME")),
@@ -420,13 +455,7 @@ assert((await stubTransactionVerificationProvider({}).findCorroboration({ applic
 const database = new DatabaseSync(":memory:");
 // 0014 belongs to the fund migration, which lands separately; nothing in
 // 0015 depends on it, and this list proves that.
-for (const migration of [
-  "0001_initial", "0002_seed", "0003_multi_offer_search", "0004_tenancy_admin", "0005_voice_calls",
-  "0006_care_context", "0007_client_errors", "0008_payments_ledger", "0009_pets", "0010_provider_analytics",
-  "0011_call_policy", "0012_pet_sex", "0013_pricing_and_ledger", "0015_hardship"
-]) {
-  database.exec(await readFile(`migrations/${migration}.sql`, "utf8"));
-}
+await applyMigrations(database);
 
 const env = { DB: new D1Mock(database), SIGN_IN_REQUIRED: "false" };
 const providerSet = {
@@ -461,13 +490,13 @@ assert(result.body.session.mode === "EMBEDDED" && result.body.session.clientToke
 identityFixtures.sessions[result.body.session.sessionId] = { verified: true, uniquenessConfidence: "HIGH", identityKey: "idk_maya", status: "COMPLETED" };
 
 documentFixtures.documents["private/maya/benefit.pdf"] = {
-  documentType: "BENEFIT_AWARD_LETTER", issuer: "CalFresh", documentDate: daysAgo(12),
+  documentType: "SSI_AWARD_LETTER", issuer: "Social Security Administration", documentDate: daysAgo(12),
   extractionConfidence: 0.93, tamperRisk: "LOW",
-  fields: { recipientName: "Maya Morgan", programCode: "SNAP", statusCurrent: true, recipientMatch: true }
+  fields: { recipientName: "Maya Morgan", programCode: "SSI", statusCurrent: true, recipientMatch: true }
 };
 result = await call(maya, `/api/hardship/applications/${mayaApplication}/evidence`, {
   method: "POST",
-  body: { evidenceType: "BENEFIT_AWARD_LETTER", storageBucket: "hardship-evidence", storageObjectRef: "private/maya/benefit.pdf", contentSha256: "sha_benefit_1", mimeType: "application/pdf", byteSize: 20_481 }
+  body: { evidenceType: "SSI_AWARD_LETTER", storageBucket: "hardship-evidence", storageObjectRef: "private/maya/benefit.pdf", contentSha256: "sha_benefit_1", mimeType: "application/pdf", byteSize: 20_481 }
 });
 assert(result.response.status === 201 && result.body.retentionDeadline, `Evidence stores a reference and a deletion date: ${JSON.stringify(result.body)}`);
 const evidenceRow = database.prepare("SELECT * FROM eligibility_evidence WHERE application_id = ?").get(mayaApplication);

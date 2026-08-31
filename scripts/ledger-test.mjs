@@ -7,6 +7,7 @@
  * production, where the symptom is a number nobody can explain.
  */
 
+import { applyMigrations } from "./lib/migrations.mjs";
 import { readFile } from "node:fs/promises";
 import { DatabaseSync } from "node:sqlite";
 import {
@@ -20,6 +21,13 @@ import {
   recordAudit,
   RESTRICTED_ACCOUNTS
 } from "../src/ledger.js";
+import {
+  chargeBookingOrder,
+  createBookingPaymentOrder,
+  getPaymentOrder,
+  quoteBooking,
+  refundAllocation
+} from "../src/booking-payment.js";
 import {
   activePricingPolicy,
   clinicFeeFor,
@@ -76,14 +84,7 @@ async function throws(fn, matcher, message) {
 }
 
 const database = new DatabaseSync(":memory:");
-for (const file of [
-  "0001_initial", "0002_seed", "0003_multi_offer_search", "0004_tenancy_admin",
-  "0005_voice_calls", "0006_care_context", "0007_client_errors", "0008_payments_ledger",
-  "0009_pets", "0010_provider_analytics", "0011_call_policy", "0012_pet_sex",
-  "0013_pricing_and_ledger"
-]) {
-  database.exec(await readFile(`migrations/${file}.sql`, "utf8"));
-}
+await applyMigrations(database);
 
 const env = { DB: new D1Mock(database) };
 
@@ -317,4 +318,78 @@ await recordAudit(env, {
 const audited = database.prepare("SELECT * FROM audit_events WHERE subject_id = 'pricing_v1'").get();
 assert(audited && audited.actor_id === "user_operator" && audited.reason === "Launch pricing", "An audit event records who, what, and why");
 
-console.log("Ledger and pricing tests passed: versioned pricing with one active policy, founding and custom clinic plans, good-standing suspension, sponsorship arithmetic that never invents a fee a founding clinic would not have paid, whole-dollar contribution limits, balanced double-entry posting, processor fees borne by Tími rather than the contributor, idempotent replay, refusal of unbalanced/one-sided/negative/unkeyed transactions, the reserve-to-revenue lifecycle, integrity detection of a journal corrupted behind the API's back, Stripe event dedupe with failed-attempt retry, and the audit trail.");
+/* ----------------------------------------- one charge, several purposes --- */
+
+// A $20 fee with a $2 contribution is ONE $22 charge with two allocations —
+// never two card charges, and never a total somebody splits back apart later.
+{
+  const quote = await quoteBooking(env, { contributionCents: 200 });
+  assert(quote.ok && quote.totalCents === 2200, `A $20 fee plus a $2 contribution totals $22: ${JSON.stringify(quote)}`);
+  assert(quote.lines.length === 2, "Two purposes, two allocations");
+  assert(quote.ownerFeeChargedCents === 2000 && quote.contributionCents === 200, "The split is decided before the charge, not after");
+
+  const order = await createBookingPaymentOrder(env, { quote, intakeId: null, confirmationSnapshot: { shown: "$22.00" } });
+  assert(order.ok, `The order writes: ${JSON.stringify(order)}`);
+
+  const stored = await getPaymentOrder(env, order.paymentOrderId);
+  assert(stored.totalCents === 2200, "The stored order totals $22");
+  const allocated = stored.allocations.reduce((sum, line) => sum + line.amountCents, 0);
+  assert(allocated === stored.totalCents, `Allocations must sum to the total: ${allocated} vs ${stored.totalCents}`);
+  assert(stored.allocations.find((line) => line.purpose === "OWNER_PLATFORM_FEE").amountCents === 2000, "Exactly $20 is platform consideration");
+  assert(stored.allocations.find((line) => line.purpose === "FUND_CONTRIBUTION").amountCents === 200, "Exactly $2 is fund contribution");
+
+  // One charge for the whole thing.
+  const charge = await chargeBookingOrder(env, order.paymentOrderId);
+  assert(charge.ok && charge.totalCents === 2200, `One charge covers the whole order: ${JSON.stringify(charge)}`);
+  assert(charge.mode === "demo", "With no Stripe key configured the caller is told so rather than shown a fake success");
+
+  // A refund names an allocation. "Half of $22" has no correct answer once
+  // the $22 was $20 of fee and $2 of somebody else's contribution.
+  const contributionAllocation = stored.allocations.find((line) => line.purpose === "FUND_CONTRIBUTION");
+  const refunded = await refundAllocation(env, { allocationId: contributionAllocation.id, amountCents: 200 });
+  assert(refunded.ok && refunded.purpose === "FUND_CONTRIBUTION", "A refund reverses the allocation it names");
+  const afterRefund = await getPaymentOrder(env, order.paymentOrderId);
+  assert(afterRefund.allocations.find((line) => line.purpose === "OWNER_PLATFORM_FEE").refundedCents === 0, "Refunding the contribution must leave the fee alone");
+  const tooMuch = await refundAllocation(env, { allocationId: contributionAllocation.id, amountCents: 1 });
+  assert(!tooMuch.ok && tooMuch.code === "REFUND_EXCEEDS_ALLOCATION", "An allocation cannot be refunded past what it held");
+}
+
+// A sponsored booking charges nothing at all. It does not create a $20
+// PaymentIntent for something downstream to mark as handled.
+{
+  const quote = await quoteBooking(env, { sponsored: true });
+  assert(quote.ok && quote.totalCents === 0, "A sponsored booking with no deposit charges nothing");
+  assert(quote.ownerFeeChargedCents === 0 && quote.ownerFeeStandardCents === 2000, "The record keeps what would have been charged");
+  assert(quote.ownerFeeWaiverReason === "PAW_IT_FORWARD", "And says why it was not");
+  assert(quote.lines.length === 0, "There is nothing to allocate");
+
+  const order = await createBookingPaymentOrder(env, { quote });
+  const charge = await chargeBookingOrder(env, order.paymentOrderId);
+  assert(charge.ok && charge.mode === "no_charge", `A zero total is not a charge: ${JSON.stringify(charge)}`);
+}
+
+// A sponsored booking at a clinic that still takes a deposit charges the
+// deposit and only the deposit.
+{
+  const quote = await quoteBooking(env, { sponsored: true, depositCents: 5000 });
+  assert(quote.totalCents === 5000 && quote.lines.length === 1, "Only the clinic deposit is charged");
+  assert(quote.lines[0].purpose === "CLINIC_DEPOSIT", "And it is the deposit, not a platform fee");
+}
+
+// Contributions attached to a booking are whole dollars like every other.
+{
+  const cents = await quoteBooking(env, { contributionCents: 237 });
+  assert(!cents.ok && cents.code === "WHOLE_DOLLARS_ONLY", "A fractional-dollar contribution is refused at the quote");
+}
+
+// An order whose parts do not sum to its total must never be charged.
+{
+  const quote = await quoteBooking(env, { contributionCents: 500 });
+  const order = await createBookingPaymentOrder(env, { quote });
+  database.prepare("UPDATE payment_allocations SET amount_cents = amount_cents + 1 WHERE payment_order_id = ? AND purpose = 'FUND_CONTRIBUTION'").run(order.paymentOrderId);
+  const charge = await chargeBookingOrder(env, order.paymentOrderId);
+  assert(!charge.ok && charge.code === "ALLOCATIONS_DO_NOT_SUM", "A mismatched order is refused rather than charged and reconciled later");
+}
+
+
+console.log("Ledger and pricing tests passed: versioned pricing with one active policy, founding and custom clinic plans, good-standing suspension, sponsorship arithmetic that never invents a fee a founding clinic would not have paid, whole-dollar contribution limits, balanced double-entry posting, processor fees borne by Tími rather than the contributor, idempotent replay, refusal of unbalanced/one-sided/negative/unkeyed transactions, the reserve-to-revenue lifecycle, integrity detection of a journal corrupted behind the API's back, Stripe event dedupe with failed-attempt retry, the audit trail, and one mixed charge whose allocations are written before the money and refunded by name rather than by percentage.");

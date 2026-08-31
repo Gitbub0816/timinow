@@ -17,6 +17,9 @@
 import { actorForRequest, roleAllows, signInRequired } from "../../../src/auth.js";
 import { publicConfig } from "../../../src/config.js";
 import { handleClinicBillingSummary } from "../../../src/clinic-billing.js";
+import { handleClinicDepositPolicyView } from "../../../src/deposit-policy.js";
+import { handleClinicBillSettlement } from "../../../src/deposit-guarantee.js";
+import { handleAuthorizationCheck } from "../../../src/clinic-contracts.js";
 import { recordAnalyticsEvents } from "../../../src/analytics.js";
 import { describeSession } from "../../../src/session.js";
 import { hasDatabase, tenantIdForClerkOrg } from "../../../src/db.js";
@@ -173,6 +176,15 @@ async function handleApi(request, env) {
     // because this is the Worker the consoles actually talk to — see the note
     // above about every customer-Worker route needing a second home.
     if (method === "GET" && path === "/api/clinic/billing") return handleClinicBillingSummary(env, tenantId);
+    // Read-only: the election is ClearKey's to record from an executed
+    // document, and a clinic-portal toggle that could contradict the paper is
+    // exactly what the addendum forbids.
+    if (method === "GET" && path === "/api/clinic/deposit-policy") return handleClinicDepositPolicyView(env, tenantId);
+    if (method === "POST" && path === "/api/clinic/authorization-check") return handleAuthorizationCheck(request, env, tenantId);
+    const settlementMatch = path.match(/^\/api\/clinic\/deposit-guarantees\/([^/]+)\/settlement$/);
+    if (method === "POST" && settlementMatch) {
+      return handleClinicBillSettlement(request, env, actor, decodeURIComponent(settlementMatch[1]));
+    }
     const decisionMatch = path.match(/^\/api\/clinic\/intakes\/([^/]+)\/decision$/);
     if (method === "POST" && decisionMatch) return decideIntake(request, env, actor, tenantId, decodeURIComponent(decisionMatch[1]));
     const searchDecisionMatch = path.match(/^\/api\/clinic\/search-targets\/([^/]+)\/decision$/);

@@ -214,9 +214,31 @@ const HARDSHIP_POLICY_V1 = {
        * Programs whose own eligibility rule is a means test. SSDI is
        * deliberately absent: it is earned by work history, not by means, and
        * treating it as a means test would be the disability-equals-eligible
-       * rule both specs forbid.
+       * rule every document forbids.
        */
       acceptedPrograms: ["SNAP", "TANF", "SSI", "MEDICAID_MEANS_TESTED", "HOUSING_ASSISTANCE", "WIC", "LIHEAP"],
+      /**
+       * Which of those approve on their own.
+       *
+       * The August 29 addendum is explicit that SNAP alone is not sufficient
+       * for an automatic waiver, and its acceptance test 36 says so in one
+       * line. That overrides the earlier Paw It Forward spec, which listed
+       * SNAP among the benefits that qualify outright — the addendum controls
+       * where the documents disagree.
+       *
+       * The distinction encoded here is breadth, not worthiness. SNAP reaches
+       * households up to 130% of the federal poverty level and, in several
+       * states, well past it under broad-based categorical eligibility; a
+       * SNAP letter is therefore weaker evidence of being unable to find $20
+       * than an SSI award, which is means- and asset-tested at a far lower
+       * threshold. WIC and LIHEAP are broader still.
+       *
+       * A corroborating benefit does not fail the applicant — it fails this
+       * pathway, and the engine goes on to try the income and shock pathways
+       * with the same evidence.
+       */
+      standalonePrograms: ["TANF", "SSI", "MEDICAID_MEANS_TESTED", "HOUSING_ASSISTANCE"],
+      corroboratingPrograms: ["SNAP", "WIC", "LIHEAP"],
       requiredFields: ["recipientName", "issuer", "programCode", "statusCurrent", "documentDate"],
       freshnessWindowDays: 90,
       validityDays: 180,

@@ -2,6 +2,7 @@ import { LEGAL_VERSION } from "../src/catalog.js";
 import { readFile } from "node:fs/promises";
 import { DatabaseSync } from "node:sqlite";
 import worker from "../apps/voice-gateway/src/index.js";
+import { applyMigrations } from "./lib/migrations.mjs";
 import {
   acceptedTwiml,
   alreadyFilledTwiml,
@@ -208,22 +209,7 @@ function assertNoRawSpecialCharacters(xml, label) {
 /* --------------------------------------------------- 6/7. cron drain + IVR --- */
 
 const database = new DatabaseSync(":memory:");
-database.exec(await readFile("migrations/0001_initial.sql", "utf8"));
-database.exec(await readFile("migrations/0002_seed.sql", "utf8"));
-database.exec(await readFile("migrations/0003_multi_offer_search.sql", "utf8"));
-database.exec(await readFile("migrations/0004_tenancy_admin.sql", "utf8"));
-database.exec(await readFile("migrations/0005_voice_calls.sql", "utf8"));
-database.exec(await readFile("migrations/0006_care_context.sql", "utf8"));
-database.exec(await readFile("migrations/0007_client_errors.sql", "utf8"));
-database.exec(await readFile("migrations/0008_payments_ledger.sql", "utf8"));
-database.exec(await readFile("migrations/0009_pets.sql", "utf8"));
-database.exec(await readFile("migrations/0010_provider_analytics.sql", "utf8"));
-database.exec(await readFile("migrations/0011_call_policy.sql", "utf8"));
-database.exec(await readFile("migrations/0012_pet_sex.sql", "utf8"));
-database.exec(await readFile("migrations/0013_pricing_and_ledger.sql", "utf8"));
-database.exec(await readFile("migrations/0014_fund.sql", "utf8"));
-database.exec(await readFile("migrations/0015_hardship.sql", "utf8"));
-database.exec(await readFile("migrations/0016_clinic_billing_and_aliases.sql", "utf8"));
+await applyMigrations(database);
 
 // Shaped like the real thing — 32 hex characters — because placeCall now
 // checks that shape before it calls Twilio, and a fixture that could never be

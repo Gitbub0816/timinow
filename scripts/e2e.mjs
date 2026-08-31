@@ -5,6 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 import worker from "../src/index.js";
 import vetWorker from "../apps/vet-web/src/index.js";
 import adminWorker from "../apps/admin-console/src/index.js";
+import { applyMigrations } from "./lib/migrations.mjs";
 
 class D1StatementMock {
   constructor(database, sql) {
@@ -54,22 +55,7 @@ function assert(condition, message) {
 }
 
 const database = new DatabaseSync(":memory:");
-database.exec(await readFile("migrations/0001_initial.sql", "utf8"));
-database.exec(await readFile("migrations/0002_seed.sql", "utf8"));
-database.exec(await readFile("migrations/0003_multi_offer_search.sql", "utf8"));
-database.exec(await readFile("migrations/0004_tenancy_admin.sql", "utf8"));
-database.exec(await readFile("migrations/0005_voice_calls.sql", "utf8"));
-database.exec(await readFile("migrations/0006_care_context.sql", "utf8"));
-database.exec(await readFile("migrations/0007_client_errors.sql", "utf8"));
-database.exec(await readFile("migrations/0008_payments_ledger.sql", "utf8"));
-database.exec(await readFile("migrations/0009_pets.sql", "utf8"));
-database.exec(await readFile("migrations/0010_provider_analytics.sql", "utf8"));
-database.exec(await readFile("migrations/0011_call_policy.sql", "utf8"));
-database.exec(await readFile("migrations/0012_pet_sex.sql", "utf8"));
-database.exec(await readFile("migrations/0013_pricing_and_ledger.sql", "utf8"));
-database.exec(await readFile("migrations/0014_fund.sql", "utf8"));
-database.exec(await readFile("migrations/0015_hardship.sql", "utf8"));
-database.exec(await readFile("migrations/0016_clinic_billing_and_aliases.sql", "utf8"));
+await applyMigrations(database);
 
 const env = {
   ASSETS: { fetch: async () => new Response("asset") },

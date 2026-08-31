@@ -12,6 +12,7 @@
  * proves nothing about the Worker.
  */
 
+import { applyMigrations } from "./lib/migrations.mjs";
 import { readFile } from "node:fs/promises";
 import { DatabaseSync } from "node:sqlite";
 import { fundSummary, ledgerIntegrity, accountBalance } from "../src/ledger.js";
@@ -92,14 +93,7 @@ function assert(condition, message) {
 }
 
 const database = new DatabaseSync(":memory:");
-for (const migration of [
-  "0001_initial", "0002_seed", "0003_multi_offer_search", "0004_tenancy_admin",
-  "0005_voice_calls", "0006_care_context", "0007_client_errors", "0008_payments_ledger",
-  "0009_pets", "0010_provider_analytics", "0011_call_policy", "0012_pet_sex",
-  "0013_pricing_and_ledger", "0014_fund"
-]) {
-  database.exec(await readFile(`migrations/${migration}.sql`, "utf8"));
-}
+await applyMigrations(database);
 
 const env = { DB: new D1Mock(database), SIGN_IN_REQUIRED: "false", DEMO_MODE: "false" };
 

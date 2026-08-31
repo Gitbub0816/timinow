@@ -641,6 +641,17 @@ export async function reserveSponsorship(env, {
             WHERE r.state = 'RESERVED'
               AND NOT EXISTS (SELECT 1 FROM ledger_transactions t
                                WHERE t.reservation_id = r.id AND t.kind = 'sponsorship_reserved'))
+        /*
+         * Deposit guarantees draw on the same pool. Without this term, a
+         * sponsorship confirmed in the window between a guarantee's row being
+         * written and its journal landing could commit money the guarantee
+         * has already claimed — the same read-then-write race this whole
+         * subquery exists to close, one table over.
+         */
+        - (SELECT COALESCE(SUM(g.amount_cents), 0) FROM pif_deposit_guarantees g
+            WHERE g.state IN ('RESERVED', 'FUNDING_PENDING', 'FUNDED', 'RETURN_DUE', 'RETURN_PENDING', 'DISPUTED')
+              AND NOT EXISTS (SELECT 1 FROM pif_deposit_guarantee_events e
+                               WHERE e.guarantee_id = g.id AND e.ledger_event = 'DEPOSIT_GUARANTEE_RESERVED'))
         - (SELECT min_liquidity_reserve_cents FROM fund_controls WHERE id = 1)
       )
       AND ? + (SELECT COALESCE(SUM(amount_cents), 0) FROM fund_reservations WHERE reserved_at >= ?)
