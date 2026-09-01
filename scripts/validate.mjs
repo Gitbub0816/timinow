@@ -673,4 +673,31 @@ if (!moments.some((moment) => PLAYFUL.test(TIMI_ANNOUNCEMENTS.calm[moment]))) {
   }
 }
 
+// Hardship evidence must never be reachable without authentication.
+//
+// Object keys are a content hash — deterministic, not secret, and never
+// intended to be. A public custom domain or the r2.dev URL on this bucket
+// would make somebody's pay stub fetchable by anyone holding or guessing a
+// key, which is the single worst outcome in this whole subsystem.
+{
+  const wranglerSource = await readFile("wrangler.jsonc", "utf8");
+  const evidenceBinding = /"binding":\s*"EVIDENCE"/.test(wranglerSource);
+  if (!evidenceBinding) {
+    throw new Error("wrangler.jsonc no longer binds the EVIDENCE bucket, so hardship document upload has nowhere to write.");
+  }
+  // A public base URL configured against the evidence binding, in any of the
+  // shapes Cloudflare accepts.
+  const publicEvidence = wranglerSource.match(/"(?:EVIDENCE_PUBLIC_URL|EVIDENCE_PUBLIC_BASE_URL|EVIDENCE_R2_PUBLIC_URL)"/)
+    || /"binding":\s*"EVIDENCE"[^}]*"public"/s.exec(wranglerSource);
+  if (publicEvidence) {
+    throw new Error("wrangler.jsonc exposes the hardship evidence bucket at a public URL. Evidence object keys are content hashes, not secrets: anyone with a key could read a pay stub. Serve evidence through an authenticated Worker route instead.");
+  }
+
+  // And nothing may build a public link to an evidence object in code.
+  const hardshipIndex = await readFile("src/hardship/index.js", "utf8");
+  if (/objects\.timinow\.pet|r2\.dev/.test(hardshipIndex)) {
+    throw new Error("src/hardship/index.js builds a public object URL for hardship evidence. Those documents are served only through an authenticated route that checks ownership and records the access.");
+  }
+}
+
 console.log(`Validated ${requiredFiles.length} files, ${screens.length} screens, ${requiredTables.length} D1 tables, and ${requiredRoutes.length} API groups.`);

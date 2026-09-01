@@ -46,15 +46,22 @@
       "migrations_dir": "migrations"
     }
   ],
-  // Hardship evidence: pay stubs, benefit letters, repair invoices. Private,
-  // separate from every other stored object, and read only by the hardship
-  // pipeline. The bucket holds the documents themselves; D1 holds only
+  // Hardship evidence: pay stubs, benefit letters, medical bills, repair
+  // invoices. The bucket holds the documents themselves; D1 holds only
   // references, hashes and the retention deadline, so a retention sweep can
   // delete the bytes while the decision stays reproducible.
+  //
+  // THIS BUCKET MUST NOT HAVE A PUBLIC CUSTOM DOMAIN OR THE R2.DEV PUBLIC
+  // URL ENABLED. Object keys are derived from a content hash, which is not a
+  // secret and was never meant to be one — anyone holding a key could read
+  // somebody's pay stub. Evidence is served only through an authenticated
+  // Worker route that checks the application belongs to the caller and
+  // records the access. scripts/validate.mjs refuses a public base URL bound
+  // to this binding.
   "r2_buckets": [
     {
       "binding": "EVIDENCE",
-      "bucket_name": "timinow-hardship-evidence"
+      "bucket_name": "timinow-hardship"
     }
   ],
   "assets": {

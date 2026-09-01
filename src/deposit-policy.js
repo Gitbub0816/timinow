@@ -185,11 +185,21 @@ export const CONTRACT_OPTION_FOR_ELECTION = Object.freeze({
 });
 
 /**
- * The elections the *currently executed* agreement can evidence on its own.
- * Anything outside this set needs an amendment or a written instruction.
+ * The elections the *current agreement template* offers on its face.
+ *
+ * All four, since the 2026 revision added OPTION D — NO APPOINTMENT DEPOSIT
+ * REQUIRED (docs/contracts/TimiNOW_Clinic_Platform_Agreement_2026.docx).
+ *
+ * This is the template, not any particular clinic's signed paper. A clinic
+ * that executed the earlier three-option version still cannot evidence
+ * Option D from its own agreement, which is what the per-clinic
+ * `contract_offers_no_deposit_option` column records — set it when a clinic
+ * signs the revised paper. That clinic needs an amendment or an authorized
+ * written instruction instead, and the validation below enforces exactly
+ * that rather than trusting this list.
  */
 export const ELECTIONS_IN_CURRENT_CONTRACT = Object.freeze([
-  "WAIVE_FOR_PAW_IT_FORWARD", "PAW_IT_FORWARD_GUARANTEE", "CUSTOMER_REQUIRED"
+  "WAIVE_FOR_PAW_IT_FORWARD", "PAW_IT_FORWARD_GUARANTEE", "CUSTOMER_REQUIRED", "NO_DEPOSIT_REQUIRED"
 ]);
 
 /* ═══════════════════════════════════════════════════════ money as text ═══ */

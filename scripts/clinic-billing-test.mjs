@@ -754,7 +754,16 @@ seedIntake("intake_sponsored", "loc_sponsor", "ten_sponsor");
 /* ═══════════════════════════════ invoicing and the failure ladder ═══ */
 
 {
-  const period = { periodStart: "2026-08-01T00:00:00Z", periodEnd: "2026-09-01T00:00:00Z" };
+  /**
+   * Around the visits this test just recorded, not around a calendar month
+   * somebody typed. The fees above were stamped with the real clock, so a
+   * fixed August window silently emptied the invoice the moment the machine's
+   * date reached September — a test that passed on the day it was written and
+   * failed every day afterwards, reporting it as a billing bug.
+   */
+  const invoiceWindowStart = new Date(Date.now() - 86_400_000).toISOString();
+  const invoiceWindowEnd = new Date(Date.now() + 86_400_000).toISOString();
+  const period = { periodStart: invoiceWindowStart, periodEnd: invoiceWindowEnd };
   const invoice = await buildMonthlyInvoice(env, { tenantId: "ten_standard", ...period, actorId: "admin_1" });
   assert(invoice.ok && invoice.invoice.totalCents === 2500, "The monthly invoice aggregates completed visits.");
   assert(invoice.invoice.lineCount === 1, "The invoice counts its lines.");

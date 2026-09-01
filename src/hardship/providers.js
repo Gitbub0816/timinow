@@ -246,6 +246,157 @@ function configured(env, keys) {
   return keys.every((key) => typeof env?.[key] === "string" && env[key].trim().length > 0);
 }
 
+
+/* ─────────────────────────────────────────────────────────── Didit ── */
+
+/**
+ * Didit, the chosen identity vendor.
+ *
+ * Embedded first, deliberately. A pet owner opening this flow is standing in
+ * a kitchen at 9pm with a sick animal; sending them out to a vendor's hosted
+ * page and hoping they come back is how an application is abandoned. The
+ * session descriptor carries a client token for the in-app widget, and the
+ * hosted URL is populated only when a caller explicitly asks for it.
+ *
+ * Two things this deliberately does not do:
+ *
+ *   It does not infer income, employment, or hardship from an identity
+ *   check. Didit answers one question — is this a real, unique person, and
+ *   are they who the evidence names — and that answer feeds the rules as a
+ *   fact like any other.
+ *
+ *   It does not store a document, a selfie, or a government number. What
+ *   comes back is a verification status, a uniqueness signal, and a stable
+ *   identity key used for the rolling per-person limit. The images stay with
+ *   the vendor under their retention terms.
+ *
+ * The endpoint shapes below follow Didit's session API as documented at
+ * integration time. They are wrong the moment Didit revises them, which is
+ * exactly why they live behind this interface: a change here touches no rule
+ * and no ledger entry.
+ */
+export function diditIdentityProvider(env) {
+  const apiKey = env.DIDIT_API_KEY || env.IDENTITY_PROVIDER_API_KEY;
+  const baseUrl = (env.DIDIT_BASE_URL || "https://verification.didit.me").replace(/\/$/, "");
+  const workflowId = env.DIDIT_WORKFLOW_ID || null;
+  const supportedModes = ["EMBEDDED", "HOSTED"];
+
+  async function call(path, { method = "POST", body } = {}) {
+    let response;
+    try {
+      response = await fetch(`${baseUrl}${path}`, {
+        method,
+        headers: {
+          "content-type": "application/json",
+          accept: "application/json",
+          "x-api-key": apiKey
+        },
+        body: body ? JSON.stringify(body) : undefined
+      });
+    } catch (error) {
+      // A network failure is temporary and must not read as a decision. The
+      // engine's TECHNICAL_RETRY exists for exactly this.
+      throw new ProviderError("IDENTITY_PROVIDER_UNREACHABLE", `Could not reach the identity provider: ${error.message}`, { retryable: true });
+    }
+
+    const text = await response.text();
+    let payload = {};
+    try { payload = text ? JSON.parse(text) : {}; } catch { payload = {}; }
+
+    if (!response.ok) {
+      const retryable = response.status >= 500 || response.status === 429;
+      throw new ProviderError(
+        retryable ? "IDENTITY_PROVIDER_UNAVAILABLE" : "IDENTITY_PROVIDER_REJECTED",
+        payload?.message || `Identity provider returned ${response.status}.`,
+        { retryable, status: response.status }
+      );
+    }
+    return payload;
+  }
+
+  return {
+    id: "didit",
+    supportedModes,
+
+    async createSession({ applicationId, mode = "EMBEDDED", locale = "en", returnUrl = null, now }) {
+      if (!applicationId) throw new ProviderError("APPLICATION_REQUIRED", "An identity session needs an application id.");
+      if (!supportedModes.includes(mode)) {
+        throw new ProviderError("MODE_NOT_SUPPORTED", `This identity provider cannot run a ${mode} flow.`);
+      }
+
+      const payload = await call("/v2/session/", {
+        body: {
+          workflow_id: workflowId,
+          // Our own id, so a webhook or a support question can be traced back
+          // to an application without the vendor holding anything else.
+          vendor_data: applicationId,
+          language: locale,
+          ...(mode === "HOSTED" && returnUrl ? { callback: returnUrl } : {})
+        }
+      });
+
+      const sessionId = payload.session_id || payload.id || null;
+      if (!sessionId) {
+        throw new ProviderError("IDENTITY_SESSION_MALFORMED", "The identity provider returned no session id.", { retryable: true });
+      }
+
+      const clientToken = payload.client_secret || payload.session_token || payload.token || null;
+      if (mode === "EMBEDDED" && !clientToken) {
+        // Falling back to the hosted page unasked would silently change the
+        // product: the applicant leaves the app and most do not return.
+        throw new ProviderError("EMBEDDED_SESSION_UNAVAILABLE", "The identity provider did not return a token for the embedded flow.", { retryable: true });
+      }
+
+      return {
+        provider: "didit",
+        mode,
+        sessionId,
+        clientToken: mode === "EMBEDDED" ? clientToken : null,
+        hostedUrl: mode === "HOSTED" ? (payload.url || payload.verification_url || null) : null,
+        expiresAt: payload.expires_at || plusMinutes(now || new Date().toISOString(), 30),
+        supportedModes
+      };
+    },
+
+    async getSessionResult(sessionId) {
+      if (!sessionId) throw new ProviderError("SESSION_REQUIRED", "A session id is required.");
+      const payload = await call(`/v2/session/${encodeURIComponent(sessionId)}/decision/`, { method: "GET" });
+
+      const status = String(payload.status || "").toUpperCase();
+      const approved = status === "APPROVED";
+      const terminal = ["APPROVED", "DECLINED", "EXPIRED", "ABANDONED", "KYC_EXPIRED"].includes(status);
+
+      /**
+       * The stable per-person handle for the rolling sponsorship limit.
+       *
+       * Never a government number, and never the raw document: those belong
+       * with the vendor. Didit's own decision id for the verified person is
+       * enough to recognise a repeat applicant, which is all the limit needs.
+       */
+      const identityKey = approved
+        ? (payload.decision?.identity_id || payload.identity_id || `didit:${sessionId}`)
+        : null;
+
+      const name = payload.decision?.kyc?.full_name
+        || [payload.decision?.kyc?.first_name, payload.decision?.kyc?.last_name].filter(Boolean).join(" ")
+        || null;
+
+      return {
+        status: terminal ? "COMPLETED" : "PENDING",
+        verified: approved,
+        // Didit's own duplicate-face and duplicate-document checks, when the
+        // configured workflow runs them. Absent means absent, not passed.
+        uniquenessConfidence: approved
+          ? (payload.decision?.aml?.status === "clear" || payload.decision?.duplicate_check?.status === "clear" ? "HIGH" : "MEDIUM")
+          : "NONE",
+        identityKey,
+        nameNormalized: name ? name.trim().toLowerCase().replace(/\s+/g, " ") : null,
+        checkedAt: payload.updated_at || payload.created_at || null
+      };
+    }
+  };
+}
+
 /**
  * The provider set for this environment.
  *
@@ -263,7 +414,7 @@ export function providers(env = {}, fixtures = {}) {
   return {
     mode: identityConfigured || extractionConfigured || incomeConfigured || transactionsConfigured ? "LIVE" : "STUB",
     identity: identityConfigured
-      ? unimplementedProvider("identity", ["createSession", "getSessionResult"])
+      ? diditIdentityProvider(env)
       : stubIdentityProvider(fixtures),
     documents: extractionConfigured
       ? unimplementedProvider("extraction", ["extract"])
