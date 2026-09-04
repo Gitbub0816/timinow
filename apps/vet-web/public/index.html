@@ -53,9 +53,11 @@
           <p data-clinic-address></p>
         </div>
         <nav class="rail-nav">
-          <a href="#console" data-nav="console">Operations</a>
+          <a href="#pill" data-nav="pill">Quick status</a>
+          <a href="#console" data-nav="console">Full dashboard</a>
           <a href="#billing" data-nav="billing">Billing</a>
           <a href="#people" data-nav="people">People</a>
+          <a href="#settings" data-nav="settings">Facility settings</a>
           <a href="#legal?section=clinics" data-nav="legal">Legal</a>
         </nav>
         <div class="rail-mode">
@@ -208,6 +210,58 @@
           <div data-billing-receivables><p class="billing-empty">Loading…</p></div>
         </section>
         <p class="billing-note">Questions about a line item or a payment: <a href="mailto:billing@clearkey.solutions">billing@clearkey.solutions</a>. A completion or fee can be disputed inside the window set out in the <a href="#legal?section=clinics">clinic participation terms</a>.</p>
+    <!-- ================================================================= pill -->
+    <!-- Reception's default screen: a small persistent availability status,
+         nothing else, expandable for the three things reception actually
+         touches during a shift. The full dashboard (#console) stays reachable
+         but is not required for routine operation. Native shells (see
+         apps/vet-desktop, apps/vet-windows) can point their small windows at
+         this route directly. -->
+    <section class="screen pill-screen" data-screen="pill" aria-labelledby="pill-title">
+      <header class="pill-topbar">
+        <img class="brand-mark" style="width:104px" src="/assets/brand/timinow-wordmark.svg" alt="Tími NOW">
+        <a class="text-link" href="#console">Full dashboard</a>
+      </header>
+      <div class="pill-shell">
+        <h1 id="pill-title" class="sr-only">Quick availability status</h1>
+        <button class="pill-widget" type="button" data-pill-toggle aria-expanded="false">
+          <span class="pill-dot" data-pill-dot></span>
+          <span class="pill-label" data-pill-label>Connecting…</span>
+          <span class="pill-capacity" data-pill-capacity></span>
+          <span class="pill-caret" aria-hidden="true">▾</span>
+        </button>
+        <p class="pill-freshness" data-pill-freshness>Connecting to Tími…</p>
+
+        <div class="pill-panel" data-pill-panel hidden>
+          <form data-pill-status-form>
+            <fieldset class="pill-status-grid">
+              <legend>Public intake status</legend>
+              <label><input type="radio" name="intakeStatus" value="available"><span>Accepting</span></label>
+              <label><input type="radio" name="intakeStatus" value="limited"><span>Limited</span></label>
+              <label><input type="radio" name="intakeStatus" value="confirm_first"><span>Confirm first</span></label>
+              <label><input type="radio" name="intakeStatus" value="critical_only"><span>Critical only</span></label>
+              <label><input type="radio" name="intakeStatus" value="diverting"><span>Diverting</span></label>
+              <label><input type="radio" name="intakeStatus" value="closed"><span>Closed</span></label>
+            </fieldset>
+            <div class="pill-fields-row">
+              <label class="field">Remaining capacity<input name="capacityCount" type="number" min="0" max="100" value="3"></label>
+              <label class="field">Status stays valid for
+                <select name="ttlMinutes">
+                  <option value="15">15 minutes</option>
+                  <option value="30" selected>30 minutes</option>
+                  <option value="60">1 hour</option>
+                  <option value="120">2 hours</option>
+                </select>
+              </label>
+            </div>
+            <div class="pill-panel-actions">
+              <button class="icon-button pill-gear" type="button" data-route="settings" title="Facility settings" aria-label="Facility settings">⚙</button>
+              <button class="button button-primary" type="submit">Update status</button>
+            </div>
+          </form>
+        </div>
+
+        <div class="pill-request-slot" data-pill-request-slot></div>
       </div>
     </section>
 
@@ -219,9 +273,11 @@
           <p class="rail-kicker">VETERINARY OPERATIONS</p>
         </div>
         <nav class="rail-nav" style="margin-top:42px">
-          <a href="#console" data-nav="console">Operations</a>
+          <a href="#pill" data-nav="pill">Quick status</a>
+          <a href="#console" data-nav="console">Full dashboard</a>
           <a href="#billing" data-nav="billing">Billing</a>
           <a href="#people" data-nav="people">People</a>
+          <a href="#settings" data-nav="settings">Facility settings</a>
           <a href="#legal?section=clinics" data-nav="legal">Legal</a>
         </nav>
         <div class="rail-spacer"></div>
@@ -234,6 +290,113 @@
         <h1 id="people-title" style="font-family:var(--serif);font-size:2rem;margin-bottom:.3rem">Roster</h1>
         <p class="people-note">Creating a <strong>new workspace</strong> is a Tími platform operation and is not available here — only a platform operator can create a tenant. Administrators here may only add, re-role, or remove people inside this one workspace.</p>
         <div data-people-body></div>
+      </div>
+    </section>
+
+    <!-- ============================================================ settings -->
+    <!-- Stable facility information: what kind of practice this is, what it
+         treats, hours, and client-facing defaults. Deliberately not on the
+         same screen as live status (#pill, #console) — this changes rarely
+         and reception should never confuse "publish today's status" with
+         "reconfigure the facility". -->
+    <section class="screen settings-screen" data-screen="settings" aria-labelledby="settings-title">
+      <aside class="vet-rail">
+        <div>
+          <img class="brand-mark" src="/assets/brand/timinow-wordmark.svg" alt="Tími NOW">
+          <p class="rail-kicker">VETERINARY OPERATIONS</p>
+        </div>
+        <nav class="rail-nav" style="margin-top:42px">
+          <a href="#pill" data-nav="pill">Quick status</a>
+          <a href="#console" data-nav="console">Full dashboard</a>
+          <a href="#people" data-nav="people">People</a>
+          <a href="#settings" data-nav="settings">Facility settings</a>
+          <a href="#legal?section=clinics" data-nav="legal">Legal</a>
+        </nav>
+        <div class="rail-spacer"></div>
+        <div class="rail-footer">
+          <button class="button rail-signout" type="button" data-action="sign-out">Sign out</button>
+        </div>
+      </aside>
+      <div class="people-main">
+        <p class="eyebrow">STABLE FACILITY INFORMATION</p>
+        <h1 id="settings-title" style="font-family:var(--serif);font-size:2rem;margin-bottom:.3rem">Facility settings</h1>
+        <p class="people-note">This is what pet owners see about your practice by default, and what a request is matched against. It changes rarely — day-to-day status lives on <a href="#pill">Quick status</a>.</p>
+        <form data-settings-form class="settings-form">
+          <section class="settings-section">
+            <h2>Facility type &amp; species</h2>
+            <div class="form-grid two-column">
+              <label class="field">Facility type
+                <select name="kind">
+                  <option value="general">General practice</option>
+                  <option value="urgent">Urgent care</option>
+                  <option value="emergency">Emergency hospital</option>
+                  <option value="specialty">Specialty clinic</option>
+                </select>
+              </label>
+              <label class="inline-check" style="align-self:end"><input type="checkbox" name="emergencyCapable"> Accepts emergency-level patients</label>
+            </div>
+            <fieldset class="settings-checklist">
+              <legend>Species accepted</legend>
+              <label><input type="checkbox" name="species" value="dog"> Dog</label>
+              <label><input type="checkbox" name="species" value="cat"> Cat</label>
+              <label><input type="checkbox" name="species" value="bird"> Bird</label>
+              <label><input type="checkbox" name="species" value="rabbit"> Rabbit</label>
+              <label><input type="checkbox" name="species" value="reptile"> Reptile</label>
+              <label><input type="checkbox" name="species" value="small_mammal"> Small mammal</label>
+              <label><input type="checkbox" name="species" value="other"> Other</label>
+            </fieldset>
+          </section>
+
+          <section class="settings-section">
+            <h2>Capabilities</h2>
+            <fieldset class="settings-checklist">
+              <legend>Select everything this location can do</legend>
+              <label><input type="checkbox" name="capability" value="surgery"> Surgery</label>
+              <label><input type="checkbox" name="capability" value="oxygen"> Oxygen support</label>
+              <label><input type="checkbox" name="capability" value="imaging"> Imaging</label>
+              <label><input type="checkbox" name="capability" value="overnight"> Overnight stay</label>
+              <label><input type="checkbox" name="capability" value="toxin"> Toxin/poison cases</label>
+              <label><input type="checkbox" name="capability" value="same_day"> Same-day appointments</label>
+              <label><input type="checkbox" name="capability" value="wellness"> Wellness care</label>
+              <label><input type="checkbox" name="capability" value="minor_injury"> Minor injury</label>
+              <label><input type="checkbox" name="capability" value="vaccines"> Vaccines</label>
+            </fieldset>
+            <label class="field">Other capabilities <span style="font-weight:400">(comma separated)</span>
+              <input name="otherCapabilities" maxlength="200" placeholder="dental, exotics, cardiology">
+            </label>
+          </section>
+
+          <section class="settings-section">
+            <h2>Operating information</h2>
+            <div class="form-grid two-column">
+              <label class="inline-check"><input type="checkbox" name="open24Hours"> Open 24 hours</label>
+              <label class="inline-check"><input type="checkbox" name="acceptsWalkIns"> Accepts walk-ins</label>
+              <label class="field">Typical arrival window (min)<input name="arrivalWindowMinutes" type="number" min="5" max="180" value="20"></label>
+              <label class="field">Base exam fee (USD)<input name="baseExamFeeCents" type="number" min="0" max="1000" step="1" placeholder="185"></label>
+            </div>
+            <label class="field">Hours &amp; operating notes, shown to pet owners
+              <textarea name="hoursNote" rows="3" maxlength="500" placeholder="Mon–Fri 8am–8pm, Sat 9am–4pm. Closed major holidays."></textarea>
+            </label>
+          </section>
+
+          <section class="settings-section">
+            <h2>Client-facing defaults</h2>
+            <div class="form-grid two-column">
+              <label class="field">Staffed by
+                <select name="staffingLevel">
+                  <option value="veterinarian">A veterinarian</option>
+                  <option value="veterinary_technician">A veterinary technician</option>
+                </select>
+              </label>
+              <label class="field">Staffing note <span style="font-weight:400">(optional)</span><input name="staffingNote" maxlength="300"></label>
+            </div>
+          </section>
+
+          <div class="settings-form-actions">
+            <button class="button button-quiet" type="button" data-route="pill">Back to quick status</button>
+            <button class="button button-primary" type="submit">Save facility settings</button>
+          </div>
+        </form>
       </div>
     </section>
 

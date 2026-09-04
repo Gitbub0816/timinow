@@ -30,7 +30,8 @@ import {
   getCallPreferences,
   respondToCareSearch,
   setCallPreferences,
-  setClinicAvailability
+  setClinicAvailability,
+  updateClinicLocationSettings
 } from "../../../src/index.js";
 import {
   addMember,
@@ -161,6 +162,11 @@ async function handleApi(request, env) {
     // consoles point at providers.timinow.pet, which is this one.
     if (method === "GET" && path === "/api/clinic/payouts") return clinicPayouts(env, tenantId);
     if (method === "POST" && path === "/api/clinic/availability") return setClinicAvailability(request, env, actor, tenantId);
+    // Facility settings (Feature A's "gear" screen) — the same route the
+    // customer Worker answers, mounted here for the same reason as
+    // /api/clinic/payouts below: providers.timinow.pet is what the pill and
+    // console actually run against.
+    if (method === "POST" && path === "/api/clinic/settings") return updateClinicLocationSettings(request, env, actor, tenantId);
     // Also here, for the same reason payouts is. This Worker is a second router
     // over the same handlers, and every route added to the customer Worker has
     // to be added again — which is exactly how this one was missed. The macOS

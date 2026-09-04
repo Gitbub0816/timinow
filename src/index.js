@@ -9,7 +9,7 @@ import {
   requireTenantAdmin,
   revokeInvitation
 } from "./tenant-admin.js";
-import { DEMO_LOCATIONS, LEGAL_VERSION, RED_FLAG_TERMS, TECHNICIAN_NOTICE, VALID_INTAKE_STATUS, VALID_SPECIES, VALID_URGENCY } from "./catalog.js";
+import { DEMO_LOCATIONS, LEGAL_VERSION, RED_FLAG_TERMS, TECHNICIAN_NOTICE, VALID_INTAKE_STATUS, VALID_SPECIES, VALID_STAFFING, VALID_URGENCY } from "./catalog.js";
 import {
   clinicEarnings,
   ensureDepositPaymentIntent,
@@ -1413,6 +1413,103 @@ export async function clinicDashboard(env, tenantId) {
   });
 }
 
+const VALID_LOCATION_KIND = new Set(["general", "urgent", "emergency", "specialty"]);
+
+/**
+ * Stable facility settings: what kind of practice this is, what it treats,
+ * hours, and client-facing defaults. Deliberately separate from
+ * setClinicAvailability — that endpoint changes every few minutes from the
+ * front desk; this one changes rarely and lives on its own screen so the two
+ * do not share a form.
+ */
+export async function updateClinicLocationSettings(request, env, actor, tenantId) {
+  const location = await getClinicLocation(env, tenantId);
+  if (!location) return apiError(404, "CLINIC_NOT_FOUND", "The clinic location was not found.");
+  const body = await readJson(request).catch(() => null);
+  if (!body) return apiError(400, "INVALID_BODY", "A JSON body is required.");
+  const kind = cleanString(body.kind, 20);
+  if (!VALID_LOCATION_KIND.has(kind)) return apiError(422, "INVALID_KIND", "Choose a valid facility type.");
+  const species = Array.isArray(body.species) ? [...new Set(body.species)].filter((value) => VALID_SPECIES.has(value)) : [];
+  if (!species.length) return apiError(422, "INVALID_SPECIES", "Choose at least one species this location treats.");
+  const capabilities = Array.isArray(body.capabilities)
+    ? [...new Set(body.capabilities.map((value) => cleanString(value, 40).toLowerCase()).filter(Boolean))].slice(0, 30)
+    : [];
+  const staffingLevel = VALID_STAFFING.has(body.staffingLevel) ? body.staffingLevel : location.staffingLevel;
+  const staffingNote = cleanString(body.staffingNote, 300) || null;
+  const hoursNote = cleanString(body.hoursNote, 500);
+  const open24Hours = Boolean(body.open24Hours);
+  const acceptsWalkIns = body.acceptsWalkIns !== false;
+  const arrivalWindowMinutes = numberInRange(body.arrivalWindowMinutes, 5, 180, location.arrivalWindowMinutes || 20);
+  const baseExamFeeCents = numberInRange(body.baseExamFeeCents, 0, 100_000, location.baseExamFeeCents);
+  const speciesJson = JSON.stringify(species);
+  const capabilitiesJson = JSON.stringify(capabilities);
+  const hoursJson = JSON.stringify({ note: hoursNote });
+
+  if (!hasDatabase(env)) {
+    return json({
+      location: enrichLocation({
+        ...location, kind, species, capabilities, staffingLevel, staffingNote,
+        hours: { note: hoursNote }, open24Hours, acceptsWalkIns, arrivalWindowMinutes, baseExamFeeCents
+      }),
+      demo: true
+    });
+  }
+
+  await env.DB.prepare(`
+    UPDATE locations SET
+      kind = ?, species_json = ?, capabilities_json = ?, hours_json = ?,
+      open_24_hours = ?, accepts_walk_ins = ?, arrival_window_minutes = ?,
+      staffing_level = ?, staffing_note = ?, base_exam_fee_cents = ?, updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `).bind(
+    kind, speciesJson, capabilitiesJson, hoursJson,
+    open24Hours ? 1 : 0, acceptsWalkIns ? 1 : 0, arrivalWindowMinutes,
+    staffingLevel, staffingNote, baseExamFeeCents, location.id
+  ).run();
+  return json({ location: enrichLocation(await getLocation(env, location.id)) });
+}
+
+/**
+ * Verified, gated network stats for the public trust module. Every figure is
+ * omitted rather than shown misleadingly small: a stat only appears once its
+ * sample clears a floor, so a quiet night never renders as "1 of 1 searches
+ * got an offer" or "1 participating clinic".
+ */
+async function publicStats(env) {
+  if (!hasDatabase(env)) return json({ generatedAt: new Date().toISOString(), windowDays: 30, stats: {} });
+  const windowStart = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+  const [clinicRow, searchRows] = await Promise.all([
+    env.DB.prepare("SELECT COUNT(DISTINCT tenant_id) AS n FROM locations WHERE active = 1").first(),
+    env.DB.prepare(`
+      SELECT cs.id AS search_id, cs.requested_at AS requested_at, MIN(co.offered_at) AS first_offer_at
+      FROM care_searches cs
+      LEFT JOIN care_offers co ON co.search_id = cs.id
+      WHERE cs.requested_at >= ?
+      GROUP BY cs.id
+    `).bind(windowStart).all()
+  ]);
+  const activeClinicCount = Number(clinicRow?.n || 0);
+  const searches = searchRows?.results || [];
+  const stats = {};
+  if (activeClinicCount >= 5) stats.participatingClinics = activeClinicCount;
+  if (searches.length >= 25) {
+    const withOffer = searches.filter((row) => row.first_offer_at);
+    stats.searchesWithOfferPct = Math.round((withOffer.length / searches.length) * 100);
+    const offerSeconds = withOffer
+      .map((row) => (timestampMs(row.first_offer_at) - timestampMs(row.requested_at)) / 1000)
+      .filter((seconds) => Number.isFinite(seconds) && seconds >= 0)
+      .sort((a, b) => a - b);
+    if (offerSeconds.length) {
+      const mid = Math.floor(offerSeconds.length / 2);
+      const medianSeconds = offerSeconds.length % 2 === 1
+        ? offerSeconds[mid]
+        : (offerSeconds[mid - 1] + offerSeconds[mid]) / 2;
+      stats.medianFirstOfferSeconds = Math.round(medianSeconds);
+    }
+  }
+  return json({ generatedAt: new Date().toISOString(), windowDays: 30, stats });
+}
+
 export async function setClinicAvailability(request, env, actor, tenantId) {
   const location = await getClinicLocation(env, tenantId);
   if (!location) return apiError(404, "CLINIC_NOT_FOUND", "The clinic location was not found.");
@@ -1819,6 +1916,9 @@ async function handleApi(request, env, ctx) {
   if (method === "GET" && path === "/api/health") return json({ ok: true, service: "timinow", version: "1.1.0-multi-offer", database: hasDatabase(env) });
   if (method === "GET" && path === "/api/config") return handleConfig(env);
   if (method === "GET" && path === "/api/locations") return handleLocationSearch(url, env);
+  // Public: the trust module on the customer site renders before sign-in, and
+  // every figure it shows is pre-gated by publicStats — no raw counts leak.
+  if (method === "GET" && path === "/api/public-stats") return publicStats(env);
   // Public, and deliberately above the sign-in gate. Somebody whose animal may
   // be dying does not get asked to sign in first.
   if (method === "GET" && path === "/api/emergency-nearby") return handleEmergencyNearby(url, env, ctx);
@@ -1948,6 +2048,7 @@ async function handleApi(request, env, ctx) {
     if (method === "GET" && path === "/api/clinic/dashboard") return clinicDashboard(env, tenantId);
     if (method === "GET" && path === "/api/clinic/payouts") return clinicPayouts(env, tenantId);
     if (method === "POST" && path === "/api/clinic/availability") return setClinicAvailability(request, env, actor, tenantId);
+    if (method === "POST" && path === "/api/clinic/settings") return updateClinicLocationSettings(request, env, actor, tenantId);
     if (path === "/api/clinic/call-preferences") {
       if (method === "GET") return getCallPreferences(env, tenantId);
       if (method === "PATCH" || method === "POST") return setCallPreferences(request, env, actor, tenantId);

@@ -206,6 +206,71 @@ label.field { display: grid; gap: .35rem; font-size: .72rem; font-weight: 700; c
 .toast { position: fixed; z-index: 200; left: 50%; bottom: 1.5rem; transform: translate(-50%, 30px); max-width: min(520px, calc(100% - 2rem)); padding: .8rem 1rem; border-radius: 10px; background: var(--ink); color: white; box-shadow: var(--soft-shadow); font-size: .72rem; opacity: 0; pointer-events: none; transition: .22s; }
 .toast.is-visible { opacity: 1; transform: translate(-50%, 0); }
 
+/* ------------------------------------------------------------------ pill mode --- */
+/* Reception's default screen. One small status widget, one expandable panel
+   with the three controls a shift actually touches, and — when a matching
+   request arrives — the same decision the full workspace offers, reused
+   rather than reinvented. See enterPill()/renderPill*() in app.js. */
+.pill-screen.is-active { display: flex; flex-direction: column; min-height: 100svh; background: var(--canvas); }
+.pill-topbar { display: flex; align-items: center; justify-content: space-between; padding: 16px 18px; }
+.pill-topbar .text-link { font-size: .74rem; font-weight: 700; color: var(--blue); }
+.pill-shell { flex: 1; width: min(420px, 100%); margin: 0 auto; padding: .5rem 1.1rem 2.5rem; display: flex; flex-direction: column; align-items: stretch; gap: 10px; }
+
+.pill-widget {
+  display: flex; align-items: center; gap: 10px; width: 100%;
+  padding: 14px 16px; border: 2px solid var(--ink); border-radius: 999px;
+  background: white; box-shadow: var(--shadow); font: inherit; text-align: left;
+}
+.pill-dot { flex: 0 0 auto; width: 14px; height: 14px; border-radius: 50%; background: var(--muted); box-shadow: 0 0 0 4px transparent; transition: background .2s, box-shadow .2s; }
+.pill-dot.status-available { background: #1f9d55; }
+.pill-dot.status-limited, .pill-dot.status-confirm_first { background: var(--gold); }
+.pill-dot.status-critical_only, .pill-dot.status-diverting { background: var(--coral); }
+.pill-dot.status-closed { background: var(--muted); }
+.pill-dot.status-unverified { background: var(--danger); }
+.pill-label { flex: 1; font-weight: 800; font-size: .95rem; }
+.pill-capacity { font-size: .8rem; font-weight: 700; color: var(--muted); }
+.pill-caret { color: var(--muted); transition: transform .18s; }
+.pill-widget[aria-expanded="true"] .pill-caret { transform: rotate(180deg); }
+.pill-widget.is-flash { animation: pill-flash .5s ease 2; }
+@keyframes pill-flash { 0%, 100% { box-shadow: var(--shadow); } 50% { box-shadow: 0 0 0 6px var(--coral-soft), var(--shadow); } }
+.pill-widget.is-stale { border-color: var(--danger); box-shadow: 0 0 0 3px var(--coral-soft), var(--shadow); }
+
+.pill-freshness { margin: 2px 4px 0; font-size: .72rem; color: var(--muted); }
+.pill-freshness.is-stale { color: var(--danger); font-weight: 700; }
+
+.pill-panel { padding: 14px; border: 1px solid var(--card-border); border-radius: var(--card-radius); background: white; }
+.pill-status-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; border: 0; padding: 0; margin: 0 0 12px; }
+.pill-status-grid legend { font-size: .68rem; font-weight: 800; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); padding: 0 0 8px; grid-column: 1 / -1; }
+.pill-status-grid label { display: flex; align-items: center; gap: 6px; padding: 8px 10px; border: 1px solid var(--input-border); border-radius: 9px; font-size: .76rem; font-weight: 700; }
+.pill-status-grid input { width: auto; min-height: 0; accent-color: var(--blue); }
+.pill-status-grid label:has(input:checked) { border-color: var(--blue); background: var(--blue-soft); }
+.pill-fields-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px; }
+.pill-panel-actions { display: flex; align-items: center; gap: 10px; }
+.pill-panel-actions .button { flex: 1; }
+.icon-button { width: 40px; height: 40px; flex: 0 0 auto; display: grid; place-items: center; border: 1px solid var(--input-border); border-radius: 10px; background: white; font-size: 1.05rem; }
+
+.pill-request-slot:empty { display: none; }
+.pill-request { margin-top: 4px; padding: 14px; border: 2px solid var(--ink); border-radius: var(--card-radius); background: var(--gold-soft); box-shadow: var(--shadow); }
+.pill-request.is-emergency { background: var(--coral-soft); }
+.pill-request-eyebrow { margin: 0 0 4px; font-size: .64rem; font-weight: 800; letter-spacing: .07em; color: var(--coral-dark); }
+.pill-request h3 { margin: 0; font-size: 1rem; }
+.pill-request p { margin: 4px 0 0; font-size: .78rem; color: var(--ink-soft); line-height: 1.4; }
+.pill-request-meta { color: var(--muted) !important; font-size: .68rem !important; }
+.pill-decision-actions, .pill-accept-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 12px; }
+.pill-accept-fields { grid-template-columns: 1fr; gap: 8px; }
+.pill-accept-fields .button-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 2px; }
+
+/* -------------------------------------------------------------------- settings --- */
+.settings-screen.is-active { display: grid; grid-template-columns: 230px minmax(0, 1fr); min-height: 100svh; background: var(--canvas); }
+.settings-form { max-width: 720px; display: grid; gap: 20px; }
+.settings-section { padding: 16px 18px; border: 1px solid var(--card-border); border-radius: var(--card-radius); background: white; }
+.settings-section h2 { font-size: 1rem; margin: 0 0 12px; }
+.settings-checklist { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; border: 0; padding: 10px 0 0; margin: 0; }
+.settings-checklist legend { font-size: .66rem; font-weight: 800; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); padding: 0; grid-column: 1 / -1; }
+.settings-checklist label { display: flex; align-items: center; gap: 6px; font-size: .78rem; }
+.settings-checklist input { width: auto; min-height: 0; accent-color: var(--blue); }
+.settings-form-actions { display: flex; justify-content: space-between; gap: 12px; }
+
 /* -------------------------------------------------------------------- people --- */
 .people-screen.is-active { display: grid; grid-template-columns: 230px minmax(0, 1fr); min-height: 100svh; background: var(--canvas); }
 .people-main { padding: clamp(1.25rem, 3vw, 2.5rem); max-width: 900px; }
@@ -262,7 +327,7 @@ label.field { display: grid; gap: .35rem; font-size: .72rem; font-weight: 700; c
 
 @media (max-width: 1100px) {
   .top-grid, .mid-grid, .settings-body { grid-template-columns: 1fr; }
-  .console-screen.is-active, .people-screen.is-active { grid-template-columns: 1fr; }
+  .console-screen.is-active, .people-screen.is-active, .settings-screen.is-active { grid-template-columns: 1fr; }
   .vet-rail { position: static; height: auto; flex-direction: row; align-items: center; flex-wrap: wrap; gap: 1rem 2rem; }
   .rail-nav, .rail-clinic, .rail-mode, .rail-footer { display: none; }
 }
@@ -271,6 +336,15 @@ label.field { display: grid; gap: .35rem; font-size: .72rem; font-weight: 700; c
   .vet-header { flex-direction: column; }
   .vet-status { text-align: left; }
   .progress-line { margin-left: 0; }
+  .pill-status-grid, .pill-fields-row, .pill-decision-actions, .pill-accept-fields .button-row, .settings-checklist { grid-template-columns: 1fr; }
+}
+/* The native-shell floating window (apps/vet-desktop, apps/vet-windows) is
+   small by design — the pill route has to look right at ~360px wide, not
+   just gracefully degrade to it. */
+@media (max-width: 420px) {
+  .pill-shell { padding: .5rem .8rem 2rem; }
+  .pill-widget { padding: 12px 14px; }
+  .pill-label { font-size: .85rem; }
 }
 
 @media (prefers-reduced-motion: reduce) {

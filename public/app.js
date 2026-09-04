@@ -1368,6 +1368,7 @@ function matchCardHtml(search, offer) {
       <div class="match-facts">
         <p class="match-facts-source">From Tími NOW</p>
         <p class="match-availability"><span class="signal ${emergency ? "limited" : "available"}" aria-hidden="true"></span>${escapeHtml(offerTypeLabel(offer))} · ${escapeHtml(travel)}</p>
+        ${offer.offeredAt ? `<p class="offer-freshness">Capacity confirmed ${escapeHtml(formatRelativeTime(offer.offeredAt))}</p>` : ""}
         <dl class="offer-facts">
           <div><dt>${emergency ? "Estimated wait" : "Reported wait"}</dt><dd>${escapeHtml(offerWaitText(offer))}</dd></div>
           <div><dt>Clinic deposit</dt><dd>${offer.depositAmountCents ? formatMoney(offer.depositAmountCents) : "None"}</dd></div>
@@ -2901,6 +2902,38 @@ $("[data-install]")?.addEventListener("click", async () => {
   state.deferredInstall.prompt(); await state.deferredInstall.userChoice; state.deferredInstall = null; $("[data-install]").hidden = true;
 });
 
+/**
+ * Verified network stats for the homepage trust module. Every figure comes
+ * pre-gated from GET /api/public-stats (see publicStats() in src/index.js) —
+ * a stat that isn't statistically meaningful yet is simply absent from the
+ * response, and this only ever reveals the rows that are actually present.
+ * Best-effort and non-blocking: the homepage renders fine without it.
+ */
+function formatDurationShort(totalSeconds) {
+  if (totalSeconds < 90) return `${Math.max(1, Math.round(totalSeconds))} sec`;
+  return `${Math.round(totalSeconds / 60)} min`;
+}
+
+async function loadNetworkStats() {
+  const container = $("[data-network-stats]");
+  if (!container) return;
+  try {
+    const { stats } = await api("/api/public-stats");
+    let shown = false;
+    const reveal = (key, valueText) => {
+      const row = container.querySelector(`[data-stat="${key}"]`);
+      if (!row) return;
+      row.querySelector("[data-stat-value]").textContent = valueText;
+      row.hidden = false;
+      shown = true;
+    };
+    if (stats?.participatingClinics != null) reveal("clinics", String(stats.participatingClinics));
+    if (stats?.searchesWithOfferPct != null) reveal("offerRate", `${stats.searchesWithOfferPct}%`);
+    if (stats?.medianFirstOfferSeconds != null) reveal("offerTime", formatDurationShort(stats.medianFirstOfferSeconds));
+    container.hidden = !shown;
+  } catch { /* trust stats are optional; a failed fetch just leaves the module hidden */ }
+}
+
 window.addEventListener("hashchange", () => { if (state.route === "find") persistFormDraft(); renderRoute(); });
 window.addEventListener("load", async () => {
   try {
@@ -2909,6 +2942,7 @@ window.addEventListener("load", async () => {
   } finally {
     hideBootSplash();
   }
+  loadNetworkStats();
 });
 
 if ("serviceWorker" in navigator) window.addEventListener("load", () => navigator.serviceWorker.register("/sw.js").catch(() => {}));
