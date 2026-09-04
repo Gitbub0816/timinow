@@ -36,6 +36,12 @@ import {
   requireTenantAdmin,
   revokeInvitation
 } from "../../../src/tenant-admin.js";
+import {
+  handleCreateWidgetToken,
+  handleListWidgetTokens,
+  handleRevokeWidgetToken
+} from "../../../src/widget.js";
+import { getOrCreateReferralLink } from "../../../src/referrals.js";
 
 const JSON_HEADERS = { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" };
 const SECURITY_HEADERS = {
@@ -172,6 +178,16 @@ async function handleApi(request, env) {
     if (method === "POST" && decisionMatch) return decideIntake(request, env, actor, tenantId, decodeURIComponent(decisionMatch[1]));
     const searchDecisionMatch = path.match(/^\/api\/clinic\/search-targets\/([^/]+)\/decision$/);
     if (method === "POST" && searchDecisionMatch) return respondToCareSearch(request, env, actor, tenantId, decodeURIComponent(searchDecisionMatch[1]));
+    // Also here, for the same reason payouts and call-preferences are: the
+    // desktop and web consoles both point at providers.timinow.pet, so the
+    // "Overflow tools" panel's own requests land on this Worker.
+    if (method === "GET" && path === "/api/clinic/widget-tokens") return handleListWidgetTokens(env, tenantId);
+    if (method === "POST" && path === "/api/clinic/widget-tokens") return handleCreateWidgetToken(request, env, actor, tenantId);
+    const widgetTokenMatch = path.match(/^\/api\/clinic\/widget-tokens\/([^/]+)$/);
+    if (method === "DELETE" && widgetTokenMatch) return handleRevokeWidgetToken(env, actor, tenantId, decodeURIComponent(widgetTokenMatch[1]));
+    if (method === "GET" && path === "/api/clinic/referral-link") {
+      return json({ referralLink: await getOrCreateReferralLink(env, actor, tenantId) });
+    }
   }
 
   return apiError(404, "NOT_FOUND", "The requested API route does not exist.");

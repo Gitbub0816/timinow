@@ -23,6 +23,13 @@ import { findEmergencyVeterinaryPlaces, phoneKey } from "./mapbox-places.js";
 import { recordAnalyticsEvents } from "./analytics.js";
 import { listPets, savePet, removePet, syncPets, validatePet } from "./pets.js";
 import {
+  handleCreateWidgetToken,
+  handleListWidgetTokens,
+  handlePublicWidgetStatus,
+  handleRevokeWidgetToken
+} from "./widget.js";
+import { getOrCreateReferralLink, resolveReferralRedirect } from "./referrals.js";
+import {
   getCareOffer,
   getCareSearch,
   getClinicSearchTarget,
@@ -458,7 +465,18 @@ function validateIntake(body, { requireLocation = true } = {}) {
   if (body.consentToContact !== true) errors.push("consentToContact is required");
   if (body.legalConsent !== true || cleanString(body.legalVersion, 20) !== LEGAL_VERSION) errors.push("current terms and safety notice must be accepted");
   const clinicConcernSummary = `${humanizeOnset(startedWhen)} · ${symptoms.map(humanizeSymptom).join(", ")} · ${concernSummary}`;
-  return { errors, pet, owner, species, urgency, concernSummary, clinicConcernSummary, symptoms, startedWhen, redFlags, medications, allergies, legalVersion: LEGAL_VERSION };
+  // Traffic-source / campaign attribution, captured client-side at boot (see
+  // public/app.js) and passed through untouched. Entirely optional, never
+  // validated against a known list — an unrecognized value is still useful
+  // context and rejecting it would only lose it — and never a reason to
+  // refuse an intake or search.
+  const attribution = {
+    attributionSource: cleanString(body.attributionSource, 60) || null,
+    attributionMedium: cleanString(body.attributionMedium, 60) || null,
+    attributionCampaign: cleanString(body.attributionCampaign, 80) || null,
+    referralSlug: cleanString(body.referralSlug, 64) || null
+  };
+  return { errors, pet, owner, species, urgency, concernSummary, clinicConcernSummary, symptoms, startedWhen, redFlags, medications, allergies, legalVersion: LEGAL_VERSION, ...attribution };
 }
 
 /**
@@ -561,6 +579,10 @@ async function createIntake(request, env, actor) {
       depositAmountCents: policy.depositAmountCents || 0,
       paymentStatus,
       legalAcceptance: { version: validated.legalVersion, acceptedAt: now },
+      attributionSource: validated.attributionSource,
+      attributionMedium: validated.attributionMedium,
+      attributionCampaign: validated.attributionCampaign,
+      referralSlug: validated.referralSlug,
       createdAt: now,
       updatedAt: now,
       demo: true
@@ -576,8 +598,8 @@ async function createIntake(request, env, actor) {
         concern_summary, urgency, red_flags_json, customer_latitude, customer_longitude,
         travel_minutes, status, requested_at, decision_at, request_expires_at, arrival_by,
         policy_snapshot_json, deposit_amount_cents, payment_status, consent_to_contact,
-        medications, allergies
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+        medications, allergies, attribution_source, attribution_medium, attribution_campaign, referral_slug
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?)
     `).bind(
       intakeId, code, location.id, location.tenantId, actor?.userId || null,
       cleanString(validated.pet.name, 80), validated.species, cleanString(validated.pet.breed, 120) || null,
@@ -586,7 +608,8 @@ async function createIntake(request, env, actor) {
       validated.clinicConcernSummary, validated.urgency, JSON.stringify(validated.redFlags), customerLatitude,
       customerLongitude, travelMinutes, status, now, decisionAt, isoAfter(requestTtl), arrivalBy,
       JSON.stringify(policy), policy.depositAmountCents || 0, paymentStatus,
-      validated.medications, validated.allergies
+      validated.medications, validated.allergies,
+      validated.attributionSource, validated.attributionMedium, validated.attributionCampaign, validated.referralSlug
     ),
     env.DB.prepare(`
       INSERT INTO intake_events (id, intake_id, event_type, actor_type, actor_id, detail_json)
@@ -691,6 +714,10 @@ async function createCareSearch(request, env, actor) {
       searchExpiresAt,
       offers,
       progress: { contacted: candidates.length, awaiting: Math.max(0, candidates.length - offers.length), declined: 0, offers: offers.length },
+      attributionSource: validated.attributionSource,
+      attributionMedium: validated.attributionMedium,
+      attributionCampaign: validated.attributionCampaign,
+      referralSlug: validated.referralSlug,
       demo: true
     };
     return json({ search, demo: true }, { status: 201 });
@@ -702,8 +729,9 @@ async function createCareSearch(request, env, actor) {
       owner_name, owner_phone, owner_email, concern_category, concern_summary, urgency,
       red_flags_json, customer_latitude, customer_longitude, radius_miles, status,
       max_offers, target_limit, legal_version, legal_accepted_at, requested_at,
-      collection_expires_at, search_expires_at, medications, allergies
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'collecting', 5, ?, ?, ?, ?, ?, ?, ?, ?)
+      collection_expires_at, search_expires_at, medications, allergies,
+      attribution_source, attribution_medium, attribution_campaign, referral_slug
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'collecting', 5, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).bind(
     searchId, publicCode(), actor?.userId || null, cleanString(validated.pet.name, 80), validated.species,
     cleanString(validated.pet.breed, 120) || null, ageYears, weightLbs, cleanString(validated.owner.name, 120),
@@ -711,7 +739,8 @@ async function createCareSearch(request, env, actor) {
     cleanString(body.concernCategory, 80), validated.clinicConcernSummary, validated.urgency,
     JSON.stringify(validated.redFlags), latitude, longitude, radiusMiles, targetLimit,
     validated.legalVersion, now, now, collectionExpiresAt, searchExpiresAt,
-    validated.medications, validated.allergies
+    validated.medications, validated.allergies,
+    validated.attributionSource, validated.attributionMedium, validated.attributionCampaign, validated.referralSlug
   )];
 
   candidates.forEach((location, rank) => {
@@ -1645,6 +1674,14 @@ async function handleApi(request, env, ctx) {
   // Public because the pages that matter most are the ones before sign-in,
   // and the beacon identifies nobody — see src/analytics.js.
   if (method === "POST" && path === "/api/analytics") return recordAnalyticsEvents(request, env);
+  // ---------------------------------------------------------------- widget --
+  // Public: a clinic's own website embeds this. The token is the only
+  // credential and it only ever discloses the public whitelist — see
+  // src/widget.js and docs/WIDGET.md.
+  const widgetStatusMatch = path.match(/^\/api\/widget\/([^/]+)\/status$/);
+  if (method === "GET" && widgetStatusMatch) {
+    return handlePublicWidgetStatus(request, env, decodeURIComponent(widgetStatusMatch[1]));
+  }
   // Public because Stripe does not carry a Clerk session. The Stripe-Signature
   // header is this endpoint's entire authentication, and it is checked before
   // the body is parsed — see handleStripeWebhook.
@@ -1730,6 +1767,16 @@ async function handleApi(request, env, ctx) {
     if (method === "POST" && decisionMatch) return decideIntake(request, env, actor, tenantId, decodeURIComponent(decisionMatch[1]));
     const searchDecisionMatch = path.match(/^\/api\/clinic\/search-targets\/([^/]+)\/decision$/);
     if (method === "POST" && searchDecisionMatch) return respondToCareSearch(request, env, actor, tenantId, decodeURIComponent(searchDecisionMatch[1]));
+    // -------------------------------------------------------- overflow tools --
+    // Widget tokens (src/widget.js) and the tenant's stable referral link
+    // (src/referrals.js) — both part of the "overflow tools" panel.
+    if (method === "GET" && path === "/api/clinic/widget-tokens") return handleListWidgetTokens(env, tenantId);
+    if (method === "POST" && path === "/api/clinic/widget-tokens") return handleCreateWidgetToken(request, env, actor, tenantId);
+    const widgetTokenMatch = path.match(/^\/api\/clinic\/widget-tokens\/([^/]+)$/);
+    if (method === "DELETE" && widgetTokenMatch) return handleRevokeWidgetToken(env, actor, tenantId, decodeURIComponent(widgetTokenMatch[1]));
+    if (method === "GET" && path === "/api/clinic/referral-link") {
+      return json({ referralLink: await getOrCreateReferralLink(env, actor, tenantId) });
+    }
   }
 
   return apiError(404, "NOT_FOUND", "The requested API route does not exist.");
@@ -1741,9 +1788,16 @@ export default {
     const startedAt = Date.now();
     try {
       const url = new URL(request.url);
-      const response = url.pathname.startsWith("/api/")
-        ? await handleApi(request, env, ctx)
-        : await env.ASSETS.fetch(request);
+      // A clinic's overflow-tools referral link (src/referrals.js) — public,
+      // above both the API and static-asset paths, since a pet owner
+      // following a voicemail or SMS link has no account and this is not a
+      // page in public/.
+      const referralMatch = request.method === "GET" ? url.pathname.match(/^\/r\/([^/]+)$/) : null;
+      const response = referralMatch
+        ? await resolveReferralRedirect(env, request, decodeURIComponent(referralMatch[1]))
+        : url.pathname.startsWith("/api/")
+          ? await handleApi(request, env, ctx)
+          : await env.ASSETS.fetch(request);
       const headers = new Headers(response.headers);
       Object.entries(SECURITY_HEADERS).forEach(([key, value]) => headers.set(key, value));
       headers.set("x-request-id", requestId);

@@ -50,6 +50,11 @@ const track = (() => {
       if (!/^[a-z0-9_.:-]{1,40}$/i.test(String(name))) return;
       const event = { name: String(name), path: `#${state?.route || "home"}` };
       if (meta && typeof meta === "object") event.meta = meta;
+      // Optional, coarse traffic-source tag — see captureAttribution above
+      // and src/analytics.js's cleanSource, which re-validates this shape.
+      if (state?.attribution?.source && /^[a-z0-9_.:-]{1,40}$/i.test(state.attribution.source)) {
+        event.source = state.attribution.source;
+      }
       queue.push(event);
       if (!flushTimer) flushTimer = window.setTimeout(flush, 400);
     } catch { /* analytics must never break the page */ }
@@ -82,6 +87,44 @@ const STORAGE_KEYS = {
   clinicDecisions: "timi_demo_clinic_decisions_v1",
   navigation: "timi_navigation_preferences_v1"
 };
+const ATTRIBUTION_STORAGE_KEY = "timi_attribution_v1";
+
+/**
+ * Traffic-source / campaign attribution — captured once, at boot, from the
+ * URL a person actually arrived on (utm_source/medium/campaign, or a Tími
+ * ref= param from a clinic widget or referral link — see src/widget.js and
+ * src/referrals.js), then carried in sessionStorage so it survives the
+ * app's hash-based routing for the rest of the visit. Nothing here is new
+ * PII: every value already lived in the URL the person's own browser sent.
+ *
+ * A fresh set of parameters (following another link mid-session) replaces
+ * whatever was captured before; visiting with none of these params keeps
+ * whatever this session already has, or stays null.
+ */
+function captureAttribution() {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const utmSource = params.get("utm_source");
+    const utmMedium = params.get("utm_medium");
+    const utmCampaign = params.get("utm_campaign");
+    const ref = params.get("ref");
+    if (utmSource || utmMedium || utmCampaign || ref) {
+      const referralMatch = ref ? ref.match(/^clinic_(.+)$/) : null;
+      const attribution = {
+        source: utmSource || (ref ? (ref.startsWith("widget_") ? "widget" : ref.startsWith("clinic_") ? "referral" : ref.slice(0, 60)) : null),
+        medium: utmMedium || null,
+        campaign: utmCampaign || null,
+        referralSlug: referralMatch ? referralMatch[1].slice(0, 64) : null
+      };
+      sessionStorage.setItem(ATTRIBUTION_STORAGE_KEY, JSON.stringify(attribution));
+      return attribution;
+    }
+    const stored = sessionStorage.getItem(ATTRIBUTION_STORAGE_KEY);
+    return stored ? JSON.parse(stored) : null;
+  } catch {
+    return null;
+  }
+}
 
 const state = {
   route: "home",
@@ -89,6 +132,7 @@ const state = {
   clerk: null,
   session: null,
   auth: null,
+  attribution: captureAttribution(),
   intakeStep: 1,
   intakeDraft: readStorage(STORAGE_KEYS.draft, {
     position: DEFAULT_POSITION,
@@ -935,7 +979,11 @@ async function startCareSearch() {
         customerLongitude: draft.position.longitude,
         consentToContact: draft.contactConsent === true,
         legalConsent: draft.legalConsent === true,
-        legalVersion: state.config?.legalVersion || "2026-08-24"
+        legalVersion: state.config?.legalVersion || "2026-08-24",
+        attributionSource: state.attribution?.source || null,
+        attributionMedium: state.attribution?.medium || null,
+        attributionCampaign: state.attribution?.campaign || null,
+        referralSlug: state.attribution?.referralSlug || null
       })
     });
     state.currentSearch = data.search;
@@ -976,7 +1024,11 @@ async function submitIntake(locationId) {
         travelMinutes: Math.max(5, Math.round((location.distanceMiles || 2) * 4)),
         consentToContact: draft.contactConsent === true,
         legalConsent: draft.legalConsent === true,
-        legalVersion: state.config?.legalVersion || "2026-08-24"
+        legalVersion: state.config?.legalVersion || "2026-08-24",
+        attributionSource: state.attribution?.source || null,
+        attributionMedium: state.attribution?.medium || null,
+        attributionCampaign: state.attribution?.campaign || null,
+        referralSlug: state.attribution?.referralSlug || null
       })
     });
     state.currentIntake = { ...data.intake, location: data.location };

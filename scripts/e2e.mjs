@@ -65,6 +65,7 @@ database.exec(await readFile("migrations/0009_pets.sql", "utf8"));
 database.exec(await readFile("migrations/0010_provider_analytics.sql", "utf8"));
 database.exec(await readFile("migrations/0011_call_policy.sql", "utf8"));
 database.exec(await readFile("migrations/0012_pet_sex.sql", "utf8"));
+database.exec(await readFile("migrations/0022_widgets_referrals_attribution.sql", "utf8"));
 
 const env = {
   ASSETS: { fetch: async () => new Response("asset") },

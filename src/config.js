@@ -40,6 +40,14 @@ export function publicConfig(env) {
     stripePublishableKey: env.STRIPE_PUBLISHABLE_KEY || null,
     demoMode: env.DEMO_MODE === "true",
     /**
+     * The customer-facing app's own origin — the one Worker that serves
+     * `/r/:slug` (src/referrals.js) and `/widget.js` (src/widget.js). The
+     * veterinary and admin consoles read this to build a clinic's referral
+     * link and widget embed snippet, since neither is the Worker those paths
+     * are mounted on.
+     */
+    customerAppUrl: env.CUSTOMER_APP_URL || "https://timinow.pet",
+    /**
      * The terms and safety notice a care request is accepted against. Served
      * so a browser client never has to carry its own copy of the string the
      * Worker rejects everything else against.

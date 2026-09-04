@@ -54,6 +54,7 @@
         </div>
         <nav class="rail-nav">
           <a href="#console" data-nav="console">Operations</a>
+          <a href="#overflow" data-nav="overflow">Overflow tools</a>
           <a href="#people" data-nav="people">People</a>
           <a href="#legal?section=clinics" data-nav="legal">Legal</a>
         </nav>
@@ -184,6 +185,7 @@
         </div>
         <nav class="rail-nav" style="margin-top:42px">
           <a href="#console" data-nav="console">Operations</a>
+          <a href="#overflow" data-nav="overflow">Overflow tools</a>
           <a href="#people" data-nav="people">People</a>
           <a href="#legal?section=clinics" data-nav="legal">Legal</a>
         </nav>
@@ -197,6 +199,32 @@
         <h1 id="people-title" style="font-family:var(--serif);font-size:2rem;margin-bottom:.3rem">Roster</h1>
         <p class="people-note">Creating a <strong>new workspace</strong> is a Tími platform operation and is not available here — only a platform operator can create a tenant. Administrators here may only add, re-role, or remove people inside this one workspace.</p>
         <div data-people-body></div>
+      </div>
+    </section>
+
+    <!-- ============================================================ overflow -->
+    <section class="screen overflow-screen" data-screen="overflow" aria-labelledby="overflow-title">
+      <aside class="vet-rail">
+        <div>
+          <img class="brand-mark" src="/assets/brand/timinow-wordmark.svg" alt="Tími NOW">
+          <p class="rail-kicker">VETERINARY OPERATIONS</p>
+        </div>
+        <nav class="rail-nav" style="margin-top:42px">
+          <a href="#console" data-nav="console">Operations</a>
+          <a href="#overflow" data-nav="overflow">Overflow tools</a>
+          <a href="#people" data-nav="people">People</a>
+          <a href="#legal?section=clinics" data-nav="legal">Legal</a>
+        </nav>
+        <div class="rail-spacer"></div>
+        <div class="rail-footer">
+          <button class="button rail-signout" type="button" data-action="sign-out">Sign out</button>
+        </div>
+      </aside>
+      <div class="people-main">
+        <p class="eyebrow">WHEN YOU CAN'T TAKE MORE CASES</p>
+        <h1 id="overflow-title" style="font-family:var(--serif);font-size:2rem;margin-bottom:.3rem">Overflow tools</h1>
+        <p class="people-note">A stable link, a QR code, and ready-to-read wording for the moments a full waiting room means turning pet owners toward another available team instead of nothing — plus an embeddable status card for your own website.</p>
+        <div data-overflow-body>Loading…</div>
       </div>
     </section>
 
@@ -225,6 +253,7 @@
   </main>
 
   <div class="toast" role="status" aria-live="polite" data-toast></div>
+  <script src="/vendor/qrcode.js"></script>
   <script src="/app.js" type="module"></script>
 </body>
 </html>

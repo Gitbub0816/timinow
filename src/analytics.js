@@ -46,6 +46,18 @@ function cleanPath(value) {
   return path || null;
 }
 
+/**
+ * A coarse, client-declared traffic-source tag — "widget", "referral",
+ * "utm:google" and the like, not a value that could ever identify a person.
+ * Same shape rule as an event name: short, and no free text long enough to
+ * carry anything else.
+ */
+function cleanSource(value) {
+  if (typeof value !== "string") return null;
+  const source = value.trim().slice(0, 40);
+  return EVENT_NAME.test(source) ? source : null;
+}
+
 /** A flat string map, clamped rather than argued with: at most ten keys, each
  * value at most eighty characters, anything that is not a string dropped. */
 function cleanMeta(value) {
@@ -109,11 +121,11 @@ export async function recordAnalyticsEvents(request, env) {
     // One batch, so a 25-event page load is one D1 round trip and either all
     // lands or none does.
     await env.DB.batch(events.map((event) => env.DB.prepare(`
-      INSERT INTO analytics_events (id, occurred_at, surface, name, path, visitor_hash, country, device, meta_json)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO analytics_events (id, occurred_at, surface, name, path, visitor_hash, country, device, meta_json, source)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).bind(
       newId("analytics"), now, surface, String(event.name), cleanPath(event.path),
-      visitor, country, device, JSON.stringify(cleanMeta(event.meta))
+      visitor, country, device, JSON.stringify(cleanMeta(event.meta)), cleanSource(event.source)
     )));
   } catch (error) {
     // Dropped counts are a better failure than an erroring page.
