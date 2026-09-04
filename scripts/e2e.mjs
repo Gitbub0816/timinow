@@ -65,6 +65,10 @@ database.exec(await readFile("migrations/0009_pets.sql", "utf8"));
 database.exec(await readFile("migrations/0010_provider_analytics.sql", "utf8"));
 database.exec(await readFile("migrations/0011_call_policy.sql", "utf8"));
 database.exec(await readFile("migrations/0012_pet_sex.sql", "utf8"));
+// Migrations 0013-0023 are parallel work not yet in this branch (staged wave
+// routing, attribution columns); 0024 is written to apply cleanly without
+// them — see its own header comment and src/metrics.js's feature detection.
+database.exec(await readFile("migrations/0024_markets_and_metrics.sql", "utf8"));
 
 const env = {
   ASSETS: { fetch: async () => new Response("asset") },

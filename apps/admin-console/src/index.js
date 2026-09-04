@@ -66,6 +66,21 @@ import {
   slugify,
   upsertTenantMember
 } from "../../../src/tenancy.js";
+import {
+  assignLocationToMarket,
+  computeReadinessReport,
+  createMarket,
+  getMarket,
+  getReadinessConfig,
+  listMarkets,
+  listMarketLocations,
+  listUnassignedLocations,
+  setMarketState,
+  unassignLocation,
+  updateMarket,
+  updateReadinessConfig
+} from "../../../src/markets.js";
+import { checkAlerts, getAlertThresholds, getMetrics, updateAlertThresholds } from "../../../src/metrics.js";
 
 const JSON_HEADERS = { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" };
 const SECURITY_HEADERS = {
@@ -991,6 +1006,66 @@ async function handleMountedTenantRoutes(request, env, actor, url, path, method)
   return apiError(404, "NOT_FOUND", "The requested tenant API route does not exist.");
 }
 
+/* ---------------------------------------------------------------- markets --- */
+
+/** Every /api/admin/markets* and /api/admin/locations/:id/market route.
+ * Returns `null` (rather than a 404) for a path this block does not own, so
+ * the caller can fall through the way handleTenantAdmin does in
+ * src/index.js. */
+async function handleMarkets(request, env, actor, path, method) {
+  const respond = (result) => (result.code
+    ? apiError(result.status, result.code, result.message, result.details)
+    : json(result.body, { status: result.status }));
+
+  if (method === "GET" && path === "/api/admin/markets") return json({ markets: await listMarkets(env) });
+  if (method === "POST" && path === "/api/admin/markets") return respond(await createMarket(env, actor, await readJson(request).catch(() => ({}))));
+  if (method === "GET" && path === "/api/admin/markets/unassigned-locations") return json({ locations: await listUnassignedLocations(env) });
+  if (path === "/api/admin/markets/readiness-config") {
+    if (method === "GET") return json({ config: await getReadinessConfig(env) });
+    if (method === "PATCH") return respond(await updateReadinessConfig(env, actor, await readJson(request).catch(() => ({}))));
+  }
+
+  const marketMatch = path.match(/^\/api\/admin\/markets\/([^/]+)$/);
+  if (marketMatch) {
+    const marketId = decodeURIComponent(marketMatch[1]);
+    if (method === "GET") {
+      const market = await getMarket(env, marketId);
+      return market
+        ? json({ market, locations: await listMarketLocations(env, marketId) })
+        : apiError(404, "MARKET_NOT_FOUND", "That market was not found.");
+    }
+    if (method === "PATCH") return respond(await updateMarket(env, actor, marketId, await readJson(request).catch(() => ({}))));
+  }
+  const stateMatch = path.match(/^\/api\/admin\/markets\/([^/]+)\/state$/);
+  if (method === "POST" && stateMatch) return respond(await setMarketState(env, actor, decodeURIComponent(stateMatch[1]), await readJson(request).catch(() => ({}))));
+  // The computed recommendation only — see src/markets.js
+  // computeReadinessReport. Never writes `state`; setMarketState above is
+  // the only route that does, and only on an explicit admin call.
+  const readinessMatch = path.match(/^\/api\/admin\/markets\/([^/]+)\/readiness$/);
+  if (method === "GET" && readinessMatch) {
+    const report = await computeReadinessReport(env, decodeURIComponent(readinessMatch[1]));
+    return report ? json({ report }) : apiError(404, "MARKET_NOT_FOUND", "That market was not found.");
+  }
+  const assignMatch = path.match(/^\/api\/admin\/markets\/([^/]+)\/locations$/);
+  if (method === "POST" && assignMatch) {
+    const body = await readJson(request).catch(() => null);
+    return respond(await assignLocationToMarket(env, actor, decodeURIComponent(assignMatch[1]), cleanString(body?.locationId, 80)));
+  }
+  const unassignMatch = path.match(/^\/api\/admin\/locations\/([^/]+)\/market$/);
+  if (method === "DELETE" && unassignMatch) return respond(await unassignLocation(env, actor, decodeURIComponent(unassignMatch[1])));
+
+  return null;
+}
+
+/* ---------------------------------------------------------------- metrics --- */
+
+async function handleAlertThresholds(request, env, actor, method) {
+  if (method === "GET") return json({ thresholds: await getAlertThresholds(env) });
+  const body = await readJson(request).catch(() => null);
+  const result = await updateAlertThresholds(env, actor, body || {});
+  return result.code ? apiError(result.status, result.code, result.message) : json(result.body, { status: result.status });
+}
+
 /* ---------------------------------------------------------------- router --- */
 
 async function handleApi(request, env) {
@@ -1051,6 +1126,14 @@ async function handleApi(request, env) {
 
     const adminsMatch = path.match(/^\/api\/admin\/tenants\/([^/]+)\/admins$/);
     if (method === "POST" && adminsMatch) return seatAdmin(request, env, actor, decodeURIComponent(adminsMatch[1]));
+
+    if (path.startsWith("/api/admin/markets") || /^\/api\/admin\/locations\/[^/]+\/market$/.test(path)) {
+      const marketsResponse = await handleMarkets(request, env, actor, path, method);
+      if (marketsResponse) return marketsResponse;
+    }
+    if (method === "GET" && path === "/api/admin/metrics") return json(await getMetrics(env, url));
+    if (method === "GET" && path === "/api/admin/alerts") return json(await checkAlerts(env));
+    if (path === "/api/admin/alerts/thresholds") return handleAlertThresholds(request, env, actor, method);
 
     return apiError(404, "NOT_FOUND", "The requested admin API route does not exist.");
   }

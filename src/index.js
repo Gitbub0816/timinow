@@ -22,6 +22,8 @@ import { stripeConfigured, StripeError, verifyWebhookSignature } from "./stripe.
 import { findEmergencyVeterinaryPlaces, phoneKey } from "./mapbox-places.js";
 import { recordAnalyticsEvents } from "./analytics.js";
 import { listPets, savePet, removePet, syncPets, validatePet } from "./pets.js";
+import { resolveSearchMarket } from "./markets.js";
+import { marketplaceEventStatement, recordMarketplaceEvent } from "./metrics.js";
 import {
   getCareOffer,
   getCareSearch,
@@ -665,6 +667,11 @@ async function createCareSearch(request, env, actor) {
   const searchExpiresAt = isoAfter(6.5);
   const ageYears = numberInRange(validated.pet.ageYears, 0, 80);
   const weightLbs = numberInRange(validated.pet.weightLbs, 0.1, 3000);
+  // Measured, never enforced: a search outside every active market (or
+  // inside a red one) still runs against `candidates` above exactly as
+  // computed — this only tags the row for expansion planning. See
+  // src/markets.js resolveSearchMarket.
+  const { marketId, outOfMarket } = await resolveSearchMarket(env, latitude, longitude);
 
   if (!hasDatabase(env)) {
     const offers = candidates.slice(0, 5).map((location, index) => demoOffer(location, searchId, index));
@@ -702,8 +709,8 @@ async function createCareSearch(request, env, actor) {
       owner_name, owner_phone, owner_email, concern_category, concern_summary, urgency,
       red_flags_json, customer_latitude, customer_longitude, radius_miles, status,
       max_offers, target_limit, legal_version, legal_accepted_at, requested_at,
-      collection_expires_at, search_expires_at, medications, allergies
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'collecting', 5, ?, ?, ?, ?, ?, ?, ?, ?)
+      collection_expires_at, search_expires_at, medications, allergies, market_id, out_of_market
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'collecting', 5, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).bind(
     searchId, publicCode(), actor?.userId || null, cleanString(validated.pet.name, 80), validated.species,
     cleanString(validated.pet.breed, 120) || null, ageYears, weightLbs, cleanString(validated.owner.name, 120),
@@ -711,8 +718,11 @@ async function createCareSearch(request, env, actor) {
     cleanString(body.concernCategory, 80), validated.clinicConcernSummary, validated.urgency,
     JSON.stringify(validated.redFlags), latitude, longitude, radiusMiles, targetLimit,
     validated.legalVersion, now, now, collectionExpiresAt, searchExpiresAt,
-    validated.medications, validated.allergies
-  )];
+    validated.medications, validated.allergies, marketId, outOfMarket ? 1 : 0
+  ), marketplaceEventStatement(env, {
+    type: "search_started", searchId, marketId, outOfMarket, actorType: "customer",
+    meta: { urgency: validated.urgency, candidateCount: candidates.length }
+  })];
 
   candidates.forEach((location, rank) => {
     const targetId = newId("target");
@@ -812,6 +822,7 @@ export async function applyCareSearchDecision(env, {
       WHERE id = ? AND tenant_id = ? AND status IN ('contacting', 'awaiting_response')
     `).bind(now, now, target.id, tenantId).run();
     if (!result.meta?.changes) return fail(409, "TARGET_CHANGED", "Another team member handled this request first.");
+    await recordMarketplaceEvent(env, { type: "target_declined", searchId: search.id, targetId: target.id, tenantId, marketId: search.marketId, actorType: "clinic" });
     return { ok: true, target: { ...target, status: "declined", respondedAt: now } };
   }
 
@@ -875,6 +886,14 @@ export async function applyCareSearchDecision(env, {
     `).bind(now, now, search.id, search.id, now, search.id)
   ]);
   if (!results[0]?.meta?.changes) return fail(409, "OFFER_WINDOW_FULL", "The customer already has five active clinic offers.");
+  // Written after the batch, not inside it: the offer INSERT above is
+  // conditional (it no-ops once the offer window is full), and an event
+  // recorded unconditionally in the same batch would claim an offer was made
+  // on every call, including the ones OFFER_WINDOW_FULL just rejected.
+  await recordMarketplaceEvent(env, {
+    type: "offer_made", searchId: search.id, targetId: target.id, offerId, tenantId, locationId: location.id,
+    marketId: location.marketId, actorType: "clinic", meta: { responseType }
+  });
   return { ok: true, offerId, search: await getCareSearch(env, search.id) };
 }
 
@@ -981,6 +1000,10 @@ async function selectCareOffer(request, env, actor, searchId) {
     `).bind(JSON.stringify({ searchId: search.id, selectedOfferId: offer.id }), now, search.id, offer.targetId, intakeId)
   ]);
   if (!results[0]?.meta?.changes || !results[1]?.meta?.changes) return apiError(409, "SELECTION_RACE", "Another clinic offer was selected first. Refresh to continue.");
+  await recordMarketplaceEvent(env, {
+    type: "offer_selected", searchId: search.id, targetId: offer.targetId, offerId: offer.id, intakeId,
+    tenantId: offer.tenantId, locationId: offer.locationId, marketId: search.marketId, actorType: "customer"
+  });
   const intake = await getIntake(env, intakeId);
   return json({ intake, location: enrichLocation(offer.location), search: await getCareSearch(env, search.id) }, { status: 201 });
 }
@@ -995,7 +1018,8 @@ async function cancelCareSearch(env, actor, searchId) {
   await env.DB.batch([
     env.DB.prepare("UPDATE care_searches SET status = 'cancelled', updated_at = ? WHERE id = ? AND status IN ('collecting', 'offers_ready')").bind(now, search.id),
     env.DB.prepare("UPDATE care_search_targets SET status = 'released', released_at = ?, updated_at = ? WHERE search_id = ? AND status IN ('contacting', 'awaiting_response', 'offered')").bind(now, now, search.id),
-    env.DB.prepare("UPDATE care_offers SET status = 'released', updated_at = ? WHERE search_id = ? AND status = 'active'").bind(now, search.id)
+    env.DB.prepare("UPDATE care_offers SET status = 'released', updated_at = ? WHERE search_id = ? AND status = 'active'").bind(now, search.id),
+    marketplaceEventStatement(env, { type: "search_cancelled", searchId: search.id, marketId: search.marketId, actorType: "customer" })
   ]);
   return json({ search: await getCareSearch(env, search.id) });
 }
@@ -1689,6 +1713,16 @@ async function handleApi(request, env, ctx) {
       const search = await getCareSearch(env, searchId);
       if (!search) return apiError(404, "SEARCH_NOT_FOUND", "The care search was not found.");
       if (signInRequired(env) && search.customerUserId !== actor?.userId) return apiError(403, "SEARCH_ACCESS_DENIED", "This care search belongs to another account.");
+      // The one funnel step nothing else records — see src/metrics.js. The
+      // customer polls this endpoint repeatedly while offers come in;
+      // idempotencyKey keyed on the search id means only the first poll that
+      // finds an offer ever writes a row, not every poll after it.
+      if (search.offers.length) {
+        ctx?.waitUntil(recordMarketplaceEvent(env, {
+          type: "offers_viewed", searchId: search.id, marketId: search.marketId, outOfMarket: search.outOfMarket,
+          actorType: "customer", idempotencyKey: search.id
+        }));
+      }
       return json({ search });
     }
     if (method === "POST" && action === "select-offer") return selectCareOffer(request, env, actor, searchId);
