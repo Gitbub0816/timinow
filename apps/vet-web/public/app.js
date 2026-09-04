@@ -17,11 +17,14 @@ const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 
 const SETTINGS_KEY = "timi_vet_settings_v1";
 const RETURN_ROUTE_KEY = "timi_vet_return_route";
-const KNOWN_SCREENS = new Set(["sign-in", "workspace", "console", "people", "legal"]);
+const KNOWN_SCREENS = new Set(["sign-in", "workspace", "pill", "console", "people", "settings", "legal"]);
 const DEFAULT_SETTINGS = { pollSeconds: 6, alertsEnabled: true, playSound: true, autoOpenMini: true };
 
 const state = {
-  route: "console",
+  // Pill mode is the default lightweight surface reception lands on — see
+  // parseRoute() and the "sign-in"/"workspace" fallthrough in renderRoute().
+  // The full dashboard (#console) stays one click away but is never required.
+  route: "pill",
   config: null,
   clerk: null,
   session: null,
@@ -34,6 +37,8 @@ const state = {
   isBusy: false,
   statusMessage: "Connecting to Tími…",
   pollTimer: null,
+  pillExpanded: false,
+  pillWasStale: false,
   signIn: { stage: "identifier", identifier: "", attempt: null, factor: null, error: null, busy: false },
   people: null,
   miniWin: null,
@@ -415,9 +420,9 @@ function renderWorkspaceFailure(session) {
 /* ------------------------------------------------------------- routing --- */
 
 function parseRoute() {
-  const raw = location.hash.replace(/^#/, "") || "console";
+  const raw = location.hash.replace(/^#/, "") || "pill";
   const [route] = raw.split("?");
-  return KNOWN_SCREENS.has(route) ? route : "console";
+  return KNOWN_SCREENS.has(route) ? route : "pill";
 }
 
 function routeQuery() {
@@ -445,7 +450,7 @@ async function renderRoute() {
       }
       if (!state.clerk.organization) route = "workspace";
     } else if (route === "sign-in" || route === "workspace") {
-      route = "console";
+      route = "pill";
     }
   }
 
@@ -458,7 +463,8 @@ async function renderRoute() {
   $$("[data-nav]").forEach((link) => link.classList.toggle("active", link.dataset.nav === route));
   document.title = ({
     "sign-in": "Sign in · Tími Vet", workspace: "Choose a workspace · Tími Vet",
-    console: "Clinic operations · Tími Vet", people: "People · Tími Vet", legal: "Legal · Tími Vet"
+    pill: "Quick status · Tími Vet", console: "Clinic operations · Tími Vet",
+    people: "People · Tími Vet", settings: "Facility settings · Tími Vet", legal: "Legal · Tími Vet"
   })[route] || "Tími Vet";
 
   if (route === "sign-in") { renderSignIn(); return; }
@@ -480,8 +486,10 @@ async function renderRoute() {
     return;
   }
 
+  if (route === "pill") await enterPill();
   if (route === "console") await enterConsole();
   if (route === "people") await enterPeople();
+  if (route === "settings") await enterSettings();
   if (route === "legal") {
     const section = routeQuery().get("section") || "clinics";
     requestAnimationFrame(() => document.getElementById(section)?.scrollIntoView({ block: "start" }));
@@ -502,6 +510,16 @@ function setStatus(message) {
   renderMiniWindow();
 }
 
+/**
+ * Both #pill and #console poll the same dashboard endpoint, so the poll timer
+ * is shared rather than owned by either screen — switching between them never
+ * starts a second interval or loses the one already running.
+ */
+function ensureDashboardPolling() {
+  if (state.pollTimer) return;
+  state.pollTimer = window.setInterval(() => refreshDashboard(false), Math.max(3, Math.min(60, state.settings.pollSeconds)) * 1000);
+}
+
 async function enterConsole() {
   if (!enterConsole.tracked) {
     enterConsole.tracked = true;
@@ -509,8 +527,21 @@ async function enterConsole() {
   }
   syncSettingsForm();
   await refreshDashboard(true);
-  window.clearInterval(state.pollTimer);
-  state.pollTimer = window.setInterval(() => refreshDashboard(false), Math.max(3, Math.min(60, state.settings.pollSeconds)) * 1000);
+  ensureDashboardPolling();
+}
+
+async function enterPill() {
+  if (!enterPill.tracked) {
+    enterPill.tracked = true;
+    track("pill_opened");
+  }
+  await refreshDashboard(true);
+  ensureDashboardPolling();
+}
+
+async function enterSettings() {
+  if (!state.dashboard) await refreshDashboard(true);
+  hydrateSettingsForm(state.dashboard?.location);
 }
 
 async function refreshDashboard(initial) {
@@ -536,6 +567,11 @@ async function refreshDashboard(initial) {
         if (state.dashboardInitialized) newArrivals.push(request);
       }
     }
+    // A matching request arriving — or one already sitting in the queue the
+    // first time this console loads — is exactly when the pill needs to stop
+    // being quiet — expand it so reception sees Accept/Decline immediately,
+    // whether or not #pill happens to be the visible screen right now.
+    if (newArrivals.length || (!state.dashboardInitialized && pending.length)) setPillExpanded(true);
     state.dashboardInitialized = true;
 
     if (state.selectedRequestId && !dashboard.requests.some((r) => r.id === state.selectedRequestId)) {
@@ -545,6 +581,7 @@ async function refreshDashboard(initial) {
     renderQueue(dashboard.requests);
     renderDecisionWorkspace();
     renderMiniWindow();
+    renderPill();
 
     for (const request of newArrivals) await onNewPendingRequest(request);
 
@@ -732,6 +769,258 @@ function wireAvailabilityForm() {
       await refreshDashboard(true);
     } catch (error) {
       setStatus(error.message);
+      showToast(error.message);
+    } finally {
+      setBusy(false);
+    }
+  });
+}
+
+/* ------------------------------------------------------------- pill mode --- */
+
+function statusVocabLabel(status) {
+  return ({
+    available: "Accepting", limited: "Limited", confirm_first: "Confirm first",
+    critical_only: "Critical only", diverting: "Diverting", closed: "Closed", unverified: "Unverified"
+  })[status] || "Unverified";
+}
+
+function minutesAgo(iso) {
+  const ms = timestampMs(iso);
+  return Number.isFinite(ms) ? Math.max(0, Math.round((Date.now() - ms) / 60_000)) : null;
+}
+
+function setPillExpanded(expanded) {
+  state.pillExpanded = expanded;
+  const panel = $("[data-pill-panel]");
+  const toggle = $("[data-pill-toggle]");
+  if (!panel || !toggle) return;
+  panel.hidden = !expanded;
+  toggle.setAttribute("aria-expanded", String(expanded));
+}
+
+function flashPillWidget() {
+  const widget = $("[data-pill-toggle]");
+  if (!widget) return;
+  widget.classList.remove("is-flash");
+  void widget.offsetWidth; // restart the CSS animation
+  widget.classList.add("is-flash");
+  window.setTimeout(() => widget.classList.remove("is-flash"), 1100);
+}
+
+/** One quiet WebAudio chime — a single soft tone, distinct from the sharper
+ *  new-request alert beep, marking the moment a status goes stale. */
+function playStaleChime() {
+  try {
+    audioContext = audioContext || new (window.AudioContext || window.webkitAudioContext)();
+    const oscillator = audioContext.createOscillator();
+    const gain = audioContext.createGain();
+    oscillator.type = "sine";
+    oscillator.frequency.value = 523;
+    gain.gain.setValueAtTime(0.0001, audioContext.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.08, audioContext.currentTime + 0.05);
+    gain.gain.exponentialRampToValueAtTime(0.0001, audioContext.currentTime + 0.6);
+    oscillator.connect(gain).connect(audioContext.destination);
+    oscillator.start();
+    oscillator.stop(audioContext.currentTime + 0.65);
+  } catch { /* WebAudio unavailable */ }
+}
+
+/** The pill widget: dot, label, remaining capacity, freshness line, and the
+ *  persistent stale border once the published status has expired. Tími's
+ *  backend already treats an expired report as "unverified" (see
+ *  availabilityFromRow in src/db.js); this only reflects that in the UI. */
+function renderPill() {
+  const availability = state.dashboard?.location?.availability;
+  const dot = $("[data-pill-dot]");
+  const label = $("[data-pill-label]");
+  const capacity = $("[data-pill-capacity]");
+  const freshness = $("[data-pill-freshness]");
+  const widget = $("[data-pill-toggle]");
+  if (!availability || !dot || !widget) return;
+
+  const status = availability.intakeStatus;
+  dot.className = `pill-dot status-${status}`;
+  label.textContent = statusVocabLabel(status);
+  capacity.textContent = availability.capacityCount != null ? `· ${availability.capacityCount}` : "";
+
+  const stale = Boolean(availability.stale);
+  if (stale) {
+    const age = minutesAgo(availability.expiresAt);
+    freshness.textContent = age == null ? "No status published yet — update to publish one." : `Status expired ${age} min ago. Unverified until you update it.`;
+  } else {
+    const reported = minutesAgo(availability.reportedAt);
+    freshness.textContent = `Confirmed ${reported == null ? "moments ago" : `${reported} min ago`} · expires ${formatClock(availability.expiresAt)}`;
+  }
+  freshness.classList.toggle("is-stale", stale);
+  widget.classList.toggle("is-stale", stale);
+
+  if (stale && !state.pillWasStale) {
+    playStaleChime();
+    flashPillWidget();
+  }
+  state.pillWasStale = stale;
+
+  hydratePillForm(availability);
+  renderPillRequests();
+}
+
+function hydratePillForm(availability) {
+  const form = $("[data-pill-status-form]");
+  if (!form || form.dataset.userEdited === "true") return;
+  const value = availability.intakeStatus === "unverified" ? "available" : availability.intakeStatus;
+  const radio = form.querySelector(`input[name="intakeStatus"][value="${value}"]`);
+  if (radio) radio.checked = true;
+  form.elements.capacityCount.value = availability.capacityCount ?? 3;
+  form.elements.ttlMinutes.value = "30";
+}
+
+function wirePillStatusForm() {
+  const toggle = $("[data-pill-toggle]");
+  toggle.addEventListener("click", () => setPillExpanded(!state.pillExpanded));
+
+  const form = $("[data-pill-status-form]");
+  form.addEventListener("input", () => { form.dataset.userEdited = "true"; });
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const values = new FormData(form);
+    const availability = state.dashboard?.location?.availability || {};
+    setBusy(true);
+    try {
+      await api("/api/clinic/availability", {
+        method: "POST",
+        body: JSON.stringify({
+          intakeStatus: values.get("intakeStatus") || "available",
+          stableWaitMin: availability.stableWaitMin,
+          stableWaitMax: availability.stableWaitMax,
+          capacityCount: Number(values.get("capacityCount")) || 0,
+          ttlMinutes: Number(values.get("ttlMinutes")) || 30,
+          acceptsCritical: availability.acceptsCritical !== false,
+          note: availability.note || ""
+        })
+      });
+      form.dataset.userEdited = "false";
+      setStatus("Live intake status published.");
+      await refreshDashboard(true);
+    } catch (error) {
+      setStatus(error.message);
+      showToast(error.message);
+    } finally {
+      setBusy(false);
+    }
+  });
+}
+
+/**
+ * The pending request the pill surfaces for a decision. Accept and Decline
+ * reuse submitDecision() — the exact same /api/clinic/intakes/.../decision
+ * and /api/clinic/search-targets/.../decision calls the full decision
+ * workspace uses — so there is one place that knows how to answer a request,
+ * not two.
+ */
+function renderPillRequests() {
+  const slot = $("[data-pill-request-slot]");
+  if (!slot) return;
+  const pending = (state.dashboard?.requests || []).filter((r) => r.status === "pending");
+  const request = pending[0];
+  if (!request) { slot.innerHTML = ""; return; }
+
+  const emergency = isEmergency(request);
+  const isSearch = Boolean(request.searchTarget);
+  slot.innerHTML = `
+    <div class="pill-request ${emergency ? "is-emergency" : ""}">
+      <p class="pill-request-eyebrow">${emergency ? "EMERGENCY REQUEST" : "NEW REQUEST"}${pending.length > 1 ? ` · +${pending.length - 1} more waiting` : ""}</p>
+      <h3>${escapeHtml(petLine(request))}</h3>
+      <p>${escapeHtml(truncate(request.concernSummary, 140))}</p>
+      <p class="pill-request-meta">${escapeHtml(travelLabel(request))} · ${escapeHtml(formatClock(request.requestedAt))}</p>
+      <form data-pill-decision-form>
+        <div class="pill-accept-fields" data-pill-accept-fields hidden>
+          ${isSearch
+            ? `<label class="field">Estimated wait (min)<input name="waitMin" type="number" min="0" max="1440" value="20" data-pill-wait-sync></label>
+               <input type="hidden" name="waitMax" value="20">
+               <input type="hidden" name="arrivalWindowMinutes" value="30">`
+            : `<label class="field">Arrival window (min)<input name="arrivalWindowMinutes" type="number" min="5" max="180" value="30"></label>`}
+          <label class="field">Instructions for the owner <span style="font-weight:400">(optional)</span>
+            <textarea name="note" rows="2" maxlength="500" placeholder="Entrance, parking, or what to bring"></textarea>
+          </label>
+          <input type="hidden" name="responseType" value="${emergency ? "emergency_intake" : "available_now"}">
+          <input type="hidden" name="holdMinutes" value="5">
+          <div class="button-row">
+            <button class="button button-quiet" type="button" data-pill-cancel-accept>Back</button>
+            <button class="button button-coral" type="submit">Confirm &amp; send</button>
+          </div>
+        </div>
+        <div class="pill-decision-actions" data-pill-decision-actions>
+          <button class="button button-quiet" type="button" data-pill-decline>Decline</button>
+          <button class="button button-coral" type="button" data-pill-accept>Accept</button>
+        </div>
+      </form>
+    </div>`;
+
+  const form = $("[data-pill-decision-form]", slot);
+  const acceptFields = $("[data-pill-accept-fields]", form);
+  const decisionActions = $("[data-pill-decision-actions]", form);
+  $("[data-pill-accept]", form).addEventListener("click", () => { acceptFields.hidden = false; decisionActions.hidden = true; });
+  $("[data-pill-cancel-accept]", form).addEventListener("click", () => { acceptFields.hidden = true; decisionActions.hidden = false; });
+  $("[data-pill-decline]", form).addEventListener("click", () => submitDecision(request, form, true));
+  $("[data-pill-wait-sync]", form)?.addEventListener("input", (event) => { form.elements.waitMax.value = event.target.value; });
+  form.addEventListener("submit", (event) => { event.preventDefault(); submitDecision(request, form, false); });
+}
+
+/* --------------------------------------------------- facility settings --- */
+
+function hydrateSettingsForm(location) {
+  const form = $("[data-settings-form]");
+  if (!form || !location) return;
+  form.elements.kind.value = location.kind || "general";
+  const capabilities = location.capabilities || [];
+  form.elements.emergencyCapable.checked = capabilities.includes("emergency");
+  $$('input[name="species"]', form).forEach((box) => { box.checked = (location.species || []).includes(box.value); });
+  const knownCapabilityBoxes = $$('input[name="capability"]', form);
+  knownCapabilityBoxes.forEach((box) => { box.checked = capabilities.includes(box.value); });
+  const known = new Set([...knownCapabilityBoxes.map((box) => box.value), "emergency"]);
+  form.elements.otherCapabilities.value = capabilities.filter((value) => !known.has(value)).join(", ");
+  form.elements.open24Hours.checked = Boolean(location.open24Hours);
+  form.elements.acceptsWalkIns.checked = location.acceptsWalkIns !== false;
+  form.elements.arrivalWindowMinutes.value = location.arrivalWindowMinutes ?? 20;
+  form.elements.baseExamFeeCents.value = location.baseExamFeeCents != null ? Math.round(location.baseExamFeeCents / 100) : "";
+  form.elements.hoursNote.value = location.hours?.note || "";
+  form.elements.staffingLevel.value = location.staffingLevel || "veterinarian";
+  form.elements.staffingNote.value = location.staffingNote || "";
+}
+
+function wireSettingsPageForm() {
+  const form = $("[data-settings-form]");
+  if (!form) return;
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const values = new FormData(form);
+    const capabilities = new Set(values.getAll("capability"));
+    if (values.get("emergencyCapable")) capabilities.add("emergency"); else capabilities.delete("emergency");
+    (values.get("otherCapabilities") || "").toString().split(",")
+      .map((value) => value.trim().toLowerCase()).filter(Boolean)
+      .forEach((value) => capabilities.add(value));
+    const feeDollars = values.get("baseExamFeeCents");
+    setBusy(true);
+    try {
+      const { location } = await api("/api/clinic/settings", {
+        method: "POST",
+        body: JSON.stringify({
+          kind: values.get("kind"),
+          species: values.getAll("species"),
+          capabilities: [...capabilities],
+          open24Hours: form.elements.open24Hours.checked,
+          acceptsWalkIns: form.elements.acceptsWalkIns.checked,
+          arrivalWindowMinutes: Number(values.get("arrivalWindowMinutes")) || 20,
+          baseExamFeeCents: feeDollars ? Math.round(Number(feeDollars) * 100) : undefined,
+          hoursNote: values.get("hoursNote")?.toString() || "",
+          staffingLevel: values.get("staffingLevel"),
+          staffingNote: values.get("staffingNote")?.toString() || ""
+        })
+      });
+      if (state.dashboard) state.dashboard.location = location;
+      showToast("Facility settings saved.");
+    } catch (error) {
       showToast(error.message);
     } finally {
       setBusy(false);
@@ -1089,6 +1378,8 @@ async function main() {
   try {
     wireGlobalActions();
     wireAvailabilityForm();
+    wirePillStatusForm();
+    wireSettingsPageForm();
     wireSettingsForm();
     await loadConfig();
     await renderRoute();
