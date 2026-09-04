@@ -51,6 +51,12 @@ import {
   resolveClinicOperator,
   revokeWorkstation
 } from "../../../src/workstation.js";
+import {
+  handleCreateWidgetToken,
+  handleListWidgetTokens,
+  handleRevokeWidgetToken
+} from "../../../src/widget.js";
+import { getOrCreateReferralLink } from "../../../src/referrals.js";
 
 const JSON_HEADERS = { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" };
 const SECURITY_HEADERS = {
@@ -281,6 +287,18 @@ async function handleApi(request, env) {
       const targetResponse = await respondToCareSearch(request, env, operatorActor, tenantId, targetId);
       if (workstationSessionId) await logWorkstationAction(env, workstationSessionId, "search_target_decision", { targetId, status: targetResponse.status });
       return targetResponse;
+    }
+    // Also here, for the same reason payouts and call-preferences are: the
+    // desktop and web consoles both point at providers.timinow.pet, so the
+    // "Overflow tools" panel's own requests land on this Worker. Admin
+    // management, not routine operation: org member only, never a
+    // workstation session.
+    if (method === "GET" && path === "/api/clinic/widget-tokens") return handleListWidgetTokens(env, tenantId);
+    if (method === "POST" && path === "/api/clinic/widget-tokens") return handleCreateWidgetToken(request, env, actor, tenantId);
+    const widgetTokenMatch = path.match(/^\/api\/clinic\/widget-tokens\/([^/]+)$/);
+    if (method === "DELETE" && widgetTokenMatch) return handleRevokeWidgetToken(env, actor, tenantId, decodeURIComponent(widgetTokenMatch[1]));
+    if (method === "GET" && path === "/api/clinic/referral-link") {
+      return json({ referralLink: await getOrCreateReferralLink(env, actor, tenantId) });
     }
   }
 

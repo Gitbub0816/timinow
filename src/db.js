@@ -277,7 +277,14 @@ function normalizeCareSearchRow(row) {
     firstOfferAt: row.first_offer_at,
     smsNotifiedAt: row.sms_notified_at,
     createdAt: row.created_at,
-    updatedAt: row.updated_at
+    updatedAt: row.updated_at,
+    // Traffic-source / campaign attribution — optional on every row, null on
+    // every row written before migrations/0022. See src/referrals.js and the
+    // boot-time capture in public/app.js.
+    attributionSource: row.attribution_source || null,
+    attributionMedium: row.attribution_medium || null,
+    attributionCampaign: row.attribution_campaign || null,
+    referralSlug: row.referral_slug || null
   };
 }
 
@@ -589,7 +596,12 @@ export function normalizeIntakeRow(row) {
     sourceSearchId: row.source_search_id || null,
     selectedOfferId: row.selected_offer_id || null,
     createdAt: row.created_at,
-    updatedAt: row.updated_at
+    updatedAt: row.updated_at,
+    // See the matching fields on normalizeCareSearchRow above.
+    attributionSource: row.attribution_source || null,
+    attributionMedium: row.attribution_medium || null,
+    attributionCampaign: row.attribution_campaign || null,
+    referralSlug: row.referral_slug || null
   };
 }
 

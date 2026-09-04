@@ -23,7 +23,7 @@ const RETURN_ROUTE_KEY = "timi_vet_return_route";
 // remember, across a reload, that it should behave as a workstation rather
 // than prompt for a Clerk sign-in it does not need.
 const WORKSTATION_KEY = "timi_vet_workstation_v1";
-const KNOWN_SCREENS = new Set(["sign-in", "workspace", "pill", "console", "billing", "people", "settings", "legal"]);
+const KNOWN_SCREENS = new Set(["sign-in", "workspace", "pill", "console", "billing", "overflow", "people", "settings", "legal"]);
 const DEFAULT_SETTINGS = { pollSeconds: 6, alertsEnabled: true, playSound: true, autoOpenMini: true };
 
 function readWorkstation() {
@@ -72,6 +72,7 @@ const state = {
   people: null,
   workstation: readWorkstation(),
   workstations: null,
+  overflow: { widgetTokens: [], referralLink: null, newSecret: null, loaded: false },
   miniWin: null,
   miniKind: null // "pip" | "popup"
 };
@@ -584,6 +585,7 @@ async function renderRoute() {
   document.title = ({
     "sign-in": "Sign in · Tími Vet", workspace: "Choose a workspace · Tími Vet",
     pill: "Quick status · Tími Vet", console: "Clinic operations · Tími Vet", billing: "Billing · Tími Vet",
+    overflow: "Overflow tools · Tími Vet",
     people: "People · Tími Vet", settings: "Facility settings · Tími Vet", legal: "Legal · Tími Vet"
   })[route] || "Tími Vet";
 
@@ -620,6 +622,7 @@ async function renderRoute() {
   if (route === "pill") await enterPill();
   if (route === "console") await enterConsole();
   if (route === "billing") await enterBilling();
+  if (route === "overflow") await enterOverflow();
   if (route === "people") await enterPeople();
   if (route === "settings") await enterSettings();
   if (route === "legal") {
@@ -1691,6 +1694,177 @@ function renderPeople() {
       } catch (error) { showToast(error.message); }
     });
   });
+}
+
+/* ------------------------------------------------------------- overflow --- */
+/* "Overflow tools" — a stable referral link (+ QR code) and copy-ready
+   wording for turning a pet owner away from a full waiting room and toward
+   Tími's own search, plus the embeddable clinic-website widget's token
+   management. See src/referrals.js and src/widget.js. */
+
+async function copyToClipboard(text, label) {
+  try {
+    await navigator.clipboard.writeText(text);
+    showToast(`${label} copied.`);
+  } catch {
+    showToast("Could not copy automatically — select and copy the text.");
+  }
+}
+
+function customerAppOrigin() {
+  return (state.config?.customerAppUrl || "https://timinow.pet").replace(/\/+$/, "");
+}
+
+function referralUrl() {
+  const slug = state.overflow.referralLink?.slug;
+  return slug ? `${customerAppOrigin()}/r/${encodeURIComponent(slug)}` : "";
+}
+
+/** Neutral, network-routing wording — never names a specific competitor. */
+function overflowScripts(link) {
+  return [
+    {
+      key: "voicemail",
+      title: "Voicemail script",
+      text: `You've reached us outside of what we're able to accept right now. For current, nearby veterinary availability, visit ${link}. If this is an emergency, please contact the nearest emergency animal hospital.`
+    },
+    {
+      key: "sms",
+      title: "SMS auto-reply",
+      text: `We're currently unable to accept additional cases. Check current nearby veterinary availability through Tími: ${link}`
+    },
+    {
+      key: "front-desk",
+      title: "Front-desk phrase",
+      text: `I'm sorry, we're not able to take new patients right now. You can check which nearby clinics have availability through Tími — here's the link: ${link}`
+    }
+  ];
+}
+
+async function enterOverflow() {
+  const mount = $("[data-overflow-body]");
+  if (!state.overflow.loaded) mount.innerHTML = `<p class="workspace-empty">Loading overflow tools…</p>`;
+  try {
+    const [tokens, referral] = await Promise.all([
+      api("/api/clinic/widget-tokens"),
+      api("/api/clinic/referral-link")
+    ]);
+    state.overflow.widgetTokens = tokens.tokens || [];
+    state.overflow.referralLink = referral.referralLink || null;
+    state.overflow.loaded = true;
+    renderOverflow();
+  } catch (error) {
+    mount.innerHTML = `<p class="workspace-fail">${escapeHtml(error.message)}</p>`;
+  }
+}
+
+function renderOverflow() {
+  const mount = $("[data-overflow-body]");
+  const canManage = isSelfAdmin();
+  const link = referralUrl();
+  const scripts = link ? overflowScripts(link) : [];
+
+  mount.innerHTML = `
+    <div class="card" style="margin-bottom:1.2rem">
+      <p class="eyebrow">STABLE REFERRAL LINK</p>
+      <h2 style="font-family:var(--serif);font-size:1.4rem;margin:.2rem 0 .6rem">Send owners to Tími when you can't take them</h2>
+      ${link ? `
+        <div class="field-row" style="align-items:flex-start;gap:1.5rem;flex-wrap:wrap">
+          <div style="flex:1;min-width:220px">
+            <label class="field">Your link<input type="text" readonly value="${escapeHtml(link)}" data-referral-input></label>
+            <button class="button button-quiet" type="button" data-copy="${escapeHtml(link)}" data-copy-label="Referral link" style="margin-top:.5rem">Copy link</button>
+            <p style="font-size:.72rem;color:var(--muted);margin-top:.6rem">Clicked ${state.overflow.referralLink?.clickCount ?? 0} time${state.overflow.referralLink?.clickCount === 1 ? "" : "s"}. This link always leads into Tími's own nearby-clinic search — never a named competitor.</p>
+          </div>
+          <div>
+            <p style="font-size:.68rem;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;margin:0 0 .4rem">QR CODE</p>
+            <div data-referral-qr style="background:#fff;border:1px solid var(--line);border-radius:8px;padding:8px;display:inline-block"></div>
+          </div>
+        </div>` : `<p class="workspace-empty">Could not load your referral link.</p>`}
+    </div>
+
+    ${scripts.length ? `
+    <div class="card" style="margin-bottom:1.2rem">
+      <p class="eyebrow">COPY-READY WORDING</p>
+      <h2 style="font-family:var(--serif);font-size:1.4rem;margin:.2rem 0 .6rem">Say it the same way every time</h2>
+      ${scripts.map((script) => `
+        <div style="margin-bottom:1rem">
+          <strong style="font-size:.85rem">${escapeHtml(script.title)}</strong>
+          <p style="font-size:.82rem;color:var(--ink-soft);margin:.3rem 0">${escapeHtml(script.text)}</p>
+          <button class="button button-quiet" type="button" data-copy="${escapeHtml(script.text)}" data-copy-label="${escapeHtml(script.title)}">Copy</button>
+        </div>`).join("")}
+    </div>` : ""}
+
+    <div class="card">
+      <p class="eyebrow">WEBSITE STATUS WIDGET</p>
+      <h2 style="font-family:var(--serif);font-size:1.4rem;margin:.2rem 0 .6rem">Embed live status on your own site</h2>
+      <p style="font-size:.82rem;color:var(--ink-soft);margin:0 0 .8rem">A small card pet owners see on your website: whether you're currently accepting urgent patients, and — if not — a link into Tími to find another available team. It never shows your name, address, exact capacity, or any customer data. See <a href="https://timinow.pet/docs/WIDGET.md" target="_blank" rel="noopener noreferrer">what it can and can't access</a>.</p>
+      ${canManage ? `
+      <div class="people-add" style="margin-bottom:1rem">
+        <label class="field">Label (optional)<input type="text" data-widget-label placeholder="Front page badge" maxlength="80"></label>
+        <label class="field">Allowed sites (optional, one per line)<textarea data-widget-origins rows="2" placeholder="https://www.yourclinic.example"></textarea></label>
+        <button class="button button-primary" type="button" data-widget-create>Create widget token</button>
+      </div>` : ""}
+      ${state.overflow.newSecret ? `
+        <div class="disclaimer-banner" style="margin-bottom:1rem">
+          <strong>Save this now — it won't be shown again.</strong>
+          <p style="font-size:.78rem;margin:.4rem 0"><code style="word-break:break-all">${escapeHtml(state.overflow.newSecret)}</code></p>
+          <p style="font-size:.78rem;margin:.4rem 0">Paste this on your site:</p>
+          <pre style="font-size:.72rem;white-space:pre-wrap;word-break:break-all;background:var(--canvas);padding:.6rem;border-radius:6px">&lt;script src="${escapeHtml(customerAppOrigin())}/widget.js" data-timi-widget="${escapeHtml(state.overflow.newSecret)}"&gt;&lt;/script&gt;</pre>
+          <button class="button button-quiet" type="button" data-copy="&lt;script src=&quot;${escapeHtml(customerAppOrigin())}/widget.js&quot; data-timi-widget=&quot;${escapeHtml(state.overflow.newSecret)}&quot;&gt;&lt;/script&gt;" data-copy-label="Embed snippet">Copy embed snippet</button>
+          <button class="button button-quiet" type="button" data-widget-secret-dismiss style="margin-left:.5rem">I've saved it</button>
+        </div>` : ""}
+      <table class="people-table">
+        <thead><tr><th>Label</th><th>Token</th><th>Sites</th><th>Last used</th><th></th></tr></thead>
+        <tbody>${state.overflow.widgetTokens.map((token) => `
+          <tr data-widget-token="${escapeHtml(token.id)}">
+            <td>${escapeHtml(token.label || "—")}</td>
+            <td><code>${escapeHtml(token.prefix)}…</code></td>
+            <td>${token.allowedOrigins.length ? escapeHtml(token.allowedOrigins.join(", ")) : "Any site"}</td>
+            <td>${token.lastUsedAt ? escapeHtml(formatClock(token.lastUsedAt)) : "Never"}</td>
+            <td class="row-actions">${canManage ? `<button type="button" data-widget-revoke>Revoke</button>` : ""}</td>
+          </tr>`).join("") || `<tr><td colspan="5">No widget tokens yet.</td></tr>`}
+        </tbody>
+      </table>
+      ${!canManage ? '<p class="people-note" style="margin-top:1rem">Only a workspace administrator can create or revoke widget tokens.</p>' : ""}
+    </div>`;
+
+  if (link && window.TimiQR) {
+    try {
+      window.TimiQR.renderInto($("[data-referral-qr]", mount), link, { moduleSize: 4, margin: 2 });
+    } catch (error) {
+      console.warn("QR render failed", error);
+    }
+  }
+
+  $$("[data-copy]", mount).forEach((button) => {
+    button.addEventListener("click", () => copyToClipboard(button.dataset.copy, button.dataset.copyLabel || "Text"));
+  });
+  $("[data-widget-secret-dismiss]", mount)?.addEventListener("click", () => {
+    state.overflow.newSecret = null;
+    renderOverflow();
+  });
+
+  if (canManage) {
+    $("[data-widget-create]", mount)?.addEventListener("click", async () => {
+      const label = $("[data-widget-label]", mount).value.trim();
+      const origins = $("[data-widget-origins]", mount).value.split("\n").map((line) => line.trim()).filter(Boolean);
+      try {
+        const data = await api("/api/clinic/widget-tokens", { method: "POST", body: JSON.stringify({ label, allowedOrigins: origins }) });
+        state.overflow.newSecret = data.token.secret;
+        await enterOverflow();
+      } catch (error) { showToast(error.message); }
+    });
+    $$("[data-widget-token]", mount).forEach((row) => {
+      row.querySelector("[data-widget-revoke]")?.addEventListener("click", async () => {
+        if (!confirm("Revoke this widget token? Any site embedding it will stop showing live status.")) return;
+        try {
+          await api(`/api/clinic/widget-tokens/${encodeURIComponent(row.dataset.widgetToken)}`, { method: "DELETE" });
+          showToast("Widget token revoked.");
+          await enterOverflow();
+        } catch (error) { showToast(error.message); }
+      });
+    });
+  }
 }
 
 /* ------------------------------------------------------------------ boot --- */

@@ -58,6 +58,7 @@
           <a href="#pill" data-nav="pill">Quick status</a>
           <a href="#console" data-nav="console">Full dashboard</a>
           <a href="#billing" data-nav="billing">Billing</a>
+          <a href="#overflow" data-nav="overflow">Overflow tools</a>
           <a href="#people" data-nav="people">People</a>
           <a href="#settings" data-nav="settings">Facility settings</a>
           <a href="#legal?section=clinics" data-nav="legal">Legal</a>
@@ -278,6 +279,7 @@
           <a href="#pill" data-nav="pill">Quick status</a>
           <a href="#console" data-nav="console">Full dashboard</a>
           <a href="#billing" data-nav="billing">Billing</a>
+          <a href="#overflow" data-nav="overflow">Overflow tools</a>
           <a href="#people" data-nav="people">People</a>
           <a href="#settings" data-nav="settings">Facility settings</a>
           <a href="#legal?section=clinics" data-nav="legal">Legal</a>
@@ -406,6 +408,32 @@
       </div>
     </section>
 
+    <!-- ============================================================ overflow -->
+    <section class="screen overflow-screen" data-screen="overflow" aria-labelledby="overflow-title">
+      <aside class="vet-rail">
+        <div>
+          <img class="brand-mark" src="/assets/brand/timinow-wordmark.svg" alt="Tími NOW">
+          <p class="rail-kicker">VETERINARY OPERATIONS</p>
+        </div>
+        <nav class="rail-nav" style="margin-top:42px">
+          <a href="#console" data-nav="console">Operations</a>
+          <a href="#overflow" data-nav="overflow">Overflow tools</a>
+          <a href="#people" data-nav="people">People</a>
+          <a href="#legal?section=clinics" data-nav="legal">Legal</a>
+        </nav>
+        <div class="rail-spacer"></div>
+        <div class="rail-footer">
+          <button class="button rail-signout" type="button" data-action="sign-out">Sign out</button>
+        </div>
+      </aside>
+      <div class="people-main">
+        <p class="eyebrow">WHEN YOU CAN'T TAKE MORE CASES</p>
+        <h1 id="overflow-title" style="font-family:var(--serif);font-size:2rem;margin-bottom:.3rem">Overflow tools</h1>
+        <p class="people-note">A stable link, a QR code, and ready-to-read wording for the moments a full waiting room means turning pet owners toward another available team instead of nothing — plus an embeddable status card for your own website.</p>
+        <div data-overflow-body>Loading…</div>
+      </div>
+    </section>
+
     <!-- ================================================================ legal -->
     <section class="screen legal-screen" data-screen="legal" aria-labelledby="legal-title">
       <div class="legal-back-bar">
@@ -431,6 +459,7 @@
   </main>
 
   <div class="toast" role="status" aria-live="polite" data-toast></div>
+  <script src="/vendor/qrcode.js"></script>
   <script src="/app.js" type="module"></script>
 </body>
 </html>
