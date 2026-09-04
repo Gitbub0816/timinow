@@ -18,19 +18,56 @@ and all four set `SIGN_IN_REQUIRED = "true"` and `DEMO_MODE = "false"`.
 
 ## Authorization model
 
-There are exactly three authority levels.
+There are exactly three authority levels, plus two narrower, purpose-built
+sessions that stand in for the first two without a Clerk login: a **guest
+session** stands in for a customer, and a **workstation session** stands in
+for a tenant member on a fixed, short list of routine operations.
 
-1. **Customer** — any signed-in Clerk user with no active organization. Reaches
-   the customer API only.
-2. **Tenant member / tenant administrator** — a Clerk organization member. The
-   organization maps to `tenants.clerk_org_id`. An administrator (`org:admin`)
-   may add and remove people **inside their own organization only**.
+1. **Customer** — any signed-in Clerk user with no active organization, or an
+   anonymous **guest session** (below). Reaches the customer API only.
+2. **Tenant member / tenant administrator** — a Clerk organization member, or
+   — for routine clinic operations only — a **workstation session** (below).
+   The organization maps to `tenants.clerk_org_id`. An administrator
+   (`org:admin`) may add and remove people, and create and revoke
+   workstations, **inside their own organization only**.
 3. **Platform operator** — listed in `PLATFORM_ADMIN_USER_IDS` /
    `PLATFORM_ADMIN_EMAILS` on the admin Worker, or present in `platform_admins`.
    Only a platform operator may create a tenant.
 
 Tenant creation is deliberately unreachable from the customer Worker and from the
 veterinary console; `scripts/validate.mjs` asserts this.
+
+### Guest sessions — booking without an account
+
+A pet owner must be able to search, get offers, pay, and book with nothing
+more than a phone number typed into the intake form. `SIGN_IN_REQUIRED` is
+`"true"` on every production Worker, so this is backed by a **guest
+session**: a random id minted on first contact and carried in a signed,
+httpOnly cookie (`src/guest-session.js`), never by relaxing
+`SIGN_IN_REQUIRED` itself. The guest id fills `customer_user_id` /
+`clerk_user_id` exactly like a Clerk user id would, so every ownership check
+already written against those columns scopes a guest's rows correctly with
+no special-casing, and a second guest can never read or write the first
+guest's data.
+
+Clerk's phone-code sign-in (already wired in `public/app.js`, one field plus
+a one-time code) is the *optional* upgrade path, never a requirement: once a
+booking exists, `POST /api/account/adopt-guest` merges the guest session's
+pets, intakes, and care searches onto the now-authenticated Clerk user,
+idempotently (`account_adoptions`; see `src/account-adoption.js`).
+
+### Workstation sessions — a shared reception desk
+
+Routine clinic operations — availability/capacity, and accepting, declining,
+or offering on a request — do not require an individual Clerk login. A
+workspace administrator names a workstation ("Front desk 1") and receives a
+one-time enrollment token (shown once, stored only hashed); entering it opens
+a durable, revocable session (`src/workstation.js`). Every action a
+workstation session takes is still attributed — clinic, workstation, session,
+and timestamp — via `workstation_audit_log`, and revoking a workstation
+invalidates every session it ever established immediately. Everything else
+(settings, payouts, call preferences, people, creating or revoking a
+workstation) still requires an individually signed-in org member.
 
 ## Clerk metadata contract
 
@@ -82,6 +119,24 @@ Served identically by all three Workers unless noted.
 | `PATCH` | `/api/tenant/members/:userId` | tenant admin | `{ role }` |
 | `DELETE` | `/api/tenant/members/:userId` | tenant admin | Remove from workspace |
 | `DELETE` | `/api/tenant/invitations/:id` | tenant admin | Revoke a pending invitation |
+| `POST` | `/api/account/adopt-guest` | signed in | Merge the caller's guest session (pets, intakes, searches) onto their account |
+
+Clinic operations, served identically by `timinow` and `timinow-vet`. Routes
+marked "routine" accept an org member **or** a workstation session; every
+other clinic route still requires an org member:
+
+| Method | Path | Who | Purpose |
+| --- | --- | --- | --- |
+| `POST` | `/api/clinic/workstations/session` | public (enrollment token) | Redeem a workstation's enrollment token for a session |
+| `DELETE` | `/api/clinic/workstations/session` | workstation session | End just this device's session |
+| `GET` / `POST` | `/api/clinic/workstations` | tenant admin | List / create a workstation (the token is returned once, on create) |
+| `DELETE` | `/api/clinic/workstations/:id` | tenant admin | Revoke a workstation and every session it established |
+| `GET` | `/api/clinic/dashboard` | org member or workstation (routine) | The live queue and current availability |
+| `POST` | `/api/clinic/availability` | org member or workstation (routine) | Publish intake status and capacity |
+| `POST` | `/api/clinic/intakes/:id/decision` | org member or workstation (routine) | Accept or decline a direct intake |
+| `POST` | `/api/clinic/search-targets/:id/decision` | org member or workstation (routine) | Offer or decline on a multi-clinic search |
+| `GET` | `/api/clinic/payouts` | org member | Settlement ledger |
+| `GET` / `PATCH` | `/api/clinic/call-preferences` | org member | Voice calling policy |
 
 Admin Worker only:
 

@@ -88,10 +88,22 @@ response = await call("/api/clinic/availability", {
 body = await response.json();
 assert(response.status === 201 && body.demo === true && body.location.availability.intakeStatus === "limited", "Fixture clinic capacity must be publishable");
 
+// A pet owner must be able to start an intake as a guest — no Clerk account —
+// even in production, where SIGN_IN_REQUIRED is always "true"
+// (docs/PLATFORM-CONTRACT.md). The request still has to pass ordinary
+// validation; only the *authentication* requirement is gone. See
+// src/guest-session.js.
 response = await call("/api/intakes", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }, { SIGN_IN_REQUIRED: "true" });
-assert(response.status === 401, "Protected mutations must require Clerk when SIGN_IN_REQUIRED=true");
+body = await response.json();
+assert(response.status === 422 && body.error.code === "VALIDATION_FAILED", "A guest's intake must be validated, not rejected for lacking a Clerk session");
+
+// Clinic routes are the one surface a guest identity must never satisfy —
+// they still require either a signed-in org member or a workstation session
+// (src/workstation.js), neither of which a bare guest visitor has.
+response = await call("/api/clinic/dashboard", {}, { SIGN_IN_REQUIRED: "true" });
+assert(response.status === 403, "Clinic routes must still refuse a plain guest, even though SIGN_IN_REQUIRED no longer blocks them at the door");
 
 response = await call("/api/does-not-exist");
 assert(response.status === 404, "Unknown API paths must return 404");
 
-console.log("Worker smoke tests passed: health, config gate, availability fixtures, zero-config intake, clinic demo, auth enforcement, and 404 handling.");
+console.log("Worker smoke tests passed: health, config gate, availability fixtures, zero-config intake, clinic demo, guest checkout, clinic auth enforcement, and 404 handling.");

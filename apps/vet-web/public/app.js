@@ -17,8 +17,36 @@ const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 
 const SETTINGS_KEY = "timi_vet_settings_v1";
 const RETURN_ROUTE_KEY = "timi_vet_return_route";
+// Non-sensitive metadata only (id, name, tenant) — the actual credential is
+// the httpOnly, signed `__timi_workstation` cookie the Worker set when this
+// was established (see src/workstation.js). This is purely so the UI can
+// remember, across a reload, that it should behave as a workstation rather
+// than prompt for a Clerk sign-in it does not need.
+const WORKSTATION_KEY = "timi_vet_workstation_v1";
 const KNOWN_SCREENS = new Set(["sign-in", "workspace", "console", "people", "legal"]);
 const DEFAULT_SETTINGS = { pollSeconds: 6, alertsEnabled: true, playSound: true, autoOpenMini: true };
+
+function readWorkstation() {
+  try {
+    const raw = localStorage.getItem(WORKSTATION_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveWorkstation(workstation) {
+  try { localStorage.setItem(WORKSTATION_KEY, JSON.stringify(workstation)); } catch { /* private mode */ }
+}
+
+function clearWorkstationLocal() {
+  try { localStorage.removeItem(WORKSTATION_KEY); } catch { /* ignore */ }
+}
+
+/** True once this device is operating as a workstation and has no individual Clerk session of its own. */
+function isWorkstationOnly() {
+  return Boolean(state.workstation) && !state.clerk?.user;
+}
 
 const state = {
   route: "console",
@@ -36,6 +64,8 @@ const state = {
   pollTimer: null,
   signIn: { stage: "identifier", identifier: "", attempt: null, factor: null, error: null, busy: false },
   people: null,
+  workstation: readWorkstation(),
+  workstations: null,
   miniWin: null,
   miniKind: null // "pip" | "popup"
 };
@@ -371,6 +401,64 @@ async function onCodeSubmit(event) {
   }
 }
 
+/* ---------------------------------------------------- workstation entry --- */
+/* Any authorized staff member at the reception computer can run routine     */
+/* operations — availability, capacity, accept/decline — without an          */
+/* individual Clerk login. Entering the one-time enrollment code (minted by  */
+/* a workspace administrator in People → Workstations) opens a durable,      */
+/* revocable session here. See src/workstation.js and docs/PLATFORM-CONTRACT.md. */
+
+function toggleWorkstationEntry() {
+  const container = $("[data-workstation-entry]");
+  if (!container) return;
+  container.hidden = !container.hidden;
+  if (!container.hidden) renderWorkstationEntry();
+}
+
+function renderWorkstationEntry() {
+  const container = $("[data-workstation-entry]");
+  if (!container) return;
+  container.innerHTML = `
+    <form class="sign-in-step" data-workstation-form style="margin-top:.8rem">
+      <label class="field">Workstation code
+        <input name="token" autocomplete="off" required placeholder="Paste the enrollment code">
+      </label>
+      <p class="sign-in-error" data-workstation-error hidden></p>
+      <button class="button button-primary button-block" type="submit">Start this workstation</button>
+    </form>
+    <p class="sign-in-note" style="margin-top:.8rem">A workspace administrator creates workstation codes under People → Workstations.</p>`;
+  $("[data-workstation-form]", container).addEventListener("submit", onWorkstationEnrollSubmit);
+}
+
+async function onWorkstationEnrollSubmit(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const token = new FormData(form).get("token")?.toString().trim();
+  const errorBox = $("[data-workstation-error]", form);
+  if (!token) return;
+  const button = form.querySelector("button[type='submit']");
+  button.disabled = true; button.textContent = "Starting…";
+  try {
+    const data = await api("/api/clinic/workstations/session", { method: "POST", body: JSON.stringify({ token }) });
+    saveWorkstation(data.workstation);
+    state.workstation = data.workstation;
+    track("workstation_established");
+    location.hash = "console";
+    await renderRoute();
+  } catch (error) {
+    if (errorBox) { errorBox.hidden = false; errorBox.textContent = signInErrorMessage(error); }
+    button.disabled = false; button.textContent = "Start this workstation";
+  }
+}
+
+async function endWorkstation() {
+  try { await api("/api/clinic/workstations/session", { method: "DELETE" }); } catch { /* the session may already be gone */ }
+  clearWorkstationLocal();
+  state.workstation = null;
+  location.hash = "sign-in";
+  await renderRoute();
+}
+
 /* ------------------------------------------------------------ workspace --- */
 
 function renderWorkspace() {
@@ -432,10 +520,16 @@ function setRoute(route) {
 
 async function renderRoute() {
   let route = parseRoute();
-  const signedIn = !state.config?.signInRequired || Boolean(state.clerk?.user);
+  const workstationOnly = isWorkstationOnly();
+  const signedIn = !state.config?.signInRequired || Boolean(state.clerk?.user) || workstationOnly;
 
   if (state.config?.signInRequired) {
-    if (!state.clerk?.user) {
+    if (workstationOnly) {
+      // A workstation session has no Clerk organization at all, and "People"
+      // (workspace membership, and workstation administration itself) is
+      // deliberately unreachable from it — see requireWorkstationAdmin.
+      if (route === "sign-in" || route === "workspace" || route === "people") route = "console";
+    } else if (!state.clerk?.user) {
       route = "sign-in";
     } else if (!state.clerk.organization) {
       const memberships = state.clerk.user.organizationMemberships || [];
@@ -456,6 +550,8 @@ async function renderRoute() {
   }
   $$("[data-screen]").forEach((screen) => screen.classList.toggle("is-active", screen.dataset.screen === route));
   $$("[data-nav]").forEach((link) => link.classList.toggle("active", link.dataset.nav === route));
+  $$('[data-nav="people"]').forEach((link) => { link.hidden = workstationOnly; });
+  $$('[data-action="sign-out"]').forEach((button) => { button.textContent = workstationOnly ? "End workstation session" : "Sign out"; });
   document.title = ({
     "sign-in": "Sign in · Tími Vet", workspace: "Choose a workspace · Tími Vet",
     console: "Clinic operations · Tími Vet", people: "People · Tími Vet", legal: "Legal · Tími Vet"
@@ -464,6 +560,17 @@ async function renderRoute() {
   if (route === "sign-in") { renderSignIn(); return; }
   if (route === "workspace") { renderWorkspace(); return; }
   if (!signedIn) return;
+
+  if (workstationOnly) {
+    // No Clerk session to describe — the workstation cookie is the entire
+    // credential, and /api/session would 401 on it (see src/session.js).
+    if (route === "console") await enterConsole();
+    if (route === "legal") {
+      const section = routeQuery().get("section") || "clinics";
+      requestAnimationFrame(() => document.getElementById(section)?.scrollIntoView({ block: "start" }));
+    }
+    return;
+  }
 
   // Every remaining route needs the session descriptor (tenant, location, surfaces).
   try {
@@ -550,6 +657,18 @@ async function refreshDashboard(initial) {
 
     setStatus(`Updated ${new Intl.DateTimeFormat("en-US", { hour: "numeric", minute: "2-digit", second: "2-digit" }).format(new Date())} · next check in ${Math.max(3, Math.min(60, state.settings.pollSeconds))} sec`);
   } catch (error) {
+    // A workstation whose access was revoked mid-session (or expired) reads
+    // as this same error on its very next poll — there is no separate
+    // "your session ended" push, so the poll is what notices.
+    if (isWorkstationOnly() && error.code === "CLINIC_ACCESS_REQUIRED") {
+      window.clearInterval(state.pollTimer);
+      clearWorkstationLocal();
+      state.workstation = null;
+      showToast("This workstation's access was revoked. Enter a new code to continue.");
+      location.hash = "sign-in";
+      await renderRoute();
+      return;
+    }
     setStatus(`Connection issue · ${error.message}`);
   } finally {
     setBusy(false);
@@ -973,10 +1092,84 @@ async function enterPeople() {
   } catch (error) {
     mount.innerHTML = `<p class="workspace-fail">${escapeHtml(error.message)}</p>`;
   }
+  await enterWorkstations();
 }
 
 function isSelfAdmin() {
   return state.session?.user?.role === "org:admin";
+}
+
+/* ----------------------------------------------------------- workstations --- */
+
+async function enterWorkstations() {
+  const mount = $("[data-workstations-body]");
+  if (!mount) return;
+  if (!isSelfAdmin()) {
+    mount.innerHTML = `<p class="people-note">Only a workspace administrator can create or revoke workstations.</p>`;
+    return;
+  }
+  mount.innerHTML = `<p class="workspace-empty">Loading workstations…</p>`;
+  try {
+    const data = await api("/api/clinic/workstations");
+    state.workstations = data.workstations || [];
+    renderWorkstations();
+  } catch (error) {
+    mount.innerHTML = `<p class="workspace-fail">${escapeHtml(error.message)}</p>`;
+  }
+}
+
+function renderWorkstations() {
+  const mount = $("[data-workstations-body]");
+  const list = state.workstations || [];
+  mount.innerHTML = `
+    <div class="people-add">
+      <label class="field">Name<input type="text" data-add-workstation-name placeholder="Front desk 1" maxlength="80"></label>
+      <button class="button button-primary" type="button" data-add-workstation-submit>Create workstation</button>
+    </div>
+    <table class="people-table">
+      <thead><tr><th>Name</th><th>Status</th><th>Created</th><th></th></tr></thead>
+      <tbody>${list.map((workstation) => `
+        <tr data-workstation="${escapeHtml(workstation.id)}">
+          <td>${escapeHtml(workstation.name)}</td>
+          <td>${workstation.revokedAt ? `<span class="pill-role">Revoked</span>` : `<span class="pill-role is-admin">Active</span>`}</td>
+          <td>${escapeHtml(workstation.createdAt ? new Date(workstation.createdAt).toLocaleDateString() : "—")}</td>
+          <td class="row-actions">${workstation.revokedAt ? "" : `<button type="button" data-revoke-workstation>Revoke</button>`}</td>
+        </tr>`).join("") || `<tr><td colspan="4">No workstations yet.</td></tr>`}
+      </tbody>
+    </table>
+    <div data-workstation-token-reveal></div>`;
+
+  $("[data-add-workstation-submit]", mount)?.addEventListener("click", async () => {
+    const nameInput = $("[data-add-workstation-name]", mount);
+    const name = nameInput.value.trim();
+    if (!name) return;
+    try {
+      const result = await api("/api/clinic/workstations", { method: "POST", body: JSON.stringify({ name }) });
+      await enterWorkstations();
+      // Shown exactly once — the token itself is never stored, only its
+      // hash (see src/workstation.js) — so this is the one and only chance
+      // to hand it to the reception computer.
+      const reveal = $("[data-workstation-token-reveal]");
+      if (reveal) {
+        reveal.innerHTML = `<div class="workstation-token-reveal">
+          <p><strong>${escapeHtml(result.workstation.name)}</strong> is ready. Enter this code once on the reception computer's sign-in screen — it will not be shown again.</p>
+          <code>${escapeHtml(result.token)}</code>
+        </div>`;
+      }
+      showToast("Workstation created.");
+    } catch (error) { showToast(error.message); }
+  });
+
+  $$("[data-workstation]", mount).forEach((row) => {
+    row.querySelector("[data-revoke-workstation]")?.addEventListener("click", async () => {
+      if (!confirm("Revoke this workstation? Every device using its code is signed out immediately.")) return;
+      try {
+        await api(`/api/clinic/workstations/${encodeURIComponent(row.dataset.workstation)}`, { method: "DELETE" });
+        showToast("Workstation revoked.");
+        await enterWorkstations();
+      } catch (error) { showToast(error.message); }
+    });
+  });
 }
 
 function renderPeople() {
@@ -1074,9 +1267,11 @@ function wireGlobalActions() {
   $$('[data-route]').forEach((el) => el.addEventListener("click", () => setRoute(el.dataset.route)));
   $('[data-action="refresh-now"]')?.addEventListener("click", () => refreshDashboard(true));
   $('[data-action="open-mini"]')?.addEventListener("click", () => openMiniWindow(true));
+  $('[data-workstation-toggle]')?.addEventListener("click", toggleWorkstationEntry);
   $$('[data-action="sign-out"]').forEach((button) => button.addEventListener("click", async () => {
     closeMiniWindow();
     window.clearInterval(state.pollTimer);
+    if (isWorkstationOnly()) { await endWorkstation(); return; }
     try { await state.clerk?.signOut(); } catch { /* already signed out */ }
     location.hash = "sign-in";
   }));

@@ -4,6 +4,15 @@ import { DatabaseSync } from "node:sqlite";
 import worker from "../src/index.js";
 import vetWorker from "../apps/vet-web/src/index.js";
 import adminWorker from "../apps/admin-console/src/index.js";
+import { adoptGuestSession } from "../src/account-adoption.js";
+import {
+  createWorkstation,
+  establishWorkstationSession,
+  logWorkstationAction,
+  resolveClinicOperator,
+  revokeWorkstation,
+  verifyWorkstationSession
+} from "../src/workstation.js";
 
 class D1StatementMock {
   constructor(database, sql) {
@@ -65,6 +74,7 @@ database.exec(await readFile("migrations/0009_pets.sql", "utf8"));
 database.exec(await readFile("migrations/0010_provider_analytics.sql", "utf8"));
 database.exec(await readFile("migrations/0011_call_policy.sql", "utf8"));
 database.exec(await readFile("migrations/0012_pet_sex.sql", "utf8"));
+database.exec(await readFile("migrations/0023_guest_and_workstations.sql", "utf8"));
 
 const env = {
   ASSETS: { fetch: async () => new Response("asset") },
@@ -590,5 +600,113 @@ for (const table of tableChecks) {
   assert(count > 0, `${table} should contain end-to-end test data`);
 }
 
+/* --------------------------------------------------------- guest sessions --- */
+/* A pet owner must be able to search, get offers, pay, and book with only a  */
+/* phone number, even under SIGN_IN_REQUIRED=true (every production Worker). */
+/* See src/guest-session.js.                                                 */
+
+const guestEnv = { ...env, SIGN_IN_REQUIRED: "true", GUEST_SESSION_SECRET: "e2e-test-guest-secret", WORKSTATION_SESSION_SECRET: "e2e-test-workstation-secret" };
+// A stub execution context: `worker.fetch` is called directly here with no
+// real Cloudflare runtime behind it, so anything gated behind `ctx.waitUntil`
+// (workstation audit logging, the voice dispatch poke) would otherwise be
+// silently skipped rather than merely deferred — `ctx?.waitUntil(x)` never
+// evaluates `x` at all when `ctx` is undefined, unlike a real Worker, which
+// always supplies one.
+const testCtx = { waitUntil: (promise) => promise };
+async function callAs(path, init, callEnv) {
+  const response = await worker.fetch(new Request(`https://timi.example${path}`, init), callEnv, testCtx);
+  const body = await response.json().catch(() => ({}));
+  return { response, body };
+}
+
+result = await callAs("/api/searches", {
+  method: "POST",
+  headers: { "content-type": "application/json" },
+  body: JSON.stringify({
+    locationIds: ["loc_bayview", "loc_hearth", "loc_juniper", "loc_cedar", "loc_solano"],
+    targetLimit: 30,
+    radiusMiles: 50,
+    pet: { name: "Milo", species: "cat", breed: "Tabby", weightLbs: 9 },
+    owner: { name: "Guest Owner", phone: "(510) 555-0199" },
+    concernCategory: "illness_or_injury",
+    concernSummary: "Stopped eating and has been hiding under the bed since yesterday.",
+    symptoms: ["not_eating_or_drinking"],
+    startedWhen: "one_to_three_days",
+    urgency: "urgent",
+    customerLatitude: 37.6688,
+    customerLongitude: -122.0808,
+    consentToContact: true,
+    legalConsent: true,
+    legalVersion: LEGAL_VERSION
+  })
+}, guestEnv);
+assert(result.response.status === 201, `A guest must be able to start a care search with no Clerk session at all: ${JSON.stringify(result.body)}`);
+const guestSearchId = result.body.search.id;
+const guestId = result.body.search.customerUserId;
+assert(typeof guestId === "string" && guestId.startsWith("guest_"), "The guest session's id, not null, must own the rows it creates — see the ownership checks in src/index.js");
+const guestSetCookie = result.response.headers.get("set-cookie");
+assert(guestSetCookie?.includes("__timi_guest="), "A guest session cookie must be issued on first contact so the session survives a reload");
+const guestCookie = guestSetCookie.split(";")[0];
+
+result = await callAs(`/api/searches/${guestSearchId}`, { headers: { cookie: guestCookie } }, guestEnv);
+assert(result.response.status === 200, "A guest must be able to read back their own search using their own guest cookie");
+
+// Guest data hygiene: a request with no cookie (or a different guest's
+// cookie) is a *different* guest, and must never read this one's search.
+result = await callAs(`/api/searches/${guestSearchId}`, {}, guestEnv);
+assert(result.response.status === 403 && result.body.error?.code === "SEARCH_ACCESS_DENIED", "An unrelated guest (or one with no session at all) must not be able to read another guest's search");
+
+/* ------------------------------------------- guest-to-account adoption --- */
+
+const adoptingActor = { authenticated: true, userId: "user_e2e_adopted", role: "customer" };
+let adoption = await adoptGuestSession(guestEnv, adoptingActor, guestId);
+assert(adoption.ok && adoption.alreadyAdopted === false && adoption.counts.searches === 1, `The first adoption must merge the guest's search onto the Clerk user: ${JSON.stringify(adoption)}`);
+const adoptedRow = database.prepare("SELECT customer_user_id FROM care_searches WHERE id = ?").get(guestSearchId);
+assert(adoptedRow.customer_user_id === adoptingActor.userId, "Adoption must reassign care_searches.customer_user_id to the Clerk user id");
+
+adoption = await adoptGuestSession(guestEnv, adoptingActor, guestId);
+assert(adoption.ok && adoption.alreadyAdopted === true && adoption.counts.searches === 1, "A second adoption for the same (guest, account) pair must be idempotent — reporting the first call's counts, not re-scanning for rows already moved");
+
+/* ----------------------------------------- shared clinic workstations --- */
+/* Reception should not need an individual Clerk login for routine work.   */
+/* See src/workstation.js and docs/PLATFORM-CONTRACT.md.                    */
+
+const workstationAdmin = { authenticated: true, userId: "user_e2e_ws_admin", tenantId: "tenant_hearth", role: "org:admin" };
+const workstation = await createWorkstation(guestEnv, workstationAdmin, "tenant_hearth", "Front desk 1");
+assert(workstation.ok && workstation.token, `Creating a workstation must return a one-time enrollment token: ${JSON.stringify(workstation)}`);
+
+const established = await establishWorkstationSession(guestEnv, workstation.token, "e2e-test-agent");
+assert(established.ok, `A valid enrollment token must establish a durable session: ${JSON.stringify(established)}`);
+const workstationCookie = established.cookie.split(";")[0];
+const workstationSessionId = decodeURIComponent(workstationCookie.split("=")[1]).split(".")[0];
+
+const verifyRequest = new Request("https://timi.example/api/clinic/dashboard", { headers: { cookie: workstationCookie } });
+const verifiedSession = await verifyWorkstationSession(verifyRequest, guestEnv);
+assert(verifiedSession?.workstationId === workstation.workstation.id, "An established session must verify back to the workstation that created it");
+
+const operator = await resolveClinicOperator(verifyRequest, guestEnv, null);
+assert(operator?.kind === "workstation" && operator.tenantId === "tenant_hearth" && operator.actorUserId === `workstation:${workstation.workstation.id}`, "resolveClinicOperator must recognize a valid workstation session with no Clerk actor at all, and attribute it to the workstation");
+
+// The routine operation itself, end to end over HTTP, with only the
+// workstation cookie and no Authorization header whatsoever.
+result = await callAs("/api/clinic/availability", {
+  method: "POST",
+  headers: { "content-type": "application/json", cookie: workstationCookie },
+  body: JSON.stringify({ intakeStatus: "available", stableWaitMin: 10, stableWaitMax: 20, capacityCount: 2, ttlMinutes: 30, acceptsCritical: true, note: "Published from the front desk workstation." })
+}, guestEnv);
+assert(result.response.status === 201, `A workstation session must be able to publish availability with no individual login: ${JSON.stringify(result.body)}`);
+const workstationAuditRow = database.prepare("SELECT action FROM workstation_audit_log WHERE workstation_session_id = ? ORDER BY created_at DESC LIMIT 1").get(workstationSessionId);
+assert(workstationAuditRow?.action === "availability_update", "Every workstation action must be attributable: clinic, workstation, session, and timestamp, via workstation_audit_log");
+
+// Settings-grade routes are never workstation-eligible, even with a valid session cookie.
+result = await callAs("/api/clinic/call-preferences", { headers: { cookie: workstationCookie } }, guestEnv);
+assert(result.response.status === 403, "A workstation session must not reach settings-grade clinic routes like call preferences");
+
+const revocation = await revokeWorkstation(guestEnv, workstationAdmin, "tenant_hearth", workstation.workstation.id);
+assert(revocation.ok, "A workspace administrator must be able to revoke their own tenant's workstation");
+assert((await verifyWorkstationSession(verifyRequest, guestEnv)) === null, "Revoking a workstation must invalidate every session it had ever established, immediately");
+result = await callAs("/api/clinic/availability", { method: "POST", headers: { "content-type": "application/json", cookie: workstationCookie }, body: JSON.stringify({ intakeStatus: "available" }) }, guestEnv);
+assert(result.response.status === 403, "A revoked workstation's cookie must be refused by the live route, not merely by the standalone verify function");
+
 database.close();
-console.log("D1 end-to-end tests passed: five-offer search with masked clinic details until selection, atomic customer selection, clinic release, policy snapshot, deposit, fee disclosure on /api/config, travel, optional medications and allergies, pets on the account, veterinary-technician staffing notices, client error reporting, clinic calling preferences, provider applications with operator triage, privacy-preserving analytics with the operator summary, observation, expiry, and audit.");
+console.log("D1 end-to-end tests passed: five-offer search with masked clinic details until selection, atomic customer selection, clinic release, policy snapshot, deposit, fee disclosure on /api/config, travel, optional medications and allergies, pets on the account, veterinary-technician staffing notices, client error reporting, clinic calling preferences, provider applications with operator triage, privacy-preserving analytics with the operator summary, observation, expiry, audit, guest checkout and data hygiene, guest-to-account adoption, and shared clinic workstation sessions.");

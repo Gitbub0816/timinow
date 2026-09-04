@@ -44,7 +44,11 @@ const requiredFiles = [
   "migrations/0007_client_errors.sql",
   "migrations/0008_payments_ledger.sql",
   "migrations/0010_provider_analytics.sql",
+  "migrations/0023_guest_and_workstations.sql",
   "src/analytics.js",
+  "src/guest-session.js",
+  "src/account-adoption.js",
+  "src/workstation.js",
   "src/stripe.js",
   "src/payments.js",
   "scripts/stripe-test.mjs",
@@ -101,12 +105,13 @@ const voiceMigration = await readFile("migrations/0005_voice_calls.sql", "utf8")
 const paymentsMigration = await readFile("migrations/0008_payments_ledger.sql", "utf8");
 const petsMigration = await readFile("migrations/0009_pets.sql", "utf8");
 const providerAnalyticsMigration = await readFile("migrations/0010_provider_analytics.sql", "utf8");
-const requiredTables = ["tenants", "locations", "availability_reports", "tenant_policies", "intake_requests", "intake_events", "customer_observations", "notification_outbox", "care_searches", "care_search_targets", "care_offers", "platform_admins", "tenant_members", "tenant_invitations", "admin_audit_log", "clinic_call_attempts", "stripe_accounts", "payment_ledger", "stripe_events", "pets", "provider_applications", "analytics_events"];
+const guestWorkstationMigration = await readFile("migrations/0023_guest_and_workstations.sql", "utf8");
+const requiredTables = ["tenants", "locations", "availability_reports", "tenant_policies", "intake_requests", "intake_events", "customer_observations", "notification_outbox", "care_searches", "care_search_targets", "care_offers", "platform_admins", "tenant_members", "tenant_invitations", "admin_audit_log", "clinic_call_attempts", "stripe_accounts", "payment_ledger", "stripe_events", "pets", "provider_applications", "analytics_events", "account_adoptions", "workstations", "workstation_sessions", "workstation_audit_log"];
 for (const table of requiredTables) {
-  if (!`${migration}\n${multiOfferMigration}\n${tenancyMigration}\n${voiceMigration}\n${paymentsMigration}\n${petsMigration}\n${providerAnalyticsMigration}`.includes(`CREATE TABLE IF NOT EXISTS ${table}`)) throw new Error(`Missing D1 table: ${table}`);
+  if (!`${migration}\n${multiOfferMigration}\n${tenancyMigration}\n${voiceMigration}\n${paymentsMigration}\n${petsMigration}\n${providerAnalyticsMigration}\n${guestWorkstationMigration}`.includes(`CREATE TABLE IF NOT EXISTS ${table}`)) throw new Error(`Missing D1 table: ${table}`);
 }
 
-const requiredRoutes = ["/api/config", "/api/locations", "/api/intakes", "/api/searches", "select-offer", "/api/observations", "/api/clinic/dashboard", "/api/clinic/availability", "search-targets", "/api/session", "/api/tenant/members", "/api/pets", "/api/provider-applications", "/api/analytics"];
+const requiredRoutes = ["/api/config", "/api/locations", "/api/intakes", "/api/searches", "select-offer", "/api/observations", "/api/clinic/dashboard", "/api/clinic/availability", "search-targets", "/api/session", "/api/tenant/members", "/api/pets", "/api/provider-applications", "/api/analytics", "/api/account/adopt-guest", "/api/clinic/workstations"];
 for (const route of requiredRoutes) {
   if (!worker.includes(route)) throw new Error(`Missing API route: ${route}`);
 }

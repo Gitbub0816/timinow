@@ -232,6 +232,9 @@ input:focus, select:focus, textarea:focus { border-color: var(--blue); box-shado
 .tracker-lede { max-width: 500px; margin: 0 auto 2rem; color: var(--muted); line-height: 1.55; }
 .tracker-card { display: flex; align-items: center; gap: .8rem; text-align: left; padding: 1rem; border: 2px solid var(--ink); border-radius: 14px; background: white; box-shadow: 5px 5px 0 var(--ink); }
 .tracker-card > div:nth-child(2) { flex: 1; }.tracker-card strong, .tracker-card small { display: block; }.tracker-card small { margin-top: .3rem; color: var(--muted); font-size: .65rem; }.tracker-card a { color: var(--blue); font-size: .72rem; font-weight: 900; }
+.guest-save-panel { margin-top: 1rem; padding: .9rem 1rem; border: 2px dashed var(--line); border-radius: 13px; background: var(--blue-soft); text-align: left; }
+.guest-save-panel p { font-size: .72rem; line-height: 1.5; margin-bottom: .6rem; }
+.guest-save-panel [data-save-guest-info] { width: 100%; }
 .status-timeline { list-style: none; padding: 0; margin: 2rem 0; text-align: left; }
 .status-timeline li { display: grid; grid-template-columns: 38px 1fr; gap: .8rem; position: relative; min-height: 74px; }
 .status-timeline li::after { content: ""; position: absolute; left: 18px; top: 36px; bottom: 0; width: 2px; background: var(--line); }.status-timeline li:last-child::after { display: none; }
