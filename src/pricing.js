@@ -10,31 +10,36 @@
  *
  * A standard completed connection:
  *
- *   owner pays Tími      $20
+ *   owner pays Tími      $15
  *   clinic pays Tími     $25
  *   ───────────────────────
- *   Tími earns           $45
+ *   Tími earns           $40
  *
  * A sponsored connection costs the owner and the clinic nothing. The
- * community fund supplies $35 and Tími contributes the remaining $10 — but
+ * community fund supplies $30 and Tími contributes the remaining $10 — but
  * only against fees that would genuinely have been charged. A founding
- * clinic pays $0 normally, so its sponsored booking is worth $20, not $45:
+ * clinic pays $0 normally, so its sponsored booking is worth $15, not $40:
  * inventing a $25 clinic fee nobody would have paid, purely to make a donor
  * statistic larger, is the kind of arithmetic that ends a program.
+ *
+ * 2026-09-04 cuts the owner fee from $20 to $15. See migration 0021, which
+ * updates the seeded launch policy prospectively rather than rewriting its
+ * own history.
  */
 
 import { hasDatabase } from "./db.js";
 
 /**
  * The fallback policy, used only when there is no database (demo mode and
- * the local UI harness). Deliberately identical to migration 0013's seeded
- * `pricing_v1` — a guard in scripts/validate.mjs proves they agree, because
- * a demo that quotes a different price than production is a demo that lies.
+ * the local UI harness). Deliberately identical to the pricing_policies row
+ * migration 0013 seeds and migration 0021 then updates — a guard in
+ * scripts/validate.mjs proves they agree, because a demo that quotes a
+ * different price than production is a demo that lies.
  */
 export const FALLBACK_PRICING = Object.freeze({
   id: "pricing_v1",
   version: 1,
-  ownerFeeCents: 2000,
+  ownerFeeCents: 1500,
   clinicFeeCents: 2500,
   timiMatchCents: 1000,
   minBookingContributionCents: 100,

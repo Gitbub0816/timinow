@@ -245,9 +245,9 @@ function insertSearchAndTarget({ searchId, targetId, tenantId, locationId, phone
   `).run(searchId, `PUB_${searchId}`, urgency, maxOffers, LEGAL_VERSION, now, now, future, future);
 
   database.prepare(`
-    INSERT INTO care_search_targets (id, search_id, location_id, tenant_id, rank, travel_minutes, status, contacted_at)
-    VALUES (?, ?, ?, ?, 1, 14, 'awaiting_response', ?)
-  `).run(targetId, searchId, locationId, tenantId, now);
+    INSERT INTO care_search_targets (id, search_id, location_id, tenant_id, rank, travel_minutes, status, contacted_at, wave_activated_at)
+    VALUES (?, ?, ?, ?, 1, 14, 'awaiting_response', ?, ?)
+  `).run(targetId, searchId, locationId, tenantId, now, now);
 
   database.prepare(`
     INSERT INTO notification_outbox (id, tenant_id, channel, recipient, template_key, payload_json, available_at)

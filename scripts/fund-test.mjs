@@ -135,13 +135,13 @@ async function setControls(patch) {
 /* ══════════════════════════════════ economics come from the policy ══ */
 
 const policy = await activePricingPolicy(env);
-assert(policy.ownerFeeCents === 2000 && policy.clinicFeeCents === 2500 && policy.timiMatchCents === 1000,
-  `Migration 0014 must not disturb the launch pricing policy: ${JSON.stringify(policy)}`);
+assert(policy.ownerFeeCents === 1500 && policy.clinicFeeCents === 2500 && policy.timiMatchCents === 1000,
+  `Migration 0021 must land the $15 owner fee prospectively, without disturbing the rest of the launch policy: ${JSON.stringify(policy)}`);
 
 const standardQuote = await sponsorshipQuote(env, "tenant_hearth");
-assert(standardQuote.fundContributionCents === 3500, `A standard sponsored connection costs the fund $35: ${JSON.stringify(standardQuote)}`);
+assert(standardQuote.fundContributionCents === 3000, `A standard sponsored connection costs the fund $30: ${JSON.stringify(standardQuote)}`);
 assert(standardQuote.timiMatchCents === 1000, "Tími matches $10 on a standard sponsored connection");
-assert(standardQuote.applicableValueCents === 4500, "$20 owner + $25 clinic is the value being waived");
+assert(standardQuote.applicableValueCents === 4000, "$15 owner + $25 clinic is the value being waived");
 
 /* ══════════════════════════ whole dollars, minimums, and maximums ══ */
 
@@ -242,7 +242,7 @@ await assertLedgerSound("replayed contribution posting");
 
 const availability = await checkFundAvailability(env, "tenant_hearth");
 assert(availability.canFund === true, `The fund can pay for a standard connection: ${JSON.stringify(availability)}`);
-assert(availability.requiredCents === 3500, "The check asks the pricing policy, not a constant");
+assert(availability.requiredCents === 3000, "The check asks the pricing policy, not a constant");
 assert(availability.availableCents === 20000, "Availability is the posted balance less the liquidity reserve");
 
 summary = await fundSummary(env);
@@ -250,7 +250,7 @@ assert(summary.availableCents === 20000 && summary.reservedCents === 0,
   "Acceptance test 8: checking availability — and approving assistance — moves nothing");
 await assertLedgerSound("availability check");
 
-/* ══ acceptance test 9 — confirming moves $35 available → reserved ══ */
+/* ══ acceptance test 9 — confirming moves $30 available → reserved ══ */
 
 const intakeA = makeIntake("tenant_hearth", "loc_hearth", "user_alice");
 const reservation = await reserveSponsorship(env, {
@@ -260,12 +260,12 @@ const reservation = await reserveSponsorship(env, {
   applicantUserId: "user_alice"
 });
 assert(reservation.ok && !reservation.duplicate, `Reservation must succeed: ${JSON.stringify(reservation)}`);
-assert(reservation.amountCents === 3500, "Acceptance test 9: exactly $35 is reserved");
+assert(reservation.amountCents === 3000, "Acceptance test 9: exactly $30 is reserved");
 assert(reservation.matchCents === 1000, "Tími's $10 is recorded on the reservation");
 
 summary = await fundSummary(env);
-assert(summary.availableCents === 16500 && summary.reservedCents === 3500,
-  `Acceptance test 9: $35 moves from available to reserved: ${JSON.stringify(summary)}`);
+assert(summary.availableCents === 17000 && summary.reservedCents === 3000,
+  `Acceptance test 9: $30 moves from available to reserved: ${JSON.stringify(summary)}`);
 assert(summary.consumedLifetimeCents === 0, "Reserving recognizes no revenue");
 await assertLedgerSound("reservation");
 
@@ -274,10 +274,10 @@ const doubled = await reserveSponsorship(env, { intakeId: intakeA, tenantId: "te
 assert(doubled.ok && doubled.duplicate && doubled.reason === "ALREADY_RESERVED",
   `A second reservation for the same booking must be refused as a duplicate: ${JSON.stringify(doubled)}`);
 summary = await fundSummary(env);
-assert(summary.reservedCents === 3500, "A double-submitted confirmation must not reserve twice");
+assert(summary.reservedCents === 3000, "A double-submitted confirmation must not reserve twice");
 await assertLedgerSound("duplicate reservation attempt");
 
-/* ══ acceptance test 11 — cancellation returns all $35, recognizes $0 ══ */
+/* ══ acceptance test 11 — cancellation returns all $30, recognizes $0 ══ */
 
 const released = await releaseSponsorship(env, { reservationId: reservation.reservationId, reason: "OWNER_CANCELLED" });
 assert(released.ok && released.state === "RELEASED_CANCELLED", `Release must succeed: ${JSON.stringify(released)}`);
@@ -298,9 +298,9 @@ await assertLedgerSound("repeated release");
 // Squeeze the fund to exactly one standard sponsorship using the liquidity
 // reserve, then race two bookings at it. Exactly one may win; the loser must
 // be refused rather than served from money that is not there.
-await setControls({ min_liquidity_reserve_cents: 20000 - 3500 });
+await setControls({ min_liquidity_reserve_cents: 20000 - 3000 });
 const squeezed = await checkFundAvailability(env, "tenant_hearth");
-assert(squeezed.availableCents === 3500 && squeezed.canFund, "Exactly one sponsorship's worth is committable");
+assert(squeezed.availableCents === 3000 && squeezed.canFund, "Exactly one sponsorship's worth is committable");
 
 const intakeB = makeIntake("tenant_hearth", "loc_hearth", "user_bob");
 const intakeC = makeIntake("tenant_hearth", "loc_hearth", "user_cleo");
@@ -316,8 +316,8 @@ assert(losers[0].code === "INSUFFICIENT_FUND_BALANCE",
   `The loser is refused for the honest reason: ${JSON.stringify(losers[0])}`);
 
 summary = await fundSummary(env);
-assert(summary.reservedCents === 3500, `Acceptance test 10: the fund reserved $35 once, not twice: ${JSON.stringify(summary)}`);
-assert(summary.availableCents === 16500, "The fund was not overspent");
+assert(summary.reservedCents === 3000, `Acceptance test 10: the fund reserved $30 once, not twice: ${JSON.stringify(summary)}`);
+assert(summary.availableCents === 17000, "The fund was not overspent");
 const liveReservations = Number(database.prepare("SELECT COUNT(*) AS c FROM fund_reservations WHERE state = 'RESERVED'").get().c);
 assert(liveReservations === 1, "Only one reservation row is live");
 await assertLedgerSound("concurrent reservation race");
@@ -325,17 +325,17 @@ await assertLedgerSound("concurrent reservation race");
 await setControls({ min_liquidity_reserve_cents: 0 });
 const winner = winners[0];
 
-/* ══ acceptance test 12 — completion moves exactly $35, once, plus the match ══ */
+/* ══ acceptance test 12 — completion moves exactly $30, once, plus the match ══ */
 
 const consumed = await consumeSponsorship(env, { reservationId: winner.reservationId, stripeEventId: "evt_complete_1" });
 assert(consumed.ok && !consumed.duplicate, `Consumption must succeed: ${JSON.stringify(consumed)}`);
-assert(consumed.amountCents === 3500 && consumed.matchCents === 1000, "Acceptance test 12: $35 consumed, $10 matched");
+assert(consumed.amountCents === 3000 && consumed.matchCents === 1000, "Acceptance test 12: $30 consumed, $10 matched");
 
 summary = await fundSummary(env);
 assert(summary.reservedCents === 0, "The reservation is gone from reserved");
-assert(summary.consumedLifetimeCents === 3500, `Acceptance test 12: exactly $35 becomes sponsored revenue: ${summary.consumedLifetimeCents}`);
+assert(summary.consumedLifetimeCents === 3000, `Acceptance test 12: exactly $30 becomes sponsored revenue: ${summary.consumedLifetimeCents}`);
 assert(summary.matchLifetimeCents === 1000, "Acceptance test 12: the $10 match is recorded as a metric");
-assert(summary.availableCents === 16500, "Consumption takes nothing further from available");
+assert(summary.availableCents === 17000, "Consumption takes nothing further from available");
 await assertLedgerSound("consumption");
 
 // The match must be a memo pair: no cash, no revenue, and nothing taken from
@@ -344,7 +344,7 @@ await assertLedgerSound("consumption");
 const matchTransaction = database.prepare(
   "SELECT id FROM ledger_transactions WHERE idempotency_key = ?"
 ).get(`sponsorship_match:${winner.reservationId}`);
-assert(matchTransaction, "The match posts its own transaction, separate from the $35");
+assert(matchTransaction, "The match posts its own transaction, separate from the $30");
 const matchLines = database.prepare(
   "SELECT account_code, debit_cents, credit_cents FROM ledger_entries WHERE transaction_id = ? ORDER BY account_code"
 ).all(matchTransaction.id);
@@ -354,8 +354,8 @@ assert(matchAccounts.join(",") === "timinow_match_contributed,timinow_program_ma
   `The match must not touch fund, cash, or revenue accounts: ${matchAccounts.join(",")}`);
 assert(await accountBalance(env, "timinow_match_contributed") === 1000,
   "The match's credit side is contributed capital, not revenue");
-assert(await accountBalance(env, "sponsored_access_revenue") === 3500,
-  "Revenue is the fund's $35 only — the match never inflates it");
+assert(await accountBalance(env, "sponsored_access_revenue") === 3000,
+  "Revenue is the fund's $30 only — the match never inflates it");
 assert(await accountBalance(env, "owner_platform_fee_revenue") === 0
   && await accountBalance(env, "clinic_platform_fee_revenue") === 0,
   "Acceptance test 14: a sponsored booking charges the owner $0 and the clinic $0");
@@ -366,13 +366,20 @@ const replayedCompletion = await consumeSponsorship(env, { reservationId: winner
 assert(replayedCompletion.ok && replayedCompletion.duplicate,
   `Acceptance test 13: a replayed completion is a duplicate: ${JSON.stringify(replayedCompletion)}`);
 summary = await fundSummary(env);
-assert(summary.consumedLifetimeCents === 3500, "Acceptance test 13: revenue is recognized once, not twice");
+assert(summary.consumedLifetimeCents === 3000, "Acceptance test 13: revenue is recognized once, not twice");
 assert(summary.matchLifetimeCents === 1000, "The match is recorded once as well");
 assert(Number(database.prepare("SELECT COUNT(*) AS c FROM sponsorships").get().c) === 1,
   "One completed connection produced one sponsorship row");
 await assertLedgerSound("replayed completion");
 
-/* ══ a founding clinic's sponsorship costs the fund $10, not $35 ══ */
+/* ══ a founding clinic's sponsorship costs the fund $5, not $30 ══ */
+//
+// $15 owner fee + $0 founding clinic fee = $15 of real value waived. Tími's
+// match is still capped at $10 (min(timiMatchCents, applicableValueCents)),
+// so the fund supplies the remaining $5 — less than it did before the owner
+// fee cut, because there is less real value here to waive in the first
+// place. Inventing a $25 clinic fee nobody would have paid, to keep this
+// number looking like it did before, is exactly what both specs forbid.
 
 database.prepare(
   "INSERT OR REPLACE INTO clinic_pricing_assignments (tenant_id, plan, good_standing) VALUES ('tenant_juniper', 'FOUNDING', 1)"
@@ -381,31 +388,31 @@ database.prepare(
 const foundingQuote = await sponsorshipQuote(env, "tenant_juniper");
 assert(foundingQuote.clinicPlan === "FOUNDING" && foundingQuote.clinicFeeCents === 0,
   "A founding clinic pays Tími nothing normally");
-assert(foundingQuote.applicableValueCents === 2000,
-  "Only $20 of real value is waived — inventing a $25 clinic fee nobody would have paid is the failure mode");
-assert(foundingQuote.fundContributionCents === 1000 && foundingQuote.timiMatchCents === 1000,
-  `A founding sponsorship asks the fund for $10: ${JSON.stringify(foundingQuote)}`);
+assert(foundingQuote.applicableValueCents === 1500,
+  "Only $15 of real value is waived — inventing a $25 clinic fee nobody would have paid is the failure mode");
+assert(foundingQuote.fundContributionCents === 500 && foundingQuote.timiMatchCents === 1000,
+  `A founding sponsorship asks the fund for $5: ${JSON.stringify(foundingQuote)}`);
 
 const foundingAvailability = await checkFundAvailability(env, "tenant_juniper");
-assert(foundingAvailability.requiredCents === 1000, "The availability check quotes $10 for a founding clinic");
+assert(foundingAvailability.requiredCents === 500, "The availability check quotes $5 for a founding clinic");
 
 const intakeD = makeIntake("tenant_juniper", "loc_juniper", "user_dana");
 const foundingReservation = await reserveSponsorship(env, {
   intakeId: intakeD, tenantId: "tenant_juniper", applicantUserId: "user_dana"
 });
-assert(foundingReservation.ok && foundingReservation.amountCents === 1000,
-  `A founding sponsorship reserves $10, not $35: ${JSON.stringify(foundingReservation)}`);
-assert(foundingReservation.applicableValueCents === 2000, "The waived value is frozen on the reservation");
+assert(foundingReservation.ok && foundingReservation.amountCents === 500,
+  `A founding sponsorship reserves $5, not $30: ${JSON.stringify(foundingReservation)}`);
+assert(foundingReservation.applicableValueCents === 1500, "The waived value is frozen on the reservation");
 
 summary = await fundSummary(env);
-assert(summary.availableCents === 15500 && summary.reservedCents === 1000, "Only $10 leaves available");
+assert(summary.availableCents === 16500 && summary.reservedCents === 500, "Only $5 leaves available");
 await assertLedgerSound("founding-clinic reservation");
 
 const foundingConsumed = await consumeSponsorship(env, { reservationId: foundingReservation.reservationId });
-assert(foundingConsumed.ok && foundingConsumed.amountCents === 1000 && foundingConsumed.matchCents === 1000,
-  "A founding sponsored connection costs the fund $10 and Tími $10");
+assert(foundingConsumed.ok && foundingConsumed.amountCents === 500 && foundingConsumed.matchCents === 1000,
+  "A founding sponsored connection costs the fund $5 and Tími $10");
 summary = await fundSummary(env);
-assert(summary.consumedLifetimeCents === 4500, "$35 + $10 of community money has now been consumed");
+assert(summary.consumedLifetimeCents === 3500, "$30 + $5 of community money has now been consumed");
 assert(summary.matchLifetimeCents === 2000, "Two connections, two $10 matches");
 await assertLedgerSound("founding-clinic consumption");
 
@@ -436,7 +443,7 @@ impact = await fundImpact(env);
 assert(impact.published === true, `Two settled connections meet the threshold: ${JSON.stringify(impact)}`);
 assert(impact.completedConnections === 2,
   `Acceptance test 15: only consumed sponsorships count — the live reservation must not appear: ${impact.completedConnections}`);
-assert(impact.communityDollarsConsumedCents === 4500, "Community dollars consumed is $35 + $10");
+assert(impact.communityDollarsConsumedCents === 3500, "Community dollars consumed is $30 + $5");
 assert(impact.timiMatchTotalCents === 2000, "The Tími match total is $10 per completed connection");
 assert(!/treatment cost|vet bill/i.test(impact.explanation) || /do not pay veterinary treatment/i.test(impact.explanation),
   "The impact copy must never imply the fund pays for veterinary care");
@@ -453,7 +460,7 @@ const sweptReservation = await getReservation(env, uncountedReservation.reservat
 assert(sweptReservation.state === "RELEASED_EXPIRED", "An expired reservation is released, not consumed");
 summary = await fundSummary(env);
 assert(summary.reservedCents === 0, "The sweep returns the money to available");
-assert(summary.consumedLifetimeCents === 4500, "The sweep recognizes no revenue");
+assert(summary.consumedLifetimeCents === 3500, "The sweep recognizes no revenue");
 await assertLedgerSound("expiry sweep");
 
 // A reversal needs a reason and a named actor, and only a consumed
@@ -470,9 +477,9 @@ const reversed = await reverseSponsorship(env, {
 });
 assert(reversed.ok && reversed.state === "REVERSED_ERROR", `Controlled reversal must succeed: ${JSON.stringify(reversed)}`);
 summary = await fundSummary(env);
-assert(summary.consumedLifetimeCents === 1000, "The reversal unwinds the $35 of recognized revenue");
+assert(summary.consumedLifetimeCents === 500, "The reversal unwinds the $30 of recognized revenue");
 assert(summary.matchLifetimeCents === 1000, "The reversal unwinds that connection's match metric too");
-assert(summary.availableCents === 20000 - 1000, "The reversed $35 is restored to available; the founding $10 stays consumed");
+assert(summary.availableCents === 20000 - 500, "The reversed $30 is restored to available; the founding $5 stays consumed");
 await assertLedgerSound("reversal");
 
 const reversedAgain = await reverseSponsorship(env, {
@@ -490,7 +497,7 @@ assert(impact.published === false && impact.reason === "BELOW_AGGREGATION_THRESH
 
 await setControls({ public_metrics_min_connections: 1 });
 impact = await fundImpact(env);
-assert(impact.published === true && impact.completedConnections === 1 && impact.communityDollarsConsumedCents === 1000,
+assert(impact.published === true && impact.completedConnections === 1 && impact.communityDollarsConsumedCents === 500,
   `A reversed completion leaves the public count: ${JSON.stringify(impact)}`);
 assert(impact.timiMatchTotalCents === 1000, "…and takes its $10 match out of the total with it");
 
@@ -506,7 +513,7 @@ assert(!pausedReservation.ok && pausedReservation.code === "ASSISTANCE_PAUSED", 
 // The pause preserves existing reservations: the founding sponsorship
 // consumed above is untouched, and nobody is retroactively charged.
 summary = await fundSummary(env);
-assert(summary.consumedLifetimeCents === 1000, "Pausing does not unwind what was already consumed");
+assert(summary.consumedLifetimeCents === 500, "Pausing does not unwind what was already consumed");
 await setControls({ assistance_paused: 0 });
 
 await setControls({ max_daily_reserved_cents: 100 });
@@ -661,4 +668,4 @@ const transactions = Number(database.prepare("SELECT COUNT(*) AS c FROM ledger_t
 
 
 database.close();
-console.log(`Paw It Forward fund tests passed: ${transactions} balanced journal transactions across whole-dollar contribution validation, contributions posting whole with the processor fee borne separately, duplicate webhooks posting once, approval moving no money, atomic $35 reservation, two concurrent reservations unable to overspend, release and expiry recognizing $0, verified completion recognizing $35 once with a non-cash $10 match, replayed completion recognizing nothing further, a founding clinic's sponsorship costing the fund $10 rather than $35, controlled reversal, delayed and thresholded public impact counting only consumed sponsorships, pause/cap/household controls, contributor-scoped history, a contribution payment call that credits nothing until Stripe confirms and never fakes a success, and a ledger that balanced after every one of them.`);
+console.log(`Paw It Forward fund tests passed: ${transactions} balanced journal transactions across whole-dollar contribution validation, contributions posting whole with the processor fee borne separately, duplicate webhooks posting once, approval moving no money, atomic $30 reservation, two concurrent reservations unable to overspend, release and expiry recognizing $0, verified completion recognizing $30 once with a non-cash $10 match, replayed completion recognizing nothing further, a founding clinic's sponsorship costing the fund $5 rather than $30, controlled reversal, delayed and thresholded public impact counting only consumed sponsorships, pause/cap/household controls, contributor-scoped history, a contribution payment call that credits nothing until Stripe confirms and never fakes a success, and a ledger that balanced after every one of them.`);

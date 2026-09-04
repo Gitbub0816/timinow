@@ -277,6 +277,60 @@ export async function placeCall(env, { to, from, url, statusCallback }) {
   return { sid: body.sid, status: body.status, raw: body };
 }
 
+/**
+ * Sends one SMS via Twilio's Messages API. Mirrors `placeCall`'s
+ * credential checks so a misconfigured account fails with the same clear
+ * message either way, but the caller (drainSmsQueue in
+ * apps/voice-gateway/src/index.js) is expected to catch this and record a
+ * failed outbox row rather than let it interrupt anything — a customer who
+ * does not get the "we found you a clinic" text still has the app open in
+ * front of them with the same offer on screen, so a silent SMS failure
+ * degrades gracefully instead of blocking anything.
+ *
+ * `from` may be a bare E.164 number (`TWILIO_MESSAGING_FROM`) or, if
+ * configured, a Messaging Service SID (`TWILIO_MESSAGING_SERVICE_SID`) —
+ * Twilio's form field is `MessagingServiceSid` in that case, `From`
+ * otherwise, so the caller passes whichever it has and this picks the right
+ * field.
+ */
+export async function sendSms(env, { to, body, messagingServiceSid, statusCallback } = {}) {
+  const accountSid = (env.TWILIO_ACCOUNT_SID || "").trim();
+  const authToken = (env.TWILIO_AUTH_TOKEN || "").trim();
+  if (!accountSid || !authToken) throw new Error("TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN must be configured");
+  if (!/^AC[0-9a-f]{32}$/i.test(accountSid)) {
+    throw new Error(`TWILIO_ACCOUNT_SID is not a usable Account SID (${accountSid.length} characters, starts "${accountSid.slice(0, 2)}").`);
+  }
+  const from = (env.TWILIO_MESSAGING_FROM || "").trim();
+  const serviceSid = (messagingServiceSid || env.TWILIO_MESSAGING_SERVICE_SID || "").trim();
+  if (!from && !serviceSid) throw new Error("TWILIO_MESSAGING_FROM (or TWILIO_MESSAGING_SERVICE_SID) is not configured — cannot send SMS");
+  const toNumber = normalizePhone(to);
+  if (!toNumber) throw new Error("No usable destination phone number for this SMS");
+
+  const form = new URLSearchParams();
+  form.set("To", toNumber);
+  if (serviceSid) form.set("MessagingServiceSid", serviceSid);
+  else form.set("From", from);
+  form.set("Body", String(body || "").slice(0, 1600));
+  if (statusCallback) form.set("StatusCallback", statusCallback);
+
+  const credentials = btoa(`${accountSid}:${authToken}`);
+  const response = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`, {
+    method: "POST",
+    headers: {
+      authorization: `Basic ${credentials}`,
+      "content-type": "application/x-www-form-urlencoded"
+    },
+    body: form.toString()
+  });
+  const responseBody = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const parts = [responseBody?.message || "Twilio rejected the SMS request", `HTTP ${response.status}`];
+    if (responseBody?.code) parts.push(`Twilio code ${responseBody.code}`);
+    throw new Error(parts.join(" — "));
+  }
+  return { sid: responseBody.sid, status: responseBody.status, raw: responseBody };
+}
+
 /* --------------------------------------------------------- quiet hours --- */
 
 /**

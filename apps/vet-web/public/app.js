@@ -240,7 +240,7 @@ function applyPricingCopy() {
   $$("[data-legal-version]").forEach((node) => { node.textContent = state.config?.legalVersion || "current"; });
 }
 
-const FEE_FALLBACK = { ownerFeeCents: 2000, clinicFeeCents: 2500, currency: "usd" };
+const FEE_FALLBACK = { ownerFeeCents: 1500, clinicFeeCents: 2500, currency: "usd" };
 
 function clinicFees() {
   return { ...FEE_FALLBACK, ...(state.config?.fees || {}) };
@@ -679,6 +679,7 @@ function renderDecisionWorkspace() {
       <div><small>PHONE</small><strong>${escapeHtml(request.owner?.phone || "—")}</strong></div>
       <div><small>TRAVEL</small><strong>${escapeHtml(travelLabel(request))}</strong></div>
     </div>
+    ${request.searchTarget && request.contactRevealed === false ? '<p class="workspace-empty" style="margin-top:.4rem">Full name and phone number appear once the owner books with your clinic.</p>' : ""}
     <hr class="workspace-divider">
     <p class="workspace-form-title">Availability response</p>
     <form data-decision-form>
@@ -702,7 +703,7 @@ function renderDecisionWorkspace() {
         <div>
           <div class="compact-grid-2x2">
             <label class="field">Arrival window (min)<input name="arrivalWindowMinutes" type="number" min="5" max="180" value="30"></label>
-            <label class="field">Offer hold (min)<input name="holdMinutes" type="number" min="2" max="10" value="5"></label>
+            <label class="field">Offer hold (min)<input name="holdMinutes" type="number" min="1" max="30" value="5"></label>
             <label class="field">Wait min<input name="waitMin" type="number" min="0" max="1440" value="${availability.stableWaitMin ?? 15}"></label>
             <label class="field">Wait max<input name="waitMax" type="number" min="0" max="1440" value="${availability.stableWaitMax ?? 35}"></label>
           </div>

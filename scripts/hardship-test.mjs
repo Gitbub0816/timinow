@@ -506,7 +506,7 @@ assert(!Object.keys(evidenceRow).some((column) => /content|body|text|image/.test
 
 result = await call(maya, `/api/hardship/applications/${mayaApplication}/submit`, { method: "POST", body: {} });
 assert(result.body.application.state === "APPROVED", `The benefit pathway approves through HTTP: ${JSON.stringify(result.body)}`);
-assert(result.body.view.message === approvalCopy({ ownerFeeCents: 2000 }), `Approval copy: ${result.body.view.message}`);
+assert(result.body.view.message === approvalCopy({ ownerFeeCents: 1500 }), `Approval copy: ${result.body.view.message}`);
 assert(result.body.view.ownerFeeCents === 0, "An approved applicant owes no TímiNOW fee");
 
 const mayaDecision = await latestDecision(env, mayaApplication);
@@ -525,9 +525,9 @@ result = await call(dana, `/api/hardship/applications/${mayaApplication}`, {});
 assert(result.response.status === 404, "An application belongs to whoever is signed in and nobody else");
 
 // ── 29. The soft denial: exact copy, and nothing internal in the body. ──
-const REQUIRED_DENIAL = "TímiNOW could not independently verify your hardship at this time. This booking will require our standard $20 fee. We know this isn't what you wanted to hear; if you feel we've made a mistake, email hardship@timinow.pet and we will have a human evaluate your case for future bookings.";
-assert(softDenialCopy({ ownerFeeCents: 2000, supportEmail: "hardship@timinow.pet" }) === REQUIRED_DENIAL,
-  `The soft denial must be the approved sentence exactly:\n${softDenialCopy({ ownerFeeCents: 2000, supportEmail: "hardship@timinow.pet" })}`);
+const REQUIRED_DENIAL = "TímiNOW could not independently verify your hardship at this time. This booking will require our standard $15 fee. We know this isn't what you wanted to hear; if you feel we've made a mistake, email hardship@timinow.pet and we will have a human evaluate your case for future bookings.";
+assert(softDenialCopy({ ownerFeeCents: 1500, supportEmail: "hardship@timinow.pet" }) === REQUIRED_DENIAL,
+  `The soft denial must be the approved sentence exactly:\n${softDenialCopy({ ownerFeeCents: 1500, supportEmail: "hardship@timinow.pet" })}`);
 assert(softDenialCopy({ ownerFeeCents: 2500, supportEmail: "hardship@timinow.pet" }).includes("standard $25 fee"),
   "The fee in the sentence comes from pricing, not from the string");
 
@@ -588,7 +588,7 @@ await call(dana, `/api/hardship/applications/${retryApplication}/evidence`, {
 });
 result = await call(dana, `/api/hardship/applications/${retryApplication}/submit`, { method: "POST", body: {} });
 assert(result.body.application.state === "TECHNICAL_RETRY", `An extraction failure is a retry: ${JSON.stringify(result.body)}`);
-assert(result.body.view.status === "PENDING" && result.body.view.message === pendingCopy({ ownerFeeCents: 2000 }),
+assert(result.body.view.status === "PENDING" && result.body.view.message === pendingCopy({ ownerFeeCents: 1500 }),
   "…and shows neutral pending language, never a denial");
 assert(database.prepare("SELECT COUNT(*) AS c FROM eligibility_decisions WHERE application_id = ?").get(retryApplication).c === 0,
   "A vendor outage writes no decision");
@@ -636,7 +636,7 @@ assert(limited.reasonCodes.includes("RATE_LIMIT_SPONSORED_CONNECTIONS_EXHAUSTED"
 database.prepare("UPDATE pricing_policies SET owner_fee_cents = 2500 WHERE active = 1").run();
 result = await call(dana, `/api/hardship/applications/${danaApplication}`, {});
 assert(result.body.view.message.includes("standard $25 fee"), `The denial quotes the active price: ${result.body.view.message}`);
-database.prepare("UPDATE pricing_policies SET owner_fee_cents = 2000 WHERE active = 1").run();
+database.prepare("UPDATE pricing_policies SET owner_fee_cents = 1500 WHERE active = 1").run();
 
 for (const table of ["eligibility_applications", "eligibility_evidence", "evidence_facts", "eligibility_decisions", "financial_shock_items", "eligibility_grants", "eligibility_rate_limits", "fraud_signals", "human_appeals"]) {
   assert(database.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get().count > 0, `${table} should contain end-to-end test data`);

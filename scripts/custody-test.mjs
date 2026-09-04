@@ -332,8 +332,8 @@ assert(!release.ok && release.code === "SPONSORSHIP_NOT_CONSUMED",
   "There is nothing to release for a reservation that never existed");
 
 const reservation = await reserveSponsorship(env, { intakeId: "intake_custody_1", tenantId: "tenant_hearth" });
-assert(reservation.ok && !reservation.duplicate && reservation.amountCents === 3500,
-  `The $35 must reserve: ${JSON.stringify(reservation)}`);
+assert(reservation.ok && !reservation.duplicate && reservation.amountCents === 3000,
+  `The $30 must reserve: ${JSON.stringify(reservation)}`);
 const reservationId = reservation.reservationId;
 
 release = await releaseSponsorshipFromCustody(env, { reservationId, provider: stub });
@@ -343,7 +343,7 @@ assert(!release.ok && release.code === "SPONSORSHIP_NOT_CONSUMED",
 const consumed = await consumeSponsorship(env, { reservationId });
 assert(consumed.ok && !consumed.duplicate, `Completion must consume the reservation: ${JSON.stringify(consumed)}`);
 
-// Custody holds $17 and the earned sponsorship is $35: money that was never
+// Custody holds $17 and the earned sponsorship is $30: money that was never
 // swept cannot be released, and the refusal says so rather than driving the
 // restricted custody account negative.
 release = await releaseSponsorshipFromCustody(env, { reservationId, provider: stub });
@@ -354,16 +354,16 @@ await sweepDesignatedContributions(env, { provider: stub });
 assert((await balances()).custody === 6700, "The $50 gift is swept too, bringing custody to $67");
 
 release = await releaseSponsorshipFromCustody(env, { reservationId, provider: stub });
-assert(release.ok && release.state === "COMPLETED", `The earned $35 releases after consumption: ${JSON.stringify(release)}`);
-assert(release.amountCents === 3500, "The amount released is the sponsorship's own recorded amount");
+assert(release.ok && release.state === "COMPLETED", `The earned $30 releases after consumption: ${JSON.stringify(release)}`);
+assert(release.amountCents === 3000, "The amount released is the sponsorship's own recorded amount");
 
 state = await balances();
-assert(state.custody === 6700 - 3500, `Custody drops by the released amount: ${state.custody}`);
-assert(state.operating === 3500, "The earned sponsorship lands in ClearKey operating cash");
+assert(state.custody === 6700 - 3000, `Custody drops by the released amount: ${state.custody}`);
+assert(state.operating === 3000, "The earned sponsorship lands in ClearKey operating cash");
 
 const releaseAgain = await releaseSponsorshipFromCustody(env, { reservationId, provider: stub });
 assert(releaseAgain.ok && releaseAgain.duplicate, "A replayed release moves nothing");
-assert((await balances()).custody === 3200, "The replay changed no balance");
+assert((await balances()).custody === 3700, "The replay changed no balance");
 await assertLedgerSound("the sponsorship release");
 
 /* ════════════════════ asynchronous rails settle by webhook only ══ */
@@ -376,7 +376,7 @@ assert(slowSweep.inTransit.length === 1 && slowSweep.swept.length === 0,
 
 state = await balances();
 assert(state.inTransit === 300, "In-flight cash sits in its own account: neither in Payments nor in custody");
-assert(state.custody === 3200, "Custody does not rise until the rail says it did");
+assert(state.custody === 3700, "Custody does not rise until the rail says it did");
 
 status = await designationStatus(env, { provider: slowRail });
 assert(status.inFlight.sweepCents === 300, "The in-flight amount is queryable");
@@ -386,11 +386,11 @@ const inFlight = (await listCustodyTransfers(env, { state: "IN_TRANSIT" })).tran
 const settled = await applyCustodyWebhook(env, { id: "evt_1", type: "payout.paid", data: { object: { id: inFlight.providerObjectId } } });
 assert(settled.ok && settled.state === "COMPLETED", `The webhook settles the movement: ${JSON.stringify(settled)}`);
 state = await balances();
-assert(state.custody === 3500 && state.inTransit === 0, "Settlement moves the cash from in-flight into custody");
+assert(state.custody === 4000 && state.inTransit === 0, "Settlement moves the cash from in-flight into custody");
 
 const replayed = await applyCustodyWebhook(env, { id: "evt_1", type: "payout.paid", data: { object: { id: inFlight.providerObjectId } } });
 assert(replayed.duplicate === true, "A redelivered settlement changes nothing");
-assert((await balances()).custody === 3500, "The redelivery moved no money");
+assert((await balances()).custody === 4000, "The redelivery moved no money");
 await assertLedgerSound("the settlement webhook");
 
 // A movement the rail later reports as failed must put the cash back and
@@ -402,12 +402,12 @@ assert(doomedTransfer.contributionId === doomed.contributionId, "The in-flight m
 const failedWebhook = await applyCustodyWebhook(env, { id: "evt_2", type: "payout.failed", data: { object: { id: doomedTransfer.providerObjectId } } });
 assert(failedWebhook.state === "FAILED", "A failed payout is recorded as failed, not quietly retried");
 state = await balances();
-assert(state.inTransit === 0 && state.custody === 3500, "A failed movement returns the cash to Payments");
+assert(state.inTransit === 0 && state.custody === 4000, "A failed movement returns the cash to Payments");
 assert(state.processorCash >= 400, "The designated $4 is back in the Payments balance");
 
 const recovered = await sweepDesignatedContributions(env, { provider: stub });
 assert(recovered.sweptCents === 400, "A failed movement leaves the money sweepable again");
-assert((await balances()).custody === 3900, "Custody holds the recovered $4");
+assert((await balances()).custody === 4400, "Custody holds the recovered $4");
 await assertLedgerSound("the failed settlement webhook");
 
 /* ═══════════════════════════ reconciliation balances to the penny ══ */

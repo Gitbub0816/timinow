@@ -260,6 +260,15 @@ function normalizeCareSearchRow(row) {
     requestedAt: row.requested_at,
     collectionExpiresAt: row.collection_expires_at,
     searchExpiresAt: row.search_expires_at,
+    // Staged wave routing (migration 0021 / src/routing.js). currentWave and
+    // totalWaves let the customer UI say "we're expanding your search"
+    // instead of a bare spinner; routingSnapshot is the frozen policy this
+    // particular search is running under.
+    currentWave: row.current_wave || 1,
+    lastWaveActivatedAt: row.last_wave_activated_at,
+    routingSnapshot: parseJson(row.routing_snapshot_json, null),
+    firstOfferAt: row.first_offer_at,
+    smsNotifiedAt: row.sms_notified_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at
   };
@@ -380,16 +389,26 @@ export async function getCareSearch(env, identifier) {
   );
   const counts = await env.DB.prepare(`
     SELECT
-      COUNT(*) AS contacted,
+      COUNT(*) AS candidates,
+      SUM(CASE WHEN wave_activated_at IS NOT NULL THEN 1 ELSE 0 END) AS contacted,
+      SUM(CASE WHEN wave_activated_at IS NULL AND status IN ('contacting', 'awaiting_response') THEN 1 ELSE 0 END) AS queued,
       SUM(CASE WHEN status IN ('contacting', 'awaiting_response') THEN 1 ELSE 0 END) AS awaiting,
-      SUM(CASE WHEN status = 'declined' THEN 1 ELSE 0 END) AS declined
+      SUM(CASE WHEN status = 'declined' THEN 1 ELSE 0 END) AS declined,
+      MAX(wave_number) AS total_waves
     FROM care_search_targets WHERE search_id = ?
   `).bind(search.id).first();
   return {
     ...search,
     offers,
+    totalWaves: Number(counts?.total_waves || 1),
     progress: {
+      // "contacted" now means "actually notified" — a target sitting in a
+      // future wave that has not activated yet is a candidate, not yet
+      // contacted. See migration 0021: staged wave routing replaced the
+      // single broadcast this count used to describe.
+      candidates: Number(counts?.candidates || 0),
       contacted: Number(counts?.contacted || 0),
+      queued: Number(counts?.queued || 0),
       awaiting: Number(counts?.awaiting || 0),
       declined: Number(counts?.declined || 0),
       offers: offers.length
@@ -397,9 +416,36 @@ export async function getCareSearch(env, identifier) {
   };
 }
 
+/**
+ * Masked owner identity for a clinic that has not yet been booked and paid.
+ *
+ * At most a first name and a last initial — never a phone number, never an
+ * email, and "Pet owner" when there is nothing safe to show at all. See
+ * migration 0021 and docs/MVP-ARCHITECTURE.md: full contact reveals only to
+ * the winning clinic, only once the customer has selected it.
+ */
+function maskOwnerIdentity(fullName) {
+  const trimmed = String(fullName || "").trim();
+  if (!trimmed) return "Pet owner";
+  const parts = trimmed.split(/\s+/).filter(Boolean);
+  const first = parts[0];
+  if (parts.length < 2) return first;
+  const lastInitial = parts[parts.length - 1][0];
+  return lastInitial ? `${first} ${lastInitial.toUpperCase()}.` : first;
+}
+
 function normalizeClinicSearchTarget(row) {
   if (!row) return null;
   const status = ["contacting", "awaiting_response"].includes(row.target_status) ? "pending" : row.target_status;
+  // Full contact reveals to exactly one clinic: whichever target the
+  // customer actually selected and booked. Every other target — still
+  // pending, offered but not chosen, declined, released, or expired — gets
+  // the masked identity. Never gated on payment status directly: a deposit
+  // (if any) is collected against the accepted intake this selection just
+  // created, and it is the selection itself — not the later payment webhook
+  // — that is "this clinic is now the one seeing this patient", matching how
+  // the rest of this codebase already treats a selected offer as the booking.
+  const contactRevealed = row.target_status === "selected";
   return {
     id: row.target_id,
     searchId: row.search_id,
@@ -418,17 +464,19 @@ function normalizeClinicSearchTarget(row) {
       medications: row.medications || null,
       allergies: row.allergies || null
     },
-    owner: {
-      name: row.owner_name,
-      phone: row.owner_phone,
-      email: row.owner_email
-    },
+    owner: contactRevealed
+      ? { name: row.owner_name, phone: row.owner_phone, email: row.owner_email }
+      : { name: maskOwnerIdentity(row.owner_name), phone: null, email: null },
+    /** Whether `owner` above carries real contact detail. Lets a console tell "no phone on file" apart from "not shown yet". */
+    contactRevealed,
     concernCategory: row.concern_category,
     concernSummary: row.concern_summary,
     urgency: row.urgency,
     redFlags: parseJson(row.red_flags_json, []),
     travelMinutes: row.travel_minutes,
     status,
+    waveNumber: row.wave_number,
+    waveActivatedAt: row.wave_activated_at,
     requestedAt: row.requested_at,
     requestExpiresAt: row.collection_expires_at || row.search_expires_at,
     respondedAt: row.responded_at,
@@ -442,6 +490,7 @@ const CLINIC_SEARCH_TARGET_SELECT = `
   SELECT
     t.id AS target_id, t.search_id, t.location_id, t.tenant_id,
     t.status AS target_status, t.travel_minutes, t.responded_at,
+    t.wave_number, t.wave_activated_at,
     t.created_at AS target_created_at, t.updated_at AS target_updated_at,
     s.public_code, s.customer_user_id, s.pet_name, s.species, s.breed,
     s.age_years, s.weight_lbs, s.owner_name, s.owner_phone, s.owner_email,
@@ -455,6 +504,7 @@ export async function listClinicSearchTargets(env, tenantId, limit = 50) {
   if (!hasDatabase(env)) return [];
   const result = await env.DB.prepare(`${CLINIC_SEARCH_TARGET_SELECT}
     WHERE t.tenant_id = ? AND s.status IN ('collecting', 'offers_ready')
+      AND t.wave_activated_at IS NOT NULL
     ORDER BY CASE t.status WHEN 'awaiting_response' THEN 0 WHEN 'contacting' THEN 1 ELSE 2 END,
              datetime(s.requested_at) DESC
     LIMIT ?

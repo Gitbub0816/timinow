@@ -40,6 +40,7 @@ import {
   placeCall,
   sayVoice,
   repeatTwiml,
+  sendSms,
   signAttemptToken,
   verifyAttemptToken,
   verifyTwilioSignature,
@@ -302,7 +303,7 @@ async function openRequestForCaller(env, fromNumber) {
     JOIN care_searches s ON s.id = t.search_id
     LEFT JOIN notification_outbox o ON o.channel = 'voice'
       AND json_extract(o.payload_json, '$.targetId') = t.id
-    WHERE t.location_id = ? AND t.status = 'awaiting_response'
+    WHERE t.location_id = ? AND t.status = 'awaiting_response' AND t.wave_activated_at IS NOT NULL
       AND s.status IN ('collecting', 'offers_ready')
       AND datetime(s.search_expires_at) > datetime(?)
     ORDER BY t.created_at DESC LIMIT 1
@@ -637,6 +638,73 @@ export async function drainVoiceQueue(env) {
   return rows.results.length;
 }
 
+/* ----------------------------------------------------------------- SMS --- */
+
+/**
+ * Drains `notification_outbox` rows with `channel = 'sms'` — today, just
+ * Feature B's "we found you a clinic, close the page" text, enqueued by
+ * `notifyFirstOfferBySms` in `../../../src/index.js` the moment a search's
+ * first offer arrives. Twilio credentials live only in this Worker (see
+ * apps/voice-gateway/README.md), the same reason phone calls are dispatched
+ * from here rather than the customer Worker — so SMS is drained from here
+ * too, through the same outbox the customer Worker already pokes.
+ */
+async function processSmsOutboxRow(env, row, nowIso) {
+  const cancel = async (reason) => {
+    await env.DB.prepare("UPDATE notification_outbox SET status = 'cancelled', last_error = ? WHERE id = ? AND status = 'queued'")
+      .bind(reason, row.id).run();
+  };
+
+  let payload;
+  try {
+    payload = JSON.parse(row.payload_json || "{}");
+  } catch {
+    return cancel("Malformed SMS outbox payload");
+  }
+  const to = row.recipient;
+  const body = payload?.body;
+  if (!to || !body) return cancel("Malformed SMS outbox payload");
+
+  if (env.DEMO_MODE === "true" || !env.TWILIO_ACCOUNT_SID || !env.TWILIO_AUTH_TOKEN) {
+    // Demo mode, or Twilio simply not configured for this environment yet:
+    // log the intent without spending a real SMS segment. Silent-but-logged
+    // is the whole point — a customer with no SMS never blocks their search.
+    console.log(JSON.stringify({ event: "sms_demo_send", outboxId: row.id, to, template: row.template_key }));
+    await env.DB.prepare("UPDATE notification_outbox SET status = 'sent', sent_at = ? WHERE id = ?").bind(nowIso, row.id).run();
+    return;
+  }
+
+  try {
+    await sendSms(env, { to, body });
+    await env.DB.prepare("UPDATE notification_outbox SET status = 'sent', sent_at = ? WHERE id = ?").bind(nowIso, row.id).run();
+  } catch (error) {
+    // One send: no retry schedule. A stale "your clinic is ready" text
+    // arriving twenty minutes late because Twilio hiccuped once is worse
+    // than not arriving — the customer's search may already be over.
+    await env.DB.prepare("UPDATE notification_outbox SET status = 'failed', attempts = attempts + 1, last_error = ? WHERE id = ?")
+      .bind(error.message, row.id).run();
+    console.error(JSON.stringify({ event: "sms_send_failed", outboxId: row.id, message: error.message }));
+  }
+}
+
+export async function drainSmsQueue(env) {
+  if (!hasDatabase(env)) return 0;
+  const nowIso = new Date().toISOString();
+  const rows = await env.DB.prepare(`
+    SELECT * FROM notification_outbox WHERE channel = 'sms' AND status = 'queued' AND available_at <= ?
+    ORDER BY available_at LIMIT 20
+  `).bind(nowIso).all();
+
+  for (const row of rows.results) {
+    try {
+      await processSmsOutboxRow(env, row, nowIso);
+    } catch (error) {
+      console.error(JSON.stringify({ event: "sms_drain_row_error", outboxId: row.id, message: error.message }));
+    }
+  }
+  return rows.results.length;
+}
+
 /* -------------------------------------------------------------- attempts API --- */
 
 function attemptFromRow(row) {
@@ -713,8 +781,8 @@ async function handleApi(request, env) {
     const expected = env.VOICE_DRAIN_TOKEN || "";
     const supplied = request.headers.get("x-timi-drain-token") || "";
     if (expected && supplied !== expected) return apiError(403, "DRAIN_FORBIDDEN", "Not permitted.");
-    const processed = await drainVoiceQueue(env);
-    return json({ drained: true, processed: processed ?? null });
+    const [processed, smsProcessed] = await Promise.all([drainVoiceQueue(env), drainSmsQueue(env)]);
+    return json({ drained: true, processed: processed ?? null, smsProcessed: smsProcessed ?? null });
   }
 
   /*
@@ -976,6 +1044,9 @@ export default {
   },
 
   async scheduled(_controller, env, ctx) {
-    ctx.waitUntil(drainVoiceQueue(env));
+    // One waitUntil rather than two: a caller that (reasonably) tracks only
+    // the most recent registration — this repo's own test harness among
+    // them — must still see every queue actually drain.
+    ctx.waitUntil(Promise.all([drainVoiceQueue(env), drainSmsQueue(env)]));
   }
 };

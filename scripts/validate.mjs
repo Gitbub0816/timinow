@@ -522,6 +522,7 @@ if (!moments.some((moment) => PLAYFUL.test(TIMI_ANNOUNCEMENTS.calm[moment]))) {
   const ledger = await readFile("src/ledger.js", "utf8");
   const pricing = await readFile("src/pricing.js", "utf8");
   const migration = await readFile("migrations/0013_pricing_and_ledger.sql", "utf8");
+  const routingMigration = await readFile("migrations/0021_wave_routing_and_masking.sql", "utf8");
 
   // Every posting balances, or it is refused. A journal that stores an
   // unbalanced transaction has not deferred the problem, it has hidden it.
@@ -557,13 +558,20 @@ if (!moments.some((moment) => PLAYFUL.test(TIMI_ANNOUNCEMENTS.calm[moment]))) {
     throw new Error("src/pricing.js no longer derives the fund's share from the applicable value. Hardcoding $35 would overcharge the fund for every founding-clinic sponsorship.");
   }
 
-  // The demo path and the production path must quote the same price.
+  // The demo path and the production path must quote the same price. The
+  // seeded row (migration 0013) is read first, then any later migration that
+  // updates the same active row prospectively (migration 0021 cuts the owner
+  // fee to $15) is applied on top — mirroring what actually happens to a real
+  // database, which applies every migration in order rather than just 0013.
   const fallbackOwner = pricing.match(/ownerFeeCents:\s*(\d+)/)?.[1];
   const fallbackClinic = pricing.match(/clinicFeeCents:\s*(\d+)/)?.[1];
   const seeded = migration.match(/VALUES \(\s*'pricing_v1',\s*1,\s*(\d+),\s*(\d+),\s*(\d+)/s);
   if (!seeded) throw new Error("migrations/0013_pricing_and_ledger.sql no longer seeds the launch pricing row in the shape this guard reads.");
-  if (fallbackOwner !== seeded[1] || fallbackClinic !== seeded[2]) {
-    throw new Error(`src/pricing.js FALLBACK_PRICING ($${fallbackOwner}/$${fallbackClinic} in cents) disagrees with the seeded pricing_v1 row ($${seeded[1]}/$${seeded[2]}). A demo that quotes a different price than production is a demo that lies.`);
+  const ownerUpdate = routingMigration.match(/UPDATE pricing_policies\s*\nSET owner_fee_cents = (\d+)/);
+  const effectiveOwner = ownerUpdate ? ownerUpdate[1] : seeded[1];
+  const effectiveClinic = seeded[2];
+  if (fallbackOwner !== effectiveOwner || fallbackClinic !== effectiveClinic) {
+    throw new Error(`src/pricing.js FALLBACK_PRICING ($${fallbackOwner}/$${fallbackClinic} in cents) disagrees with the effective active pricing_v1 row after migrations ($${effectiveOwner}/$${effectiveClinic}). A demo that quotes a different price than production is a demo that lies.`);
   }
 
   // Contributions are whole dollars: the processor fee on $2.37 is most of it.

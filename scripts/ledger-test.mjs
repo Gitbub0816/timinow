@@ -91,7 +91,7 @@ const env = { DB: new D1Mock(database) };
 /* ------------------------------------------------------------- pricing --- */
 
 const pricing = await activePricingPolicy(env);
-assert(pricing.ownerFeeCents === 2000, "The launch policy charges the owner $20");
+assert(pricing.ownerFeeCents === 1500, "The launch policy charges the owner $15");
 assert(pricing.clinicFeeCents === 2500, "The launch policy charges a standard clinic $25");
 assert(pricing.timiMatchCents === 1000, "Tími contributes $10 toward a sponsored connection");
 
@@ -153,7 +153,9 @@ const tiny = sponsorshipCostFor({ ownerFeeCents: 500, clinicFeeCents: 0, timiMat
 assert(tiny.timiMatchCents === 500 && tiny.fundContributionCents === 0, "Tími's match is capped at the value actually forgone");
 
 const quote = await sponsorshipQuote(env, "tenant_hearth");
-assert(quote.fundContributionCents === 1000 && quote.clinicPlan === "FOUNDING", "The live quote reads the clinic's real plan");
+// $15 owner fee (the live active policy) + $0 founding clinic fee = $15
+// applicable value; Tími's $10 match leaves the fund $5.
+assert(quote.fundContributionCents === 500 && quote.clinicPlan === "FOUNDING", "The live quote reads the clinic's real plan");
 
 /* --------------------------------------------------- contribution amounts --- */
 
@@ -320,31 +322,31 @@ assert(audited && audited.actor_id === "user_operator" && audited.reason === "La
 
 /* ----------------------------------------- one charge, several purposes --- */
 
-// A $20 fee with a $2 contribution is ONE $22 charge with two allocations —
+// A $15 fee with a $2 contribution is ONE $17 charge with two allocations —
 // never two card charges, and never a total somebody splits back apart later.
 {
   const quote = await quoteBooking(env, { contributionCents: 200 });
-  assert(quote.ok && quote.totalCents === 2200, `A $20 fee plus a $2 contribution totals $22: ${JSON.stringify(quote)}`);
+  assert(quote.ok && quote.totalCents === 1700, `A $15 fee plus a $2 contribution totals $17: ${JSON.stringify(quote)}`);
   assert(quote.lines.length === 2, "Two purposes, two allocations");
-  assert(quote.ownerFeeChargedCents === 2000 && quote.contributionCents === 200, "The split is decided before the charge, not after");
+  assert(quote.ownerFeeChargedCents === 1500 && quote.contributionCents === 200, "The split is decided before the charge, not after");
 
-  const order = await createBookingPaymentOrder(env, { quote, intakeId: null, confirmationSnapshot: { shown: "$22.00" } });
+  const order = await createBookingPaymentOrder(env, { quote, intakeId: null, confirmationSnapshot: { shown: "$17.00" } });
   assert(order.ok, `The order writes: ${JSON.stringify(order)}`);
 
   const stored = await getPaymentOrder(env, order.paymentOrderId);
-  assert(stored.totalCents === 2200, "The stored order totals $22");
+  assert(stored.totalCents === 1700, "The stored order totals $17");
   const allocated = stored.allocations.reduce((sum, line) => sum + line.amountCents, 0);
   assert(allocated === stored.totalCents, `Allocations must sum to the total: ${allocated} vs ${stored.totalCents}`);
-  assert(stored.allocations.find((line) => line.purpose === "OWNER_PLATFORM_FEE").amountCents === 2000, "Exactly $20 is platform consideration");
+  assert(stored.allocations.find((line) => line.purpose === "OWNER_PLATFORM_FEE").amountCents === 1500, "Exactly $15 is platform consideration");
   assert(stored.allocations.find((line) => line.purpose === "FUND_CONTRIBUTION").amountCents === 200, "Exactly $2 is fund contribution");
 
   // One charge for the whole thing.
   const charge = await chargeBookingOrder(env, order.paymentOrderId);
-  assert(charge.ok && charge.totalCents === 2200, `One charge covers the whole order: ${JSON.stringify(charge)}`);
+  assert(charge.ok && charge.totalCents === 1700, `One charge covers the whole order: ${JSON.stringify(charge)}`);
   assert(charge.mode === "demo", "With no Stripe key configured the caller is told so rather than shown a fake success");
 
-  // A refund names an allocation. "Half of $22" has no correct answer once
-  // the $22 was $20 of fee and $2 of somebody else's contribution.
+  // A refund names an allocation. "Half of $17" has no correct answer once
+  // the $17 was $15 of fee and $2 of somebody else's contribution.
   const contributionAllocation = stored.allocations.find((line) => line.purpose === "FUND_CONTRIBUTION");
   const refunded = await refundAllocation(env, { allocationId: contributionAllocation.id, amountCents: 200 });
   assert(refunded.ok && refunded.purpose === "FUND_CONTRIBUTION", "A refund reverses the allocation it names");
@@ -354,12 +356,12 @@ assert(audited && audited.actor_id === "user_operator" && audited.reason === "La
   assert(!tooMuch.ok && tooMuch.code === "REFUND_EXCEEDS_ALLOCATION", "An allocation cannot be refunded past what it held");
 }
 
-// A sponsored booking charges nothing at all. It does not create a $20
+// A sponsored booking charges nothing at all. It does not create a $15
 // PaymentIntent for something downstream to mark as handled.
 {
   const quote = await quoteBooking(env, { sponsored: true });
   assert(quote.ok && quote.totalCents === 0, "A sponsored booking with no deposit charges nothing");
-  assert(quote.ownerFeeChargedCents === 0 && quote.ownerFeeStandardCents === 2000, "The record keeps what would have been charged");
+  assert(quote.ownerFeeChargedCents === 0 && quote.ownerFeeStandardCents === 1500, "The record keeps what would have been charged");
   assert(quote.ownerFeeWaiverReason === "PAW_IT_FORWARD", "And says why it was not");
   assert(quote.lines.length === 0, "There is nothing to allocate");
 

@@ -3,7 +3,7 @@
  *
  * Addendum §26 acceptance tests 14–29, in order, plus the ones this feature
  * cannot ship without: that the contract's three elections and the addendum's
- * four cannot be silently conflated, that a guarantee reservation and a $35
+ * four cannot be silently conflated, that a guarantee reservation and a $30
  * sponsorship reservation can coexist without either pretending the other
  * does not exist, and that the journal still balances after every single
  * operation below.
@@ -423,7 +423,7 @@ const bothIntake = makeIntake(guaranteeClinic, "loc_bayview");
 await snapshotDepositPolicyForBooking(env, { intakeId: bothIntake, tenantId: guaranteeClinic, sponsored: true });
 
 const sponsorship = await reserveSponsorship(env, { intakeId: bothIntake, tenantId: guaranteeClinic });
-assert(sponsorship.ok && sponsorship.amountCents === 3500, `The $35 sponsorship reserves: ${JSON.stringify(sponsorship)}`);
+assert(sponsorship.ok && sponsorship.amountCents === 3000, `The $30 sponsorship reserves: ${JSON.stringify(sponsorship)}`);
 
 const bothGuarantee = await reserveDepositGuarantee(env, {
   intakeId: bothIntake, tenantId: guaranteeClinic, customerUserId: "user_maya"
@@ -431,11 +431,11 @@ const bothGuarantee = await reserveDepositGuarantee(env, {
 assert(bothGuarantee.ok && bothGuarantee.guarantee.state === "RESERVED"
   && bothGuarantee.guarantee.amountCents === 7500,
   `Test 17: the guarantee reserves separately: ${JSON.stringify(bothGuarantee)}`);
-assert(await accountBalance(env, "fund_reserved") === 3500,
-  "Test 17: the $35 sponsorship reservation is its own account");
+assert(await accountBalance(env, "fund_reserved") === 3000,
+  "Test 17: the $30 sponsorship reservation is its own account");
 assert(await accountBalance(env, "fund_deposit_guarantee_reserved") === 7500,
   "Test 17: the $75 guarantee reservation is its own account");
-assert(await accountBalance(env, "fund_available") === 50000 - 3500 - 7500,
+assert(await accountBalance(env, "fund_available") === 50000 - 3000 - 7500,
   "Both reservations draw on the same available cash and neither pretends the other is absent");
 await assertLedgerSound("sponsorship + guarantee on one booking");
 
@@ -452,7 +452,7 @@ const tooBig = await reserveDepositGuarantee(env, {
 });
 assert(!tooBig.ok && tooBig.code === "INSUFFICIENT_FUND_BALANCE",
   `A guarantee larger than the fund is refused, not overspent: ${JSON.stringify(tooBig)}`);
-assert(await accountBalance(env, "fund_available") === 50000 - 3500 - 7500, "and nothing moved");
+assert(await accountBalance(env, "fund_available") === 50000 - 3000 - 7500, "and nothing moved");
 await assertLedgerSound("refused oversized guarantee");
 
 /* ══ acceptance test 29 — treatment deposits are out of scope ══ */
@@ -642,8 +642,8 @@ assert(returned.ok && returned.guarantee.state === "RETURNED" && returned.guaran
   `Test 22: the $75 guarantee returns after an attended visit: ${JSON.stringify(returned)}`);
 assert(await accountBalance(env, "deposit_guarantee_outstanding") === 0, "Nothing is left at the clinic");
 assert(await accountBalance(env, "fund_deposit_guarantee_reserved") === 0, "The commitment is discharged");
-assert(await accountBalance(env, "fund_available") === 50000 - 3500,
-  "The $75 is back in the fund; only the $35 sponsorship is still reserved");
+assert(await accountBalance(env, "fund_available") === 50000 - 3000,
+  "The $75 is back in the fund; only the $30 sponsorship is still reserved");
 await assertLedgerSound("guarantee returned");
 
 const events = await listDepositGuaranteeEvents(env, liveGuarantee.id);
@@ -797,7 +797,7 @@ assert(await accountBalance(env, "deposit_guarantee_forfeiture_expense") === 600
 assert(await accountBalance(env, "program_restricted_released") === 6000,
   "and the restricted contribution that funded it is released as actually spent");
 assert(await accountBalance(env, "deposit_guarantee_outstanding") === 0, "Nothing is left outstanding");
-assert(await accountBalance(env, "fund_available") === 50000 - 3500 - 6000,
+assert(await accountBalance(env, "fund_available") === 50000 - 3000 - 6000,
   "Only the forfeited $60 has left the fund");
 await assertLedgerSound("partial forfeiture");
 
@@ -972,8 +972,8 @@ assert(await accountBalance(env, "fund_deposit_guarantee_reserved") === 12000,
   "The only guarantee commitment left is the parked one");
 assert(await accountBalance(env, "deposit_guarantee_outstanding") === 12000,
   "and the only program cash still at a clinic is its $120");
-assert(await accountBalance(env, "fund_available") === 50000 - 3500 - 6000 - 12000,
-  `The fund is the $500 contributed less the $35 sponsorship still reserved, the $60 genuinely forfeited, and the $120 still committed: ${await accountBalance(env, "fund_available")}`);
+assert(await accountBalance(env, "fund_available") === 50000 - 3000 - 6000 - 12000,
+  `The fund is the $500 contributed less the $30 sponsorship still reserved, the $60 genuinely forfeited, and the $120 still committed: ${await accountBalance(env, "fund_available")}`);
 
 const guaranteeCount = Number(database.prepare("SELECT COUNT(*) AS c FROM pif_deposit_guarantees").get().c);
 const eventCount = Number(database.prepare("SELECT COUNT(*) AS c FROM pif_deposit_guarantee_events").get().c);

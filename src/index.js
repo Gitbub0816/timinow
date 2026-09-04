@@ -39,6 +39,17 @@ import {
   normalizeIntakeRow,
   tenantIdForClerkOrg
 } from "./db.js";
+import {
+  activeRoutingPolicy,
+  advanceSearchWaves,
+  assignWaves,
+  rankCandidates,
+  recordClinicIgnored,
+  recordClinicResponded,
+  reliabilityByTenant
+} from "./routing.js";
+import { recordAudit } from "./ledger.js";
+import { signSearchToken, verifySearchToken } from "./search-links.js";
 
 const JSON_HEADERS = { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" };
 const SECURITY_HEADERS = {
@@ -664,10 +675,27 @@ async function createCareSearch(request, env, actor) {
 
   const searchId = newId(hasDatabase(env) ? "search" : "demo_search");
   const now = new Date().toISOString();
-  const collectionExpiresAt = isoAfter(1.5);
-  const searchExpiresAt = isoAfter(6.5);
   const ageYears = numberInRange(validated.pet.ageYears, 0, 80);
   const weightLbs = numberInRange(validated.pet.weightLbs, 0.1, 3000);
+
+  // Staged wave routing (Feature A, migration 0021): rank every candidate on
+  // required capability, capacity and freshness, species/case eligibility,
+  // travel time, reported wait, and this clinic's own response reliability —
+  // never on payment status, see src/routing.js. The ranked list is then cut
+  // into waves per the routing policy, frozen into the search row so a later
+  // policy edit cannot retroactively change a search already in flight.
+  const routingPolicy = await activeRoutingPolicy(env);
+  const reliabilityMap = await reliabilityByTenant(env, candidates.map((location) => location.tenantId));
+  const ranked = rankCandidates(candidates, reliabilityMap, {
+    urgency: validated.urgency,
+    concernCategory: cleanString(body.concernCategory, 80),
+    redFlags: validated.redFlags
+  });
+  const waveAssignments = assignWaves(ranked.map((entry) => entry.location), routingPolicy);
+  const scoreByLocationId = new Map(ranked.map((entry) => [entry.location.id, entry.score]));
+
+  const collectionExpiresAt = isoAfter(routingPolicy.searchWindowMinutes);
+  const searchExpiresAt = isoAfter(routingPolicy.searchWindowMinutes + routingPolicy.offerHoldMinutes);
 
   if (!hasDatabase(env)) {
     const offers = candidates.slice(0, 5).map((location, index) => demoOffer(location, searchId, index));
@@ -692,12 +720,16 @@ async function createCareSearch(request, env, actor) {
       requestedAt: now,
       collectionExpiresAt,
       searchExpiresAt,
+      currentWave: 1,
+      totalWaves: 1,
       offers,
-      progress: { contacted: candidates.length, awaiting: Math.max(0, candidates.length - offers.length), declined: 0, offers: offers.length },
+      progress: { candidates: candidates.length, contacted: candidates.length, queued: 0, awaiting: Math.max(0, candidates.length - offers.length), declined: 0, offers: offers.length },
       demo: true
     };
     return json({ search, demo: true }, { status: 201 });
   }
+
+  const routingSnapshot = { id: routingPolicy.id, waves: routingPolicy.waves, expansionBatchSize: routingPolicy.expansionBatchSize, expansionDurationSeconds: routingPolicy.expansionDurationSeconds, searchWindowMinutes: routingPolicy.searchWindowMinutes, offerHoldMinutes: routingPolicy.offerHoldMinutes };
 
   const statements = [env.DB.prepare(`
     INSERT INTO care_searches (
@@ -705,8 +737,9 @@ async function createCareSearch(request, env, actor) {
       owner_name, owner_phone, owner_email, concern_category, concern_summary, urgency,
       red_flags_json, customer_latitude, customer_longitude, radius_miles, status,
       max_offers, target_limit, legal_version, legal_accepted_at, requested_at,
-      collection_expires_at, search_expires_at, medications, allergies
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'collecting', 5, ?, ?, ?, ?, ?, ?, ?, ?)
+      collection_expires_at, search_expires_at, medications, allergies,
+      routing_policy_id, routing_snapshot_json, current_wave, symptoms_json, started_when
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'collecting', 5, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
   `).bind(
     searchId, publicCode(), actor?.userId || null, cleanString(validated.pet.name, 80), validated.species,
     cleanString(validated.pet.breed, 120) || null, ageYears, weightLbs, cleanString(validated.owner.name, 120),
@@ -714,18 +747,34 @@ async function createCareSearch(request, env, actor) {
     cleanString(body.concernCategory, 80), validated.clinicConcernSummary, validated.urgency,
     JSON.stringify(validated.redFlags), latitude, longitude, radiusMiles, targetLimit,
     validated.legalVersion, now, now, collectionExpiresAt, searchExpiresAt,
-    validated.medications, validated.allergies
+    validated.medications, validated.allergies,
+    routingPolicy.id, JSON.stringify(routingSnapshot), JSON.stringify(validated.symptoms), validated.startedWhen
   )];
 
-  candidates.forEach((location, rank) => {
+  const wave1TenantsContacted = new Set();
+  waveAssignments.forEach(({ candidate: location, waveNumber }, index) => {
     const targetId = newId("target");
     const travelMinutes = Math.max(5, Math.round((location.distanceMiles || 2) * 4));
+    const activatedNow = waveNumber === 1;
     statements.push(
       env.DB.prepare(`
         INSERT INTO care_search_targets (
-          id, search_id, location_id, tenant_id, rank, travel_minutes, status, contacted_at
-        ) VALUES (?, ?, ?, ?, ?, ?, 'awaiting_response', ?)
-      `).bind(targetId, searchId, location.id, location.tenantId, rank + 1, travelMinutes, now),
+          id, search_id, location_id, tenant_id, rank, travel_minutes, status, wave_number,
+          rank_score, contacted_at, wave_activated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, 'awaiting_response', ?, ?, ?, ?)
+      `).bind(
+        targetId, searchId, location.id, location.tenantId, index + 1,
+        travelMinutes, waveNumber, scoreByLocationId.get(location.id) ?? null,
+        activatedNow ? now : null, activatedNow ? now : null
+      )
+    );
+    // Only wave 1 is contacted at creation time. Every later wave is picked
+    // up by advanceSearchWaves the next time the search is polled or a
+    // clinic responds — see src/routing.js — which is also where its
+    // dashboard notification and voice call actually get enqueued.
+    if (!activatedNow) return;
+    wave1TenantsContacted.add(location.tenantId);
+    statements.push(
       env.DB.prepare(`
         INSERT INTO notification_outbox (
           id, tenant_id, channel, template_key, payload_json, available_at
@@ -763,8 +812,26 @@ async function createCareSearch(request, env, actor) {
       )
     );
   });
+  for (const tenantId of wave1TenantsContacted) {
+    statements.push(env.DB.prepare(`
+      INSERT INTO clinic_response_stats (tenant_id, requests_received, updated_at)
+      VALUES (?, 1, CURRENT_TIMESTAMP)
+      ON CONFLICT(tenant_id) DO UPDATE SET requests_received = requests_received + 1, updated_at = CURRENT_TIMESTAMP
+    `).bind(tenantId));
+  }
   await env.DB.batch(statements);
   return json({ search: await getCareSearch(env, searchId) }, { status: 201 });
+}
+
+/**
+ * Runs the lazy wave-advancement check for a search already in hand and
+ * re-reads it only if anything actually changed. Called from every place a
+ * customer (or their SMS link) reads a search — see src/routing.js for why
+ * this has to be lazy rather than scheduled.
+ */
+async function advanceSearchWavesAndRefetch(env, search) {
+  const changed = await advanceSearchWaves(env, search);
+  return changed ? await getCareSearch(env, search.id) : search;
 }
 
 /**
@@ -802,6 +869,12 @@ export async function applyCareSearchDecision(env, {
   const target = await getClinicSearchTarget(env, targetId, tenantId);
   if (!target) return fail(404, "SEARCH_TARGET_NOT_FOUND", "This clinic request was not found.");
   if (target.status !== "pending") return fail(409, "ALREADY_DECIDED", "This clinic request has already been handled.");
+  // Staged wave routing: a target sitting in a wave that has not activated
+  // yet has never been shown to this clinic — no dashboard row, no phone
+  // call — so there is nothing for a legitimate caller to be responding to.
+  // This is defense in depth (listClinicSearchTargets already hides it), not
+  // the primary gate.
+  if (!target.waveActivatedAt) return fail(409, "TARGET_NOT_YET_ACTIVE", "This request has not been sent to your clinic yet.");
 
   const search = await getCareSearch(env, target.searchId);
   const now = new Date().toISOString();
@@ -815,6 +888,10 @@ export async function applyCareSearchDecision(env, {
       WHERE id = ? AND tenant_id = ? AND status IN ('contacting', 'awaiting_response')
     `).bind(now, now, target.id, tenantId).run();
     if (!result.meta?.changes) return fail(409, "TARGET_CHANGED", "Another team member handled this request first.");
+    // A decline is a response, not a failure to respond — see
+    // src/routing.js: only silence (an activated target that never answers
+    // before its window closes) counts against a clinic's reliability.
+    await recordClinicResponded(env, tenantId, { contactedAt: target.waveActivatedAt });
     return { ok: true, target: { ...target, status: "declined", respondedAt: now } };
   }
 
@@ -833,7 +910,8 @@ export async function applyCareSearchDecision(env, {
   const waitMax = numberInRange(requestedWaitMax, 0, 1440, location.availability.stableWaitMax);
   if (waitMin !== null && waitMax !== null && waitMin > waitMax) return fail(422, "INVALID_WAIT_RANGE", "Minimum wait cannot exceed maximum wait.");
   const offerId = newId("offer");
-  const offerExpiresAt = isoAfter(numberInRange(holdMinutes, 2, 10, 5));
+  const defaultHoldMinutes = search.routingSnapshot?.offerHoldMinutes || 5;
+  const offerExpiresAt = isoAfter(numberInRange(holdMinutes, 1, 30, defaultHoldMinutes));
   const availableAt = new Date(availableAtMs).toISOString();
   const arrivalBy = new Date(availableAtMs + arrivalMinutes * 60_000).toISOString();
   const policy = location.policy || { depositRequired: false, depositAmountCents: 0 };
@@ -878,11 +956,22 @@ export async function applyCareSearchDecision(env, {
     `).bind(now, now, search.id, search.id, now, search.id)
   ]);
   if (!results[0]?.meta?.changes) return fail(409, "OFFER_WINDOW_FULL", "The customer already has five active clinic offers.");
-  return { ok: true, offerId, search: await getCareSearch(env, search.id) };
+  // An offer is a response too — see the decline branch above.
+  await recordClinicResponded(env, tenantId, { contactedAt: target.waveActivatedAt });
+  const updatedSearch = await getCareSearch(env, search.id);
+  // The first offer to exist surfaces to the customer immediately (it is
+  // already in `updatedSearch.offers` above — nothing here withholds it
+  // while later waves keep going). Mark the moment for analytics and hand
+  // the caller `firstOffer` so an SMS notification can go out — see
+  // notifyFirstOfferBySms, called from respondToCareSearch below.
+  if (!search.firstOfferAt) {
+    await env.DB.prepare("UPDATE care_searches SET first_offer_at = COALESCE(first_offer_at, ?) WHERE id = ?").bind(now, search.id).run();
+  }
+  return { ok: true, offerId, search: updatedSearch };
 }
 
 /** HTTP wrapper for the clinic console and the desktop clients. */
-export async function respondToCareSearch(request, env, actor, tenantId, targetId) {
+export async function respondToCareSearch(request, env, actor, tenantId, targetId, ctx) {
   const body = await readJson(request).catch(() => null);
   const result = await applyCareSearchDecision(env, {
     targetId,
@@ -898,9 +987,66 @@ export async function respondToCareSearch(request, env, actor, tenantId, targetI
     note: body?.note
   });
   if (!result.ok) return apiError(result.status, result.code, result.message);
+  // Feature B: text the customer once, the first time any offer exists for
+  // their search, so they can close the page. Guarded to a no-op (and never
+  // awaited here) by notifyFirstOfferBySms itself when there is no phone on
+  // file, no link secret configured, or a text was already sent.
+  if (result.offerId && result.search?.id) {
+    const notify = notifyFirstOfferBySms(env, result.search.id).catch((error) => {
+      console.error(JSON.stringify({ event: "search_sms_failed", searchId: result.search.id, message: error.message }));
+    });
+    if (ctx?.waitUntil) ctx.waitUntil(notify);
+  }
   return result.target
     ? json({ target: result.target })
     : json({ search: result.search, offerId: result.offerId });
+}
+
+/**
+ * Feature B: one SMS, the first time a care search gets an offer, with a
+ * signed link that restores the search without asking the customer to sign
+ * in again. Guarded so a missing phone number, a missing
+ * SEARCH_LINK_SECRET/PUBLIC_APP_URL, or an already-sent text all degrade
+ * silently — a customer with the app still open in front of them must never
+ * have their offer blocked by an SMS failure.
+ *
+ * The conditional UPDATE below is the actual "only once" guarantee: this can
+ * be called once per offer created for the same search (every clinic
+ * response goes through respondToCareSearch), and only the very first call
+ * to reach it will find `sms_notified_at IS NULL` and win the race.
+ */
+export async function notifyFirstOfferBySms(env, searchId) {
+  if (!hasDatabase(env)) return;
+  const row = await env.DB.prepare(
+    "SELECT id, owner_phone, owner_name, pet_name, sms_notified_at FROM care_searches WHERE id = ?"
+  ).bind(searchId).first();
+  if (!row || row.sms_notified_at) return;
+  const phone = cleanString(row.owner_phone, 30);
+  if (!phone) return;
+
+  const now = new Date().toISOString();
+  const claim = await env.DB.prepare(
+    "UPDATE care_searches SET sms_notified_at = ? WHERE id = ? AND sms_notified_at IS NULL"
+  ).bind(now, searchId).run();
+  if (!claim.meta?.changes) return; // another concurrent call already claimed this send
+
+  const token = await signSearchToken(env, searchId, { ttlMinutes: 24 * 60 });
+  const baseUrl = String(env.PUBLIC_APP_URL || "").replace(/\/+$/, "");
+  if (!token || !baseUrl) {
+    console.warn(JSON.stringify({ event: "search_sms_skipped", searchId, reason: !token ? "SEARCH_LINK_SECRET not configured" : "PUBLIC_APP_URL not configured" }));
+    return;
+  }
+  const link = `${baseUrl}/#tracker?st=${token}`;
+  const petName = cleanString(row.pet_name, 80) || "your pet";
+  const smsBody = `Tími NOW found a clinic for ${petName}. You can close this page — review and confirm here: ${link}`;
+
+  await env.DB.prepare(`
+    INSERT INTO notification_outbox (id, channel, recipient, template_key, payload_json, available_at)
+    VALUES (?, 'sms', ?, 'first_offer_sms', ?, ?)
+  `).bind(newId("notification"), phone, JSON.stringify({ body: smsBody }), now).run();
+  // Reuses the same drain poke the voice call queue already uses — the
+  // voice gateway Worker holds the Twilio credentials for both channels.
+  await dispatchVoiceCalls(env);
 }
 
 async function selectCareOffer(request, env, actor, searchId) {
@@ -984,6 +1130,24 @@ async function selectCareOffer(request, env, actor, searchId) {
     `).bind(JSON.stringify({ searchId: search.id, selectedOfferId: offer.id }), now, search.id, offer.targetId, intakeId)
   ]);
   if (!results[0]?.meta?.changes || !results[1]?.meta?.changes) return apiError(409, "SELECTION_RACE", "Another clinic offer was selected first. Refresh to continue.");
+  /**
+   * Feature C: this is the moment the winning clinic's full contact reveal
+   * actually happens — src/db.js's normalizeClinicSearchTarget starts
+   * returning real owner name/phone for this one target the instant its
+   * status flips to 'selected' above, and every other target in this search
+   * stays masked (declined, released, or still pending). Audited here rather
+   * than on every subsequent read, the same way match-alias.js's
+   * revealMapping audits a reveal once at the moment it happens.
+   */
+  await recordAudit(env, {
+    actorId: actor?.userId || null,
+    actorRole: "customer",
+    action: "clinic_contact.revealed",
+    subjectType: "care_search",
+    subjectId: search.id,
+    newState: { tenantId: offer.tenantId, targetId: offer.targetId, intakeId },
+    reason: "offer_selected"
+  });
   const intake = await getIntake(env, intakeId);
   return json({ intake, location: enrichLocation(offer.location), search: await getCareSearch(env, search.id) }, { status: 201 });
 }
@@ -1552,6 +1716,24 @@ async function expireStaleState(env) {
   `).bind(now, now).all();
   const expiredSearches = await env.DB.prepare("SELECT id FROM care_searches WHERE status IN ('collecting', 'offers_ready') AND datetime(search_expires_at) <= datetime(?) LIMIT 200").bind(now).all();
   const expiredOffers = await env.DB.prepare("SELECT id, search_id FROM care_offers WHERE status = 'active' AND datetime(expires_at) <= datetime(?) LIMIT 200").bind(now).all();
+
+  // Reliability tracking (Feature A): a target that was actually shown to a
+  // clinic (wave_activated_at is set) and is still sitting unanswered the
+  // moment its search or collection window closes counts against that
+  // clinic — see recordClinicIgnored in src/routing.js. A target still in a
+  // future, unactivated wave was never shown to anyone and is released below
+  // the same way it always was, but it is not "ignored" — nobody ignored it.
+  const closingSearchIds = [...closedCollections.results.map((row) => row.id), ...expiredSearches.results.map((row) => row.id)];
+  let ignoredTenantIds = [];
+  if (closingSearchIds.length) {
+    const placeholders = closingSearchIds.map(() => "?").join(",");
+    const ignoredRows = await env.DB.prepare(`
+      SELECT DISTINCT tenant_id FROM care_search_targets
+      WHERE search_id IN (${placeholders}) AND wave_activated_at IS NOT NULL AND status IN ('contacting', 'awaiting_response')
+    `).bind(...closingSearchIds).all();
+    ignoredTenantIds = ignoredRows.results.map((row) => row.tenant_id);
+  }
+
   const statements = [];
   for (const intake of expired.results) {
     statements.push(
@@ -1585,7 +1767,8 @@ async function expireStaleState(env) {
     );
   }
   if (statements.length) await env.DB.batch(statements);
-  console.log(JSON.stringify({ event: "scheduled_expiry_complete", at: now, expired: expired.results.length, noShows: noShows.results.length, closedCollections: closedCollections.results.length, expiredSearches: expiredSearches.results.length, expiredOffers: expiredOffers.results.length }));
+  if (ignoredTenantIds.length) await recordClinicIgnored(env, ignoredTenantIds);
+  console.log(JSON.stringify({ event: "scheduled_expiry_complete", at: now, expired: expired.results.length, noShows: noShows.results.length, closedCollections: closedCollections.results.length, expiredSearches: expiredSearches.results.length, expiredOffers: expiredOffers.results.length, ignoredClinicTargets: ignoredTenantIds.length }));
 }
 
 /**
@@ -1656,6 +1839,18 @@ async function handleApi(request, env, ctx) {
     const location = await getLocation(env, decodeURIComponent(path.slice("/api/locations/".length)));
     return location ? json({ location: enrichLocation(location) }) : apiError(404, "LOCATION_NOT_FOUND", "The hospital was not found.");
   }
+  // Public and deliberately above the sign-in gate: Feature B's SMS link has
+  // to work for a customer opening it on a new device with no Clerk session.
+  // The signed token itself — not a Clerk session — is the authorization
+  // here, exactly the way the Stripe signature above authorizes that route.
+  if (method === "GET" && path === "/api/searches/by-token") {
+    const resolved = await verifySearchToken(env, new URL(request.url).searchParams.get("token"));
+    if (!resolved) return apiError(404, "SEARCH_LINK_EXPIRED", "This link has expired or is no longer valid.");
+    let search = await getCareSearch(env, resolved.searchId);
+    if (search) search = await advanceSearchWavesAndRefetch(env, search);
+    if (!search) return apiError(404, "SEARCH_NOT_FOUND", "The care search was not found.");
+    return json({ search });
+  }
 
   const actor = await authenticatedActor(request, env);
   if (signInRequired(env) && !actor) return authRequiredResponse();
@@ -1713,9 +1908,13 @@ async function handleApi(request, env, ctx) {
     const searchId = decodeURIComponent(searchMatch[1]);
     const action = searchMatch[2] || null;
     if (method === "GET" && !action) {
-      const search = await getCareSearch(env, searchId);
+      let search = await getCareSearch(env, searchId);
       if (!search) return apiError(404, "SEARCH_NOT_FOUND", "The care search was not found.");
       if (signInRequired(env) && search.customerUserId !== actor?.userId) return apiError(403, "SEARCH_ACCESS_DENIED", "This care search belongs to another account.");
+      // Staged wave routing has no background timer to advance it — the
+      // customer's own poll of this endpoint (every five seconds while the
+      // tracker is open) is the clock. See src/routing.js.
+      search = await advanceSearchWavesAndRefetch(env, search);
       return json({ search });
     }
     if (method === "POST" && action === "select-offer") return selectCareOffer(request, env, actor, searchId);
@@ -1756,7 +1955,7 @@ async function handleApi(request, env, ctx) {
     const decisionMatch = path.match(/^\/api\/clinic\/intakes\/([^/]+)\/decision$/);
     if (method === "POST" && decisionMatch) return decideIntake(request, env, actor, tenantId, decodeURIComponent(decisionMatch[1]));
     const searchDecisionMatch = path.match(/^\/api\/clinic\/search-targets\/([^/]+)\/decision$/);
-    if (method === "POST" && searchDecisionMatch) return respondToCareSearch(request, env, actor, tenantId, decodeURIComponent(searchDecisionMatch[1]));
+    if (method === "POST" && searchDecisionMatch) return respondToCareSearch(request, env, actor, tenantId, decodeURIComponent(searchDecisionMatch[1]), ctx);
   }
 
   return apiError(404, "NOT_FOUND", "The requested API route does not exist.");

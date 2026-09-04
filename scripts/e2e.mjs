@@ -98,12 +98,12 @@ assert(result.response.status === 200 && result.body.locations.length === 5, "D1
 // dollar figures, because the numbers themselves are the commercial contract.
 result = await call("/api/config");
 assert(result.response.status === 200 && result.body.legalVersion === LEGAL_VERSION && result.body.legalVersion === "2026-08-29", "/api/config must serve legal version 2026-08-29, the one the Worker validates intakes against");
-assert(result.body.fees?.ownerFeeCents === 2000, "/api/config must disclose the $20 owner fee");
+assert(result.body.fees?.ownerFeeCents === 1500, "/api/config must disclose the $15 owner fee");
 assert(result.body.fees?.clinicFeeCents === 2500, "/api/config must disclose the $25 clinic fee");
 assert(result.body.fees?.timiMatchCents === 1000, "/api/config must disclose Tími's $10 match");
 // The community fund's share is derived, not sent independently: a client
 // that computed it itself could drift from what the ledger actually reserves.
-assert(result.body.fees?.sponsorshipFundCents === 3500, "A standard sponsored connection asks the fund for $35");
+assert(result.body.fees?.sponsorshipFundCents === 3000, "A standard sponsored connection asks the fund for $30");
 assert(result.body.fees?.currency === "usd", "The fee currency travels with the amounts");
 // The seeded launch policy and the no-database fallback must agree, or a
 // demo quotes a different price than production charges.
@@ -251,27 +251,83 @@ result = await call("/api/searches", {
 });
 assert(result.response.status === 201 && result.body.search.status === "collecting", `Multi-clinic search creation failed: ${JSON.stringify(result.body)}`);
 const careSearchId = result.body.search.id;
-const targets = database.prepare("SELECT id, tenant_id FROM care_search_targets WHERE search_id = ? ORDER BY rank").all(careSearchId);
-assert(targets.length === 5, "A care search must fan out to every matching seeded clinic");
-for (const [index, target] of targets.entries()) {
-  result = await call(`/api/clinic/search-targets/${target.id}/decision`, {
-    method: "POST",
-    headers: { "content-type": "application/json", "x-demo-role": "clinic", "x-demo-tenant-id": target.tenant_id },
-    body: JSON.stringify({
-      decision: "offer",
-      responseType: index % 2 ? "available_now" : "emergency_intake",
-      arrivalWindowMinutes: 20 + index * 5,
-      holdMinutes: 5,
-      waitMin: 10 + index * 5,
-      waitMax: 25 + index * 5,
-      note: `Offer ${index + 1} is ready for comparison.`
-    })
-  });
+const targets = database.prepare("SELECT id, tenant_id, wave_number, wave_activated_at FROM care_search_targets WHERE search_id = ? ORDER BY rank").all(careSearchId);
+assert(targets.length === 5, "A care search must fan out to every matching seeded clinic, even though staged wave routing means not all five are contacted yet");
+
+// Staged wave routing (Feature A): the launch policy's wave 1 is the best
+// three candidates, contacted immediately; the rest wait for later waves.
+const wave1 = targets.filter((target) => target.wave_activated_at);
+const laterWaves = targets.filter((target) => !target.wave_activated_at);
+assert(wave1.length === 3 && laterWaves.length === 2, `Five candidates should split 3 (wave 1, contacted now) / 2 (later waves, not yet) — got ${wave1.length}/${laterWaves.length}`);
+
+// A clinic in a later wave cannot respond before its wave activates — the
+// request was never shown to it (no dashboard row, no phone call).
+result = await call(`/api/clinic/search-targets/${laterWaves[0].id}/decision`, {
+  method: "POST",
+  headers: { "content-type": "application/json", "x-demo-role": "clinic", "x-demo-tenant-id": laterWaves[0].tenant_id },
+  body: JSON.stringify({ decision: "offer" })
+});
+assert(result.response.status === 409 && result.body.error.code === "TARGET_NOT_YET_ACTIVE", `A clinic in an unactivated wave must not be able to respond yet: ${JSON.stringify(result.body)}`);
+const dashboardBeforeActivation = await call("/api/clinic/dashboard", { headers: { "x-demo-role": "clinic", "x-demo-tenant-id": laterWaves[0].tenant_id } });
+assert(!dashboardBeforeActivation.body.requests?.some((item) => item.id === laterWaves[0].id), "A clinic's dashboard must not show a request from a wave that has not activated yet");
+
+const offerFor = (index, target) => call(`/api/clinic/search-targets/${target.id}/decision`, {
+  method: "POST",
+  headers: { "content-type": "application/json", "x-demo-role": "clinic", "x-demo-tenant-id": target.tenant_id },
+  body: JSON.stringify({
+    decision: "offer",
+    responseType: index % 2 ? "available_now" : "emergency_intake",
+    arrivalWindowMinutes: 20 + index * 5,
+    holdMinutes: 5,
+    waitMin: 10 + index * 5,
+    waitMax: 25 + index * 5,
+    note: `Offer ${index + 1} is ready for comparison.`
+  })
+});
+for (const [index, target] of wave1.entries()) {
+  result = await offerFor(index, target);
   assert(result.response.status === 200, `Clinic ${target.tenant_id} could not submit an offer: ${JSON.stringify(result.body)}`);
+}
+
+result = await call(`/api/searches/${careSearchId}`);
+assert(result.response.status === 200 && result.body.search.offers.length === 3, `The first three offers must already be visible to the customer while later waves are still pending: ${JSON.stringify(result.body.search.progress)}`);
+assert(result.body.search.status === "collecting", "Three offers (below max_offers) must not close collection — later waves still have a chance");
+
+// Fast-forward past wave 1's window by backdating the search's requested_at.
+// The next customer poll is the only clock a Worker has — see
+// advanceSearchWaves in src/routing.js — so simulating elapsed time this way
+// is exactly what a real customer leaving the tracker open for two minutes
+// would trigger.
+const backdated = new Date(Date.now() - 4 * 60_000).toISOString();
+database.prepare("UPDATE care_searches SET requested_at = ? WHERE id = ?").run(backdated, careSearchId);
+result = await call(`/api/searches/${careSearchId}`);
+assert(result.response.status === 200, "Polling after the wave window elapses must still succeed");
+const afterAdvance = database.prepare("SELECT id, tenant_id, wave_activated_at FROM care_search_targets WHERE search_id = ?").all(careSearchId);
+assert(afterAdvance.every((target) => target.wave_activated_at), `Every remaining wave should have activated once four minutes have elapsed: ${JSON.stringify(afterAdvance)}`);
+assert(result.body.search.progress.contacted === 5, `progress.contacted must now count all five clinics as actually notified: ${JSON.stringify(result.body.search.progress)}`);
+
+for (const [index, target] of laterWaves.entries()) {
+  result = await offerFor(index + wave1.length, target);
+  assert(result.response.status === 200, `Clinic ${target.tenant_id} could not submit an offer after its wave activated: ${JSON.stringify(result.body)}`);
 }
 result = await call(`/api/searches/${careSearchId}`);
 assert(result.response.status === 200 && result.body.search.status === "offers_ready", "The search must become ready after five clinic offers");
 assert(result.body.search.offers.length === 5, "The customer must receive exactly five comparable active offers");
+
+// Feature C: every clinic in this search made an offer, and not one of them
+// has been selected yet — none should see the pet owner's real name or
+// phone number. Full name and the intake's owner_phone are seeded fixture
+// values ("Avery Cole", "(510) 555-0126" in intakePayload) that must not
+// appear anywhere in any clinic's dashboard before a selection happens.
+for (const target of targets) {
+  const clinicView = await call("/api/clinic/dashboard", { headers: { "x-demo-role": "clinic", "x-demo-tenant-id": target.tenant_id } });
+  const ownRequest = clinicView.body.requests.find((item) => item.id === target.id);
+  assert(ownRequest, `Clinic ${target.tenant_id} should see its own (now-activated) request on the dashboard`);
+  assert(ownRequest.contactRevealed === false, `A clinic that has not been selected must not have contact revealed: ${JSON.stringify(ownRequest.owner)}`);
+  assert(ownRequest.owner.phone === null && ownRequest.owner.email === null, `A pre-selection clinic view must carry no phone or email: ${JSON.stringify(ownRequest.owner)}`);
+  assert(ownRequest.owner.name !== intakePayload.owner.name, `A pre-selection clinic view must not show the owner's real full name: ${JSON.stringify(ownRequest.owner)}`);
+  assert(!JSON.stringify(ownRequest).includes(intakePayload.owner.phone), `A pre-selection clinic view leaked the owner's real phone number: ${JSON.stringify(ownRequest)}`);
+}
 
 // Nothing to drive to for free. Every offer still being compared wears a
 // temporary match alias and must not leak anything a customer could use to

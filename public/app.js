@@ -232,7 +232,7 @@ function formatMoneyExact(cents) {
 /* price change is a database row, and a screen quoting yesterday's number */
 /* is a screen that lies to somebody about to pay.                         */
 /* ---------------------------------------------------------------------- */
-const FEE_FALLBACK = { ownerFeeCents: 2000, clinicFeeCents: 2500, timiMatchCents: 1000, sponsorshipFundCents: 3500, minBookingContributionCents: 100, minStandaloneContributionCents: 1000, maxBookingContributionCents: 500000, maxStandaloneContributionCents: 2500000, currency: "usd" };
+const FEE_FALLBACK = { ownerFeeCents: 1500, clinicFeeCents: 2500, timiMatchCents: 1000, sponsorshipFundCents: 3000, minBookingContributionCents: 100, minStandaloneContributionCents: 1000, maxBookingContributionCents: 500000, maxStandaloneContributionCents: 2500000, currency: "usd" };
 
 function fees() {
   return { ...FEE_FALLBACK, ...(state.config?.fees || {}) };
@@ -418,7 +418,12 @@ async function renderRoute() {
   $$('dialog[open]').forEach((dialog) => dialog.close());
   document.body.classList.remove("dialog-open");
   let route = parseRoute();
-  if (state.config?.signInRequired && PROTECTED_ROUTES.has(route) && !state.clerk?.user) {
+  // A Feature B SMS link ("#tracker?st=<signed token>") has to work for a
+  // customer who never signed in on this device — the signed token is the
+  // authorization, not a Clerk session. See notifyFirstOfferBySms in
+  // src/index.js and the GET /api/searches/by-token route it points at.
+  const hasSearchLinkToken = route === "tracker" && Boolean(routeQuery().get("st"));
+  if (state.config?.signInRequired && PROTECTED_ROUTES.has(route) && !state.clerk?.user && !hasSearchLinkToken) {
     sessionStorage.setItem("timi_return_route", route);
     route = "sign-in";
   }
@@ -479,6 +484,17 @@ async function renderRoute() {
   if (route === "paw-it-forward") await enterPawItForward();
   if (route === "results") await loadLocations();
   if (route === "tracker") {
+    const searchLinkToken = routeQuery().get("st");
+    if (searchLinkToken) {
+      try {
+        const resolved = await api(`/api/searches/by-token?token=${encodeURIComponent(searchLinkToken)}`);
+        state.currentSearch = resolved.search;
+        state.currentIntake = null;
+        writeStorage(STORAGE_KEYS.search, state.currentSearch);
+      } catch (error) {
+        showToast(error.code === "SEARCH_LINK_EXPIRED" ? "This link has expired." : error.message);
+      }
+    }
     await refreshCurrentIntake();
     state.trackerTimer = window.setInterval(refreshCurrentIntake, 5000);
   }
@@ -1253,26 +1269,55 @@ function renderCareSearch() {
   $("[data-search-stage]").hidden = false;
   $("[data-confirmed-stage]").hidden = true;
   const offers = Array.isArray(search.offers) ? search.offers.filter((offer) => offer.status === "active") : [];
-  const progress = search.progress || { contacted: search.targetLimit || 0, awaiting: 0, declined: 0, offers: offers.length };
+  const progress = search.progress || { candidates: search.targetLimit || 0, contacted: 0, queued: 0, awaiting: 0, declined: 0, offers: offers.length };
+  const currentWave = search.currentWave || 1;
+  const expandingWaves = currentWave > 1;
+  const searchTimedOut = search.status === "expired" && !offers.length;
+
   $("[data-offer-count]").textContent = `${offers.length} of ${search.maxOffers || 5} offers`;
-  $("[data-search-progress]").textContent = offers.length >= (search.maxOffers || 5) ? "Five clinics can help" : `Contacting ${progress.contacted || 0} clinics`;
-  $("[data-search-progress-detail]").textContent = search.status === "expired"
-    ? "The response window ended. Start a new search for current capacity."
-    : `${progress.awaiting || 0} awaiting response · ${progress.declined || 0} unavailable`;
-  $("[data-tracker-eyebrow]").textContent = offers.length ? "AVAILABILITY OFFERS" : "SEARCH IN PROGRESS";
+  // Staged wave routing (Feature A) contacts clinics in small batches rather
+  // than all at once, so "contacted" now tracks how many teams have actually
+  // been reached so far — a real, growing number, not a bare spinner.
+  $("[data-search-progress]").textContent = offers.length >= (search.maxOffers || 5)
+    ? "Five clinics can help"
+    : expandingWaves
+      ? `Contacted ${progress.contacted || 0} of ${progress.candidates || progress.contacted || 0} veterinary teams`
+      : "Checking nearby capacity…";
+  $("[data-search-progress-detail]").textContent = searchTimedOut
+    ? "No clinic confirmed in time. You have not been charged — this search costs you $0."
+    : search.status === "expired"
+      ? "The response window ended. Start a new search for current capacity."
+      : expandingWaves
+        ? "We're expanding your search to additional veterinary teams."
+        : `${progress.awaiting || 0} awaiting response · ${progress.declined || 0} unavailable`;
+  $("[data-tracker-eyebrow]").textContent = offers.length ? "AVAILABILITY OFFERS" : searchTimedOut ? "SEARCH ENDED" : "SEARCH IN PROGRESS";
   $("[data-tracker-title]").textContent = offers.length
     ? `${search.pet?.name || "Your pet"} has ${offers.length} option${offers.length === 1 ? "" : "s"}.`
-    : "Asking nearby clinics now.";
+    : searchTimedOut
+      ? "No clinic was able to confirm in time."
+      : expandingWaves
+        ? "We're expanding your search to additional veterinary teams."
+        : "Checking nearby capacity…";
   $("[data-tracker-lede]").textContent = offers.length
     ? "Compare the live offers and choose the clinic that works best. Tími will release every offer you do not select."
-    : `Offers will be collected until ${formatClock(search.collectionExpiresAt || search.searchExpiresAt)} or until five clinics respond.`;
+    : searchTimedOut
+      // Explicit, on purpose: a customer whose search ends with nothing must
+      // never have to wonder whether they are about to be billed for it.
+      ? "You have not been charged anything — this search cost you $0. You're welcome to try again; capacity changes quickly."
+      : `Offers will be collected until ${formatClock(search.collectionExpiresAt || search.searchExpiresAt)} or until five clinics respond. ${search.smsNotifiedAt ? "We texted you a link — it's safe to close this page." : "You may leave this page open; responses update automatically."}`;
   const list = $("[data-offer-list]");
   if (offers.length && renderCareSearch.offersViewedFor !== search.id) {
     renderCareSearch.offersViewedFor = search.id;
     track("offers_viewed", { offers: offers.length });
   }
   if (!offers.length) {
-    list.innerHTML = `<div class="empty-state offer-waiting">${search.status === "expired" ? "" : '<span class="evander evander-sm" aria-hidden="true"></span>'}<strong>${search.status === "expired" ? "No active offers remain" : "Waiting for clinic responses"}</strong><p>${search.status === "expired" ? "Capacity changes quickly. Please start a new search." : "You may leave this page open; responses update automatically."}</p></div>`;
+    const waitingHeadline = searchTimedOut ? "No clinic confirmed — you pay $0" : expandingWaves ? "Expanding to more veterinary teams" : "Checking nearby capacity…";
+    const waitingBody = searchTimedOut
+      ? "Every nearby team we contacted was unavailable in time. Nothing was charged. Capacity changes quickly, so it's worth trying again."
+      : search.smsNotifiedAt
+        ? "You may leave this page open, or watch for our text — responses update automatically either way."
+        : "You may leave this page open; responses update automatically.";
+    list.innerHTML = `<div class="empty-state offer-waiting">${searchTimedOut ? "" : '<span class="evander evander-sm" aria-hidden="true"></span>'}<strong>${escapeHtml(waitingHeadline)}</strong><p>${escapeHtml(waitingBody)}</p></div>`;
     return;
   }
   list.innerHTML = offers.map((offer) => matchCardHtml(search, offer)).join("");
