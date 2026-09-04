@@ -918,6 +918,12 @@ put_secret SEARCH_LINK_SECRET    "$CUSTOMER"
 put_secret STRIPE_SECRET_KEY     "$CUSTOMER" "$ADMIN"
 # Only the Worker that serves /api/stripe/webhook.
 put_secret STRIPE_WEBHOOK_SECRET "$CUSTOMER"
+# Guest checkout only happens on the customer Worker.
+put_secret GUEST_SESSION_SECRET       "$CUSTOMER"
+# Workstation sessions are established and used on both — reception usually
+# enrolls through providers.timinow.pet, but the customer Worker serves the
+# same /api/clinic/* routes too (see docs/PLATFORM-CONTRACT.md).
+put_secret WORKSTATION_SESSION_SECRET "$CUSTOMER" "$VET"
 echo
 
 # Only what a workflow actually consumes. Setting a secret nothing reads is

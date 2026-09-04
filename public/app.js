@@ -72,7 +72,12 @@ function hideBootSplash() {
 window.setTimeout(hideBootSplash, 10000);
 
 const APP_ROUTES = new Set(["find", "results", "tracker", "pets", "clinic", "sign-in", "legal"]);
-const PROTECTED_ROUTES = new Set(["find", "results", "tracker", "pets", "clinic"]);
+// A pet owner must be able to search, get offers, pay, and book with only a
+// phone number — no Clerk account. The Worker backs this with a guest session
+// (src/guest-session.js) even when SIGN_IN_REQUIRED is true, so nothing here
+// may force sign-in ahead of it. Only "clinic" still requires an account (an
+// org member) or, on the veterinary console, a workstation session.
+const PROTECTED_ROUTES = new Set(["clinic"]);
 const DEFAULT_POSITION = { latitude: 37.6688, longitude: -122.0808, label: "Hayward, California", detail: "Using demonstration coordinates" };
 const STORAGE_KEYS = {
   draft: "timi_intake_draft_v1",
@@ -665,6 +670,7 @@ async function renderSignIn() {
 async function afterAuthenticated() {
   try { state.session = (await api("/api/session")).session; }
   catch { state.session = null; }
+  await adoptGuestSessionIfPending();
   const returnRoute = (state.auth && state.auth.pendingRoute) || sessionStorage.getItem("timi_return_route") || "find";
   const memberships = state.clerk.user?.organizationMemberships || [];
   if (returnRoute === "clinic" && !state.clerk.organization) {
@@ -1690,6 +1696,41 @@ function renderTracker() {
     $("[data-tracker-lede]").textContent = intake.status === "declined" ? "Return to the live results and Tími will help you try the next appropriate hospital." : "Search again to obtain a fresh capacity confirmation.";
     cancel.hidden = true;
   }
+  updateGuestSavePrompt(intake);
+}
+
+/**
+ * "Save your info": offered once a request has a real outcome (accepted or
+ * further along — not while still pending, and not once already signed in).
+ * Verifying a phone number through Clerk (see promptGuestSignIn) is the whole
+ * ask; nothing here is required to keep the booking working.
+ */
+function updateGuestSavePrompt(intake) {
+  const panel = $("[data-guest-save-panel]");
+  if (!panel) return;
+  const eligible = state.config?.signInRequired
+    && !state.clerk?.user
+    && ["accepted", "en_route", "arrived", "triaged", "seen", "completed"].includes(intake?.status);
+  panel.hidden = !eligible;
+}
+
+/** Routes to sign-in, remembering to return to the tracker and to fold the guest session's history in once signed in. */
+function promptGuestSignIn() {
+  sessionStorage.setItem("timi_return_route", "tracker");
+  sessionStorage.setItem("timi_guest_adopt_pending", "1");
+  setRoute("sign-in");
+}
+
+/** After a guest verifies and signs in, merge their guest session's pets, intake, and booking onto the new account. */
+async function adoptGuestSessionIfPending() {
+  if (!sessionStorage.getItem("timi_guest_adopt_pending")) return;
+  sessionStorage.removeItem("timi_guest_adopt_pending");
+  try {
+    const result = await api("/api/account/adopt-guest", { method: "POST" });
+    if (result.adopted) showToast(result.alreadyAdopted ? "Your info was already saved to this account." : "Saved. Tími will remember your pets and requests next time.");
+  } catch {
+    // Not fatal — the booking already completed as a guest either way.
+  }
 }
 
 /**
@@ -2657,6 +2698,8 @@ document.addEventListener("click", (event) => {
   if (observation) recordObservation(observation.dataset.observation);
   const pay = event.target.closest("[data-pay-deposit]");
   if (pay) startPayment();
+  const saveGuestInfo = event.target.closest("[data-save-guest-info]");
+  if (saveGuestInfo) promptGuestSignIn();
   const refreshClinic = event.target.closest("[data-refresh-clinic]");
   if (refreshClinic) loadClinicDashboard();
   const enableAlerts = event.target.closest("[data-enable-alerts]");

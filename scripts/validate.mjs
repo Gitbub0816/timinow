@@ -44,7 +44,11 @@ const requiredFiles = [
   "migrations/0007_client_errors.sql",
   "migrations/0008_payments_ledger.sql",
   "migrations/0010_provider_analytics.sql",
+  "migrations/0023_guest_and_workstations.sql",
   "src/analytics.js",
+  "src/guest-session.js",
+  "src/account-adoption.js",
+  "src/workstation.js",
   "src/stripe.js",
   "src/payments.js",
   "scripts/stripe-test.mjs",
@@ -105,12 +109,13 @@ const pricingMigration = await readFile("migrations/0013_pricing_and_ledger.sql"
 const fundMigration = await readFile("migrations/0014_fund.sql", "utf8");
 const hardshipMigration = await readFile("migrations/0015_hardship.sql", "utf8");
 const clinicBillingMigration = await readFile("migrations/0016_clinic_billing_and_aliases.sql", "utf8");
-const requiredTables = ["tenants", "locations", "availability_reports", "tenant_policies", "intake_requests", "intake_events", "customer_observations", "notification_outbox", "care_searches", "care_search_targets", "care_offers", "platform_admins", "tenant_members", "tenant_invitations", "admin_audit_log", "clinic_call_attempts", "stripe_accounts", "payment_ledger", "stripe_events", "pets", "provider_applications", "analytics_events", "pricing_policies", "clinic_pricing_assignments", "payment_orders", "payment_allocations", "ledger_accounts", "ledger_transactions", "ledger_entries", "audit_events", "contributions", "fund_reservations", "sponsorships", "eligibility_applications", "eligibility_decisions", "match_aliases", "search_match_aliases", "clinic_fee_receivables"];
+const guestWorkstationMigration = await readFile("migrations/0023_guest_and_workstations.sql", "utf8");
+const requiredTables = ["tenants", "locations", "availability_reports", "tenant_policies", "intake_requests", "intake_events", "customer_observations", "notification_outbox", "care_searches", "care_search_targets", "care_offers", "platform_admins", "tenant_members", "tenant_invitations", "admin_audit_log", "clinic_call_attempts", "stripe_accounts", "payment_ledger", "stripe_events", "pets", "provider_applications", "analytics_events", "pricing_policies", "clinic_pricing_assignments", "payment_orders", "payment_allocations", "ledger_accounts", "ledger_transactions", "ledger_entries", "audit_events", "contributions", "fund_reservations", "sponsorships", "eligibility_applications", "eligibility_decisions", "match_aliases", "search_match_aliases", "clinic_fee_receivables", "account_adoptions", "workstations", "workstation_sessions", "workstation_audit_log"];
 for (const table of requiredTables) {
-  if (!`${migration}\n${multiOfferMigration}\n${tenancyMigration}\n${voiceMigration}\n${paymentsMigration}\n${petsMigration}\n${providerAnalyticsMigration}\n${pricingMigration}\n${fundMigration}\n${hardshipMigration}\n${clinicBillingMigration}`.includes(`CREATE TABLE IF NOT EXISTS ${table}`)) throw new Error(`Missing D1 table: ${table}`);
+  if (!`${migration}\n${multiOfferMigration}\n${tenancyMigration}\n${voiceMigration}\n${paymentsMigration}\n${petsMigration}\n${providerAnalyticsMigration}\n${pricingMigration}\n${fundMigration}\n${hardshipMigration}\n${clinicBillingMigration}\n${guestWorkstationMigration}`.includes(`CREATE TABLE IF NOT EXISTS ${table}`)) throw new Error(`Missing D1 table: ${table}`);
 }
 
-const requiredRoutes = ["/api/config", "/api/locations", "/api/intakes", "/api/searches", "select-offer", "/api/observations", "/api/clinic/dashboard", "/api/clinic/availability", "search-targets", "/api/session", "/api/tenant/members", "/api/pets", "/api/provider-applications", "/api/analytics"];
+const requiredRoutes = ["/api/config", "/api/locations", "/api/intakes", "/api/searches", "select-offer", "/api/observations", "/api/clinic/dashboard", "/api/clinic/availability", "search-targets", "/api/session", "/api/tenant/members", "/api/pets", "/api/provider-applications", "/api/analytics", "/api/account/adopt-guest", "/api/clinic/workstations"];
 for (const route of requiredRoutes) {
   if (!worker.includes(route)) throw new Error(`Missing API route: ${route}`);
 }

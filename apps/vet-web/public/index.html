@@ -27,6 +27,8 @@
         <p class="lede">Veterinary staff join by invitation from a workspace administrator. There is no open sign-up on this console.</p>
         <div data-sign-in-body></div>
         <p class="sign-in-note" data-auth-disabled hidden>Sign-in is not configured on this deployment yet. Set CLERK_PUBLISHABLE_KEY, CLERK_JS_URL, and CLERK_SECRET_KEY.</p>
+        <button class="sign-in-back" type="button" data-workstation-toggle style="margin-top:1.4rem">Working the front desk? Enter a workstation code →</button>
+        <div data-workstation-entry hidden></div>
       </div>
     </section>
 
@@ -290,6 +292,10 @@
         <h1 id="people-title" style="font-family:var(--serif);font-size:2rem;margin-bottom:.3rem">Roster</h1>
         <p class="people-note">Creating a <strong>new workspace</strong> is a Tími platform operation and is not available here — only a platform operator can create a tenant. Administrators here may only add, re-role, or remove people inside this one workspace.</p>
         <div data-people-body></div>
+
+        <div class="section-heading" style="margin-top:2.2rem"><h2 style="font-family:var(--serif)">Workstations</h2></div>
+        <p class="people-note">A named workstation ("Front desk 1") lets anyone at that computer run availability, capacity, and accept/decline without an individual sign-in. Settings, payouts, and people management still require a signed-in administrator.</p>
+        <div data-workstations-body></div>
       </div>
     </section>
 

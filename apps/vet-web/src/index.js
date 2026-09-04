@@ -41,6 +41,16 @@ import {
   requireTenantAdmin,
   revokeInvitation
 } from "../../../src/tenant-admin.js";
+import {
+  createWorkstation,
+  endWorkstationSession,
+  establishWorkstationSession,
+  listWorkstations,
+  logWorkstationAction,
+  requireWorkstationAdmin,
+  resolveClinicOperator,
+  revokeWorkstation
+} from "../../../src/workstation.js";
 
 const JSON_HEADERS = { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" };
 const SECURITY_HEADERS = {
@@ -141,7 +151,10 @@ async function handleApi(request, env) {
   if (method === "POST" && path === "/api/analytics") return recordAnalyticsEvents(request, env);
 
   const actor = await authenticatedActor(request, env);
-  if (signInRequired(env) && !actor) return authRequiredResponse();
+  // A reception computer may be running under a workstation session instead
+  // of an individual Clerk login (see src/workstation.js), so `/api/clinic/`
+  // is left to sort that out itself rather than being blocked here.
+  if (signInRequired(env) && !actor && !path.startsWith("/api/clinic/")) return authRequiredResponse();
 
   if (method === "GET" && path === "/api/session") {
     const session = await describeSession(env, actor);
@@ -154,14 +167,80 @@ async function handleApi(request, env) {
   }
 
   if (path.startsWith("/api/clinic/")) {
-    if (!roleAllows(actor, ["clinic", "admin", "org:admin", "org:member"])) return apiError(403, "CLINIC_ACCESS_REQUIRED", "Clinic organization access is required.");
-    const tenantId = actor.tenantId;
-    if (!tenantId) return apiError(403, "TENANT_REQUIRED", "Choose an active Clerk organization mapped to a Tími tenant.");
+    // The reception computer establishes or ends its workstation session here
+    // before it has — or needs — any Clerk credential at all. See
+    // src/workstation.js for the enrollment-token/session split.
+    if (method === "POST" && path === "/api/clinic/workstations/session") {
+      const body = await readJson(request).catch(() => null);
+      const result = await establishWorkstationSession(env, body?.token, request.headers.get("user-agent"));
+      if (!result.ok) return apiError(result.status, result.code, result.message);
+      return json({ workstation: result.workstation }, { status: 201, headers: { "set-cookie": result.cookie } });
+    }
+    if (method === "DELETE" && path === "/api/clinic/workstations/session") {
+      return json({ signedOut: true }, { headers: { "set-cookie": await endWorkstationSession(request, env) } });
+    }
+
+    // Creating, listing, and revoking workstations stays an individually
+    // signed-in workspace administrator's job, never a workstation session's.
+    if (path === "/api/clinic/workstations") {
+      const tenantId = actor?.tenantId;
+      const guard = requireWorkstationAdmin(actor, tenantId);
+      if (guard) return apiError(guard.status, guard.code, guard.message);
+      if (method === "GET") return json({ workstations: await listWorkstations(env, tenantId) });
+      if (method === "POST") {
+        const body = await readJson(request).catch(() => null);
+        const result = await createWorkstation(env, actor, tenantId, body?.name);
+        return result.ok
+          ? json({ workstation: result.workstation, token: result.token }, { status: 201 })
+          : apiError(result.status, result.code, result.message);
+      }
+    }
+    const workstationMatch = path.match(/^\/api\/clinic\/workstations\/([^/]+)$/);
+    if (method === "DELETE" && workstationMatch) {
+      const tenantId = actor?.tenantId;
+      const guard = requireWorkstationAdmin(actor, tenantId);
+      if (guard) return apiError(guard.status, guard.code, guard.message);
+      const result = await revokeWorkstation(env, actor, tenantId, decodeURIComponent(workstationMatch[1]));
+      return result.ok ? json({ revoked: result.revoked }) : apiError(result.status, result.code, result.message);
+    }
+
+    // Routine operations — availability/capacity and accepting, declining, or
+    // offering on a request — run under an org member OR a workstation
+    // session, which is the entire point of a reception workstation: the desk
+    // never needs an individual login for these. Everything else here still
+    // needs an org member. See docs/PLATFORM-CONTRACT.md.
+    const decisionMatch = path.match(/^\/api\/clinic\/intakes\/([^/]+)\/decision$/);
+    const searchDecisionMatch = path.match(/^\/api\/clinic\/search-targets\/([^/]+)\/decision$/);
+    const isRoutineOperation = (method === "GET" && path === "/api/clinic/dashboard")
+      || (method === "POST" && path === "/api/clinic/availability")
+      || (method === "POST" && Boolean(decisionMatch))
+      || (method === "POST" && Boolean(searchDecisionMatch));
+
+    let tenantId;
+    let operatorActorId = actor?.userId;
+    let workstationSessionId = null;
+    if (isRoutineOperation) {
+      const operator = await resolveClinicOperator(request, env, actor);
+      if (!operator) return apiError(403, "CLINIC_ACCESS_REQUIRED", "Clinic organization access, or a valid workstation session, is required.");
+      tenantId = operator.tenantId;
+      operatorActorId = operator.actorUserId;
+      workstationSessionId = operator.workstationSessionId;
+    } else {
+      if (!roleAllows(actor, ["clinic", "admin", "org:admin", "org:member"])) return apiError(403, "CLINIC_ACCESS_REQUIRED", "Clinic organization access is required.");
+      tenantId = actor.tenantId;
+      if (!tenantId) return apiError(403, "TENANT_REQUIRED", "Choose an active Clerk organization mapped to a Tími tenant.");
+    }
+    const operatorActor = { ...actor, userId: operatorActorId };
+
     if (method === "GET" && path === "/api/clinic/dashboard") return clinicDashboard(env, tenantId);
     // Served here as well as on the customer Worker because the desktop
     // consoles point at providers.timinow.pet, which is this one.
     if (method === "GET" && path === "/api/clinic/payouts") return clinicPayouts(env, tenantId);
-    if (method === "POST" && path === "/api/clinic/availability") return setClinicAvailability(request, env, actor, tenantId);
+    if (method === "POST" && path === "/api/clinic/availability") {
+      const availabilityResponse = await setClinicAvailability(request, env, operatorActor, tenantId);
+      if (workstationSessionId) await logWorkstationAction(env, workstationSessionId, "availability_update", { tenantId, status: availabilityResponse.status });
+      return availabilityResponse;
+    }
     // Facility settings (Feature A's "gear" screen) — the same route the
     // customer Worker answers, mounted here for the same reason as
     // /api/clinic/payouts below: providers.timinow.pet is what the pill and
@@ -191,10 +270,18 @@ async function handleApi(request, env) {
     if (method === "POST" && settlementMatch) {
       return handleClinicBillSettlement(request, env, actor, decodeURIComponent(settlementMatch[1]));
     }
-    const decisionMatch = path.match(/^\/api\/clinic\/intakes\/([^/]+)\/decision$/);
-    if (method === "POST" && decisionMatch) return decideIntake(request, env, actor, tenantId, decodeURIComponent(decisionMatch[1]));
-    const searchDecisionMatch = path.match(/^\/api\/clinic\/search-targets\/([^/]+)\/decision$/);
-    if (method === "POST" && searchDecisionMatch) return respondToCareSearch(request, env, actor, tenantId, decodeURIComponent(searchDecisionMatch[1]));
+    if (method === "POST" && decisionMatch) {
+      const intakeId = decodeURIComponent(decisionMatch[1]);
+      const decisionResponse = await decideIntake(request, env, operatorActor, tenantId, intakeId);
+      if (workstationSessionId) await logWorkstationAction(env, workstationSessionId, "intake_decision", { intakeId, status: decisionResponse.status });
+      return decisionResponse;
+    }
+    if (method === "POST" && searchDecisionMatch) {
+      const targetId = decodeURIComponent(searchDecisionMatch[1]);
+      const targetResponse = await respondToCareSearch(request, env, operatorActor, tenantId, targetId);
+      if (workstationSessionId) await logWorkstationAction(env, workstationSessionId, "search_target_decision", { targetId, status: targetResponse.status });
+      return targetResponse;
+    }
   }
 
   return apiError(404, "NOT_FOUND", "The requested API route does not exist.");
