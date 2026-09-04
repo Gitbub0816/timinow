@@ -253,3 +253,50 @@ code.env-var { display: inline-block; padding: .15rem .45rem; border-radius: 5px
 .count-list .count-line { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: .8rem; align-items: baseline; font-size: .76rem; }
 .count-list .count-line > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 700; }
 .count-list .count-line > span:last-child { color: var(--muted); font-variant-numeric: tabular-nums; }
+
+/* --------------------------------------------------- markets & metrics --- */
+:root {
+  --good: #1a8f5e;
+  --good-dark: #0f6b45;
+  --good-soft: #e1f6ec;
+}
+.grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1.25rem; align-items: start; }
+@media (max-width: 900px) { .grid-2, .grid-3 { grid-template-columns: 1fr; } }
+
+.pill.market-green { background: var(--good-soft); color: var(--good-dark); }
+.pill.market-yellow { background: var(--gold-soft); color: var(--ink); }
+.pill.market-red { background: var(--coral-soft); color: var(--coral-dark); }
+.pill.activation-active_marketing { background: var(--blue-soft); color: var(--blue-dark); }
+.pill.activation-soft { background: var(--canvas); color: var(--muted); border: 1px solid var(--line); }
+.pill.activation-inactive { background: var(--canvas); color: var(--muted); border: 1px solid var(--line); }
+
+/* A market's dot before its pill label — never color alone for state. */
+.state-dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: .4rem; vertical-align: middle; }
+.state-dot.market-green { background: var(--good); }
+.state-dot.market-yellow { background: var(--gold); }
+.state-dot.market-red { background: var(--coral); }
+
+.readiness-checks { display: grid; gap: .5rem; margin-top: .5rem; }
+.readiness-check { display: grid; grid-template-columns: 20px minmax(0, 1fr) auto; gap: .6rem; align-items: baseline; font-size: .76rem; padding: .55rem .1rem; border-bottom: 1px solid var(--line); }
+.readiness-check:last-child { border-bottom: 0; }
+.readiness-check .mark { font-weight: 900; }
+.readiness-check .mark.pass { color: var(--good-dark); }
+.readiness-check .mark.fail { color: var(--coral-dark); }
+.readiness-check .value { color: var(--muted); font-variant-numeric: tabular-nums; }
+
+.funnel-list { display: grid; gap: 0; }
+.funnel-step { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: .8rem; align-items: center; padding: .7rem .1rem; border-bottom: 1px solid var(--line); font-size: .8rem; }
+.funnel-step:last-child { border-bottom: 0; }
+.funnel-step strong { font-family: var(--serif); font-size: 1.05rem; }
+.funnel-step .funnel-bar { grid-column: 1 / -1; }
+
+.breach-list { display: grid; gap: .7rem; }
+.breach-card { display: flex; align-items: center; gap: .8rem; padding: .9rem 1rem; border: 1.5px solid var(--coral-dark); border-radius: 10px; background: var(--coral-soft); font-size: .78rem; }
+.breach-card strong { display: block; font-family: var(--serif); font-size: .95rem; }
+.no-breach-card { padding: .9rem 1rem; border: 1.5px solid var(--good-dark); border-radius: 10px; background: var(--good-soft); color: var(--good-dark); font-size: .78rem; font-weight: 800; }
+
+.location-pick-row { display: flex; align-items: center; justify-content: space-between; gap: .8rem; padding: .65rem 0; border-bottom: 1px solid var(--line); font-size: .78rem; }
+.location-pick-row:last-child { border-bottom: 0; }
+
+.modal-backdrop { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; padding: 1.5rem; background: rgba(17, 27, 59, .45); }
+.modal-backdrop[hidden] { display: none; }

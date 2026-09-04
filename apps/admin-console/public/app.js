@@ -136,11 +136,17 @@ function parseHash() {
   if (raw === "ledger") return { screen: "ledger" };
   if (raw === "analytics") return { screen: "analytics" };
   if (raw === "applications") return { screen: "applications" };
+  if (raw === "markets") return { screen: "markets" };
+  const marketDetailMatch = raw.match(/^markets\/([^/]+)$/);
+  if (marketDetailMatch) return { screen: "market-detail", id: decodeURIComponent(marketDetailMatch[1]) };
+  if (raw === "metrics") return { screen: "metrics" };
   return { screen: "tenants" };
 }
 
 function updateNavActive() {
-  const top = ["audit", "errors", "ledger", "analytics", "applications"].includes(state.route.screen) ? state.route.screen : "tenants";
+  const top = ["audit", "errors", "ledger", "analytics", "applications", "metrics"].includes(state.route.screen)
+    ? state.route.screen
+    : ["markets", "market-detail"].includes(state.route.screen) ? "markets" : "tenants";
   document.querySelectorAll("[data-nav]").forEach((a) => a.classList.toggle("active", a.dataset.nav === top));
 }
 
@@ -216,6 +222,21 @@ async function renderRoute() {
   if (state.route.screen === "applications") {
     showScreen("applications");
     await loadApplications();
+    return;
+  }
+  if (state.route.screen === "markets") {
+    showScreen("markets");
+    await loadMarkets();
+    return;
+  }
+  if (state.route.screen === "market-detail") {
+    showScreen("market-detail");
+    await loadMarketDetail(state.route.id);
+    return;
+  }
+  if (state.route.screen === "metrics") {
+    showScreen("metrics");
+    await loadMetrics();
     return;
   }
   showScreen("tenants");
@@ -968,6 +989,42 @@ function wireStaticHandlers() {
   document.querySelector('form[data-form="analytics-range"]')?.addEventListener("change", () => loadAnalytics());
   document.querySelector('form[data-form="analytics-range"]')?.addEventListener("submit", (event) => { event.preventDefault(); loadAnalytics(); });
 
+  document.querySelector("[data-open-create-market]")?.addEventListener("click", () => {
+    document.querySelector('form[data-form="create-market"]').reset();
+    document.querySelector("[data-market-form-errors]").hidden = true;
+    document.querySelector("[data-create-market-modal]").hidden = false;
+  });
+  document.querySelector("[data-close-create-market]")?.addEventListener("click", () => {
+    document.querySelector("[data-create-market-modal]").hidden = true;
+  });
+  document.querySelector('form[data-form="create-market"]')?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.target;
+    const errorsBox = form.querySelector("[data-market-form-errors]");
+    errorsBox.hidden = true;
+    const payload = {
+      name: form.name.value.trim(),
+      centerLatitude: Number(form.centerLatitude.value),
+      centerLongitude: Number(form.centerLongitude.value),
+      radiusKm: Number(form.radiusKm.value),
+      notes: form.notes.value.trim() || undefined
+    };
+    try {
+      const { market } = await apiFetch("/api/admin/markets", { method: "POST", body: JSON.stringify(payload) });
+      document.querySelector("[data-create-market-modal]").hidden = true;
+      toast(`${market.name} was created.`);
+      location.hash = `#markets/${encodeURIComponent(market.id)}`;
+    } catch (error) {
+      errorsBox.textContent = Array.isArray(error.details) ? error.details.join(" ") : error.message;
+      errorsBox.hidden = false;
+    }
+  });
+
+  document.querySelector('form[data-form="metrics-filter"]')?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    loadMetrics();
+  });
+
   window.addEventListener("hashchange", route);
 }
 
@@ -1294,6 +1351,420 @@ function renderApplications(applications) {
       }
     });
   });
+}
+
+/* -------------------------------------------------------------- markets --- */
+
+const MARKET_STATES = ["green", "yellow", "red"];
+const ACTIVATIONS = ["active_marketing", "soft", "inactive"];
+const ACTIVATION_LABEL = { active_marketing: "Active marketing", soft: "Soft launch", inactive: "Inactive" };
+
+function statePill(marketState) {
+  return `<span class="pill market-${escapeAttr(marketState)}"><span class="state-dot market-${escapeAttr(marketState)}"></span>${escapeHtml(marketState)}</span>`;
+}
+function activationPill(activation) {
+  return `<span class="pill activation-${escapeAttr(activation)}">${escapeHtml(ACTIVATION_LABEL[activation] || activation)}</span>`;
+}
+function fmtPct(value) { return value === null || value === undefined ? "—" : `${value}%`; }
+function fmtMin(value) { return value === null || value === undefined ? "—" : `${value} min`; }
+/** A single-hue magnitude bar, the same visual language renderAnalytics
+ * already uses for count-by-day — one series never needs a legend. */
+function bar(value, max) {
+  const width = max > 0 ? Math.max(2, Math.round((Number(value) / max) * 100)) : 2;
+  return `<span class="count-bar"><i style="width:${width}%"></i></span>`;
+}
+
+async function loadMarkets() {
+  const mount = document.querySelector("[data-markets-body]");
+  mount.innerHTML = '<div class="loading-state"><span class="spinner" aria-hidden="true"></span><p>Loading markets…</p></div>';
+  try {
+    const [{ markets }, unassigned] = await Promise.all([
+      apiFetch("/api/admin/markets"),
+      apiFetch("/api/admin/markets/unassigned-locations").catch(() => ({ locations: [] }))
+    ]);
+    renderMarkets(markets || []);
+    renderUnassignedLocations(unassigned.locations || []);
+  } catch (error) {
+    mount.innerHTML = `<div class="empty-state"><p>${escapeHtml(error.message)}</p></div>`;
+  }
+}
+
+function renderMarkets(markets) {
+  const mount = document.querySelector("[data-markets-body]");
+  if (!markets.length) {
+    mount.innerHTML = '<div class="table-wrap"><table class="data-table"><tbody><tr class="empty-row"><td>No markets yet. Create one to start assigning clinics and tracking readiness.</td></tr></tbody></table></div>';
+    return;
+  }
+  const rows = markets.map((market) => `
+    <tr>
+      <td><a class="row-link" href="#markets/${encodeURIComponent(market.id)}">${escapeHtml(market.name)}</a></td>
+      <td>${statePill(market.state)}</td>
+      <td>${activationPill(market.activation)}</td>
+      <td>${Number(market.locationCount || 0)}</td>
+      <td>${market.radiusKm} km</td>
+      <td>${market.stateSetAt ? formatDate(market.stateSetAt) : "—"}</td>
+    </tr>`).join("");
+  mount.innerHTML = `
+    <div class="table-wrap">
+      <table class="data-table">
+        <thead><tr><th>Market</th><th>State</th><th>Activation</th><th>Clinics</th><th>Radius</th><th>State set</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
+}
+
+function renderUnassignedLocations(locations) {
+  const mount = document.querySelector("[data-unassigned-locations]");
+  if (!locations.length) {
+    mount.innerHTML = '<p class="page-lede">Every active clinic is assigned to a market.</p>';
+    return;
+  }
+  mount.innerHTML = locations.map((location) => `
+    <div class="location-pick-row">
+      <span><strong>${escapeHtml(location.name)}</strong> — ${escapeHtml(location.city || "")}, ${escapeHtml(location.region || "")}
+        ${location.suggestedMarket ? `<br><small style="color:var(--muted);">Suggested: ${escapeHtml(location.suggestedMarket.name)} (${location.suggestedMarket.distanceKm} km from center)</small>` : ""}
+      </span>
+      ${location.suggestedMarket ? `<button class="button button-small" type="button" data-quick-assign="${escapeAttr(location.id)}" data-quick-market="${escapeAttr(location.suggestedMarket.id)}">Assign to ${escapeHtml(location.suggestedMarket.name)}</button>` : '<span class="hint">No market in range</span>'}
+    </div>`).join("");
+  mount.querySelectorAll("[data-quick-assign]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      button.disabled = true;
+      try {
+        await apiFetch(`/api/admin/markets/${encodeURIComponent(button.dataset.quickMarket)}/locations`, {
+          method: "POST", body: JSON.stringify({ locationId: button.dataset.quickAssign })
+        });
+        toast("Location assigned.");
+        await loadMarkets();
+      } catch (error) {
+        toast(error.message, true);
+        button.disabled = false;
+      }
+    });
+  });
+}
+
+async function loadMarketDetail(marketId) {
+  const mount = document.querySelector("[data-market-detail-body]");
+  mount.innerHTML = '<div class="loading-state"><span class="spinner" aria-hidden="true"></span><p>Loading market…</p></div>';
+  try {
+    const [{ market, locations }, { report }, unassigned] = await Promise.all([
+      apiFetch(`/api/admin/markets/${encodeURIComponent(marketId)}`),
+      apiFetch(`/api/admin/markets/${encodeURIComponent(marketId)}/readiness`),
+      apiFetch("/api/admin/markets/unassigned-locations").catch(() => ({ locations: [] }))
+    ]);
+    renderMarketDetail(market, locations, report, unassigned.locations || []);
+  } catch (error) {
+    mount.innerHTML = `<div class="empty-state"><p>${escapeHtml(error.message)}</p></div>`;
+  }
+}
+
+function readinessCheckRow(label, pass, valueText) {
+  return `<div class="readiness-check"><span class="mark ${pass ? "pass" : "fail"}">${pass ? "✓" : "✗"}</span><span>${escapeHtml(label)}</span><span class="value">${escapeHtml(valueText)}</span></div>`;
+}
+
+function renderMarketDetail(market, locations, report, unassignedLocations) {
+  const mount = document.querySelector("[data-market-detail-body]");
+  const m = report?.metrics || {};
+  const checks = report?.checks || {};
+  const coverage = m.timeOfDayCoverage || {};
+  mount.innerHTML = `
+    <div class="page-head">
+      <div>
+        <p class="eyebrow">Market</p>
+        <h1 class="page-title">${escapeHtml(market.name)}</h1>
+        <p class="page-lede">${statePill(market.state)} ${activationPill(market.activation)} · set ${market.stateSetAt ? formatDateTime(market.stateSetAt) : "never"}${market.stateSetBy ? ` by ${escapeHtml(market.stateSetBy)}` : ""}</p>
+      </div>
+    </div>
+    <div class="grid-2">
+      <div>
+        <div class="panel">
+          <h2>Readiness — computed vs. set</h2>
+          <p class="page-lede">Over the last ${report?.lookbackDays ?? 30} days. Recomputed on every load; only the form below ever changes the market's actual state.</p>
+          <div class="stat-row" style="margin-top:.5rem;">
+            <span><small>Computed recommendation</small><strong>${report ? statePill(report.recommendedState) : "—"}</strong></span>
+            <span><small>Current state</small><strong>${statePill(market.state)}</strong></span>
+          </div>
+          <div class="readiness-checks">
+            ${readinessCheckRow(`Active clinics (target ${report?.thresholds?.targetActiveClinics ?? "—"}, min ${report?.thresholds?.minActiveClinics ?? "—"})`, checks.meetsTargetClinicCount, String(m.activeClinicCount ?? 0))}
+            ${readinessCheckRow(`Searches receiving ≥1 offer (target ${fmtPct(report?.thresholds?.minOfferRatePct)})`, checks.meetsOfferRate, `${fmtPct(m.offerRatePct)} (${m.searchesWithOffer ?? 0}/${m.totalSearches ?? 0})`)}
+            ${readinessCheckRow(`Median time to first offer (target ≤ ${fmtMin(report?.thresholds?.maxMedianFirstOfferMinutes)})`, checks.meetsFirstOfferTime, fmtMin(m.medianFirstOfferMinutes))}
+            ${readinessCheckRow("Day / evening / night coverage", checks.meetsTimeOfDayCoverage, ["day", "evening", "night"].map((k) => `${k}:${coverage[k] ? "✓" : "✗"}`).join(" "))}
+            ${readinessCheckRow(`Busiest clinic's share of bookings (flag > ${fmtPct(report?.thresholds?.maxSingleClinicSharePct)})`, checks.meetsConcentration, fmtPct(m.concentrationPct))}
+          </div>
+        </div>
+
+        <div class="panel">
+          <h2>Set state</h2>
+          <p class="page-lede">Always an explicit choice — the computed recommendation above is never written automatically.</p>
+          <form data-form="market-state" class="form-grid two-col">
+            <label class="field"><span>State</span><select name="state">${MARKET_STATES.map((s) => `<option value="${s}" ${market.state === s ? "selected" : ""}>${s}</option>`).join("")}</select></label>
+            <label class="field"><span>Activation</span><select name="activation">${ACTIVATIONS.map((a) => `<option value="${a}" ${market.activation === a ? "selected" : ""}>${ACTIVATION_LABEL[a]}</option>`).join("")}</select></label>
+            <div class="field wide" style="text-align:right;"><button class="button button-primary" type="submit">Save state</button></div>
+          </form>
+        </div>
+
+        <div class="panel">
+          <h2>Market boundary</h2>
+          <form data-form="market-edit" class="form-grid two-col">
+            <label class="field wide"><span>Name</span><input type="text" name="name" value="${escapeAttr(market.name)}"></label>
+            <label class="field"><span>Center latitude</span><input type="number" name="centerLatitude" step="0.000001" value="${market.centerLatitude}"></label>
+            <label class="field"><span>Center longitude</span><input type="number" name="centerLongitude" step="0.000001" value="${market.centerLongitude}"></label>
+            <label class="field"><span>Radius (km)</span><input type="number" name="radiusKm" min="1" max="500" value="${market.radiusKm}"></label>
+            <label class="field wide"><span>Notes</span><input type="text" name="notes" maxlength="2000" value="${escapeAttr(market.notes || "")}"></label>
+            <div class="field wide" style="text-align:right;"><button class="button" type="submit">Save boundary</button></div>
+          </form>
+        </div>
+      </div>
+
+      <div>
+        <div class="panel">
+          <h2>Assigned clinics (${locations.length})</h2>
+          ${locations.length ? locations.map((location) => `
+            <div class="location-pick-row">
+              <span><strong>${escapeHtml(location.name)}</strong> — ${escapeHtml(location.city || "")}, ${escapeHtml(location.region || "")}${location.active ? "" : " · inactive"}</span>
+              <button class="button button-small button-danger" type="button" data-unassign-location="${escapeAttr(location.id)}">Unassign</button>
+            </div>`).join("") : '<p class="page-lede">No clinics assigned yet.</p>'}
+        </div>
+
+        <div class="panel">
+          <h2>Assign a clinic</h2>
+          ${unassignedLocations.length ? `
+            <form data-form="assign-location" class="form-grid">
+              <label class="field"><span>Unassigned location</span>
+                <select name="locationId">${unassignedLocations.map((l) => `<option value="${escapeAttr(l.id)}">${escapeHtml(l.name)} — ${escapeHtml(l.city || "")}</option>`).join("")}</select>
+              </label>
+              <button class="button" type="submit">Assign to this market</button>
+            </form>` : '<p class="page-lede">No unassigned clinics available.</p>'}
+        </div>
+      </div>
+    </div>`;
+
+  mount.querySelector('form[data-form="market-state"]').addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.target;
+    try {
+      await apiFetch(`/api/admin/markets/${encodeURIComponent(market.id)}/state`, {
+        method: "POST", body: JSON.stringify({ state: form.state.value, activation: form.activation.value })
+      });
+      toast("Market state saved.");
+      await loadMarketDetail(market.id);
+    } catch (error) { toast(error.message, true); }
+  });
+
+  mount.querySelector('form[data-form="market-edit"]').addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.target;
+    try {
+      await apiFetch(`/api/admin/markets/${encodeURIComponent(market.id)}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          name: form.name.value.trim(),
+          centerLatitude: Number(form.centerLatitude.value),
+          centerLongitude: Number(form.centerLongitude.value),
+          radiusKm: Number(form.radiusKm.value),
+          notes: form.notes.value.trim() || undefined
+        })
+      });
+      toast("Market boundary saved.");
+      await loadMarketDetail(market.id);
+    } catch (error) { toast(error.message, true); }
+  });
+
+  mount.querySelector('form[data-form="assign-location"]')?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    try {
+      await apiFetch(`/api/admin/markets/${encodeURIComponent(market.id)}/locations`, {
+        method: "POST", body: JSON.stringify({ locationId: event.target.locationId.value })
+      });
+      toast("Clinic assigned.");
+      await loadMarketDetail(market.id);
+    } catch (error) { toast(error.message, true); }
+  });
+
+  mount.querySelectorAll("[data-unassign-location]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      button.disabled = true;
+      try {
+        await apiFetch(`/api/admin/locations/${encodeURIComponent(button.dataset.unassignLocation)}/market`, { method: "DELETE" });
+        toast("Clinic unassigned.");
+        await loadMarketDetail(market.id);
+      } catch (error) {
+        toast(error.message, true);
+        button.disabled = false;
+      }
+    });
+  });
+}
+
+/* -------------------------------------------------------------- metrics --- */
+
+/** Populated once per session — filter options do not change while the
+ * dashboard is open. */
+async function ensureMetricsFilterOptions() {
+  if (state.metricsFilterOptionsLoaded) return;
+  try {
+    const [{ markets }, { tenants }] = await Promise.all([
+      apiFetch("/api/admin/markets"),
+      apiFetch("/api/admin/tenants")
+    ]);
+    const marketSelect = document.querySelector("[data-metrics-markets]");
+    for (const market of markets || []) {
+      const option = document.createElement("option");
+      option.value = market.id;
+      option.textContent = market.name;
+      marketSelect.appendChild(option);
+    }
+    const tenantSelect = document.querySelector("[data-metrics-tenants]");
+    for (const tenant of tenants || []) {
+      const option = document.createElement("option");
+      option.value = tenant.id;
+      option.textContent = tenant.name;
+      tenantSelect.appendChild(option);
+    }
+    state.metricsFilterOptionsLoaded = true;
+  } catch { /* filters remain "All" if this fails; the dashboard still works */ }
+}
+
+async function loadMetrics() {
+  await ensureMetricsFilterOptions();
+  const mount = document.querySelector("[data-metrics-body]");
+  mount.innerHTML = '<div class="loading-state"><span class="spinner" aria-hidden="true"></span><p>Loading metrics…</p></div>';
+  const form = document.querySelector('form[data-form="metrics-filter"]');
+  const params = new URLSearchParams();
+  if (form.from.value) params.set("from", `${form.from.value}T00:00:00.000Z`);
+  if (form.to.value) params.set("to", `${form.to.value}T23:59:59.999Z`);
+  if (form.market.value) params.set("market", form.market.value);
+  if (form.tenant.value) params.set("tenant", form.tenant.value);
+  try {
+    const [metrics, alerts] = await Promise.all([
+      apiFetch(`/api/admin/metrics?${params.toString()}`),
+      apiFetch("/api/admin/alerts").catch(() => null)
+    ]);
+    renderMetrics(metrics, alerts);
+  } catch (error) {
+    mount.innerHTML = `<div class="empty-state"><p>${escapeHtml(error.message)}</p></div>`;
+  }
+}
+
+function renderMetrics(data, alerts) {
+  const mount = document.querySelector("[data-metrics-body]");
+  const { demand, supply, matching, booking, revenue, quality } = data;
+  if (!demand) { mount.innerHTML = '<div class="empty-state"><p>No database is bound to this Worker.</p></div>'; return; }
+
+  const maxByDay = Math.max(...demand.byDay.map((d) => d.total), 1);
+
+  const alertsHtml = !alerts ? "" : alerts.breaches.length
+    ? `<div class="breach-list" style="margin-bottom:1.25rem;">${alerts.breaches.map((b) => `
+        <div class="breach-card"><div>⚠️</div><div><strong>${escapeHtml(b.metric)}</strong> is ${b.direction} threshold — ${escapeHtml(String(b.value))}${typeof b.value === "number" && String(b.metric).toLowerCase().includes("pct") ? "%" : ""} vs. ${escapeHtml(String(b.threshold))} (last ${alerts.windowHours}h)</div></div>`).join("")}</div>`
+    : `<div class="no-breach-card" style="margin-bottom:1.25rem;">No thresholds breached in the last ${alerts.windowHours ?? 24} hours.</div>`;
+
+  mount.innerHTML = `
+    ${alertsHtml}
+    <div class="panel">
+      <h2>Demand</h2>
+      <div class="stat-row">
+        <span><small>Searches started</small><strong>${demand.searchesStarted}</strong></span>
+        <span><small>Valid intakes</small><strong>${demand.validIntakes}</strong></span>
+        <span><small>Out of market</small><strong>${demand.outOfMarketSearches}</strong></span>
+      </div>
+      <div class="table-wrap" style="border:1px solid var(--line); box-shadow:none;">
+        <table class="data-table" style="min-width:0;">
+          <thead><tr><th>Date</th><th>Searches</th><th style="width:40%"></th></tr></thead>
+          <tbody>${demand.byDay.length ? demand.byDay.map((d) => `
+            <tr><td>${escapeHtml(formatDate(d.date))}</td><td>${d.total}</td><td>${bar(d.total, maxByDay)}</td></tr>`).join("") : '<tr class="empty-row"><td colspan="3">No searches in this window.</td></tr>'}</tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="grid-2">
+      <div class="panel">
+        <h2>Supply</h2>
+        <div class="stat-row">
+          <span><small>Active clinics</small><strong>${supply.activeClinics}</strong></span>
+          <span><small>Clinic response rate</small><strong>${fmtPct(supply.clinicResponse.responseRatePct)}</strong></span>
+          <span><small>Decline rate</small><strong>${fmtPct(supply.clinicResponse.declineRatePct)}</strong></span>
+        </div>
+        <h3 style="font-size:.8rem; margin: .8rem 0 .4rem;">Capacity freshness (right now)</h3>
+        <div class="count-list">
+          ${["fresh", "aging", "stale", "never"].map((k) => `<div class="count-line"><span>${k}</span><span>${supply.capacityFreshness[k] || 0}</span></div>`).join("")}
+        </div>
+        <h3 style="font-size:.8rem; margin: .8rem 0 .4rem;">Availability states</h3>
+        <div class="count-list">
+          ${supply.availabilityStates.length ? supply.availabilityStates.map((s) => `<div class="count-line"><span>${escapeHtml(s.status)}</span><span>${s.total}</span></div>`).join("") : '<p class="page-lede">No active clinics match this filter.</p>'}
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>Matching</h2>
+        <div class="stat-row">
+          <span><small>Search → offer rate</small><strong>${fmtPct(matching.searchToOfferRatePct)}</strong></span>
+          <span><small>2+ offer rate</small><strong>${fmtPct(matching.twoPlusOfferRatePct)}</strong></span>
+          <span><small>No-result rate</small><strong>${fmtPct(matching.noResultRatePct)}</strong></span>
+          <span><small>Median time to first offer</small><strong>${fmtMin(matching.medianTimeToFirstOfferMinutes)}</strong></span>
+          <span><small>Avg. clinics contacted</small><strong>${matching.avgClinicsContacted ?? "—"}</strong></span>
+        </div>
+        ${matching.waveAvailable ? `
+          <h3 style="font-size:.8rem; margin: .8rem 0 .4rem;">By wave</h3>
+          <div class="table-wrap" style="border:1px solid var(--line); box-shadow:none;">
+            <table class="data-table" style="min-width:0;">
+              <thead><tr><th>Wave</th><th>Contacted</th><th>Offered</th><th>Offer rate</th></tr></thead>
+              <tbody>${(matching.byWave || []).map((w) => `<tr><td>${w.wave}</td><td>${w.total}</td><td>${w.offered}</td><td>${fmtPct(w.offerRatePct)}</td></tr>`).join("")}</tbody>
+            </table>
+          </div>` : '<p class="page-lede">Per-wave performance activates once staged wave routing lands.</p>'}
+      </div>
+    </div>
+
+    <div class="grid-2">
+      <div class="panel">
+        <h2>Booking funnel</h2>
+        <div class="funnel-list">
+          ${[
+            ["Offers viewed", booking.offersViewed],
+            ["Offers selected", booking.offersSelected],
+            ["Paid", booking.paid],
+            ["Confirmed booking", booking.confirmedBooking],
+            ["Confirmed visit", booking.confirmedVisit]
+          ].map(([label, value], i, arr) => `
+            <div class="funnel-step">
+              <span>${escapeHtml(label)}</span><strong>${value}</strong>
+              <div class="funnel-bar">${bar(value, Math.max(...arr.map((r) => r[1]), 1))}</div>
+            </div>`).join("")}
+        </div>
+        <div class="count-list" style="margin-top:.8rem;">
+          <div class="count-line"><span>Cancellations</span><span>${booking.cancellations}</span></div>
+          <div class="count-line"><span>No-shows</span><span>${booking.noShows}</span></div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>Revenue</h2>
+        <div class="stat-row">
+          <span><small>Customer payments</small><strong>${formatCents(revenue.customerPaymentsCents)}</strong></span>
+          <span><small>Platform fee</small><strong>${formatCents(revenue.platformFeeCents)}</strong></span>
+          <span><small>Clinic transfers</small><strong>${formatCents(revenue.clinicTransfersCents)}</strong></span>
+          <span><small>Refunds</small><strong>${formatCents(revenue.refundsCents)}</strong></span>
+          <span><small>Per connection</small><strong>${revenue.revenuePerConnectionCents === null ? "—" : formatCents(revenue.revenuePerConnectionCents)}</strong></span>
+        </div>
+        ${revenue.byMarket.length ? `
+          <h3 style="font-size:.8rem; margin: .8rem 0 .4rem;">By market</h3>
+          <div class="count-list">${revenue.byMarket.map((m) => `<div class="count-line"><span>${escapeHtml(m.marketId)}</span><span>${formatCents(m.platformFeeCents)} fee</span></div>`).join("")}</div>` : ""}
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Quality</h2>
+      <div class="stat-row">
+        <span><small>Stale capacity now</small><strong>${quality.staleCapacityLocationsNow}</strong></span>
+        <span><small>Ignored / expired requests</small><strong>${quality.ignoredOrExpiredRequests}</strong></span>
+        <span><small>Expired offers</small><strong>${quality.expiredOffers}</strong></span>
+        <span><small>Clinic decline rate</small><strong>${fmtPct(quality.clinicDeclineRatePct)}</strong></span>
+        <span><small>Explicit cancellations</small><strong>${quality.customerAbandonment.explicitCancellations}</strong></span>
+      </div>
+      <h3 style="font-size:.8rem; margin: .8rem 0 .4rem;">Technical failures (client-reported)</h3>
+      <div class="count-list">
+        ${quality.technicalFailures.length ? quality.technicalFailures.map((f) => `<div class="count-line"><span>${escapeHtml(f.surface)} · ${escapeHtml(f.code || "—")}</span><span>${f.total}</span></div>`).join("") : '<p class="page-lede">No client errors in this window.</p>'}
+      </div>
+    </div>`;
 }
 
 function describeAdminResult(admin) {

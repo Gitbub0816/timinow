@@ -92,6 +92,9 @@ function locationFromRow(row, coordinates) {
   return {
     id: row.id,
     tenantId: row.tenant_id,
+    // Null on every location assigned before migration 0024 — see
+    // src/markets.js assignLocationToMarket.
+    marketId: row.market_id || null,
     name: row.name,
     slug: row.slug,
     kind: row.kind,
@@ -250,6 +253,10 @@ function normalizeCareSearchRow(row) {
     customerLatitude: row.customer_latitude,
     customerLongitude: row.customer_longitude,
     radiusMiles: row.radius_miles,
+    // Null/0 on every row written before migration 0024 — see src/markets.js
+    // resolveSearchMarket, called once at createCareSearch and never revisited.
+    marketId: row.market_id || null,
+    outOfMarket: row.out_of_market === 1 || row.out_of_market === true,
     status: row.status,
     maxOffers: row.max_offers,
     targetLimit: row.target_limit,

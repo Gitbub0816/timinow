@@ -25,6 +25,8 @@ import { listPets, savePet, removePet, syncPets, validatePet } from "./pets.js";
 import { createContributionPayment, createStandaloneContribution, getContributorHistory, getFundImpact } from "./fund.js";
 import { handleHardship } from "./hardship/index.js";
 import { handleClinicApplicationSubmit, handleClinicBillingSummary } from "./clinic-billing.js";
+import { resolveSearchMarket } from "./markets.js";
+import { marketplaceEventStatement, recordMarketplaceEvent } from "./metrics.js";
 import {
   getCareOffer,
   getCareSearch,
@@ -677,6 +679,11 @@ async function createCareSearch(request, env, actor) {
   const now = new Date().toISOString();
   const ageYears = numberInRange(validated.pet.ageYears, 0, 80);
   const weightLbs = numberInRange(validated.pet.weightLbs, 0.1, 3000);
+  // Measured, never enforced: a search outside every active market (or
+  // inside a red one) still runs against `candidates` above exactly as
+  // computed — this only tags the row for expansion planning. See
+  // src/markets.js resolveSearchMarket.
+  const { marketId, outOfMarket } = await resolveSearchMarket(env, latitude, longitude);
 
   // Staged wave routing (Feature A, migration 0021): rank every candidate on
   // required capability, capacity and freshness, species/case eligibility,
@@ -738,8 +745,8 @@ async function createCareSearch(request, env, actor) {
       red_flags_json, customer_latitude, customer_longitude, radius_miles, status,
       max_offers, target_limit, legal_version, legal_accepted_at, requested_at,
       collection_expires_at, search_expires_at, medications, allergies,
-      routing_policy_id, routing_snapshot_json, current_wave, symptoms_json, started_when
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'collecting', 5, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+      routing_policy_id, routing_snapshot_json, current_wave, symptoms_json, started_when, market_id, out_of_market
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'collecting', 5, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)
   `).bind(
     searchId, publicCode(), actor?.userId || null, cleanString(validated.pet.name, 80), validated.species,
     cleanString(validated.pet.breed, 120) || null, ageYears, weightLbs, cleanString(validated.owner.name, 120),
@@ -748,8 +755,12 @@ async function createCareSearch(request, env, actor) {
     JSON.stringify(validated.redFlags), latitude, longitude, radiusMiles, targetLimit,
     validated.legalVersion, now, now, collectionExpiresAt, searchExpiresAt,
     validated.medications, validated.allergies,
-    routingPolicy.id, JSON.stringify(routingSnapshot), JSON.stringify(validated.symptoms), validated.startedWhen
-  )];
+    routingPolicy.id, JSON.stringify(routingSnapshot), JSON.stringify(validated.symptoms), validated.startedWhen,
+    marketId, outOfMarket ? 1 : 0
+  ), marketplaceEventStatement(env, {
+    type: "search_started", searchId, marketId, outOfMarket, actorType: "customer",
+    meta: { urgency: validated.urgency, candidateCount: candidates.length }
+  })];
 
   const wave1TenantsContacted = new Set();
   waveAssignments.forEach(({ candidate: location, waveNumber }, index) => {
@@ -892,6 +903,7 @@ export async function applyCareSearchDecision(env, {
     // src/routing.js: only silence (an activated target that never answers
     // before its window closes) counts against a clinic's reliability.
     await recordClinicResponded(env, tenantId, { contactedAt: target.waveActivatedAt });
+    await recordMarketplaceEvent(env, { type: "target_declined", searchId: search.id, targetId: target.id, tenantId, marketId: search.marketId, actorType: "clinic" });
     return { ok: true, target: { ...target, status: "declined", respondedAt: now } };
   }
 
@@ -958,15 +970,23 @@ export async function applyCareSearchDecision(env, {
   if (!results[0]?.meta?.changes) return fail(409, "OFFER_WINDOW_FULL", "The customer already has five active clinic offers.");
   // An offer is a response too — see the decline branch above.
   await recordClinicResponded(env, tenantId, { contactedAt: target.waveActivatedAt });
-  const updatedSearch = await getCareSearch(env, search.id);
   // The first offer to exist surfaces to the customer immediately (it is
-  // already in `updatedSearch.offers` above — nothing here withholds it
+  // already in `updatedSearch.offers` below — nothing here withholds it
   // while later waves keep going). Mark the moment for analytics and hand
   // the caller `firstOffer` so an SMS notification can go out — see
   // notifyFirstOfferBySms, called from respondToCareSearch below.
   if (!search.firstOfferAt) {
     await env.DB.prepare("UPDATE care_searches SET first_offer_at = COALESCE(first_offer_at, ?) WHERE id = ?").bind(now, search.id).run();
   }
+  // Written after the batch, not inside it: the offer INSERT above is
+  // conditional (it no-ops once the offer window is full), and an event
+  // recorded unconditionally in the same batch would claim an offer was made
+  // on every call, including the ones OFFER_WINDOW_FULL just rejected.
+  await recordMarketplaceEvent(env, {
+    type: "offer_made", searchId: search.id, targetId: target.id, offerId, tenantId, locationId: location.id,
+    marketId: location.marketId, actorType: "clinic", meta: { responseType }
+  });
+  const updatedSearch = await getCareSearch(env, search.id);
   return { ok: true, offerId, search: updatedSearch };
 }
 
@@ -1148,6 +1168,10 @@ async function selectCareOffer(request, env, actor, searchId) {
     newState: { tenantId: offer.tenantId, targetId: offer.targetId, intakeId },
     reason: "offer_selected"
   });
+  await recordMarketplaceEvent(env, {
+    type: "offer_selected", searchId: search.id, targetId: offer.targetId, offerId: offer.id, intakeId,
+    tenantId: offer.tenantId, locationId: offer.locationId, marketId: search.marketId, actorType: "customer"
+  });
   const intake = await getIntake(env, intakeId);
   return json({ intake, location: enrichLocation(offer.location), search: await getCareSearch(env, search.id) }, { status: 201 });
 }
@@ -1162,7 +1186,8 @@ async function cancelCareSearch(env, actor, searchId) {
   await env.DB.batch([
     env.DB.prepare("UPDATE care_searches SET status = 'cancelled', updated_at = ? WHERE id = ? AND status IN ('collecting', 'offers_ready')").bind(now, search.id),
     env.DB.prepare("UPDATE care_search_targets SET status = 'released', released_at = ?, updated_at = ? WHERE search_id = ? AND status IN ('contacting', 'awaiting_response', 'offered')").bind(now, now, search.id),
-    env.DB.prepare("UPDATE care_offers SET status = 'released', updated_at = ? WHERE search_id = ? AND status = 'active'").bind(now, search.id)
+    env.DB.prepare("UPDATE care_offers SET status = 'released', updated_at = ? WHERE search_id = ? AND status = 'active'").bind(now, search.id),
+    marketplaceEventStatement(env, { type: "search_cancelled", searchId: search.id, marketId: search.marketId, actorType: "customer" })
   ]);
   return json({ search: await getCareSearch(env, search.id) });
 }
@@ -2015,6 +2040,16 @@ async function handleApi(request, env, ctx) {
       // customer's own poll of this endpoint (every five seconds while the
       // tracker is open) is the clock. See src/routing.js.
       search = await advanceSearchWavesAndRefetch(env, search);
+      // The one funnel step nothing else records — see src/metrics.js. The
+      // customer polls this endpoint repeatedly while offers come in;
+      // idempotencyKey keyed on the search id means only the first poll that
+      // finds an offer ever writes a row, not every poll after it.
+      if (search.offers.length) {
+        ctx?.waitUntil(recordMarketplaceEvent(env, {
+          type: "offers_viewed", searchId: search.id, marketId: search.marketId, outOfMarket: search.outOfMarket,
+          actorType: "customer", idempotencyKey: search.id
+        }));
+      }
       return json({ search });
     }
     if (method === "POST" && action === "select-offer") return selectCareOffer(request, env, actor, searchId);

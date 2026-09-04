@@ -24,6 +24,8 @@
     <span class="brand-mark">Tími <small>Platform Console</small></span>
     <nav class="admin-nav" data-operator-nav hidden aria-label="Platform console navigation">
       <a href="#tenants" data-nav="tenants">Tenants</a>
+      <a href="#markets" data-nav="markets">Markets</a>
+      <a href="#metrics" data-nav="metrics">Metrics</a>
       <a href="#applications" data-nav="applications">Applications</a>
       <a href="#analytics" data-nav="analytics">Analytics</a>
       <a href="#audit" data-nav="audit">Audit log</a>
@@ -245,6 +247,82 @@
         <a class="button button-quiet" href="#tenants" style="margin-bottom: 1rem; padding-left: 0;">← Back to tenants</a>
         <div data-tenant-detail-body>
           <div class="loading-state"><span class="spinner" aria-hidden="true"></span><p>Loading tenant…</p></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ------------------------------------------------------- markets --- -->
+    <section class="screen" data-screen="markets" aria-labelledby="markets-title">
+      <div class="shell">
+        <div class="page-head">
+          <div>
+            <p class="eyebrow">Expansion</p>
+            <h1 class="page-title" id="markets-title">Markets</h1>
+            <p class="page-lede">Geographic expansion units. Readiness is computed fresh from live search and offer data every time you open a market; only an operator ever changes its state — see each market's readiness report.</p>
+          </div>
+          <button class="button button-primary" type="button" data-open-create-market>+ Create market</button>
+        </div>
+        <div data-markets-body>
+          <div class="loading-state"><span class="spinner" aria-hidden="true"></span><p>Loading markets…</p></div>
+        </div>
+
+        <div class="panel" style="margin-top: 1.5rem;">
+          <h2>Unassigned locations</h2>
+          <p class="page-lede" style="margin-bottom: .8rem;">Active clinics with no market yet. The suggested market is whichever one's radius reaches the clinic's coordinates, if any.</p>
+          <div data-unassigned-locations></div>
+        </div>
+      </div>
+
+      <div class="modal-backdrop" data-create-market-modal hidden>
+        <div class="panel" style="width: min(520px, 92vw); max-height: 88vh; overflow-y: auto;">
+          <h2 class="section-title" style="margin-top:0;">Create a market</h2>
+          <form data-form="create-market" novalidate>
+            <div data-market-form-errors class="form-errors" hidden></div>
+            <div class="form-grid two-col">
+              <label class="field wide"><span>Name *</span><input type="text" name="name" placeholder="East Bay" required></label>
+              <label class="field"><span>Center latitude *</span><input type="number" name="centerLatitude" step="0.000001" min="-90" max="90" required></label>
+              <label class="field"><span>Center longitude *</span><input type="number" name="centerLongitude" step="0.000001" min="-180" max="180" required></label>
+              <label class="field"><span>Radius (km) *</span><input type="number" name="radiusKm" min="1" max="500" value="40" required></label>
+              <label class="field wide"><span>Notes</span><input type="text" name="notes" maxlength="2000"></label>
+            </div>
+            <div class="form-actions">
+              <button class="button" type="button" data-close-create-market>Cancel</button>
+              <button class="button button-primary" type="submit">Create market</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </section>
+
+    <!-- --------------------------------------------------- market detail --- -->
+    <section class="screen" data-screen="market-detail" aria-labelledby="market-detail-title">
+      <div class="shell">
+        <a class="button button-quiet" href="#markets" style="margin-bottom: 1rem; padding-left: 0;">← Back to markets</a>
+        <div data-market-detail-body>
+          <div class="loading-state"><span class="spinner" aria-hidden="true"></span><p>Loading market…</p></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- --------------------------------------------------------- metrics --- -->
+    <section class="screen" data-screen="metrics" aria-labelledby="metrics-title">
+      <div class="shell">
+        <div class="page-head">
+          <div>
+            <p class="eyebrow">Platform-wide</p>
+            <h1 class="page-title" id="metrics-title">Marketplace metrics</h1>
+            <p class="page-lede">Demand, supply, matching, booking, revenue, and quality — computed from live search and offer data, filterable below.</p>
+          </div>
+        </div>
+        <form data-form="metrics-filter" class="form-grid" style="grid-template-columns: repeat(5, 1fr); margin-bottom: 1.25rem;">
+          <label class="field"><span>From</span><input type="date" name="from"></label>
+          <label class="field"><span>To</span><input type="date" name="to"></label>
+          <label class="field"><span>Market</span><select name="market" data-metrics-markets><option value="">All markets</option><option value="out_of_market">Out of market</option></select></label>
+          <label class="field"><span>Clinic</span><select name="tenant" data-metrics-tenants><option value="">All clinics</option></select></label>
+          <div class="field"><span>&nbsp;</span><button class="button" type="submit">Apply</button></div>
+        </form>
+        <div data-metrics-body>
+          <div class="loading-state"><span class="spinner" aria-hidden="true"></span><p>Loading metrics…</p></div>
         </div>
       </div>
     </section>
