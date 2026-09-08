@@ -108,7 +108,9 @@ import UserNotifications
 
     func requestAlways() async -> Bool {
         if manager.authorizationStatus == .authorizedAlways { return true }
-        guard manager.authorizationStatus == .authorizedWhenInUse || (await request()) else { return false }
+        if manager.authorizationStatus != .authorizedWhenInUse {
+            guard await request() else { return false }
+        }
         if manager.authorizationStatus == .authorizedAlways { return true }
         return await withCheckedContinuation { value in alwaysContinuation = value; manager.requestAlwaysAuthorization() }
     }
