@@ -34,7 +34,7 @@
     "DEMO_MODE": "false",
     "SURFACE": "voice",
     "MAPBOX_STYLE_URL": "mapbox://styles/calebowen2019/cmt3nci25004d01sya8qxcb4u",
-    "TWILIO_FROM_NUMBER": "",
+    "TWILIO_FROM_NUMBER": "+15103720647",
     // The E.164 number (or, if TWILIO_MESSAGING_SERVICE_SID is set instead,
     // ignored) Feature B's "we found you a clinic" SMS sends from. Needs SMS
     // capability, unlike TWILIO_FROM_NUMBER above which only needs Voice.
@@ -42,11 +42,11 @@
     "VOICE_CALLS_ENABLED": "true",
     "VOICE_MAX_ATTEMPTS": "2",
     "VOICE_SAY_VOICE": "",
-    "GEMINI_TTS_VOICE": "",
+    "GEMINI_TTS_VOICE": "Iapetus",
     "GEMINI_TTS_MODEL": "",
     "GEMINI_TTS_STYLE": "",
     "VOICE_PUBLIC_URL": "https://voice.timinow.pet",
-    "VOICE_DRAIN_TOKEN": ""
+    "VOICE_DRAIN_TOKEN": "d82e070830e6d63266e55c609c5236f6d196345e13bd657d"
   },
   "d1_databases": [
     {
