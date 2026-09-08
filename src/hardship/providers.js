@@ -18,16 +18,21 @@
  * have expired — the drop-off is real and it lands on exactly the people this
  * program exists for.
  *
- * So `createSession` returns a *session descriptor*, not a URL:
+ * So `createSession` returns a *session descriptor*:
  *
- *   { mode: "EMBEDDED", sessionId, clientToken, expiresAt, hostedUrl: null }
+ *   { mode: "EMBEDDED", sessionId, sessionUrl, expiresAt, hostedUrl: null }
  *
- * The client hands `clientToken` to the vendor's in-app SDK and the capture
- * happens inside TímiNOW. `mode: "HOSTED"` exists as a documented fallback for
- * a vendor or a device that cannot support embedding, and only then is
- * `hostedUrl` populated. Callers must branch on `mode` and must never assume a
- * URL is present; an interface that returned a bare string would have quietly
- * made the redirect flow the only one implementable.
+ * `sessionUrl` is the vendor's own session link — for Didit specifically it is
+ * the one URL their create-session API returns regardless of mode. What
+ * changes between EMBEDDED and HOSTED is purely how the *client* uses it: the
+ * embedded path hands it to the vendor's in-app SDK, which renders it inline
+ * into a container element rather than navigating to it, so the capture stays
+ * inside TímiNOW; `mode: "HOSTED"` exists as a documented fallback for a
+ * device that cannot embed, and only then does the client open it as a plain
+ * link (also exposed as `hostedUrl`, the same value, so a caller that only
+ * ever expected the HOSTED shape still finds it). Callers must branch on
+ * `mode` and must never assume a URL means "open this" — for EMBEDDED it
+ * means "mount this".
  *
  * ─────────────────────────────────────────────── transactions are optional ──
  *
@@ -54,10 +59,12 @@ export class ProviderError extends Error {
  * @property {string} provider          Vendor id, for the audit record.
  * @property {"EMBEDDED"|"HOSTED"} mode Which flow this session is for.
  * @property {string} sessionId         Opaque vendor session id.
- * @property {string|null} clientToken  Short-lived token for the in-app SDK.
- *                                      Present for EMBEDDED, the primary path.
- * @property {string|null} hostedUrl    Populated only for HOSTED.
- * @property {string} expiresAt         ISO instant after which the token dies.
+ * @property {string} sessionUrl        The vendor's session link. Mounted
+ *                                      in-app for EMBEDDED, opened for HOSTED.
+ * @property {string|null} hostedUrl    Same value as sessionUrl, populated
+ *                                      only for HOSTED, for callers that only
+ *                                      know the HOSTED-only field name.
+ * @property {string} expiresAt         ISO instant after which the session dies.
  * @property {string[]} supportedModes  What this vendor can actually do.
  */
 
@@ -132,18 +139,17 @@ export function stubIdentityProvider({ sessions = {}, supportedModes = ["EMBEDDE
       }
       const nowIso = now || new Date(0).toISOString();
       const sessionId = `idvs_stub_${applicationId}`;
+      // One URL for both modes, matching the real vendor's create-session
+      // response — the embedded path mounts it in-app via the vendor SDK, the
+      // hosted path opens it as a plain link, and it carries the return
+      // target with it so the booking can be resumed rather than abandoned.
+      const sessionUrl = `https://identity.stub.invalid/session/${sessionId}${returnUrl ? `?return=${encodeURIComponent(returnUrl)}` : ""}`;
       return {
         provider: "stub-identity",
         mode,
         sessionId,
-        // The embedded path is the product's intent: a token the in-app SDK
-        // consumes, with the capture staying inside TímiNOW.
-        clientToken: mode === "EMBEDDED" ? `idvt_stub_${applicationId}` : null,
-        // Only the fallback carries a URL, and it carries the return target
-        // with it so the booking can be resumed rather than abandoned.
-        hostedUrl: mode === "HOSTED"
-          ? `https://identity.stub.invalid/session/${sessionId}${returnUrl ? `?return=${encodeURIComponent(returnUrl)}` : ""}`
-          : null,
+        sessionUrl,
+        hostedUrl: mode === "HOSTED" ? sessionUrl : null,
         expiresAt: plusMinutes(nowIso, STUB_SESSION_TTL_MINUTES),
         supportedModes
       };
@@ -340,19 +346,27 @@ export function diditIdentityProvider(env) {
         throw new ProviderError("IDENTITY_SESSION_MALFORMED", "The identity provider returned no session id.", { retryable: true });
       }
 
-      const clientToken = payload.client_secret || payload.session_token || payload.token || null;
-      if (mode === "EMBEDDED" && !clientToken) {
-        // Falling back to the hosted page unasked would silently change the
+      // Didit's create-session response carries one URL field (`url`, a
+      // `https://verify.didit.me/session/...` link) for every mode — there is
+      // no separate embedded token. The web SDK's `startVerification` takes
+      // this same URL and renders it inline via `configuration.embedded` +
+      // `embeddedContainerId` instead of opening it as a redirect; only the
+      // client-side rendering differs between EMBEDDED and HOSTED, not what
+      // the backend receives.
+      const sessionUrl = payload.url || payload.verification_url || null;
+      if (!sessionUrl) {
+        // Falling back to a different flow unasked would silently change the
         // product: the applicant leaves the app and most do not return.
-        throw new ProviderError("EMBEDDED_SESSION_UNAVAILABLE", "The identity provider did not return a token for the embedded flow.", { retryable: true });
+        throw new ProviderError("EMBEDDED_SESSION_UNAVAILABLE", "The identity provider did not return a verification URL.", { retryable: true });
       }
 
       return {
         provider: "didit",
         mode,
         sessionId,
-        clientToken: mode === "EMBEDDED" ? clientToken : null,
-        hostedUrl: mode === "HOSTED" ? (payload.url || payload.verification_url || null) : null,
+        sessionUrl,
+        // Kept for any caller still reading the HOSTED-only field name.
+        hostedUrl: mode === "HOSTED" ? sessionUrl : null,
         expiresAt: payload.expires_at || plusMinutes(now || new Date().toISOString(), 30),
         supportedModes
       };

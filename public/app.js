@@ -1995,11 +1995,72 @@ async function renderAssistanceIdentity() {
     assistanceBody().innerHTML = `<p class="assistance-question">First, confirm who you are</p>
       <p class="assistance-note">Assistance is one visit per household, so we verify a real, unique person before looking at any document. This checks identity only — never income, and no document image reaches this step.</p>
       <div id="assistance-identity-mount" class="assistance-identity" data-identity-session="${escapeHtml(session?.sessionId || "")}" data-identity-mode="${escapeHtml(session?.mode || "EMBEDDED")}"></div>
+      <p class="assistance-note" data-identity-status hidden></p>
       ${session?.mode === "HOSTED" && session?.hostedUrl ? `<p><a class="button button-quiet" href="${escapeHtml(session.hostedUrl)}" target="_blank" rel="noopener">Open identity check</a></p>` : ""}
       <div class="assistance-actions"><button class="button button-primary" type="button" data-assistance-submit="identity">I’ve finished verifying</button><button class="button button-quiet" type="button" data-assistance-back>Choose something else</button></div>`;
+    if (session?.mode === "EMBEDDED" && session?.sessionUrl) await mountDiditWidget(session);
   } catch (error) {
     state.assistance.decision = { result: "NOT_VERIFIED", technical: true, message: error.message };
     renderAssistanceDecision();
+  }
+}
+
+/**
+ * Mount Didit's widget inline and let its own completion event drive the
+ * check — the manual "I've finished verifying" button stays only as a
+ * fallback for a widget that failed to load or a HOSTED tab the applicant
+ * never returned to click through from. Either path ends at the same real
+ * server check (`checkAssistanceIdentityStatus`); neither one ever advances
+ * the flow on trust alone.
+ */
+async function mountDiditWidget(session) {
+  const mount = document.getElementById("assistance-identity-mount");
+  if (!mount) return;
+  try {
+    const DiditSdk = await loadDiditSdk();
+    // The load is async; bail if the dialog moved on (closed, or the
+    // applicant picked a different pathway) while the script was fetching.
+    if (!DiditSdk || !document.body.contains(mount) || !state.assistance?.application) return;
+    mount.style.minHeight = "480px";
+    DiditSdk.shared.onComplete = (result) => {
+      if (result?.type === "completed" || result?.status === "completed") checkAssistanceIdentityStatus();
+    };
+    DiditSdk.shared.startVerification({
+      url: session.sessionUrl,
+      configuration: { embedded: true, embeddedContainerId: "assistance-identity-mount", showCloseButton: false, closeModalOnComplete: false }
+    });
+  } catch {
+    // The widget script failed to load (offline, ad blocker, CDN outage). The
+    // manual button and, for HOSTED sessions, the opened-tab link remain the
+    // path forward — nothing here silently approves anyone.
+    const status = $("[data-identity-status]");
+    if (status) { status.hidden = false; status.textContent = "The identity check widget couldn’t load. If you completed it in another tab, press “I’ve finished verifying” below."; }
+  }
+}
+
+/**
+ * The one real gate: ask the server what Didit actually decided, and only
+ * move forward when it says verified. Used both by the widget's own
+ * completion event and by the manual fallback button — clicking the button
+ * never advances the flow on its own.
+ */
+async function checkAssistanceIdentityStatus() {
+  const application = state.assistance?.application;
+  if (!application) return renderAssistancePathways();
+  const status = $("[data-identity-status]");
+  if (status) { status.hidden = false; status.textContent = "Checking your verification…"; }
+  try {
+    const { application: refreshed, identity } = await api(`/api/hardship/applications/${encodeURIComponent(application.id)}/identity-status`);
+    state.assistance.application = refreshed;
+    if (identity?.verified) return renderAssistanceEvidence();
+    if (identity?.status === "COMPLETED") {
+      state.assistance.decision = { result: "NOT_VERIFIED" };
+      return renderAssistanceDecision();
+    }
+    if (status) status.textContent = "We haven’t received a result yet. If you just finished in the identity window, wait a moment and try again.";
+  } catch (error) {
+    if (status) { status.hidden = false; status.textContent = "Couldn’t check your verification status just now. Try again in a moment."; }
+    else { state.assistance.decision = { result: "NOT_VERIFIED", technical: true, message: error.message }; renderAssistanceDecision(); }
   }
 }
 
@@ -2059,7 +2120,7 @@ async function uploadAssistanceDocument(applicationId, input) {
 async function submitAssistanceApplication(stage) {
   const step = stage || document.activeElement?.dataset?.assistanceSubmit;
   if (step === "scope") return renderAssistancePathways();
-  if (step === "identity") return renderAssistanceEvidence();
+  if (step === "identity") return checkAssistanceIdentityStatus();
   const pathway = state.assistance?.pathway;
   if (!pathway) return renderAssistancePathways();
   const files = $$("[data-assistance-file]");
@@ -2448,6 +2509,25 @@ async function loadStripe() {
     document.head.append(script);
   });
   return window.Stripe;
+}
+
+/**
+ * Didit's web SDK, loaded once. `DiditSdk.shared.startVerification` takes the
+ * same session `url` the backend returns for both EMBEDDED and HOSTED mode —
+ * only `configuration.embedded` differs, rendering it inline into
+ * `embeddedContainerId` instead of opening it. See src/hardship/providers.js
+ * for why there is no separate embedded token.
+ */
+async function loadDiditSdk() {
+  if (window.DiditSDK?.DiditSdk) return window.DiditSDK.DiditSdk;
+  await new Promise((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = "https://unpkg.com/@didit-protocol/sdk-web/dist/didit-sdk.umd.min.js";
+    script.onload = resolve;
+    script.onerror = reject;
+    document.head.append(script);
+  });
+  return window.DiditSDK?.DiditSdk;
 }
 
 async function openStripePayment(clientSecret) {

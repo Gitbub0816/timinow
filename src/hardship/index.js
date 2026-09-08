@@ -205,6 +205,32 @@ export async function startIdentitySession(env, application, { mode = "EMBEDDED"
 }
 
 /**
+ * Ask the provider for the current verdict on an application's open identity
+ * session and, if it changed, write it down.
+ *
+ * Split out of `submitApplication` so the client can learn "verified" or
+ * "declined" the moment the Didit widget itself reports completion, rather
+ * than only finding out at final submit — asking for a benefit letter before
+ * confirming a real, unique person is the thing this flow exists to avoid.
+ * `submitApplication` still calls this itself: a client can be closed, killed,
+ * or simply never call the status endpoint, and submit must be correct either
+ * way.
+ */
+export async function checkIdentityStatus(env, application, { now = new Date().toISOString(), providerSet } = {}) {
+  const set = providerSet || defaultProviders(env);
+  let identity = { verified: Boolean(application.identityVerified), uniquenessConfidence: application.identityConfidence || "NONE", identityKey: application.identityKey || null };
+  if (!application.identitySessionId) return { application, identity };
+
+  identity = await set.identity.getSessionResult(application.identitySessionId);
+  if (identity.identityKey !== application.identityKey || Boolean(identity.verified) !== Boolean(application.identityVerified)) {
+    await env.DB.prepare("UPDATE eligibility_applications SET identity_key = ?, identity_verified = ?, identity_confidence = ?, updated_at = ? WHERE id = ?")
+      .bind(identity.identityKey || null, identity.verified ? 1 : 0, identity.uniquenessConfidence || null, now, application.id).run();
+    application = { ...application, identityKey: identity.identityKey || application.identityKey, identityVerified: identity.verified, identityConfidence: identity.uniquenessConfidence || application.identityConfidence };
+  }
+  return { application, identity };
+}
+
+/**
  * Record a piece of evidence — a reference, never content.
  *
  * The bytes are uploaded straight to private object storage by the client
@@ -403,7 +429,7 @@ export function factsFromEvidence(application, extractions, identity) {
  * evaluator see anything, and whatever it returns is written down verbatim.
  */
 export async function submitApplication(env, actor, applicationId, { now = new Date().toISOString(), providerSet, policy = activePolicy() } = {}) {
-  const application = await getApplication(env, applicationId, actor.userId);
+  let application = await getApplication(env, applicationId, actor.userId);
   if (!application) return { ok: false, status: 404, code: "APPLICATION_NOT_FOUND", message: "That assistance application was not found." };
   if (application.state === "APPROVED" || application.state === "NOT_VERIFIED") {
     const existing = await latestDecision(env, application.id);
@@ -414,18 +440,14 @@ export async function submitApplication(env, actor, applicationId, { now = new D
   await setState(env, application, "VERIFYING", { now, actorId: actor.userId });
 
   // Identity first: everything else is meaningless without a unique person.
-  let identity = { verified: false, uniquenessConfidence: "NONE", identityKey: null };
-  if (application.identitySessionId) {
-    try {
-      identity = await set.identity.getSessionResult(application.identitySessionId);
-    } catch (error) {
-      return await technicalRetry(env, application, error, { now, actorId: actor.userId });
-    }
-  }
-  if (identity.identityKey && identity.identityKey !== application.identityKey) {
-    await env.DB.prepare("UPDATE eligibility_applications SET identity_key = ?, identity_verified = ?, identity_confidence = ?, updated_at = ? WHERE id = ?")
-      .bind(identity.identityKey, identity.verified ? 1 : 0, identity.uniquenessConfidence || null, now, application.id).run();
-    application.identityKey = identity.identityKey;
+  // Shared with the identity-status endpoint the client polls right after the
+  // Didit widget reports completion — this call is what makes submit correct
+  // even if that poll never happened.
+  let identity;
+  try {
+    ({ application, identity } = await checkIdentityStatus(env, application, { now, providerSet: set }));
+  } catch (error) {
+    return await technicalRetry(env, application, error, { now, actorId: actor.userId });
   }
 
   // An unresolved high-severity signal parks the application. The applicant
@@ -846,7 +868,7 @@ export async function handleHardship(request, env, actor, path, method, options 
     });
   }
 
-  const match = path.match(/^\/api\/hardship\/applications\/([^/]+)(?:\/(identity-session|evidence|uploads|submit|appeal))?$/);
+  const match = path.match(/^\/api\/hardship\/applications\/([^/]+)(?:\/(identity-session|identity-status|evidence|uploads|submit|appeal))?$/);
   if (!match) return apiError(404, "NOT_FOUND", "The requested API route does not exist.");
   const applicationId = decodeURIComponent(match[1]);
   const action = match[2] || null;
@@ -867,6 +889,22 @@ export async function handleHardship(request, env, actor, path, method, options 
     try {
       const session = await startIdentitySession(env, application, { mode, returnUrl: cleanString(body?.returnUrl, 300) || null, now, providerSet: options.providerSet });
       return json({ session });
+    } catch (error) {
+      if (error instanceof ProviderError) return apiError(503, "IDENTITY_UNAVAILABLE", "Identity verification is unavailable right now. Please try again shortly.");
+      throw error;
+    }
+  }
+
+  /**
+   * The moment the Didit widget itself reports completion, the client asks
+   * here rather than waiting for final submit — a declined identity check
+   * should never be followed by "now upload a benefit letter".
+   */
+  if (action === "identity-status") {
+    if (method !== "GET") return apiError(405, "METHOD_NOT_ALLOWED", "Use GET to read identity verification status.");
+    try {
+      const { application: refreshed, identity } = await checkIdentityStatus(env, application, { now, providerSet: options.providerSet });
+      return json({ application: refreshed, identity: { verified: identity.verified, status: identity.status || null } });
     } catch (error) {
       if (error instanceof ProviderError) return apiError(503, "IDENTITY_UNAVAILABLE", "Identity verification is unavailable right now. Please try again shortly.");
       throw error;

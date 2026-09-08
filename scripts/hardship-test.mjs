@@ -425,13 +425,13 @@ const documentFixtures = { documents: {} };
 const identity = stubIdentityProvider(identityFixtures);
 
 const embedded = await identity.createSession({ applicationId: "elig_demo", now: NOW });
-assert(embedded.mode === "EMBEDDED" && typeof embedded.clientToken === "string" && embedded.hostedUrl === null,
-  `The primary identity flow is embedded and returns a client token, not a URL: ${JSON.stringify(embedded)}`);
+assert(embedded.mode === "EMBEDDED" && typeof embedded.sessionUrl === "string" && embedded.hostedUrl === null,
+  `The primary identity flow is embedded, mounts the session URL in-app, and leaves hostedUrl null: ${JSON.stringify(embedded)}`);
 assert(embedded.supportedModes.includes("EMBEDDED") && embedded.supportedModes.includes("HOSTED"),
   "The session descriptor tells the client which flows this vendor supports");
 const hosted = await identity.createSession({ applicationId: "elig_demo", mode: "HOSTED", returnUrl: "https://timi.example/book", now: NOW });
-assert(hosted.mode === "HOSTED" && hosted.clientToken === null && hosted.hostedUrl.includes("return="),
-  "The hosted redirect is the documented fallback and carries the return target");
+assert(hosted.mode === "HOSTED" && hosted.hostedUrl === hosted.sessionUrl && hosted.hostedUrl.includes("return="),
+  "The hosted redirect is the documented fallback, carries the return target, and hostedUrl mirrors sessionUrl");
 let embedOnlyThrew = false;
 try {
   await stubIdentityProvider({ supportedModes: ["EMBEDDED"] }).createSession({ applicationId: "elig_demo", mode: "HOSTED", now: NOW });
@@ -486,8 +486,12 @@ assert(result.response.status === 201 && result.body.application.state === "DRAF
 const mayaApplication = result.body.application.id;
 
 result = await call(maya, `/api/hardship/applications/${mayaApplication}/identity-session`, { method: "POST", body: {} });
-assert(result.body.session.mode === "EMBEDDED" && result.body.session.clientToken, "The application's identity session embeds by default");
+assert(result.body.session.mode === "EMBEDDED" && result.body.session.sessionUrl, "The application's identity session embeds by default");
 identityFixtures.sessions[result.body.session.sessionId] = { verified: true, uniquenessConfidence: "HIGH", identityKey: "idk_maya", status: "COMPLETED" };
+
+result = await call(maya, `/api/hardship/applications/${mayaApplication}/identity-status`, { method: "GET" });
+assert(result.response.status === 200 && result.body.identity.verified === true && result.body.application.identityVerified === true,
+  `The client can learn identity status the moment Didit reports completion, without waiting for final submit: ${JSON.stringify(result.body)}`);
 
 documentFixtures.documents["private/maya/benefit.pdf"] = {
   documentType: "SSI_AWARD_LETTER", issuer: "Social Security Administration", documentDate: daysAgo(12),
