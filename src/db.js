@@ -431,6 +431,22 @@ export async function getCareSearch(env, identifier) {
 }
 
 /**
+ * Every search still in `collecting` or `offers_ready`, normalized but
+ * without `getCareSearch`'s offer/alias/count joins — those exist to build a
+ * customer-facing card and cost a Promise.all of location lookups plus an
+ * alias-table round trip per search. The cron sweep (`scheduled()` in
+ * src/index.js) just needs enough to decide whether a wave is due, so it
+ * calls this instead of `getCareSearch` in a loop.
+ */
+export async function listActiveCareSearches(env, { limit = 200 } = {}) {
+  if (!hasDatabase(env)) return [];
+  const rows = await env.DB.prepare(
+    "SELECT * FROM care_searches WHERE status IN ('collecting', 'offers_ready') ORDER BY requested_at LIMIT ?"
+  ).bind(limit).all();
+  return rows.results.map(normalizeCareSearchRow);
+}
+
+/**
  * Masked owner identity for a clinic that has not yet been booked and paid.
  *
  * At most a first name and a last initial — never a phone number, never an

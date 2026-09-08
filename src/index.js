@@ -35,10 +35,11 @@ import { findEmergencyVeterinaryPlaces, phoneKey } from "./mapbox-places.js";
 import { recordAnalyticsEvents } from "./analytics.js";
 import { listPets, savePet, removePet, syncPets, validatePet } from "./pets.js";
 import { createContributionPayment, createStandaloneContribution, getContributorHistory, getFundImpact } from "./fund.js";
-import { handleHardship } from "./hardship/index.js";
+import { handleHardship, sweepExpiredEvidence } from "./hardship/index.js";
 import { handleClinicApplicationSubmit, handleClinicBillingSummary } from "./clinic-billing.js";
 import { resolveSearchMarket } from "./markets.js";
 import { marketplaceEventStatement, recordMarketplaceEvent } from "./metrics.js";
+import { notifyAlertBreaches } from "./alert-notifications.js";
 import {
   handleCreateWidgetToken,
   handleListWidgetTokens,
@@ -62,10 +63,11 @@ import {
 } from "./db.js";
 import {
   activeRoutingPolicy,
+  advanceAllActiveSearchWaves,
   advanceSearchWaves,
   assignWaves,
+  closeDueSearchWindows,
   rankCandidates,
-  recordClinicIgnored,
   recordClinicResponded,
   reliabilityByTenant
 } from "./routing.js";
@@ -1870,32 +1872,7 @@ async function expireStaleState(env) {
   const now = new Date().toISOString();
   const expired = await env.DB.prepare("SELECT id, status FROM intake_requests WHERE status = 'pending' AND request_expires_at <= ? LIMIT 200").bind(now).all();
   const noShows = await env.DB.prepare("SELECT id, status FROM intake_requests WHERE status IN ('accepted', 'en_route') AND arrival_by IS NOT NULL AND datetime(arrival_by) <= datetime(?, '-15 minutes') LIMIT 200").bind(now).all();
-  const closedCollections = await env.DB.prepare(`
-    SELECT s.id,
-      (SELECT COUNT(*) FROM care_offers o WHERE o.search_id = s.id AND o.status = 'active' AND datetime(o.expires_at) > datetime(?)) AS active_offers
-    FROM care_searches s
-    WHERE s.status = 'collecting' AND datetime(s.collection_expires_at) <= datetime(?)
-    LIMIT 200
-  `).bind(now, now).all();
-  const expiredSearches = await env.DB.prepare("SELECT id FROM care_searches WHERE status IN ('collecting', 'offers_ready') AND datetime(search_expires_at) <= datetime(?) LIMIT 200").bind(now).all();
   const expiredOffers = await env.DB.prepare("SELECT id, search_id FROM care_offers WHERE status = 'active' AND datetime(expires_at) <= datetime(?) LIMIT 200").bind(now).all();
-
-  // Reliability tracking (Feature A): a target that was actually shown to a
-  // clinic (wave_activated_at is set) and is still sitting unanswered the
-  // moment its search or collection window closes counts against that
-  // clinic — see recordClinicIgnored in src/routing.js. A target still in a
-  // future, unactivated wave was never shown to anyone and is released below
-  // the same way it always was, but it is not "ignored" — nobody ignored it.
-  const closingSearchIds = [...closedCollections.results.map((row) => row.id), ...expiredSearches.results.map((row) => row.id)];
-  let ignoredTenantIds = [];
-  if (closingSearchIds.length) {
-    const placeholders = closingSearchIds.map(() => "?").join(",");
-    const ignoredRows = await env.DB.prepare(`
-      SELECT DISTINCT tenant_id FROM care_search_targets
-      WHERE search_id IN (${placeholders}) AND wave_activated_at IS NOT NULL AND status IN ('contacting', 'awaiting_response')
-    `).bind(...closingSearchIds).all();
-    ignoredTenantIds = ignoredRows.results.map((row) => row.tenant_id);
-  }
 
   const statements = [];
   for (const intake of expired.results) {
@@ -1916,22 +1893,29 @@ async function expireStaleState(env) {
       env.DB.prepare("UPDATE care_search_targets SET status = 'expired', updated_at = ? WHERE id = (SELECT target_id FROM care_offers WHERE id = ?) AND status = 'offered'").bind(now, offer.id)
     );
   }
-  for (const search of closedCollections.results) {
-    statements.push(
-      env.DB.prepare("UPDATE care_searches SET status = ?, updated_at = ? WHERE id = ? AND status = 'collecting'").bind(Number(search.active_offers) > 0 ? "offers_ready" : "expired", now, search.id),
-      env.DB.prepare("UPDATE care_search_targets SET status = 'released', released_at = ?, updated_at = ? WHERE search_id = ? AND status IN ('contacting', 'awaiting_response')").bind(now, now, search.id)
-    );
-  }
-  for (const search of expiredSearches.results) {
-    statements.push(
-      env.DB.prepare("UPDATE care_searches SET status = 'expired', updated_at = ? WHERE id = ? AND status IN ('collecting', 'offers_ready')").bind(now, search.id),
-      env.DB.prepare("UPDATE care_search_targets SET status = 'expired', updated_at = ? WHERE search_id = ? AND status IN ('contacting', 'awaiting_response', 'offered')").bind(now, search.id),
-      env.DB.prepare("UPDATE care_offers SET status = 'expired', updated_at = ? WHERE search_id = ? AND status = 'active'").bind(now, search.id)
-    );
-  }
   if (statements.length) await env.DB.batch(statements);
-  if (ignoredTenantIds.length) await recordClinicIgnored(env, ignoredTenantIds);
-  console.log(JSON.stringify({ event: "scheduled_expiry_complete", at: now, expired: expired.results.length, noShows: noShows.results.length, closedCollections: closedCollections.results.length, expiredSearches: expiredSearches.results.length, expiredOffers: expiredOffers.results.length, ignoredClinicTargets: ignoredTenantIds.length }));
+
+  // Search window closes (collecting -> offers_ready/expired), released or
+  // expired targets, and the ignored-clinic reliability penalty (Feature A) —
+  // one implementation shared with the lazy per-poll path in src/routing.js,
+  // called here with no `searchIds` so it sweeps every search that is due
+  // rather than just the one a poll happened to touch. See
+  // closeDueSearchWindows for why a target still sitting in a future,
+  // unactivated wave is released rather than counted as ignored.
+  const searchWindows = await closeDueSearchWindows(env);
+
+  // Waves for every other still-open search advance here too, so a search
+  // nobody is polling still reaches its later waves on this same tick —
+  // see advanceAllActiveSearchWaves in src/routing.js.
+  const waveProgress = await advanceAllActiveSearchWaves(env);
+
+  console.log(JSON.stringify({
+    event: "scheduled_expiry_complete", at: now,
+    expired: expired.results.length, noShows: noShows.results.length,
+    closedCollections: searchWindows.closedCollections, expiredSearches: searchWindows.expiredSearches,
+    expiredOffers: expiredOffers.results.length, ignoredClinicTargets: searchWindows.ignoredClinicTargets,
+    activeSearchesChecked: waveProgress.checked, wavesAdvanced: waveProgress.advanced
+  }));
 }
 
 /**
@@ -2304,5 +2288,13 @@ export default {
     // rather than two. Immediate dispatch handles the time-critical path; this
     // sweep picks up retries and anything that failed to dispatch.
     ctx.waitUntil(dispatchVoiceCalls(env));
+    // Hardship evidence past its retention_deadline (migration 0015's
+    // documented-but-never-built job) — see sweepExpiredEvidence for the
+    // fail-closed R2-then-D1 ordering.
+    ctx.waitUntil(sweepExpiredEvidence(env));
+    // Operator-facing metric breaches, deduped against alert_notifications_sent
+    // so an ongoing breach pages at most once per cooldown window rather than
+    // every five minutes — see src/alert-notifications.js.
+    ctx.waitUntil(notifyAlertBreaches(env));
   }
 };
