@@ -82,7 +82,7 @@
         <a class="button button-light" href="#find?care=emergency">Find emergency care</a>
       </section>
 
-      <section class="team-callout"><img src="/assets/art/clinic-operations.png" alt="Veterinary staff coordinating live intake at a clinic workstation"><div><p class="eyebrow">FOR VETERINARY TEAMS</p><h2>A serious intake console—not another noisy inbox.</h2><p>Publish capacity, review structured case summaries, and confirm an arrival window from one work queue.</p><a class="button button-dark" href="#vets">Partner with Tími <span aria-hidden="true">→</span></a> <a class="button button-quiet" href="#clinic">Open clinic console</a></div></section>
+      <section class="team-callout"><img src="/assets/art/clinic-operations.png" alt="Veterinary staff coordinating live intake at a clinic workstation"><div><p class="eyebrow">FOR VETERINARY TEAMS</p><h2>A serious intake console—not another noisy inbox.</h2><p>Publish capacity, review structured case summaries, and confirm an arrival window from one work queue.</p><a class="button button-dark" href="#vets">Partner with Tími <span aria-hidden="true">→</span></a> <a class="button button-quiet" href="https://providers.timinow.pet" target="_blank" rel="noopener">Open clinic console <span aria-hidden="true">↗</span></a></div></section>
       <footer class="site-footer"><a class="brand footer-brand" href="#home"><img src="/assets/brand/timinow-wordmark.png" alt="Tími NOW"></a><p>Tími NOW is an intake-routing platform operated by ClearKey Solutions, LLC. It is not a veterinary practice and does not diagnose or provide clinical triage.</p><nav aria-label="Legal"><a href="#vets">For veterinary teams</a><a href="#paw-it-forward">Paw It Forward</a><a href="#legal?section=terms">Terms</a><a href="#legal?section=privacy">Privacy</a><a href="#legal?section=safety">Veterinary safety</a><a href="#legal?section=deposits">Deposits & refunds</a><a href="#legal?section=clinics">Clinic terms</a></nav></footer>
     </section>
 
@@ -154,14 +154,20 @@
     </section>
 
     <section class="screen profile-screen" data-screen="pets" aria-labelledby="pets-title">
-      <header class="app-header"><button class="icon-button" type="button" data-route="results" aria-label="Back">←</button><span>Pet profile</span><div class="header-end"><button class="text-button" type="button" data-toast-message="Profile editing will be available when accounts are enabled.">Edit</button><div class="account-menu" data-account-menu hidden></div></div></header>
-      <div class="profile-shell"><div class="pet-portrait">🐶<span>✦</span></div><p class="eyebrow coral">READY TO SHARE</p><h1 id="pets-title">Otis</h1><p>Golden retriever · Dog · 72 lb</p><div class="profile-grid"><article><small>MEDICATION</small><strong>Apoquel · 16 mg daily</strong></article><article><small>ALLERGY</small><strong>Chicken protein</strong></article><article><small>VACCINES</small><strong>Current through May 2027</strong></article><article><small>RECORDS</small><strong>4 documents ready</strong></article></div><p class="privacy-note">Records are not sent until you explicitly include them with an accepted intake.</p></div>
+      <header class="app-header"><button class="icon-button" type="button" data-route="results" aria-label="Back">←</button><span>Your pets</span><div class="header-end"><button class="text-button" type="button" data-add-pet>+ Add pet</button><div class="account-menu" data-account-menu hidden></div></div></header>
+      <div class="profile-shell profile-shell-list">
+        <p class="eyebrow coral">READY TO SHARE</p>
+        <h1 id="pets-title">Your pets</h1>
+        <p class="profile-lede">Keep your pets’ details here so they’re ready to include with an intake.</p>
+        <div class="pet-list" data-pet-list aria-live="polite"><div class="loading-state"><span class="evander evander-sm" aria-hidden="true"></span><strong>Loading your pets…</strong></div></div>
+        <p class="privacy-note">Records are not sent until you explicitly include them with an accepted intake.</p>
+      </div>
     </section>
 
     <section class="screen clinic-screen" data-screen="clinic" aria-labelledby="clinic-title">
-      <aside class="clinic-sidebar"><a class="brand inverse-brand" href="#home"><img src="/assets/brand/timinow-wordmark.png" alt="Tími NOW"></a><p>CLINIC CONSOLE</p><nav><a class="active" href="#clinic">Live intake</a><a href="#clinic" data-toast-message="History is included in the activity feed below.">History</a><a href="#clinic" data-toast-message="Policy controls are shown in the settlement panel.">Policies</a><a href="#legal?section=clinics">Clinic terms</a><a href="#home">Public site</a></nav><button class="workspace-switch-button" type="button" data-workspace-switch hidden><span data-workspace-switch-label>Choose workspace</span><i aria-hidden="true">⇄</i></button><div class="clinic-identity"><span>HP</span><div><strong data-clinic-name>Hearth & Paw</strong><small>Demo tenant</small></div></div></aside>
+      <aside class="clinic-sidebar"><a class="brand inverse-brand" href="#home"><img src="/assets/brand/timinow-wordmark.png" alt="Tími NOW"></a><p>CLINIC CONSOLE</p><nav><a class="active" href="#clinic">Live intake</a><a href="#clinic-history">History</a><a href="#clinic-policies">Policies</a><a href="#legal?section=clinics">Clinic terms</a><a href="#home">Public site</a></nav><button class="workspace-switch-button" type="button" data-workspace-switch hidden><span data-workspace-switch-label>Choose workspace</span><i aria-hidden="true">⇄</i></button><div class="clinic-identity"><span data-clinic-initials>··</span><div><strong data-clinic-name>Loading…</strong><small data-clinic-kind></small></div></div></aside>
       <div class="clinic-workspace">
-        <header class="clinic-topbar"><div><p class="eyebrow">HEARTH & PAW · LIVE OPERATIONS</p><h1 id="clinic-title">Immediate intake control</h1><p class="clinic-subtitle">One accountable queue for reported capacity, clinical review, and confirmed arrivals.</p></div><div class="clinic-topbar-actions"><button class="button button-quiet" type="button" data-enable-alerts>Desktop alerts</button><button class="button button-dark" type="button" data-refresh-clinic>Refresh queue</button><div class="account-menu" data-account-menu hidden></div></div></header>
+        <header class="clinic-topbar"><div><p class="eyebrow" data-clinic-eyebrow>LIVE OPERATIONS</p><h1 id="clinic-title">Immediate intake control</h1><p class="clinic-subtitle">One accountable queue for reported capacity, clinical review, and confirmed arrivals.</p></div><div class="clinic-topbar-actions"><button class="button button-quiet" type="button" data-enable-alerts>Desktop alerts</button><button class="button button-dark" type="button" data-refresh-clinic>Refresh queue</button><div class="account-menu" data-account-menu hidden></div></div></header>
         <div class="clinic-denied" data-clinic-denied hidden>
           <div class="safety-callout"><strong>This account is not part of a veterinary workspace.</strong><p data-clinic-denied-message>Sign in with a clinic account to reach the veterinary console, or return to the customer app.</p></div>
           <a class="button button-quiet" href="#home">Return to the customer app</a>
@@ -180,10 +186,10 @@
 
         <div class="clinic-metrics"><article><small>WAITING FOR RESPONSE</small><strong data-metric-pending>0</strong></article><article><small>ACTIVE ARRIVALS</small><strong data-metric-active>0</strong></article><article><small>COMPLETED TODAY</small><strong data-metric-completed>0</strong></article><article><small>DECLINED TODAY</small><strong data-metric-declined>0</strong></article></div>
 
-        <div class="clinic-columns"><section class="request-panel"><div class="panel-heading"><div><p class="eyebrow coral">REVIEW QUEUE</p><h2>Requests awaiting a decision</h2></div><span data-request-count>0 requests</span></div><div class="request-list" data-request-list><div class="empty-state"><strong>Queue clear</strong><p>New requests arrive with onset, observable symptoms, owner contact, travel time, and the clinic policy snapshot.</p></div></div></section>
+        <div class="clinic-columns"><section class="request-panel" id="clinic-history"><div class="panel-heading"><div><p class="eyebrow coral">REVIEW QUEUE</p><h2>Requests awaiting a decision</h2></div><span data-request-count>0 requests</span></div><div class="request-list" data-request-list><div class="empty-state"><strong>Queue clear</strong><p>New requests arrive with onset, observable symptoms, owner contact, travel time, and the clinic policy snapshot.</p></div></div></section>
           <aside class="operations-panel"><div class="panel-heading"><div><p class="eyebrow">HOW TÍMI REPORTS LOAD</p><h2>Public visibility</h2></div></div><dl><div><dt>Source</dt><dd data-ops-source>Hospital confirmed</dd></div><div><dt>Confidence</dt><dd data-ops-confidence>High</dd></div><div><dt>Stable-patient wait</dt><dd data-ops-wait>15–35 min</dd></div><div><dt>Critical care</dt><dd data-ops-critical>Accepting</dd></div></dl><p class="operations-note">Tími always labels the source and age of capacity data. An expired report becomes “unverified” automatically.</p></aside></div>
 
-        <section class="policy-panel"><div><p class="eyebrow">TENANT POLICY · VERSION 1</p><h2>Arrival deposit and settlement</h2></div><div class="policy-metrics"><span><small>DEPOSIT</small><strong data-policy-deposit>$50</strong></span><span><small>FREE CANCELLATION</small><strong data-policy-cancel>30 min</strong></span><span><small>COMPLETED VISIT FEE</small><strong data-policy-completed>$20</strong></span><span><small>NO-SHOW FEE</small><strong data-policy-noshow>$5</strong></span></div><p>Every intake keeps the exact policy snapshot accepted by the customer. Clinics can use different amounts and refund rules.</p></section>
+        <section class="policy-panel" id="clinic-policies"><div><p class="eyebrow">TENANT POLICY · VERSION 1</p><h2>Arrival deposit and settlement</h2></div><div class="policy-metrics"><span><small>DEPOSIT</small><strong data-policy-deposit>$50</strong></span><span><small>FREE CANCELLATION</small><strong data-policy-cancel>30 min</strong></span><span><small>COMPLETED VISIT FEE</small><strong data-policy-completed>$20</strong></span><span><small>NO-SHOW FEE</small><strong data-policy-noshow>$5</strong></span></div><p>Every intake keeps the exact policy snapshot accepted by the customer. Clinics can use different amounts and refund rules.</p></section>
         </div>
       </div>
     </section>
@@ -193,7 +199,7 @@
         <p class="eyebrow coral">FOR VETERINARY TEAMS</p>
         <h1 id="vets-title">Control your incoming<br>patient <em>flow.</em></h1>
         <p class="hero-lede">Report your real-time capacity and Tími routes matching cases to you while you're accepting, and away from you the moment you're not. Accept when there's room, divert when there isn't, and fill the openings a fully booked calendar never shows.</p>
-        <div class="hero-actions"><a class="button button-primary" href="#vets-apply">Request to join <span aria-hidden="true">→</span></a><a class="button button-quiet" href="#clinic">Open the clinic console</a></div>
+        <div class="hero-actions"><a class="button button-primary" href="#vets-apply">Request to join <span aria-hidden="true">→</span></a><a class="button button-quiet" href="https://providers.timinow.pet" target="_blank" rel="noopener">Open the clinic console <span aria-hidden="true">↗</span></a></div>
       </div>
       <div class="vets-points">
         <article><div class="sketch-icon">⌁</div><h3>Accept, divert, or go quiet — on your terms</h3><p>Publish accepting, limited, critical-only, or diverting in one tap. Tími stops sending cases the instant you're full and resumes the instant you're not.</p></article>
@@ -438,6 +444,31 @@
       <div data-contribution-element></div>
       <p class="dialog-legal">Payment processing is provided by Stripe. Your receipt is emailed to the address you supplied. This contribution is not represented by TímiNOW as tax deductible.</p>
       <button class="button button-primary" type="submit" data-contribution-submit>Pay contribution</button>
+    </form>
+  </dialog>
+
+  <dialog class="pet-form-dialog" data-pet-form-dialog aria-labelledby="pet-form-title">
+    <form data-pet-form novalidate>
+      <button class="dialog-close" type="button" data-close-dialog aria-label="Close">×</button>
+      <p class="eyebrow coral" data-pet-form-eyebrow>ADD A PET</p>
+      <h2 id="pet-form-title" data-pet-form-title>Add a pet</h2>
+      <input type="hidden" name="id">
+      <div class="form-grid two-column">
+        <label>Pet’s name<input name="name" autocomplete="off" required maxlength="60"></label>
+        <label>Species<select name="species" required><option value="dog">Dog</option><option value="cat">Cat</option><option value="bird">Bird</option><option value="rabbit">Rabbit</option><option value="reptile">Reptile</option><option value="small_mammal">Small mammal</option><option value="other">Other</option></select></label>
+        <label>Breed <span>(optional)</span><input name="breed" autocomplete="off" maxlength="80"></label>
+        <label>Sex <span>(optional)</span><select name="sex"><option value="">Not specified</option><option value="female">Female</option><option value="male">Male</option><option value="unknown">Unknown</option></select></label>
+        <label>Weight <span>(optional)</span><div class="input-suffix"><input name="weightLbs" type="number" min="0.1" max="400" step="0.1"><span>lb</span></div></label>
+        <label>Birth year <span>(optional)</span><input name="birthYear" type="number" min="1970"></label>
+        <label class="wide">Medications <span>(optional)</span><input name="medications" maxlength="500" placeholder="e.g. Apoquel 16 mg daily"></label>
+        <label class="wide">Allergies <span>(optional)</span><input name="allergies" maxlength="500" placeholder="e.g. Chicken protein"></label>
+      </div>
+      <p class="provider-error" data-pet-form-error hidden></p>
+      <p class="privacy-note">Medications and allergies are optional, stored as you type them, and are shared only with clinics an accepted intake reaches.</p>
+      <div class="dialog-actions">
+        <button class="button button-quiet" type="button" data-delete-pet hidden>Remove pet</button>
+        <button class="button button-primary" type="submit">Save pet</button>
+      </div>
     </form>
   </dialog>
 

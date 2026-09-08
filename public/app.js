@@ -201,6 +201,7 @@ const state = {
   }),
   locations: [],
   selectedLocation: null,
+  pets: [],
   currentIntake: readStorage(STORAGE_KEYS.intake, null),
   currentSearch: readStorage(STORAGE_KEYS.search, null),
   /** searchId → { locationId: aliasName }. Presentation only; see ALIAS_LIBRARY. */
@@ -441,6 +442,7 @@ function parseRoute() {
   const [route] = raw.split("?");
   if (route === "how-it-works" || route === "emergency") return "home";
   if (route === "vets-apply") return "vets";
+  if (route === "clinic-history" || route === "clinic-policies") return "clinic";
   return $("[data-screen='" + CSS.escape(route) + "']") ? route : "home";
 }
 
@@ -557,7 +559,12 @@ async function renderRoute() {
       await loadClinicDashboard();
       state.clinicTimer = window.setInterval(loadClinicDashboard, 15000);
     }
+    const clinicAnchor = location.hash.replace("#", "").split("?")[0];
+    if (clinicAnchor === "clinic-history" || clinicAnchor === "clinic-policies") {
+      requestAnimationFrame(() => document.getElementById(clinicAnchor)?.scrollIntoView({ block: "start" }));
+    }
   }
+  if (route === "pets") await loadPets();
   if (route === "sign-in") await renderSignIn();
   if (APP_ROUTES.has(route) && route !== "sign-in") renderAccountMenu();
 }
@@ -2520,6 +2527,12 @@ function renderClinicDashboard(data) {
   const { location, requests, metrics } = data;
   announceNewClinicRequests(requests);
   $("[data-clinic-name]").textContent = location.name;
+  const initials = $("[data-clinic-initials]");
+  if (initials) initials.textContent = (location.name || "").split(/\s+/).filter(Boolean).slice(0, 2).map((word) => word[0].toUpperCase()).join("") || "—";
+  const kindLabel = $("[data-clinic-kind]");
+  if (kindLabel) kindLabel.textContent = location.kind ? `${humanize(location.kind)} practice` : "Veterinary workspace";
+  const eyebrow = $("[data-clinic-eyebrow]");
+  if (eyebrow) eyebrow.textContent = `${(location.name || "").toUpperCase()} · LIVE OPERATIONS`;
   $("[data-clinic-status]").textContent = location.availability.label;
   $("[data-clinic-freshness]").textContent = `Confirmed ${formatRelativeTime(location.availability.reportedAt)} · expires ${formatClock(location.availability.expiresAt)}`;
   const signal = $("[data-clinic-signal]");
@@ -2684,6 +2697,121 @@ async function submitDecision(event) {
   finally { button.disabled = false; button.textContent = "Send decision"; }
 }
 
+/* ---------------------------------------------------------------------- */
+/* Pet profiles — GET /api/pets, PUT /api/pets/{id}, DELETE /api/pets/{id}. */
+/* Works for a guest the same as a signed-in customer: both resolve to an   */
+/* actor with a userId (see src/guest-session.js), which is all this API   */
+/* keys pets on.                                                           */
+/* ---------------------------------------------------------------------- */
+const SPECIES_EMOJI = { dog: "🐶", cat: "🐱", bird: "🐦", rabbit: "🐰", reptile: "🦎", small_mammal: "🐹", other: "🐾" };
+
+async function loadPets() {
+  const list = $("[data-pet-list]");
+  try {
+    const data = await api("/api/pets");
+    state.pets = data.pets || [];
+    renderPetList(state.pets);
+  } catch (error) {
+    list.innerHTML = `<div class="empty-state"><strong>Your pets could not be loaded.</strong><p>${escapeHtml(error.message)}</p></div>`;
+  }
+}
+
+function petDetailLine(pet) {
+  const parts = [pet.breed, humanize(pet.species)];
+  if (pet.weightLbs) parts.push(`${pet.weightLbs} lb`);
+  if (pet.birthYear) parts.push(`Born ${pet.birthYear}`);
+  return parts.filter(Boolean).join(" · ");
+}
+
+function renderPetList(pets) {
+  const list = $("[data-pet-list]");
+  if (!pets.length) {
+    list.innerHTML = '<div class="empty-state"><strong>No pets yet.</strong><p>Add a pet so their details are ready to include with an intake.</p><button class="button button-primary" type="button" data-add-pet>Add your first pet</button></div>';
+    return;
+  }
+  list.innerHTML = pets.map((pet) => `<article class="pet-card" data-pet-id="${escapeHtml(pet.id)}">
+    <div class="pet-portrait small">${SPECIES_EMOJI[pet.species] || "🐾"}</div>
+    <div class="pet-card-body">
+      <h2>${escapeHtml(pet.name)}</h2>
+      <p>${escapeHtml(petDetailLine(pet))}</p>
+      ${(pet.medications || pet.allergies) ? `<div class="profile-grid compact">${pet.medications ? `<article><small>MEDICATION</small><strong>${escapeHtml(pet.medications)}</strong></article>` : ""}${pet.allergies ? `<article><small>ALLERGY</small><strong>${escapeHtml(pet.allergies)}</strong></article>` : ""}</div>` : '<p class="microcopy">No medications or allergies on file.</p>'}
+    </div>
+    <div class="pet-card-actions"><button type="button" data-edit-pet="${escapeHtml(pet.id)}">Edit</button></div>
+  </article>`).join("");
+}
+
+function openPetForm(petId) {
+  const dialog = $("[data-pet-form-dialog]");
+  const form = $("[data-pet-form]");
+  form.reset();
+  $("[data-pet-form-error]").hidden = true;
+  const pet = petId ? (state.pets || []).find((item) => item.id === petId) : null;
+  form.elements.id.value = pet ? pet.id : `pet_${crypto.randomUUID()}`;
+  form.elements.name.value = pet?.name || "";
+  form.elements.species.value = pet?.species || "dog";
+  form.elements.breed.value = pet?.breed || "";
+  form.elements.sex.value = pet?.sex || "";
+  form.elements.weightLbs.value = pet?.weightLbs ?? "";
+  form.elements.birthYear.value = pet?.birthYear ?? "";
+  form.elements.birthYear.max = new Date().getFullYear();
+  form.elements.medications.value = pet?.medications || "";
+  form.elements.allergies.value = pet?.allergies || "";
+  $("[data-pet-form-eyebrow]").textContent = pet ? "EDIT PET" : "ADD A PET";
+  $("[data-pet-form-title]").textContent = pet ? `Edit ${pet.name}` : "Add a pet";
+  const deleteButton = $("[data-delete-pet]");
+  deleteButton.hidden = !pet;
+  if (pet) deleteButton.dataset.deletePet = pet.id;
+  dialog.showModal();
+  document.body.classList.add("dialog-open");
+}
+
+async function submitPetForm(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const errorBox = $("[data-pet-form-error]");
+  errorBox.hidden = true;
+  if (!form.reportValidity()) return;
+  const values = new FormData(form);
+  const petId = values.get("id");
+  const payload = {
+    name: String(values.get("name") || "").trim(),
+    species: values.get("species"),
+    breed: String(values.get("breed") || "").trim(),
+    sex: values.get("sex") || null,
+    weightLbs: values.get("weightLbs") ? Number(values.get("weightLbs")) : null,
+    birthYear: values.get("birthYear") ? Number(values.get("birthYear")) : null,
+    medications: String(values.get("medications") || "").trim(),
+    allergies: String(values.get("allergies") || "").trim()
+  };
+  const button = form.querySelector("button[type='submit']");
+  button.disabled = true;
+  button.textContent = "Saving…";
+  try {
+    await api(`/api/pets/${encodeURIComponent(petId)}`, { method: "PUT", body: JSON.stringify(payload) });
+    $("[data-pet-form-dialog]").close();
+    document.body.classList.remove("dialog-open");
+    showToast(`${payload.name} saved.`);
+    await loadPets();
+  } catch (error) {
+    errorBox.textContent = error.message || "That pet could not be saved. Please check the form and try again.";
+    errorBox.hidden = false;
+  } finally {
+    button.disabled = false;
+    button.textContent = "Save pet";
+  }
+}
+
+async function deletePet(petId) {
+  if (!confirm("Remove this pet from your account?")) return;
+  try {
+    await api(`/api/pets/${encodeURIComponent(petId)}`, { method: "DELETE" });
+    $("[data-pet-form-dialog]").close();
+    document.body.classList.remove("dialog-open");
+    showToast("Pet removed.");
+    await loadPets();
+  } catch (error) { showToast(error.message); }
+}
+
 document.addEventListener("click", (event) => {
   const routeButton = event.target.closest("[data-route]");
   if (routeButton) setRoute(routeButton.dataset.route);
@@ -2758,6 +2886,12 @@ document.addEventListener("click", (event) => {
   if (enableAlerts) enableClinicAlerts();
   const review = event.target.closest("[data-review-intake]");
   if (review) openDecisionDialog(review.dataset.reviewIntake, review.dataset.petName, review.dataset.searchTarget === "true");
+  const addPet = event.target.closest("[data-add-pet]");
+  if (addPet) openPetForm(null);
+  const editPet = event.target.closest("[data-edit-pet]");
+  if (editPet) openPetForm(editPet.dataset.editPet);
+  const deletePetButton = event.target.closest("[data-delete-pet]");
+  if (deletePetButton && !deletePetButton.hidden) deletePet(deletePetButton.dataset.deletePet);
   const closeDialog = event.target.closest("[data-close-dialog]");
   if (closeDialog) { closeDialog.closest("dialog")?.close(); document.body.classList.remove("dialog-open"); }
   const toastButton = event.target.closest("[data-toast-message]");
@@ -2980,6 +3114,7 @@ $("[data-decision-form]")?.addEventListener("change", (event) => {
   if (event.target.matches('[name="decision"], [name="responseType"]')) syncDecisionFields();
 });
 $("[data-payment-form]")?.addEventListener("submit", confirmStripePayment);
+$("[data-pet-form]")?.addEventListener("submit", submitPetForm);
 
 $$('dialog').forEach((dialog) => {
   dialog.addEventListener("close", () => document.body.classList.remove("dialog-open"));
