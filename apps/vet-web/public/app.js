@@ -23,7 +23,13 @@ const RETURN_ROUTE_KEY = "timi_vet_return_route";
 // remember, across a reload, that it should behave as a workstation rather
 // than prompt for a Clerk sign-in it does not need.
 const WORKSTATION_KEY = "timi_vet_workstation_v1";
-const KNOWN_SCREENS = new Set(["sign-in", "workspace", "pill", "console", "billing", "overflow", "people", "settings", "legal"]);
+const KNOWN_SCREENS = new Set(["sign-in", "workspace", "pill", "console", "billing", "payouts", "overflow", "people", "settings", "legal"]);
+// Every route a workstation session may land on. Everything else — billing,
+// payouts, overflow tools, people, and facility/call settings — requires an
+// individually signed-in org member per the backend's own authorization (see
+// resolveClinicOperator in src/workstation.js): a workstation has no path to
+// succeed on any of those, so the UI must not offer them.
+const WORKSTATION_ALLOWED_ROUTES = new Set(["console", "pill", "legal"]);
 const DEFAULT_SETTINGS = { pollSeconds: 6, alertsEnabled: true, playSound: true, autoOpenMini: true };
 
 function readWorkstation() {
@@ -60,6 +66,8 @@ const state = {
   dashboard: null,
   dashboardInitialized: false,
   billing: null,
+  payouts: null,
+  callPreferences: null,
   knownPendingIds: new Set(),
   selectedRequestId: null,
   offerFormEdited: false,
@@ -473,7 +481,11 @@ async function onWorkstationEnrollSubmit(event) {
     saveWorkstation(data.workstation);
     state.workstation = data.workstation;
     track("workstation_established");
-    location.hash = "console";
+    // Pill, not console: the same default surface a reload lands on (see
+    // parseRoute()) now that renderRoute()'s workstationOnly branch actually
+    // handles it — this used to hardcode "console" specifically to dodge
+    // that gap, landing on a blank, non-polling pill screen otherwise.
+    location.hash = "pill";
     await renderRoute();
   } catch (error) {
     if (errorBox) { errorBox.hidden = false; errorBox.textContent = signInErrorMessage(error); }
@@ -555,10 +567,14 @@ async function renderRoute() {
 
   if (state.config?.signInRequired) {
     if (workstationOnly) {
-      // A workstation session has no Clerk organization at all, and "People"
-      // (workspace membership, and workstation administration itself) is
-      // deliberately unreachable from it — see requireWorkstationAdmin.
-      if (route === "sign-in" || route === "workspace" || route === "people") route = "console";
+      // A workstation session has no Clerk organization at all. Billing,
+      // payouts, overflow tools, people, and settings all require an
+      // individually signed-in org member server-side (see
+      // resolveClinicOperator in src/workstation.js) — a workstation has no
+      // path to succeed on any of them, so a hash pointing at one (typed,
+      // bookmarked, or left over from before enrollment) falls back to the
+      // pill rather than rendering a screen with no data and no controls.
+      if (!WORKSTATION_ALLOWED_ROUTES.has(route)) route = "pill";
     } else if (!state.clerk?.user) {
       route = "sign-in";
     } else if (!state.clerk.organization) {
@@ -579,13 +595,21 @@ async function renderRoute() {
     track("page_view");
   }
   $$("[data-screen]").forEach((screen) => screen.classList.toggle("is-active", screen.dataset.screen === route));
-  $$("[data-nav]").forEach((link) => link.classList.toggle("active", link.dataset.nav === route));
-  $$('[data-nav="people"]').forEach((link) => { link.hidden = workstationOnly; });
+  $$("[data-nav]").forEach((link) => {
+    link.classList.toggle("active", link.dataset.nav === route);
+    // Hidden, not merely disabled: a workstation session has no path to
+    // succeed on any of these server-side, so offering the link at all is
+    // the bug (see WORKSTATION_ALLOWED_ROUTES above).
+    link.hidden = workstationOnly && !WORKSTATION_ALLOWED_ROUTES.has(link.dataset.nav);
+  });
+  // The pill's settings gear (data-route, not data-nav) is the other way
+  // into a hidden screen — same rule applies.
+  $$('[data-route="settings"]').forEach((el) => { el.hidden = workstationOnly; });
   $$('[data-action="sign-out"]').forEach((button) => { button.textContent = workstationOnly ? "End workstation session" : "Sign out"; });
   document.title = ({
     "sign-in": "Sign in · Tími Vet", workspace: "Choose a workspace · Tími Vet",
     pill: "Quick status · Tími Vet", console: "Clinic operations · Tími Vet", billing: "Billing · Tími Vet",
-    overflow: "Overflow tools · Tími Vet",
+    payouts: "Payouts · Tími Vet", overflow: "Overflow tools · Tími Vet",
     people: "People · Tími Vet", settings: "Facility settings · Tími Vet", legal: "Legal · Tími Vet"
   })[route] || "Tími Vet";
 
@@ -596,6 +620,10 @@ async function renderRoute() {
   if (workstationOnly) {
     // No Clerk session to describe — the workstation cookie is the entire
     // credential, and /api/session would 401 on it (see src/session.js).
+    // Pill and console share the same dashboard poll (see
+    // ensureDashboardPolling), so a workstation lands on live data whether
+    // it reloads on the default empty hash or clicks "Full dashboard".
+    if (route === "pill") await enterPill();
     if (route === "console") await enterConsole();
     if (route === "legal") {
       const section = routeQuery().get("section") || "clinics";
@@ -622,6 +650,7 @@ async function renderRoute() {
   if (route === "pill") await enterPill();
   if (route === "console") await enterConsole();
   if (route === "billing") await enterBilling();
+  if (route === "payouts") await enterPayouts();
   if (route === "overflow") await enterOverflow();
   if (route === "people") await enterPeople();
   if (route === "settings") await enterSettings();
@@ -677,6 +706,7 @@ async function enterPill() {
 async function enterSettings() {
   if (!state.dashboard) await refreshDashboard(true);
   hydrateSettingsForm(state.dashboard?.location);
+  await enterCallPreferences();
 }
 
 async function refreshDashboard(initial) {
@@ -1206,6 +1236,77 @@ function wireSettingsPageForm() {
   });
 }
 
+/* ---------------------------------------------------- call preferences --- */
+// GET/POST /api/clinic/call-preferences (src/index.js) — any org member may
+// view, only an org admin may change (setCallPreferences checks isOrgAdmin
+// itself; the form disables here too so the refusal isn't a surprise after
+// a submit). Never reachable by a workstation session — see WORKSTATION_
+// ALLOWED_ROUTES and the settings screen's nav gating in renderRoute().
+
+const CALL_POLICIES = ["always", "console_active", "never"];
+
+async function enterCallPreferences() {
+  const status = $("[data-call-preferences-status]");
+  try {
+    const { preferences } = await api("/api/clinic/call-preferences");
+    state.callPreferences = preferences;
+    hydrateCallPreferencesForm(preferences);
+  } catch (error) {
+    if (status) status.textContent = `Calling preferences are unavailable right now — ${error.message}`;
+  }
+}
+
+function hydrateCallPreferencesForm(preferences) {
+  const form = $("[data-call-preferences-form]");
+  if (!form || !preferences) return;
+  const policy = CALL_POLICIES.includes(preferences.callPolicy) ? preferences.callPolicy : "always";
+  $$('input[name="callPolicy"]', form).forEach((radio) => { radio.checked = radio.value === policy; });
+  form.elements.voicePhone.value = preferences.voicePhone || "";
+  form.elements.quietStart.value = preferences.quietHours?.start || "";
+  form.elements.quietEnd.value = preferences.quietHours?.end || "";
+
+  const canEdit = isSelfAdmin();
+  $$("input, button", form).forEach((el) => { el.disabled = !canEdit; });
+  const status = $("[data-call-preferences-status]");
+  if (status) status.textContent = canEdit ? "" : "Only a workspace administrator can change calling preferences.";
+}
+
+function wireCallPreferencesForm() {
+  const form = $("[data-call-preferences-form]");
+  if (!form) return;
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (!isSelfAdmin()) return;
+    const values = new FormData(form);
+    setBusy(true);
+    try {
+      const { preferences } = await api("/api/clinic/call-preferences", {
+        method: "POST",
+        body: JSON.stringify({
+          callPolicy: CALL_POLICIES.includes(values.get("callPolicy")) ? values.get("callPolicy") : "always",
+          voicePhone: values.get("voicePhone")?.toString().trim() || "",
+          quietHours: {
+            start: values.get("quietStart")?.toString() || "",
+            end: values.get("quietEnd")?.toString() || ""
+          }
+        })
+      });
+      state.callPreferences = preferences;
+      hydrateCallPreferencesForm(preferences);
+      showToast("Calling preferences saved.");
+    } catch (error) {
+      showToast(error.message);
+    } finally {
+      setBusy(false);
+    }
+  });
+  $("[data-call-preferences-clear-quiet]", form)?.addEventListener("click", () => {
+    if (!isSelfAdmin()) return;
+    form.elements.quietStart.value = "";
+    form.elements.quietEnd.value = "";
+  });
+}
+
 /* -------------------------------------------------------------- settings --- */
 
 function syncSettingsForm() {
@@ -1513,6 +1614,74 @@ function renderBilling() {
         <td><span class="billing-state is-${escapeHtml(String(row.state || "").toLowerCase())}">${escapeHtml(RECEIVABLE_STATE_LABEL[row.state] || humanize(row.state || "—"))}</span></td>
         <td>${escapeHtml(row.invoiceId || "—")}</td></tr>`).join("")}</tbody></table>`
     : '<p class="billing-empty">A completed connection appears here with the fee it carried, including sponsored connections at $0.</p>';
+}
+
+/* -------------------------------------------------------------- payouts --- */
+/**
+ * What Tími's own settlement ledger has transferred to this clinic and what
+ * Stripe has already paid out to its bank — GET /api/clinic/payouts (see
+ * clinicPayouts / clinicEarnings in src/index.js and src/payments.js).
+ * Org member only: never reachable from a workstation session.
+ */
+const PAYOUT_STATUS_LABEL = { paid: "Paid", pending: "Pending", in_transit: "In transit", failed: "Failed", canceled: "Cancelled", reversed: "Reversed" };
+
+async function enterPayouts() {
+  try {
+    const data = await api("/api/clinic/payouts");
+    state.payouts = data;
+  } catch (error) {
+    state.payouts = null;
+    $("[data-payouts-summary]").innerHTML = `<p class="billing-empty">Payouts are unavailable right now — ${escapeHtml(error.message)}</p>`;
+    $("[data-payouts-connect]").innerHTML = '<p class="billing-empty">Unavailable.</p>';
+    $("[data-payouts-transfers]").innerHTML = '<p class="billing-empty">Unavailable.</p>';
+    $("[data-payouts-payouts]").innerHTML = '<p class="billing-empty">Unavailable.</p>';
+    return;
+  }
+  renderPayouts();
+}
+
+function payoutsRowsTable(rows, columns) {
+  if (!rows.length) return null;
+  return `<table class="billing-table"><thead><tr>${columns.map((column) => `<th>${escapeHtml(column.label)}</th>`).join("")}</tr></thead><tbody>${rows.map((row) => `
+    <tr>${columns.map((column) => `<td${column.mono ? ' class="billing-id"' : ""}>${column.render(row)}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
+}
+
+function payoutsStateBadge(status) {
+  return `<span class="billing-state is-${escapeHtml(String(status || "").toLowerCase())}">${escapeHtml(PAYOUT_STATUS_LABEL[status] || humanize(status || "—"))}</span>`;
+}
+
+function renderPayouts() {
+  const data = state.payouts || {};
+  const earnings = data.earnings || {};
+  const transfers = earnings.transfers || [];
+  const payouts = earnings.payouts || [];
+  const connect = data.connect;
+
+  $("[data-payouts-summary]").innerHTML = [
+    { label: "Transferred to date", value: formatMoney(earnings.transferredCents || 0), note: "Every completed connection Tími has settled to your account" },
+    { label: "Paid out", value: formatMoney(earnings.paidOutCents || 0), note: "Already sent to your bank by Stripe" },
+    { label: "Awaiting payout", value: formatMoney(earnings.awaitingPayoutCents || 0), note: "Transferred but not yet paid out" }
+  ].map((tile) => `<article class="card billing-tile"><small>${escapeHtml(tile.label)}</small><strong>${escapeHtml(tile.value)}</strong><span>${escapeHtml(tile.note)}</span></article>`).join("");
+
+  $("[data-payouts-connect]").innerHTML = connect
+    ? `<p class="billing-empty">Onboarding: <strong>${escapeHtml(humanize(connect.onboardingStatus || "—"))}</strong> · Transfers ${connect.transfersEnabled ? "enabled" : "disabled"} · Payouts ${connect.payoutsEnabled ? "enabled" : "disabled"}${connect.disabledReason ? ` · ${escapeHtml(humanize(connect.disabledReason))}` : ""}</p>`
+    : '<p class="billing-empty">Stripe Connect has not been set up for this clinic yet.</p>';
+
+  $("[data-payouts-transfer-count]").textContent = transfers.length ? `${transfers.length} entr${transfers.length === 1 ? "y" : "ies"}` : "None yet";
+  $("[data-payouts-transfers]").innerHTML = payoutsRowsTable(transfers, [
+    { label: "Date", render: (row) => escapeHtml(billingDate(row.occurredAt)) },
+    { label: "Booking", mono: true, render: (row) => escapeHtml(row.intakeId || row.searchId || "—") },
+    { label: "Kind", render: (row) => escapeHtml(humanize(row.kind || "—")) },
+    { label: "Amount", render: (row) => escapeHtml(formatMoney(row.amountCents)) },
+    { label: "Status", render: (row) => payoutsStateBadge(row.status) }
+  ]) || '<p class="billing-empty">A transfer appears here once a connection completes.</p>';
+
+  $("[data-payouts-payout-count]").textContent = payouts.length ? `${payouts.length} payout${payouts.length === 1 ? "" : "s"}` : "None yet";
+  $("[data-payouts-payouts]").innerHTML = payoutsRowsTable(payouts, [
+    { label: "Date", render: (row) => escapeHtml(billingDate(row.occurredAt)) },
+    { label: "Amount", render: (row) => escapeHtml(formatMoney(row.amountCents)) },
+    { label: "Status", render: (row) => payoutsStateBadge(row.status) }
+  ]) || '<p class="billing-empty">Stripe payouts to your bank appear here.</p>';
 }
 
 /* ---------------------------------------------------------------- people --- */
@@ -1892,6 +2061,7 @@ async function main() {
     wireAvailabilityForm();
     wirePillStatusForm();
     wireSettingsPageForm();
+    wireCallPreferencesForm();
     wireSettingsForm();
     await loadConfig();
     await renderRoute();
