@@ -170,20 +170,32 @@ struct TrackerView: View {
                     HStack { TimiWordmark(compact: true); Spacer(); Text(intake?.publicCode ?? "CONFIRMED").font(.caption).fontWeight(.black).foregroundStyle(TimiColor.blue) }
                     Eyebrow(text: "CLINIC SELECTED", color: TimiColor.blue)
                     Text("\(intake?.pet?.name ?? store.selectedPet.name) has a place to go.").font(.system(size: 41, weight: .bold, design: .serif))
-                    if let clinic {
-                        ClinicMapView(
-                            clinics: [clinic],
-                            selectedClinicId: clinic.id,
-                            userLatitude: store.currentLatitude,
-                            userLongitude: store.currentLongitude,
-                            styleURL: store.mapStyleURL,
-                            routeCoordinates: routePreview
-                        ).frame(height: 220).clipShape(RoundedRectangle(cornerRadius: 20)).overlay(RoundedRectangle(cornerRadius: 20).stroke(TimiColor.ink, lineWidth: 2))
-                    }
-                    clinicCard
                     timeline
-                    if (intake?.depositAmountCents ?? 0) > 0 { DepositSection(store: store) }
-                    actionButtons
+                    // Clinic details — the map, the address/phone/Navigate
+                    // card, and the arrival-status buttons — all reveal or
+                    // act on the clinic's exact location, which now waits
+                    // for the combined booking payment (Tími's own fee, plus
+                    // any clinic-required arrival deposit) to settle. The old
+                    // standalone `DepositSection` is not shown here anymore:
+                    // `BookingPaymentSection` already collects any clinic
+                    // deposit as part of the one combined charge, so showing
+                    // both would double-prompt for money.
+                    if store.bookingPaymentSettled {
+                        if let clinic {
+                            ClinicMapView(
+                                clinics: [clinic],
+                                selectedClinicId: clinic.id,
+                                userLatitude: store.currentLatitude,
+                                userLongitude: store.currentLongitude,
+                                styleURL: store.mapStyleURL,
+                                routeCoordinates: routePreview
+                            ).frame(height: 220).clipShape(RoundedRectangle(cornerRadius: 20)).overlay(RoundedRectangle(cornerRadius: 20).stroke(TimiColor.ink, lineWidth: 2))
+                        }
+                        clinicCard
+                        actionButtons
+                    } else {
+                        BookingPaymentSection(store: store)
+                    }
                     SafetyBanner(compact: true)
                     Button("Finish and return home") { store.resetCareFlow() }.buttonStyle(TimiQuietButtonStyle())
                 }.padding(20).padding(.bottom, 34)
@@ -201,7 +213,25 @@ struct TrackerView: View {
             routePreview = preview?.coordinates ?? []
             if let summary = preview?.summary { store.updateNavigationProgress(step: store.currentNavigationStep, summary: summary) }
         }
-        .onAppear { if ["accepted", "en_route"].contains(intake?.status ?? "") { Task { await beginArrivalAutomation() } } }
+        .onAppear {
+            guard ["accepted", "en_route"].contains(intake?.status ?? "") else { return }
+            // Ask for the combined booking payment once per appearance —
+            // `store.bookingPayment == nil` guards a redraw from asking
+            // twice. Arming the geofence is deliberately not gated on this
+            // same condition: it waits for `bookingPaymentSettled`, handled
+            // below and by the `.onChange` beneath it, since a geofence
+            // arming before the customer has even confirmed the clinic
+            // exists to them (by paying) makes no sense.
+            if store.bookingPayment == nil { Task { await store.prepareBookingPayment() } }
+            if store.bookingPaymentSettled { Task { await beginArrivalAutomation() } }
+        }
+        .onChange(of: store.bookingPaymentSettled) { settled in
+            // Settlement can land a few seconds after this view already
+            // appeared — the customer pays while looking at the screen — so
+            // the `.onAppear` check above alone would miss it.
+            guard settled, ["accepted", "en_route"].contains(intake?.status ?? "") else { return }
+            Task { await beginArrivalAutomation() }
+        }
         .onDisappear { PlatformPermissions.stopArrivalTracking(); store.arrivalAutomationEnabled = false }
         // fullScreenCover does not exist on macOS. The customer app ships to
         // iOS and Android only — macOS is just the host `swift test` builds
