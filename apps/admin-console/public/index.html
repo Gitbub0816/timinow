@@ -27,6 +27,9 @@
       <a href="#markets" data-nav="markets">Markets</a>
       <a href="#metrics" data-nav="metrics">Metrics</a>
       <a href="#applications" data-nav="applications">Applications</a>
+      <a href="#clinic-applications" data-nav="clinic-applications">Clinic applications</a>
+      <a href="#clinic-contracts" data-nav="clinic-contracts">Clinic contracts</a>
+      <a href="#pif" data-nav="pif">Paw It Forward</a>
       <a href="#analytics" data-nav="analytics">Analytics</a>
       <a href="#audit" data-nav="audit">Audit log</a>
       <a href="#ledger" data-nav="ledger">Ledger</a>
@@ -271,6 +274,15 @@
           <p class="page-lede" style="margin-bottom: .8rem;">Active clinics with no market yet. The suggested market is whichever one's radius reaches the clinic's coordinates, if any.</p>
           <div data-unassigned-locations></div>
         </div>
+
+        <div class="panel" style="margin-top: 1.5rem;">
+          <div class="page-head" style="margin-bottom: .5rem;">
+            <h2 style="margin:0;">Readiness thresholds<span class="hint"> — platform-wide</span></h2>
+            <button class="button button-small" type="button" data-toggle="readiness-config">Edit</button>
+          </div>
+          <p class="page-lede">The targets every market's readiness report (on its detail page) is checked against. One shared configuration, not per-market.</p>
+          <div data-readiness-config-body hidden></div>
+        </div>
       </div>
 
       <div class="modal-backdrop" data-create-market-modal hidden>
@@ -323,6 +335,15 @@
         </form>
         <div data-metrics-body>
           <div class="loading-state"><span class="spinner" aria-hidden="true"></span><p>Loading metrics…</p></div>
+        </div>
+
+        <div class="panel">
+          <div class="page-head" style="margin-bottom: .5rem;">
+            <h2 style="margin:0;">Alert thresholds</h2>
+            <button class="button button-small" type="button" data-toggle="alert-thresholds">Edit</button>
+          </div>
+          <p class="page-lede">What "⚠️ breached" above means. Checked against the trailing window below, every time the alerts panel loads.</p>
+          <div data-alert-thresholds-body hidden></div>
         </div>
       </div>
     </section>
@@ -447,7 +468,111 @@
       </div>
     </section>
 
+    <!-- --------------------------------------------- clinic applications --- -->
+    <section class="screen" data-screen="clinic-applications" aria-labelledby="clinic-applications-title">
+      <div class="shell">
+        <div class="page-head">
+          <div>
+            <p class="eyebrow">Growth</p>
+            <h1 class="page-title" id="clinic-applications-title">Clinic applications</h1>
+            <p class="page-lede">Join requests submitted through the public clinic sign-up portal — distinct from the provider-interest form on the Applications screen. Review, approve (which creates the tenant), or decline each one.</p>
+          </div>
+        </div>
+        <form data-form="clinic-application-filter" class="form-grid two-col" style="margin-bottom: 1.25rem;">
+          <label class="field"><span>Status</span>
+            <select name="status">
+              <option value="">All</option>
+              <option value="SUBMITTED">Submitted</option>
+              <option value="REVIEWING">Reviewing</option>
+              <option value="APPROVED">Approved</option>
+              <option value="DECLINED">Declined</option>
+              <option value="WITHDRAWN">Withdrawn</option>
+            </select>
+          </label>
+        </form>
+        <div data-clinic-applications-body>
+          <div class="loading-state"><span class="spinner" aria-hidden="true"></span><p>Loading clinic applications…</p></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ------------------------------------------------- clinic contracts --- -->
+    <section class="screen" data-screen="clinic-contracts" aria-labelledby="clinic-contracts-title">
+      <div class="shell">
+        <div class="page-head">
+          <div>
+            <p class="eyebrow">Contracts</p>
+            <h1 class="page-title" id="clinic-contracts-title">Clinic contracts</h1>
+            <p class="page-lede">Every recorded VETERINARY CLINIC PLATFORM PARTICIPATION AGREEMENT, its founding-clinic status, and its lifecycle. Open a clinic to record an agreement, grant or revoke founding status, or move it through separation and rejoin.</p>
+          </div>
+        </div>
+        <form data-form="clinic-contract-filter" class="form-grid two-col" style="margin-bottom: 1.25rem;">
+          <label class="field"><span>Status</span>
+            <select name="status">
+              <option value="">All</option>
+              <option value="DRAFT">Draft</option>
+              <option value="PENDING_SIGNATURE">Pending signature</option>
+              <option value="EXECUTED">Executed</option>
+              <option value="SUPERSEDED">Superseded</option>
+              <option value="TERMINATED">Terminated</option>
+              <option value="VOID">Void</option>
+            </select>
+          </label>
+        </form>
+        <div data-clinic-contracts-body>
+          <div class="loading-state"><span class="spinner" aria-hidden="true"></span><p>Loading clinic contracts…</p></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ------------------------------------------ clinic contract detail --- -->
+    <section class="screen" data-screen="clinic-contract-detail" aria-labelledby="clinic-contract-detail-title">
+      <div class="shell">
+        <a class="button button-quiet" href="#clinic-contracts" style="margin-bottom: 1rem; padding-left: 0;">← Back to clinic contracts</a>
+        <div data-clinic-contract-detail-body>
+          <div class="loading-state"><span class="spinner" aria-hidden="true"></span><p>Loading clinic…</p></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ------------------------------------------------------ Paw It Forward --- -->
+    <section class="screen" data-screen="pif" aria-labelledby="pif-title">
+      <div class="shell">
+        <div class="page-head">
+          <div>
+            <p class="eyebrow">Paw It Forward</p>
+            <h1 class="page-title" id="pif-title">Fund, custody &amp; reconciliation</h1>
+            <p class="page-lede">The Paw It Forward assistance fund's own books: what it holds, what is physically protected in custody, and whether the daily reconciliation agrees.</p>
+          </div>
+        </div>
+        <div class="tabs" data-pif-tabs>
+          <button type="button" data-pif-tab="fund" class="active">Fund</button>
+          <button type="button" data-pif-tab="custody">Custody</button>
+          <button type="button" data-pif-tab="reconciliation">Reconciliation</button>
+        </div>
+        <div class="tab-panel" data-pif-panel="fund">
+          <div class="loading-state"><span class="spinner" aria-hidden="true"></span><p>Loading fund…</p></div>
+        </div>
+        <div class="tab-panel" data-pif-panel="custody" hidden>
+          <div class="loading-state"><span class="spinner" aria-hidden="true"></span><p>Loading custody…</p></div>
+        </div>
+        <div class="tab-panel" data-pif-panel="reconciliation" hidden>
+          <div class="loading-state"><span class="spinner" aria-hidden="true"></span><p>Loading reconciliation…</p></div>
+        </div>
+      </div>
+    </section>
+
   </main>
+
+  <!-- Generic action-form modal, reused by clinic contracts, custody sweeps,
+       and reconciliation exception resolution. Destructive actions render a
+       required confirmation checkbox that gates the submit button. -->
+  <div class="modal-backdrop" data-action-modal hidden>
+    <div class="panel" style="width: min(640px, 92vw); max-height: 88vh; overflow-y: auto;">
+      <h2 class="section-title" data-action-modal-title style="margin-top:0;"></h2>
+      <div data-action-modal-body></div>
+    </div>
+  </div>
 
   <div class="toast" data-toast role="status" aria-live="polite"></div>
 
