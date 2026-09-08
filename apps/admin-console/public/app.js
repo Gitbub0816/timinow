@@ -17,7 +17,11 @@ const state = {
   /** Survives a re-render so "mark reconciled" returns to the same view. */
   ledgerFilters: { tenantId: "", kind: "", from: "", to: "", intakeId: "", unreconciled: false },
   map: null,
-  marker: null
+  marker: null,
+  /** Tenant id → name, filled lazily wherever a clinic screen needs to show a
+   * name next to an id the underlying route only returns as an id. */
+  tenantNames: null,
+  pifTab: "fund"
 };
 
 /* ----------------------------------------------------------- analytics --- */
@@ -80,6 +84,25 @@ function initials(email) {
   return name.slice(0, 2).toUpperCase();
 }
 
+/** A `.pill` in one of five tones, built from the same tokens the rest of the
+ * console already uses for status color — no new CSS classes needed per
+ * status vocabulary (application status, contract status, lifecycle state,
+ * founding status, reconciliation verdict, …). */
+const TONE_COLORS = {
+  good: ["var(--good-soft)", "var(--good-dark)"],
+  bad: ["var(--coral-soft)", "var(--coral-dark)"],
+  warn: ["var(--gold-soft)", "var(--ink)"],
+  info: ["var(--blue-soft)", "var(--blue-dark)"],
+  neutral: ["var(--canvas)", "var(--muted)"]
+};
+function tonePill(label, tone = "neutral") {
+  const [bg, fg] = TONE_COLORS[tone] || TONE_COLORS.neutral;
+  return `<span class="pill" style="background:${bg}; color:${fg}; border:1px solid var(--line);">${escapeHtml(label)}</span>`;
+}
+function labelize(value) {
+  return String(value ?? "").replaceAll("_", " ").toLowerCase().replace(/^./, (c) => c.toUpperCase());
+}
+
 let toastTimer = null;
 function toast(message, isError = false) {
   const el = document.querySelector("[data-toast]");
@@ -140,13 +163,22 @@ function parseHash() {
   const marketDetailMatch = raw.match(/^markets\/([^/]+)$/);
   if (marketDetailMatch) return { screen: "market-detail", id: decodeURIComponent(marketDetailMatch[1]) };
   if (raw === "metrics") return { screen: "metrics" };
+  if (raw === "clinic-applications") return { screen: "clinic-applications" };
+  if (raw === "clinic-contracts") return { screen: "clinic-contracts" };
+  const clinicContractDetailMatch = raw.match(/^clinic-contracts\/([^/]+)$/);
+  if (clinicContractDetailMatch) return { screen: "clinic-contract-detail", id: decodeURIComponent(clinicContractDetailMatch[1]) };
+  if (raw === "pif") return { screen: "pif", tab: "fund" };
+  const pifMatch = raw.match(/^pif\/(fund|custody|reconciliation)$/);
+  if (pifMatch) return { screen: "pif", tab: pifMatch[1] };
   return { screen: "tenants" };
 }
 
 function updateNavActive() {
-  const top = ["audit", "errors", "ledger", "analytics", "applications", "metrics"].includes(state.route.screen)
+  const top = ["audit", "errors", "ledger", "analytics", "applications", "metrics", "clinic-applications", "clinic-contracts", "pif"].includes(state.route.screen)
     ? state.route.screen
-    : ["markets", "market-detail"].includes(state.route.screen) ? "markets" : "tenants";
+    : ["markets", "market-detail"].includes(state.route.screen) ? "markets"
+    : state.route.screen === "clinic-contract-detail" ? "clinic-contracts"
+    : "tenants";
   document.querySelectorAll("[data-nav]").forEach((a) => a.classList.toggle("active", a.dataset.nav === top));
 }
 
@@ -237,6 +269,26 @@ async function renderRoute() {
   if (state.route.screen === "metrics") {
     showScreen("metrics");
     await loadMetrics();
+    return;
+  }
+  if (state.route.screen === "clinic-applications") {
+    showScreen("clinic-applications");
+    await loadClinicApplications();
+    return;
+  }
+  if (state.route.screen === "clinic-contracts") {
+    showScreen("clinic-contracts");
+    await loadClinicContracts();
+    return;
+  }
+  if (state.route.screen === "clinic-contract-detail") {
+    showScreen("clinic-contract-detail");
+    await loadClinicContractDetail(state.route.id);
+    return;
+  }
+  if (state.route.screen === "pif") {
+    showScreen("pif");
+    await loadPif(state.route.tab || "fund");
     return;
   }
   showScreen("tenants");
@@ -438,6 +490,22 @@ function renderTenantsTable(tenants) {
         <tbody>${rows}</tbody>
       </table>
     </div>`;
+}
+
+/** Tenant id → name, loaded once and reused by every screen that only gets an
+ * id back from its own route (clinic contracts chief among them). */
+async function ensureTenantNames() {
+  if (state.tenantNames) return state.tenantNames;
+  try {
+    const { tenants } = await apiFetch("/api/admin/tenants");
+    state.tenantNames = Object.fromEntries((tenants || []).map((t) => [t.id, t.name]));
+  } catch {
+    state.tenantNames = {};
+  }
+  return state.tenantNames;
+}
+function tenantLabel(tenantId) {
+  return (state.tenantNames && state.tenantNames[tenantId]) || tenantId;
 }
 
 /* ---------------------------------------------------------------- audit --- */
@@ -1025,6 +1093,28 @@ function wireStaticHandlers() {
     loadMetrics();
   });
 
+  document.querySelector('[data-toggle="alert-thresholds"]')?.addEventListener("click", () => {
+    const el = document.querySelector("[data-alert-thresholds-body]");
+    el.hidden = !el.hidden;
+    if (!el.hidden) loadAlertThresholds();
+  });
+  document.querySelector('[data-toggle="readiness-config"]')?.addEventListener("click", () => {
+    const el = document.querySelector("[data-readiness-config-body]");
+    el.hidden = !el.hidden;
+    if (!el.hidden) loadReadinessConfig();
+  });
+
+  document.querySelector('form[data-form="clinic-application-filter"]')?.addEventListener("change", () => loadClinicApplications());
+  document.querySelector('form[data-form="clinic-contract-filter"]')?.addEventListener("change", () => loadClinicContracts());
+
+  document.querySelectorAll("[data-pif-tab]").forEach((button) => {
+    button.addEventListener("click", () => { location.hash = `#pif/${button.dataset.pifTab}`; });
+  });
+
+  document.querySelector("[data-action-modal]")?.addEventListener("click", (event) => {
+    if (event.target === event.currentTarget) closeActionModal();
+  });
+
   window.addEventListener("hashchange", route);
 }
 
@@ -1353,6 +1443,611 @@ function renderApplications(applications) {
   });
 }
 
+/* -------------------------------------------------- clinic applications --- */
+/**
+ * Join requests from the public clinic sign-up portal (`POST
+ * /api/clinic-applications`). Distinct from the "Applications" screen, which
+ * is the older provider-interest lead form — a different table, a different
+ * lifecycle, and no review action of its own.
+ */
+const CLINIC_APPLICATION_TONE = {
+  SUBMITTED: "info", REVIEWING: "warn", APPROVED: "good", DECLINED: "bad", WITHDRAWN: "neutral"
+};
+
+async function loadClinicApplications() {
+  const mount = document.querySelector("[data-clinic-applications-body]");
+  mount.innerHTML = '<div class="loading-state"><span class="spinner" aria-hidden="true"></span><p>Loading clinic applications…</p></div>';
+  const status = document.querySelector('form[data-form="clinic-application-filter"]')?.status?.value || "";
+  try {
+    const query = status ? `?status=${encodeURIComponent(status)}` : "";
+    const [{ applications = [] }] = await Promise.all([
+      apiFetch(`/api/admin/clinic-applications${query}`),
+      ensureTenantNames()
+    ]);
+    renderClinicApplications(applications);
+  } catch (error) {
+    mount.innerHTML = `<div class="empty-state"><p>${escapeHtml(error.message)}</p></div>`;
+  }
+}
+
+function clinicApplicationCard(app) {
+  const address = [app.addressLine1, app.city, app.region, app.postalCode].filter(Boolean).join(", ");
+  const canDecide = app.status === "SUBMITTED" || app.status === "REVIEWING";
+  return `<div class="panel" data-application-card="${escapeAttr(app.id)}">
+    <div class="page-head" style="margin-bottom:.6rem; align-items:flex-start;">
+      <div>
+        <h2 style="margin-bottom:.2rem;">${escapeHtml(app.practiceName)}${app.wantsFounding ? ' <span class="hint">— wants founding status</span>' : ""}</h2>
+        <p class="page-lede" style="margin:0;">${escapeHtml(app.contactName)} · <a href="mailto:${escapeAttr(app.email)}" style="color:var(--blue);">${escapeHtml(app.email)}</a> · ${escapeHtml(app.phone)}</p>
+      </div>
+      ${tonePill(app.status, CLINIC_APPLICATION_TONE[app.status] || "neutral")}
+    </div>
+    <p class="page-lede" style="margin:0 0 .4rem;">${escapeHtml(address || "No address given")}${app.kind ? ` · ${escapeHtml(app.kind)}` : ""}${app.website ? ` · <a href="${escapeAttr(app.website)}" target="_blank" rel="noopener" style="color:var(--blue);">${escapeHtml(app.website)}</a>` : ""}</p>
+    ${(app.species?.length || app.capabilities?.length) ? `<p class="page-lede" style="margin:0 0 .4rem;">${[...(app.species || []), ...(app.capabilities || [])].map(escapeHtml).join(", ")}</p>` : ""}
+    ${app.license?.number ? `<p class="page-lede" style="margin:0 0 .4rem;">License ${escapeHtml(app.license.number)}${app.license.authority ? ` (${escapeHtml(app.license.authority)})` : ""}${app.license.expiresOn ? `, expires ${escapeHtml(formatDate(app.license.expiresOn))}` : ""}</p>` : ""}
+    ${app.notes ? `<p class="page-lede" style="margin:0 0 .4rem;">“${escapeHtml(app.notes)}”</p>` : ""}
+    <p class="page-lede" style="margin:0 0 .8rem; font-size:.68rem;">Received ${escapeHtml(formatDateTime(app.createdAt))}${app.reviewedAt ? ` · last reviewed ${escapeHtml(formatDateTime(app.reviewedAt))}${app.reviewedBy ? ` by ${escapeHtml(app.reviewedBy)}` : ""}` : ""}</p>
+    ${app.status === "DECLINED" && app.declineReason ? `<p class="page-lede" style="margin:0 0 .8rem;"><strong>Decline reason:</strong> ${escapeHtml(app.declineReason)}</p>` : ""}
+    ${app.status === "APPROVED" && app.createdTenantId ? `<p class="page-lede" style="margin:0 0 .8rem;"><strong>Created tenant:</strong> <a class="row-link" href="#tenants/${encodeURIComponent(app.createdTenantId)}">${escapeHtml(tenantLabel(app.createdTenantId))}</a> · <a class="row-link" href="#clinic-contracts/${encodeURIComponent(app.createdTenantId)}">contract profile</a></p>` : ""}
+    ${canDecide ? `<div class="form-actions" style="justify-content:flex-start; margin-top:0;">
+      ${app.status === "SUBMITTED" ? `<button class="button button-small" type="button" data-app-action="review" data-app-id="${escapeAttr(app.id)}">Start review</button>` : ""}
+      <button class="button button-small button-primary" type="button" data-app-action="approve" data-app-id="${escapeAttr(app.id)}">Approve</button>
+      <button class="button button-small button-danger" type="button" data-app-action="decline" data-app-id="${escapeAttr(app.id)}">Decline</button>
+      <button class="button button-small" type="button" data-app-action="withdraw" data-app-id="${escapeAttr(app.id)}">Mark withdrawn</button>
+    </div>` : ""}
+  </div>`;
+}
+
+function renderClinicApplications(applications) {
+  const mount = document.querySelector("[data-clinic-applications-body]");
+  mount.innerHTML = applications.length
+    ? applications.map(clinicApplicationCard).join("")
+    : '<div class="empty-state"><p>No clinic applications match this filter.</p></div>';
+  wireClinicApplicationEvents();
+}
+
+async function decideClinicApplication(id, body) {
+  await apiFetch(`/api/admin/clinic-applications/${encodeURIComponent(id)}`, { method: "POST", body: JSON.stringify(body) });
+}
+
+function wireClinicApplicationEvents() {
+  document.querySelectorAll("[data-app-action]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const id = button.dataset.appId;
+      const action = button.dataset.appAction;
+      if (action === "review") {
+        button.disabled = true;
+        try {
+          await decideClinicApplication(id, { action: "review" });
+          toast("Marked reviewing.");
+          await loadClinicApplications();
+        } catch (error) {
+          toast(error.message, true);
+          button.disabled = false;
+        }
+        return;
+      }
+      if (action === "approve") {
+        openActionModal({
+          title: "Approve clinic application",
+          lede: "Creates the tenant (and, if a plan other than standard is chosen, its pricing assignment). This does not create a location — add one from the new tenant's page afterward.",
+          fields: [
+            { name: "tenantName", label: "Workspace name", type: "text" },
+            { name: "plan", label: "Pricing plan", type: "select", options: ["STANDARD", "FOUNDING", "CUSTOM"], value: "STANDARD", blank: false },
+            { name: "customFeeCents", label: "Custom clinic fee", type: "money", hint: "USD, required if plan is Custom" },
+            { name: "contractId", label: "Contract reference", type: "text", hint: "required if plan is Founding or Custom" },
+            { name: "note", label: "Note", type: "textarea" }
+          ],
+          submitLabel: "Approve",
+          onSubmit: async (payload) => {
+            await decideClinicApplication(id, { action: "approve", ...payload });
+            state.tenantNames = null; // a new tenant just came into existence
+            toast("Application approved. Tenant created.");
+            await loadClinicApplications();
+          }
+        });
+        return;
+      }
+      if (action === "decline") {
+        openActionModal({
+          title: "Decline clinic application",
+          fields: [{ name: "reason", label: "Reason", type: "textarea", required: true }],
+          submitLabel: "Decline",
+          onSubmit: async (payload) => {
+            await decideClinicApplication(id, { action: "decline", ...payload });
+            toast("Application declined.");
+            await loadClinicApplications();
+          }
+        });
+        return;
+      }
+      if (action === "withdraw") {
+        openActionModal({
+          title: "Mark application withdrawn",
+          lede: "For when the practice tells you they're no longer applying.",
+          fields: [{ name: "reason", label: "Reason", type: "textarea" }],
+          submitLabel: "Mark withdrawn",
+          onSubmit: async (payload) => {
+            await decideClinicApplication(id, { action: "withdraw", ...payload });
+            toast("Application marked withdrawn.");
+            await loadClinicApplications();
+          }
+        });
+      }
+    });
+  });
+}
+
+/* ------------------------------------------------------ clinic contracts --- */
+
+const CONTRACT_STATUS_TONE = {
+  DRAFT: "neutral", PENDING_SIGNATURE: "warn", EXECUTED: "good", SUPERSEDED: "neutral", TERMINATED: "bad", VOID: "bad"
+};
+const FOUNDING_STATUS_TONE = {
+  NOT_APPLICABLE: "neutral", ACTIVE: "good", TEMPORARILY_INACTIVE: "warn",
+  SEPARATED_ELIGIBLE_TO_RESTORE: "warn", REVOKED_FOR_CAUSE: "bad"
+};
+const LIFECYCLE_TONE = {
+  PENDING_CONTRACT: "neutral", PENDING_ONBOARDING: "warn", ACTIVE: "good", TEMPORARILY_INACTIVE: "warn",
+  SUSPENDED: "bad", VOLUNTARY_SEPARATION_PENDING: "warn", SEPARATED: "bad", TERMINATED_FOR_CAUSE: "bad", REJOIN_REVIEW: "info"
+};
+
+const CAUSE_CATEGORIES = [
+  "FRAUD", "VISIT_OR_PAYMENT_FALSIFICATION", "INTENTIONAL_FEE_CIRCUMVENTION", "PAW_IT_FORWARD_FUND_MISUSE",
+  "DEPOSIT_DOUBLE_COLLECTION", "MATERIAL_SECURITY_ABUSE", "MATERIAL_UNLAWFUL_CONDUCT", "UNCURED_MATERIAL_BREACH"
+];
+const CONTRACT_STATUSES = ["DRAFT", "PENDING_SIGNATURE", "EXECUTED", "SUPERSEDED", "TERMINATED", "VOID"];
+const DEPOSIT_ELECTIONS = ["NO_DEPOSIT_REQUIRED", "WAIVE_FOR_PAW_IT_FORWARD", "ACCEPT_PIF_GUARANTEE", "CUSTOMER_FUNDED_DEPOSIT"];
+const REPRESENTATIVE_ROLES = [
+  "AUTHORIZED_REPRESENTATIVE", "AUTHORIZED_SIGNER", "BILLING_CONTACT",
+  "LEGAL_NOTICE_CONTACT", "PRACTICE_ADMINISTRATOR", "MEDICAL_DIRECTOR", "STAFF_USER"
+];
+const AUTHORITY_SCOPES = ["ROUTINE", "ACTUAL_AUTHORITY_TO_BIND"];
+const MANAGEMENT_EVENT_TYPES = [
+  "OWNER_CONTROL", "LEGAL_ENTITY", "MANAGEMENT_COMPANY", "ADMINISTRATOR",
+  "MEDICAL_DIRECTOR", "BILLING", "AUTHORIZED_REPRESENTATIVE"
+];
+
+async function loadClinicContracts() {
+  const mount = document.querySelector("[data-clinic-contracts-body]");
+  mount.innerHTML = '<div class="loading-state"><span class="spinner" aria-hidden="true"></span><p>Loading clinic contracts…</p></div>';
+  const status = document.querySelector('form[data-form="clinic-contract-filter"]')?.status?.value || "";
+  try {
+    await ensureTenantNames();
+    const query = status ? `?status=${encodeURIComponent(status)}` : "";
+    const { contracts = [] } = await apiFetch(`/api/admin/clinic-contracts${query}`);
+    renderClinicContracts(contracts);
+  } catch (error) {
+    mount.innerHTML = `<div class="empty-state"><p>${escapeHtml(error.message)}</p></div>`;
+  }
+}
+
+function renderClinicContracts(contracts) {
+  const mount = document.querySelector("[data-clinic-contracts-body]");
+  if (!contracts.length) {
+    mount.innerHTML = '<div class="table-wrap"><table class="data-table"><tbody><tr class="empty-row"><td>No contracts match this filter. Record one from a clinic\'s contract profile.</td></tr></tbody></table></div>';
+    return;
+  }
+  const rows = contracts.map((c) => `
+    <tr>
+      <td><a class="row-link" href="#clinic-contracts/${encodeURIComponent(c.tenantId)}">${escapeHtml(tenantLabel(c.tenantId))}</a><br><small style="color:var(--muted);">${escapeHtml(c.clinicLegalName)}</small></td>
+      <td>${tonePill(c.status, CONTRACT_STATUS_TONE[c.status] || "neutral")}</td>
+      <td>${escapeHtml(c.agreementVersion)}</td>
+      <td>${c.effectiveDate ? escapeHtml(formatDate(c.effectiveDate)) : "—"}</td>
+      <td>${c.depositElection ? escapeHtml(labelize(c.depositElection)) : "—"}</td>
+      <td>${formatDate(c.createdAt)}</td>
+    </tr>`).join("");
+  mount.innerHTML = `
+    <div class="table-wrap">
+      <table class="data-table">
+        <thead><tr><th>Clinic</th><th>Status</th><th>Agreement version</th><th>Effective</th><th>Deposit election</th><th>Recorded</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
+}
+
+/* ----------------------------------------------- clinic contract detail --- */
+/**
+ * The full addendum §19 profile for one clinic: its agreement, founding
+ * status, lifecycle, representatives, management history, separation, and
+ * rejoin requests — plus every lifecycle-changing action the backend exposes
+ * (src/clinic-contracts.js `handleClinicContractUpdate`), each through the
+ * generic action modal above.
+ */
+async function loadClinicContractDetail(tenantId) {
+  const mount = document.querySelector("[data-clinic-contract-detail-body]");
+  mount.innerHTML = '<div class="loading-state"><span class="spinner" aria-hidden="true"></span><p>Loading clinic…</p></div>';
+  try {
+    const [{ profile }] = await Promise.all([
+      apiFetch(`/api/admin/clinics/${encodeURIComponent(tenantId)}/contract`),
+      ensureTenantNames()
+    ]);
+    renderClinicContractDetail(tenantId, profile);
+  } catch (error) {
+    mount.innerHTML = `<div class="empty-state"><p>${escapeHtml(error.message)}</p></div>`;
+  }
+}
+
+function contractAction(tenantId, action, payload) {
+  return apiFetch(`/api/admin/clinics/${encodeURIComponent(tenantId)}/contract`, {
+    method: "POST", body: JSON.stringify({ action, ...payload })
+  });
+}
+function reloadClinicContractDetail(tenantId) { return loadClinicContractDetail(tenantId); }
+
+function renderContractPanel(tenantId, contract) {
+  return `<div class="panel">
+    <div class="page-head" style="margin-bottom:.6rem;">
+      <h2 style="margin:0;">Agreement</h2>
+      ${contract ? tonePill(contract.status, CONTRACT_STATUS_TONE[contract.status] || "neutral") : ""}
+    </div>
+    ${contract ? `
+      <div class="tenant-summary">
+        <span><small>Legal name</small><strong style="font-size:.85rem;">${escapeHtml(contract.clinicLegalName)}</strong></span>
+        <span><small>DBA</small><strong style="font-size:.85rem;">${escapeHtml(contract.clinicDba || "—")}</strong></span>
+        <span><small>Agreement version</small><strong style="font-size:.85rem;">${escapeHtml(contract.agreementVersion)}</strong></span>
+        <span><small>Effective</small><strong style="font-size:.85rem;">${contract.effectiveDate ? escapeHtml(formatDate(contract.effectiveDate)) : "—"}</strong></span>
+        <span><small>Deposit election</small><strong style="font-size:.85rem;">${contract.depositElection ? escapeHtml(labelize(contract.depositElection)) : "—"}</strong></span>
+        <span><small>Contracting entity</small><strong style="font-size:.75rem;">${escapeHtml(contract.contractingEntity)}</strong></span>
+        <span><small>Authorized signer</small><strong style="font-size:.75rem;">${contract.authorizedSigner ? escapeHtml(`${contract.authorizedSigner.name}${contract.authorizedSigner.title ? `, ${contract.authorizedSigner.title}` : ""}`) : "—"}</strong></span>
+        <span><small>Document</small><strong style="font-size:.7rem; word-break:break-all;">${escapeHtml(contract.agreementDocumentId || "—")}</strong></span>
+      </div>
+      ${contract.notes ? `<p class="page-lede">${escapeHtml(contract.notes)}</p>` : ""}
+    ` : '<p class="page-lede">No agreement recorded yet for this clinic.</p>'}
+    <div class="form-actions" style="justify-content:flex-start; margin-top:.5rem;">
+      <button class="button button-small button-primary" type="button" data-contract-action="record_contract">${contract ? "Record new agreement" : "Record agreement"}</button>
+    </div>
+  </div>`;
+}
+
+function renderFoundingPanel(founding, pricing) {
+  return `<div class="panel">
+    <div class="page-head" style="margin-bottom:.6rem;">
+      <h2 style="margin:0;">Founding status &amp; pricing</h2>
+      ${tonePill(founding.status, FOUNDING_STATUS_TONE[founding.status] || "neutral")}
+    </div>
+    <div class="tenant-summary">
+      <span><small>Plan</small><strong style="font-size:.85rem;">${escapeHtml(pricing.plan)}</strong></span>
+      <span><small>Applicable fee</small><strong style="font-size:.85rem;">${formatCents(pricing.applicableFeeCents)}</strong></span>
+      <span><small>Reason</small><strong style="font-size:.7rem;">${escapeHtml(labelize(pricing.reason || ""))}</strong></span>
+      <span><small>Good standing</small><strong style="font-size:.85rem;">${founding.goodStanding ? "Yes" : "No"}</strong></span>
+      <span><small>Rejoin eligible</small><strong style="font-size:.85rem;">${founding.rejoinEligible ? "Yes" : "No"}</strong></span>
+      <span><small>Granted</small><strong style="font-size:.75rem;">${founding.grantedAt ? escapeHtml(formatDate(founding.grantedAt)) : "—"}</strong></span>
+    </div>
+    ${founding.history?.length ? `
+      <h3 style="font-size:.8rem; margin: .8rem 0 .4rem;">History</h3>
+      <div class="audit-list">${founding.history.slice(0, 10).map((h) => `
+        <div class="audit-row">
+          <time>${formatDateTime(h.effectiveAt)}</time>
+          <div><span class="action">${escapeHtml(labelize(h.status))}</span><div class="detail">${escapeHtml(h.reason || h.causeCategory || "")}</div></div>
+          <span class="pill role-member">${escapeHtml(h.recordedBy || "system")}</span>
+        </div>`).join("")}</div>` : ""}
+    <div class="form-actions" style="justify-content:flex-start; margin-top:.8rem; flex-wrap:wrap;">
+      <button class="button button-small" type="button" data-contract-action="grant_founding">Grant founding status</button>
+      <button class="button button-small" type="button" data-contract-action="set_founding_status">Change founding status</button>
+      <button class="button button-small" type="button" data-contract-action="surrender_founding">Surrender founding status</button>
+      <button class="button button-small button-danger" type="button" data-contract-action="revoke_founding_for_cause">Revoke for cause</button>
+    </div>
+  </div>`;
+}
+
+function renderLifecyclePanel(lifecycle, events) {
+  return `<div class="panel">
+    <div class="page-head" style="margin-bottom:.6rem;">
+      <h2 style="margin:0;">Lifecycle</h2>
+      ${lifecycle ? tonePill(lifecycle.status, LIFECYCLE_TONE[lifecycle.status] || "neutral") : tonePill("PENDING_CONTRACT", "neutral")}
+    </div>
+    ${lifecycle ? `<p class="page-lede">${escapeHtml(lifecycle.reason || "")}${lifecycle.activeForReferrals ? " · active for referrals" : " · not receiving referrals"}</p>` : ""}
+    ${events?.length ? `
+      <div class="audit-list">${events.slice(0, 8).map((e) => `
+        <div class="audit-row">
+          <time>${formatDateTime(e.effectiveAt)}</time>
+          <div><span class="action">${escapeHtml(labelize(e.fromStatus || "—"))} → ${escapeHtml(labelize(e.toStatus))}</span><div class="detail">${escapeHtml(e.reason || "")}</div></div>
+          <span class="pill role-member">${escapeHtml(e.triggerSource)}</span>
+        </div>`).join("")}</div>` : '<p class="page-lede">No lifecycle events yet.</p>'}
+    <div class="form-actions" style="justify-content:flex-start; margin-top:.8rem;">
+      <button class="button button-small" type="button" data-contract-action="set_lifecycle">Change lifecycle status</button>
+    </div>
+  </div>`;
+}
+
+function renderSeparationPanel(tenantId, separation, obligations, windDown, rejoinRequests) {
+  const obligationsBad = obligations?.uncured;
+  return `<div class="panel">
+    <h2>Separation &amp; wind-down</h2>
+    ${separation ? `
+      <div class="tenant-summary">
+        <span><small>Kind</small><strong style="font-size:.85rem;">${escapeHtml(labelize(separation.kind))}</strong></span>
+        <span><small>Initiated by</small><strong style="font-size:.85rem;">${escapeHtml(labelize(separation.initiatedBy))}</strong></span>
+        <span><small>Cause</small><strong style="font-size:.75rem;">${escapeHtml(separation.causeCategory ? labelize(separation.causeCategory) : "—")}</strong></span>
+        <span><small>Effective</small><strong style="font-size:.85rem;">${separation.effectiveAt ? escapeHtml(formatDate(separation.effectiveAt)) : "—"}</strong></span>
+        <span><small>Wind-down complete</small><strong style="font-size:.85rem;">${separation.windDownComplete ? "Yes" : "No"}</strong></span>
+        <span><small>Obligations cleared</small><strong style="font-size:.85rem;">${separation.obligationsCleared ? "Yes" : "No"}</strong></span>
+      </div>
+      ${separation.reason ? `<p class="page-lede">${escapeHtml(separation.reason)}</p>` : ""}
+    ` : '<p class="page-lede">This clinic has never been separated from the platform.</p>'}
+    <p class="page-lede" style="${obligationsBad ? "color:var(--coral-dark); font-weight:700;" : ""}">
+      Surviving obligations: ${obligations.outstandingReceivableCount} unpaid fee${obligations.outstandingReceivableCount === 1 ? "" : "s"} (${formatCents(obligations.outstandingReceivableCents)}), ${obligations.openInvoiceCount} open invoice${obligations.openInvoiceCount === 1 ? "" : "s"} (${formatCents(obligations.openInvoiceCents)}).
+    </p>
+    ${windDown?.length ? `<p class="page-lede">${windDown.length} booking${windDown.length === 1 ? "" : "s"} still to be seen through before this clinic can go fully quiet.</p>` : ""}
+    <div class="form-actions" style="justify-content:flex-start; margin-top:.5rem; flex-wrap:wrap;">
+      <button class="button button-small button-danger" type="button" data-contract-action="separate">Separate this clinic</button>
+      ${separation && !separation.windDownComplete ? `<button class="button button-small" type="button" data-contract-action="complete_wind_down">Mark wind-down complete</button>` : ""}
+    </div>
+
+    <h3 style="font-size:.9rem; margin: 1.2rem 0 .4rem;">Rejoin requests</h3>
+    ${rejoinRequests?.length ? rejoinRequests.map((r) => `
+      <div class="member-row">
+        <div class="who"><strong>${escapeHtml(r.requestedByName || r.requestedByEmail || "—")}</strong><small>${escapeHtml(formatDateTime(r.requestedAt))} · ${escapeHtml(r.status)}${r.foundingRestored ? " · founding restored" : ""}</small></div>
+      </div>`).join("") : '<p class="page-lede">No rejoin requests on file.</p>'}
+    <div class="form-actions" style="justify-content:flex-start; margin-top:.5rem; flex-wrap:wrap;">
+      <button class="button button-small" type="button" data-contract-action="request_rejoin">Record a rejoin request</button>
+      <button class="button button-small" type="button" data-contract-action="restore_founding">Decide founding restoration</button>
+    </div>
+  </div>`;
+}
+
+function renderRepresentativesPanel(tenantId, representatives) {
+  return `<div class="panel">
+    <h2>Authorized representatives</h2>
+    ${representatives.length ? representatives.map((r) => `
+      <div class="member-row">
+        <div class="who"><strong>${escapeHtml(r.name)}</strong><small>${escapeHtml(r.email)} · ${escapeHtml(labelize(r.role))} · ${escapeHtml(labelize(r.authorityScope))}</small></div>
+        <div class="member-actions"><button class="button button-small button-danger" type="button" data-end-representative="${escapeAttr(r.id)}">End</button></div>
+      </div>`).join("") : '<p class="page-lede">No active representatives on file.</p>'}
+    <div class="form-actions" style="justify-content:flex-start; margin-top:.8rem;">
+      <button class="button button-small" type="button" data-contract-action="add_representative">Add representative</button>
+    </div>
+  </div>`;
+}
+
+function renderManagementEventsPanel(events) {
+  return `<div class="panel">
+    <h2>Management &amp; ownership changes</h2>
+    <p class="page-lede">§3/§9: none of these, by themselves, end the agreement or the founding waiver.</p>
+    ${events.length ? `<div class="audit-list">${events.slice(0, 10).map((e) => `
+      <div class="audit-row">
+        <time>${formatDateTime(e.effectiveAt)}</time>
+        <div><span class="action">${escapeHtml(labelize(e.eventType))}</span><div class="detail">${escapeHtml(e.oldValue || "—")} → ${escapeHtml(e.newValue || "—")}${e.requiresSuccessorReview ? " · needs successor review" : ""}</div></div>
+        <span class="pill role-member">${escapeHtml(e.recordedBy || "—")}</span>
+      </div>`).join("")}</div>` : '<p class="page-lede">No management changes recorded.</p>'}
+    <div class="form-actions" style="justify-content:flex-start; margin-top:.8rem;">
+      <button class="button button-small" type="button" data-contract-action="record_management_event">Record a management change</button>
+    </div>
+  </div>`;
+}
+
+function renderClinicContractDetail(tenantId, profile) {
+  const mount = document.querySelector("[data-clinic-contract-detail-body]");
+  const { contract, founding, pricing, lifecycle, lifecycleEvents, representatives, managementEvents, separation, survivingObligations, windDownBookings, rejoinRequests } = profile;
+  mount.innerHTML = `
+    <div class="page-head">
+      <div>
+        <p class="eyebrow">Clinic contract profile</p>
+        <h1 class="page-title">${escapeHtml(tenantLabel(tenantId))}</h1>
+      </div>
+    </div>
+    <div class="grid-2">
+      <div>
+        ${renderContractPanel(tenantId, contract)}
+        ${renderFoundingPanel(founding, pricing)}
+        ${renderLifecyclePanel(lifecycle, lifecycleEvents)}
+      </div>
+      <div>
+        ${renderRepresentativesPanel(tenantId, representatives)}
+        ${renderManagementEventsPanel(managementEvents)}
+        ${renderSeparationPanel(tenantId, separation, survivingObligations, windDownBookings, rejoinRequests)}
+      </div>
+    </div>`;
+  wireClinicContractActions(tenantId, profile);
+}
+
+/** Field specs for every `handleClinicContractUpdate` action. Kept as data so
+ * the generic action modal can render and submit each one uniformly. */
+function contractActionSpec(action, profile) {
+  const latestSeparationId = profile.separation?.id || null;
+  const latestRejoinId = profile.rejoinRequests?.[0]?.id || null;
+  switch (action) {
+    case "record_contract":
+      return {
+        title: "Record an executed agreement",
+        lede: "A new EXECUTED agreement supersedes whichever one is currently in force.",
+        submitLabel: "Record agreement",
+        fields: [
+          { name: "clinicLegalName", label: "Clinic legal name", required: true, value: profile.contract?.clinicLegalName },
+          { name: "clinicDba", label: "DBA", value: profile.contract?.clinicDba },
+          { name: "entityType", label: "Entity type", hint: "e.g. LLC, PC" },
+          { name: "stateOfOrganization", label: "State of organization" },
+          { name: "agreementVersion", label: "Agreement version", required: true },
+          { name: "agreementDocumentId", label: "Agreement document id" },
+          { name: "esignEnvelopeId", label: "E-sign envelope id" },
+          { name: "authorizedSignerName", label: "Authorized signer name" },
+          { name: "authorizedSignerTitle", label: "Authorized signer title" },
+          { name: "authorizedSignerEmail", label: "Authorized signer email", type: "email" },
+          { name: "effectiveDate", label: "Effective date", type: "date" },
+          { name: "status", label: "Status", type: "select", options: CONTRACT_STATUSES, value: "EXECUTED", blank: false },
+          { name: "legalNoticeEmail", label: "Legal notice email", type: "email" },
+          { name: "billingContactName", label: "Billing contact name" },
+          { name: "billingContactEmail", label: "Billing contact email", type: "email" },
+          { name: "depositElection", label: "Deposit election (§15)", type: "select", options: DEPOSIT_ELECTIONS, hint: "required if status is Executed" },
+          { name: "notes", label: "Notes", type: "textarea" }
+        ]
+      };
+    case "add_representative":
+      return {
+        title: "Add an authorized representative",
+        submitLabel: "Add representative",
+        fields: [
+          { name: "name", label: "Name", required: true },
+          { name: "email", label: "Email", type: "email", required: true },
+          { name: "title", label: "Title" },
+          { name: "phone", label: "Phone" },
+          { name: "role", label: "Role", type: "select", options: REPRESENTATIVE_ROLES, value: "AUTHORIZED_REPRESENTATIVE", blank: false },
+          { name: "authorityScope", label: "Authority scope", type: "select", options: AUTHORITY_SCOPES, value: "ROUTINE", blank: false },
+          { name: "authoritySourceDocumentId", label: "Authority source document", hint: "required if scope is actual authority to bind" },
+          { name: "reason", label: "Reason", type: "textarea" }
+        ]
+      };
+    case "record_management_event":
+      return {
+        title: "Record a management or ownership change",
+        lede: "§3/§9: recording this cannot, by itself, end the agreement or the founding waiver.",
+        submitLabel: "Record change",
+        fields: [
+          { name: "eventType", label: "Event type", type: "select", options: MANAGEMENT_EVENT_TYPES, blank: false },
+          { name: "oldValue", label: "Previous" },
+          { name: "newValue", label: "New" },
+          { name: "effectiveAt", label: "Effective", type: "date" },
+          { name: "noticeReceivedAt", label: "Notice received", type: "date" },
+          { name: "sourceDocumentId", label: "Source document" },
+          { name: "note", label: "Note", type: "textarea" }
+        ]
+      };
+    case "grant_founding":
+      return {
+        title: "Grant founding clinic status",
+        lede: "§9: an express written designation. A source document is required.",
+        submitLabel: "Grant founding status",
+        fields: [
+          { name: "sourceDocumentId", label: "Source document id", required: true },
+          { name: "effectiveAt", label: "Effective date", type: "date" },
+          { name: "reason", label: "Reason", type: "textarea" }
+        ]
+      };
+    case "set_founding_status":
+      return {
+        title: "Change founding status",
+        lede: "Moves between the non-terminal founding states. The FOUNDING pricing plan and the fee waiver are preserved through all of them (§9) — use \"Revoke for cause\" to actually end the waiver.",
+        submitLabel: "Save status",
+        fields: [
+          { name: "status", label: "Status", type: "select", options: ["NOT_APPLICABLE", "ACTIVE", "TEMPORARILY_INACTIVE", "SEPARATED_ELIGIBLE_TO_RESTORE"], blank: false },
+          { name: "reason", label: "Reason", type: "textarea" },
+          { name: "sourceDocumentId", label: "Source document" }
+        ]
+      };
+    case "surrender_founding":
+      return {
+        title: "Surrender founding status",
+        lede: "§9(d): the Parties may agree in writing to surrender the privilege. Requires a clinic representative with actual authority to bind, and a writing.",
+        submitLabel: "Record surrender",
+        confirmText: "The clinic representative named below has actual authority to bind the clinic, and I have the writing on file.",
+        fields: [
+          { name: "requestedByEmail", label: "Requested by (representative email)", type: "email", required: true },
+          { name: "sourceDocumentId", label: "Source document id", required: true },
+          { name: "reason", label: "Reason", type: "textarea" }
+        ]
+      };
+    case "revoke_founding_for_cause":
+      return {
+        title: "Revoke founding status for cause",
+        lede: "§9/§28: prospective only — visits already waived are not re-billed. Closes rejoin eligibility unless later restored in writing.",
+        submitLabel: "Revoke for cause",
+        confirmText: "I understand this ends the clinic's $0 founding rate going forward and closes automatic rejoin eligibility.",
+        fields: [
+          { name: "causeCategory", label: "Cause category", type: "select", options: CAUSE_CATEGORIES, blank: false },
+          { name: "sourceDocumentId", label: "Source document id" },
+          { name: "reason", label: "Reason", type: "textarea", required: true }
+        ]
+      };
+    case "set_lifecycle":
+      return {
+        title: "Change lifecycle status",
+        lede: "Separating or terminating a clinic is not available here — use \"Separate this clinic\", which records the required notice and wind-down.",
+        submitLabel: "Save status",
+        fields: [
+          { name: "status", label: "Status", type: "select", options: ["PENDING_CONTRACT", "PENDING_ONBOARDING", "ACTIVE", "TEMPORARILY_INACTIVE", "SUSPENDED", "REJOIN_REVIEW"], blank: false },
+          { name: "reason", label: "Reason", type: "textarea" },
+          { name: "suspensionReason", label: "Suspension reason", hint: "if suspending" }
+        ]
+      };
+    case "separate":
+      return {
+        title: "Separate this clinic from the platform",
+        lede: "Ends the clinic's participation. Already-confirmed bookings are still seen through (§27); a voluntary separation with pending bookings lands in a wind-down state rather than closing immediately.",
+        submitLabel: "Separate clinic",
+        confirmText: "I understand this ends the clinic's participation and cannot be undone from this screen.",
+        fields: [
+          { name: "kind", label: "Kind", type: "select", options: ["VOLUNTARY", "WITHOUT_CAUSE", "FOR_CAUSE"], blank: false },
+          { name: "causeCategory", label: "Cause category", type: "select", options: CAUSE_CATEGORIES, hint: "required if kind is For Cause" },
+          { name: "initiatedBy", label: "Initiated by", type: "select", options: ["CLINIC", "CLEARKEY"], value: "CLINIC", blank: false },
+          { name: "reason", label: "Reason", type: "textarea", required: true },
+          { name: "noticeReceivedAt", label: "Notice received", type: "date" },
+          { name: "effectiveAt", label: "Effective date", type: "date" },
+          { name: "sourceDocumentId", label: "Source document" }
+        ]
+      };
+    case "complete_wind_down":
+      return {
+        title: "Mark wind-down complete",
+        submitLabel: "Mark complete",
+        fields: [
+          { name: "separationEventId", label: "Separation event id", required: true, value: latestSeparationId },
+          { name: "reason", label: "Reason", type: "textarea" }
+        ]
+      };
+    case "request_rejoin":
+      return {
+        title: "Record a rejoin request",
+        submitLabel: "Record request",
+        fields: [
+          { name: "requestedByName", label: "Requested by (name)" },
+          { name: "requestedByEmail", label: "Requested by (email)", type: "email" },
+          { name: "claimsSameLegalEntity", label: "Claims to be the same contracting legal entity", type: "checkbox" },
+          { name: "claimsSamePractice", label: "Claims to be substantially the same practice", type: "checkbox" }
+        ]
+      };
+    case "restore_founding":
+      return {
+        title: "Decide founding restoration on rejoin",
+        lede: "§9: restored only if the same legal entity and substantially the same practice rejoin, with no prior Cause loss, no uncured obligations, and no circumvention or written surrender.",
+        submitLabel: "Decide",
+        fields: [
+          { name: "rejoinRequestId", label: "Rejoin request id", value: latestRejoinId, hint: "defaults to the most recent request" },
+          { name: "verifiedSameLegalEntity", label: "Verified: same contracting legal entity", type: "checkbox" },
+          { name: "verifiedSamePractice", label: "Verified: substantially the same practice", type: "checkbox" },
+          { name: "expressWrittenRestoration", label: "An express written restoration exists (required only if previously revoked for Cause)", type: "checkbox" },
+          { name: "sourceDocumentId", label: "Source document id" },
+          { name: "reason", label: "Reason", type: "textarea" }
+        ]
+      };
+    default:
+      return null;
+  }
+}
+
+function wireClinicContractActions(tenantId, profile) {
+  document.querySelectorAll("[data-contract-action]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const action = button.dataset.contractAction;
+      const spec = contractActionSpec(action, profile);
+      if (!spec) return;
+      openActionModal({
+        ...spec,
+        onSubmit: async (payload) => {
+          await contractAction(tenantId, action, payload);
+          toast("Saved.");
+          await reloadClinicContractDetail(tenantId);
+        }
+      });
+    });
+  });
+  document.querySelectorAll("[data-end-representative]").forEach((button) => {
+    button.addEventListener("click", () => {
+      openActionModal({
+        title: "End this representative's authority",
+        submitLabel: "End authority",
+        fields: [
+          { name: "endReason", label: "Reason", value: "DEPARTED" }
+        ],
+        onSubmit: async (payload) => {
+          await contractAction(tenantId, "end_representative", { representativeId: button.dataset.endRepresentative, ...payload });
+          toast("Representative's authority ended.");
+          await reloadClinicContractDetail(tenantId);
+        }
+      });
+    });
+  });
+}
+
 /* -------------------------------------------------------------- markets --- */
 
 const MARKET_STATES = ["green", "yellow", "red"];
@@ -1440,6 +2135,57 @@ function renderUnassignedLocations(locations) {
         button.disabled = false;
       }
     });
+  });
+}
+
+/**
+ * The one shared configuration `computeReadinessReport` (src/markets.js)
+ * checks every market against — not per-market, so it lives on the markets
+ * list rather than nested in a single market's detail page.
+ */
+async function loadReadinessConfig() {
+  const mount = document.querySelector("[data-readiness-config-body]");
+  mount.innerHTML = '<p class="page-lede">Loading…</p>';
+  try {
+    const { config } = await apiFetch("/api/admin/markets/readiness-config");
+    renderReadinessConfig(config);
+  } catch (error) {
+    mount.innerHTML = `<p class="page-lede">${escapeHtml(error.message)}</p>`;
+  }
+}
+
+function renderReadinessConfig(config) {
+  const mount = document.querySelector("[data-readiness-config-body]");
+  mount.innerHTML = `
+    <form data-form="readiness-config" class="form-grid two-col">
+      <label class="field"><span>Minimum active clinics</span><input type="number" name="minActiveClinics" min="1" max="500" value="${config.minActiveClinics}"></label>
+      <label class="field"><span>Target active clinics</span><input type="number" name="targetActiveClinics" min="1" max="500" value="${config.targetActiveClinics}"></label>
+      <label class="field"><span>Minimum offer rate (%)</span><input type="number" name="minOfferRatePct" min="0" max="100" value="${config.minOfferRatePct}"></label>
+      <label class="field"><span>Max median time to first offer (min)</span><input type="number" name="maxMedianFirstOfferMinutes" min="0" max="1440" value="${config.maxMedianFirstOfferMinutes}"></label>
+      <label class="field"><span>Max single-clinic booking share (%)</span><input type="number" name="maxSingleClinicSharePct" min="0" max="100" value="${config.maxSingleClinicSharePct}"></label>
+      <label class="field"><span>Lookback window (days)</span><input type="number" name="lookbackDays" min="1" max="365" value="${config.lookbackDays}"></label>
+      <div class="form-actions wide" style="margin-top:0;"><button class="button button-primary" type="submit">Save thresholds</button></div>
+    </form>`;
+  mount.querySelector('form[data-form="readiness-config"]').addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.target;
+    try {
+      const { config: saved } = await apiFetch("/api/admin/markets/readiness-config", {
+        method: "PATCH",
+        body: JSON.stringify({
+          minActiveClinics: Number(form.minActiveClinics.value),
+          targetActiveClinics: Number(form.targetActiveClinics.value),
+          minOfferRatePct: Number(form.minOfferRatePct.value),
+          maxMedianFirstOfferMinutes: Number(form.maxMedianFirstOfferMinutes.value),
+          maxSingleClinicSharePct: Number(form.maxSingleClinicSharePct.value),
+          lookbackDays: Number(form.lookbackDays.value)
+        })
+      });
+      toast("Readiness thresholds saved.");
+      renderReadinessConfig(saved);
+    } catch (error) {
+      toast(error.message, true);
+    }
   });
 }
 
@@ -1767,6 +2513,314 @@ function renderMetrics(data, alerts) {
     </div>`;
 }
 
+/**
+ * The config `checkAlerts` (src/metrics.js) checks the alerts panel above
+ * against — a trailing window, not the dashboard's own date-range filter.
+ */
+async function loadAlertThresholds() {
+  const mount = document.querySelector("[data-alert-thresholds-body]");
+  mount.innerHTML = '<p class="page-lede">Loading…</p>';
+  try {
+    const { thresholds } = await apiFetch("/api/admin/alerts/thresholds");
+    renderAlertThresholds(thresholds);
+  } catch (error) {
+    mount.innerHTML = `<p class="page-lede">${escapeHtml(error.message)}</p>`;
+  }
+}
+
+function renderAlertThresholds(thresholds) {
+  const mount = document.querySelector("[data-alert-thresholds-body]");
+  mount.innerHTML = `
+    <form data-form="alert-thresholds" class="form-grid two-col">
+      <label class="field"><span>Minimum search → offer rate (%)</span><input type="number" name="minOfferRatePct" min="0" max="100" value="${thresholds.minOfferRatePct}"></label>
+      <label class="field"><span>Max median time to first offer (min)</span><input type="number" name="maxMedianFirstOfferMinutes" min="0" max="1440" value="${thresholds.maxMedianFirstOfferMinutes}"></label>
+      <label class="field"><span>Max no-result rate (%)</span><input type="number" name="maxNoResultRatePct" min="0" max="100" value="${thresholds.maxNoResultRatePct}"></label>
+      <label class="field"><span>Max clinic decline rate (%)</span><input type="number" name="maxDeclineRatePct" min="0" max="100" value="${thresholds.maxDeclineRatePct}"></label>
+      <label class="field"><span>Trailing window (hours)</span><input type="number" name="windowHours" min="1" max="168" value="${thresholds.windowHours}"></label>
+      <div class="form-actions wide" style="margin-top:0;"><button class="button button-primary" type="submit">Save thresholds</button></div>
+    </form>`;
+  mount.querySelector('form[data-form="alert-thresholds"]').addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.target;
+    try {
+      const { thresholds: saved } = await apiFetch("/api/admin/alerts/thresholds", {
+        method: "PUT",
+        body: JSON.stringify({
+          minOfferRatePct: Number(form.minOfferRatePct.value),
+          maxMedianFirstOfferMinutes: Number(form.maxMedianFirstOfferMinutes.value),
+          maxNoResultRatePct: Number(form.maxNoResultRatePct.value),
+          maxDeclineRatePct: Number(form.maxDeclineRatePct.value),
+          windowHours: Number(form.windowHours.value)
+        })
+      });
+      toast("Alert thresholds saved.");
+      renderAlertThresholds(saved);
+      loadMetrics();
+    } catch (error) {
+      toast(error.message, true);
+    }
+  });
+}
+
+/* ------------------------------------------------------- Paw It Forward --- */
+/**
+ * Fund, custody, and reconciliation — three related but distinct backend
+ * modules (src/fund.js, src/fund-custody.js, src/reconciliation.js) grouped
+ * under one nav item with sub-tabs, per the audit's instructions. Custody's
+ * sweep is the one action here that moves real money, so it is the one
+ * gated behind the action modal's confirmation checkbox.
+ */
+async function loadPif(tab) {
+  state.pifTab = tab;
+  document.querySelectorAll("[data-pif-tab]").forEach((button) => button.classList.toggle("active", button.dataset.pifTab === tab));
+  document.querySelectorAll("[data-pif-panel]").forEach((panel) => { panel.hidden = panel.dataset.pifPanel !== tab; });
+  if (tab === "custody") return loadPifCustody();
+  if (tab === "reconciliation") return loadPifReconciliation();
+  return loadPifFund();
+}
+
+async function loadPifFund() {
+  const mount = document.querySelector('[data-pif-panel="fund"]');
+  mount.innerHTML = '<div class="loading-state"><span class="spinner" aria-hidden="true"></span><p>Loading fund…</p></div>';
+  try {
+    renderPifFund(await apiFetch("/api/admin/fund"));
+  } catch (error) {
+    mount.innerHTML = `<div class="empty-state"><p>${escapeHtml(error.message)}</p></div>`;
+  }
+}
+
+function renderFundIntegrity(integrity) {
+  return `<h2>Ledger integrity</h2>
+    ${integrity.ok
+      ? '<div class="no-breach-card">The ledger is balanced, and no restricted account is negative.</div>'
+      : `<div class="breach-list">
+          ${(integrity.unbalanced || []).map((t) => `<div class="breach-card"><div>⚠️</div><div><strong>Unbalanced transaction</strong> ${escapeHtml(t.id)} (${escapeHtml(t.kind)}) — debits ${t.debits} ≠ credits ${t.credits}</div></div>`).join("")}
+          ${(integrity.negativeRestricted || []).map((a) => `<div class="breach-card"><div>⚠️</div><div><strong>Negative restricted account</strong> ${escapeHtml(a.code)} — ${formatCents(a.balanceCents)}</div></div>`).join("")}
+        </div>`}
+    <div class="form-actions" style="justify-content:flex-start; margin-top:.8rem;">
+      <button class="button button-small" type="button" data-run-integrity>Run integrity check now</button>
+    </div>`;
+}
+
+function wireFundIntegrityButton(root) {
+  root.querySelector("[data-run-integrity]")?.addEventListener("click", async (event) => {
+    event.target.disabled = true;
+    try {
+      const fresh = await apiFetch("/api/admin/fund/integrity");
+      const panel = root.querySelector("[data-fund-integrity]");
+      panel.innerHTML = renderFundIntegrity(fresh);
+      wireFundIntegrityButton(root);
+      toast(fresh.ok ? "Ledger checks out." : "Integrity issues found — see below.", !fresh.ok);
+    } catch (error) {
+      toast(error.message, true);
+      event.target.disabled = false;
+    }
+  });
+}
+
+function renderPifFund(data) {
+  const mount = document.querySelector('[data-pif-panel="fund"]');
+  const { balances, controls, integrity, matchContributedCents, reservationsByState } = data;
+  mount.innerHTML = `
+    <div class="panel">
+      <h2>Fund balances</h2>
+      <div class="stat-row">
+        <span><small>Available</small><strong>${formatCents(balances.availableCents)}</strong></span>
+        <span><small>Reserved</small><strong>${formatCents(balances.reservedCents)}</strong></span>
+        <span><small>Consumed lifetime</small><strong>${formatCents(balances.consumedLifetimeCents)}</strong></span>
+        <span><small>Refunds payable</small><strong>${formatCents(balances.refundsPayableCents)}</strong></span>
+        <span><small>Tími match lifetime</small><strong>${formatCents(balances.matchLifetimeCents)}</strong></span>
+        <span><small>Match contributed</small><strong>${formatCents(matchContributedCents)}</strong></span>
+        <span><small>Processor fees</small><strong>${formatCents(balances.processorFeesCents)}</strong></span>
+      </div>
+    </div>
+    <div class="panel">
+      <h2>Reservations by state</h2>
+      ${Object.keys(reservationsByState || {}).length ? `<div class="count-list">${Object.entries(reservationsByState).map(([key, row]) => `<div class="count-line"><span>${escapeHtml(labelize(key))}</span><span>${row.count} · ${formatCents(row.cents)}</span></div>`).join("")}</div>` : '<p class="page-lede">No reservations recorded.</p>'}
+    </div>
+    <div class="panel">
+      <h2>Fund controls</h2>
+      <p class="page-lede">Read-only here — set by migration/config, not this console.</p>
+      <div class="tenant-summary">
+        <span><small>Min liquidity reserve</small><strong style="font-size:.85rem;">${formatCents(controls.minLiquidityReserveCents)}</strong></span>
+        <span><small>Max daily reserved</small><strong style="font-size:.85rem;">${formatCents(controls.maxDailyReservedCents)}</strong></span>
+        <span><small>Max monthly reserved</small><strong style="font-size:.85rem;">${formatCents(controls.maxMonthlyReservedCents)}</strong></span>
+        <span><small>Reservation TTL</small><strong style="font-size:.85rem;">${controls.reservationTtlMinutes} min</strong></span>
+        <span><small>Assistance paused</small><strong style="font-size:.85rem;">${controls.assistancePaused ? "Yes" : "No"}</strong></span>
+        <span><small>Visits / household / year</small><strong style="font-size:.85rem;">${controls.perHouseholdVisitsPerYear}</strong></span>
+        <span><small>Public metrics delay</small><strong style="font-size:.85rem;">${controls.publicMetricsDelayHours}h</strong></span>
+        <span><small>Public metrics min. connections</small><strong style="font-size:.85rem;">${controls.publicMetricsMinConnections}</strong></span>
+        <span><small>Enhanced review threshold</small><strong style="font-size:.85rem;">${formatCents(controls.enhancedReviewThresholdCents)}</strong></span>
+      </div>
+    </div>
+    <div class="panel" data-fund-integrity>${renderFundIntegrity(integrity)}</div>`;
+  wireFundIntegrityButton(mount);
+}
+
+const CUSTODY_TRANSFER_TONE = { PENDING: "warn", IN_TRANSIT: "info", COMPLETED: "good", FAILED: "bad" };
+
+async function loadPifCustody() {
+  const mount = document.querySelector('[data-pif-panel="custody"]');
+  mount.innerHTML = '<div class="loading-state"><span class="spinner" aria-hidden="true"></span><p>Loading custody…</p></div>';
+  try {
+    const [status, transfers] = await Promise.all([
+      apiFetch("/api/admin/pif/custody"),
+      apiFetch("/api/admin/pif/custody/transfers?limit=50")
+    ]);
+    renderPifCustody(status, transfers.transfers || []);
+  } catch (error) {
+    mount.innerHTML = `<div class="empty-state"><p>${escapeHtml(error.message)}</p></div>`;
+  }
+}
+
+function renderPifCustody(status, transfers) {
+  const mount = document.querySelector('[data-pif-panel="custody"]');
+  const c = status.custody;
+  const rail = status.rail;
+  mount.innerHTML = `
+    <div class="panel">
+      <div class="page-head" style="margin-bottom:.6rem;">
+        <h2 style="margin:0;">Custody status</h2>
+        ${tonePill(c.custodyProtected ? "Protected" : "Not physically protected", c.custodyProtected ? "good" : "bad")}
+      </div>
+      <p class="page-lede">Provider ${escapeHtml(c.provider)} (${escapeHtml(c.custodyMode)}) · rail ${rail.ok ? "reachable" : `unreachable — ${escapeHtml(rail.message || rail.code || "")}`}</p>
+      <div class="stat-row">
+        <span><small>Unsettled</small><strong>${formatCents(c.unsettledPifContributionsCents)}</strong></span>
+        <span><small>Available to sweep</small><strong>${formatCents(c.availableToSweepPifContributionsCents)}</strong></span>
+        <span><small>Swept lifetime</small><strong>${formatCents(c.sweptPifContributionsCents)}</strong></span>
+        <span><small>Designated (ledger)</small><strong>${formatCents(c.designatedLedgerCents)}</strong></span>
+        <span><small>Custody (ledger)</small><strong>${formatCents(c.custodyLedgerCents)}</strong></span>
+        <span><small>In transit</small><strong>${formatCents(c.inTransitLedgerCents)}</strong></span>
+        <span><small>Guarantee cash at clinics</small><strong>${formatCents(c.guaranteeCashAtClinicCents)}</strong></span>
+        <span><small>Rail balance</small><strong>${rail.ok ? formatCents(rail.balanceCents) : "—"}</strong></span>
+        <span><small>Unprotected designated</small><strong${c.unprotectedDesignatedCents > 0 ? ' style="color:var(--coral-dark);"' : ""}>${formatCents(c.unprotectedDesignatedCents)}</strong></span>
+      </div>
+      <div class="form-actions" style="justify-content:flex-start; margin-top:.8rem;">
+        <button class="button button-small button-danger" type="button" data-run-sweep>Sweep designated contributions now</button>
+      </div>
+    </div>
+    <div class="panel">
+      <h2>Transfers (${transfers.length})</h2>
+      ${transfers.length ? `<div class="table-wrap" style="border:1px solid var(--line); box-shadow:none;">
+        <table class="data-table" style="min-width:0;">
+          <thead><tr><th>Direction</th><th>Amount</th><th>State</th><th>Requested</th><th>Settled</th></tr></thead>
+          <tbody>${transfers.map((t) => `<tr>
+            <td>${escapeHtml(labelize(t.direction))}</td>
+            <td>${formatCents(t.amountCents)}</td>
+            <td>${tonePill(labelize(t.state), CUSTODY_TRANSFER_TONE[t.state] || "neutral")}</td>
+            <td>${formatDateTime(t.requestedAt)}</td>
+            <td>${t.settledAt ? formatDateTime(t.settledAt) : "—"}</td>
+          </tr>`).join("")}</tbody>
+        </table>
+      </div>` : '<p class="page-lede">No custody transfers recorded yet.</p>'}
+    </div>`;
+
+  mount.querySelector("[data-run-sweep]").addEventListener("click", () => {
+    openActionModal({
+      title: "Sweep designated contributions",
+      lede: "Moves the exact designated, settled, unswept amount into protected custody — a real transfer against the custody rail. It cannot be undone from this screen.",
+      confirmText: "I understand this moves money into custody and cannot be undone here.",
+      submitLabel: "Run sweep",
+      fields: [{ name: "limit", label: "Max contributions this run", type: "number", hint: "optional, defaults to 50" }],
+      onSubmit: async (payload) => {
+        const { sweep } = await apiFetch("/api/admin/pif/custody/sweep", {
+          method: "POST", body: JSON.stringify(payload.limit ? { limit: payload.limit } : {})
+        });
+        toast(`Swept ${sweep.swept.length} (${formatCents(sweep.sweptCents)}) · ${sweep.inTransit.length} in transit · ${sweep.failed.length} failed.`, sweep.failedClosed);
+        await loadPifCustody();
+      }
+    });
+  });
+}
+
+const RECON_RUN_TONE = { OK: "good", EXCEPTIONS_RAISED: "warn", FAILED: "bad" };
+const RECON_EXCEPTION_TONE = { CRITICAL_RECONCILIATION_EXCEPTION: "bad", RECONCILIATION_WARNING: "warn" };
+const RECON_EXCEPTION_STATUSES = ["OPEN", "INVESTIGATING", "RESOLVED_EXPLAINED", "RESOLVED_COMPENSATING_ENTRY"];
+
+async function loadPifReconciliation() {
+  const mount = document.querySelector('[data-pif-panel="reconciliation"]');
+  mount.innerHTML = '<div class="loading-state"><span class="spinner" aria-hidden="true"></span><p>Loading reconciliation…</p></div>';
+  try {
+    const [{ runs = [] }, { exceptions = [] }] = await Promise.all([
+      apiFetch("/api/admin/pif/reconciliation/runs?limit=20"),
+      apiFetch("/api/admin/pif/reconciliation/exceptions?status=OPEN&limit=100")
+    ]);
+    renderPifReconciliation(runs, exceptions);
+  } catch (error) {
+    mount.innerHTML = `<div class="empty-state"><p>${escapeHtml(error.message)}</p></div>`;
+  }
+}
+
+function renderPifReconciliation(runs, exceptions) {
+  const mount = document.querySelector('[data-pif-panel="reconciliation"]');
+  mount.innerHTML = `
+    <div class="panel">
+      <div class="page-head" style="margin-bottom:.6rem;">
+        <h2 style="margin:0;">Reconciliation runs</h2>
+        <button class="button button-small button-primary" type="button" data-run-reconciliation>Run reconciliation now</button>
+      </div>
+      <p class="page-lede">Reconciles protected custody to the penny (§21) — no threshold, no auto-adjustment. A run only examines; it never moves money.</p>
+      ${runs.length ? `<div class="table-wrap" style="border:1px solid var(--line); box-shadow:none;">
+        <table class="data-table" style="min-width:0;">
+          <thead><tr><th>Started</th><th>Scope</th><th>Status</th><th>Difference</th><th>Exceptions</th><th>Critical</th></tr></thead>
+          <tbody>${runs.map((r) => `<tr>
+            <td>${formatDateTime(r.startedAt)}</td>
+            <td>${escapeHtml(labelize(r.scope))}</td>
+            <td>${tonePill(labelize(r.status), RECON_RUN_TONE[r.status] || "neutral")}</td>
+            <td>${formatCents(r.differenceCents)}</td>
+            <td>${r.exceptionCount}</td>
+            <td>${r.criticalCount}</td>
+          </tr>`).join("")}</tbody>
+        </table>
+      </div>` : '<p class="page-lede">No reconciliation runs yet.</p>'}
+    </div>
+    <div class="panel">
+      <h2>Open exceptions (${exceptions.length})</h2>
+      ${exceptions.length ? exceptions.map((e) => `
+        <div class="member-row">
+          <div class="who">
+            <strong>${escapeHtml(e.code)}</strong> ${tonePill(e.classification === "CRITICAL_RECONCILIATION_EXCEPTION" ? "Critical" : "Warning", RECON_EXCEPTION_TONE[e.classification] || "neutral")}
+            <small>${escapeHtml(e.summary)}</small>
+            <small>Expected ${formatCents(e.expectedCents)} · actual ${formatCents(e.actualCents)} · diff ${formatCents(e.differenceCents)} · opened ${escapeHtml(formatDateTime(e.openedAt))}</small>
+          </div>
+          <div class="member-actions"><button class="button button-small" type="button" data-resolve-exception="${escapeAttr(e.id)}">Resolve</button></div>
+        </div>`).join("") : '<p class="page-lede">No open exceptions.</p>'}
+    </div>`;
+
+  mount.querySelector("[data-run-reconciliation]").addEventListener("click", async (event) => {
+    event.target.disabled = true;
+    try {
+      const result = await apiFetch("/api/admin/pif/reconciliation/runs", { method: "POST", body: JSON.stringify({ scope: "MANUAL" }) });
+      toast(result.run.status === "OK" ? "Reconciliation OK — no exceptions." : `Reconciliation raised ${result.run.exceptionCount} exception(s).`, result.run.status !== "OK");
+      await loadPifReconciliation();
+    } catch (error) {
+      toast(error.message, true);
+      event.target.disabled = false;
+    }
+  });
+
+  mount.querySelectorAll("[data-resolve-exception]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const exceptionId = button.dataset.resolveException;
+      openActionModal({
+        title: "Resolve reconciliation exception",
+        lede: "Bookkeeping about the investigation, not the money — no balance changes here. Resolving as corrected requires the ledger transaction id that made the correction.",
+        submitLabel: "Save",
+        fields: [
+          { name: "status", label: "Status", type: "select", options: RECON_EXCEPTION_STATUSES, blank: false },
+          { name: "investigationNotes", label: "Investigation notes", type: "textarea", required: true },
+          { name: "compensatingTransactionId", label: "Compensating ledger transaction id", hint: "required only if resolving as corrected" }
+        ],
+        onSubmit: async (payload) => {
+          await apiFetch(`/api/admin/pif/reconciliation/exceptions/${encodeURIComponent(exceptionId)}`, { method: "POST", body: JSON.stringify(payload) });
+          toast("Exception updated.");
+          await loadPifReconciliation();
+        }
+      });
+    });
+  });
+}
+
 function describeAdminResult(admin) {
   if (!admin) return "No administrator email was given, so nobody can sign into it yet — add one from the workspace page.";
   if (admin.mode === "seated") {
@@ -1782,6 +2836,94 @@ function describeAdminResult(admin) {
     return `ADMINISTRATOR NOT SEATED — ${admin.error || "Clerk refused the request"}. Add one from the workspace page.`;
   }
   return "";
+}
+
+/* ------------------------------------------------- generic action modal --- */
+/**
+ * A reusable modal form, driven by a field spec, for the many narrow
+ * POST-with-a-body actions the clinic-contract, custody, and reconciliation
+ * screens expose (record an agreement, grant founding status, run a sweep,
+ * resolve an exception, …). One implementation instead of N bespoke forms.
+ *
+ * `confirmText`, when given, renders a required checkbox that gates the
+ * submit button — the explicit confirmation step every destructive action
+ * (moves money, terminates a contract) must have before its POST fires.
+ */
+function actionFieldHtml(field) {
+  const value = field.value ?? field.default ?? "";
+  const req = field.required ? "required" : "";
+  const wide = field.wide === false ? "" : " wide";
+  const label = `<span>${escapeHtml(field.label)}${field.hint ? `<span class="hint"> — ${escapeHtml(field.hint)}</span>` : ""}</span>`;
+  if (field.type === "select") {
+    const opts = (field.options || []).map((o) => {
+      const val = typeof o === "string" ? o : o.value;
+      const text = typeof o === "string" ? labelize(o) : o.label;
+      return `<option value="${escapeAttr(val)}" ${val === value ? "selected" : ""}>${escapeHtml(text)}</option>`;
+    }).join("");
+    return `<label class="field${field.wide === false ? "" : " wide"}">${label}<select name="${field.name}" ${req}>${field.blank !== false ? `<option value="">${escapeHtml(field.blankLabel || "—")}</option>` : ""}${opts}</select></label>`;
+  }
+  if (field.type === "textarea") {
+    return `<label class="field wide">${label}<textarea name="${field.name}" rows="3" ${req}>${escapeHtml(value)}</textarea></label>`;
+  }
+  if (field.type === "checkbox") {
+    return `<label class="checkbox-row wide"><input type="checkbox" name="${field.name}" ${value ? "checked" : ""}> ${escapeHtml(field.label)}</label>`;
+  }
+  const inputType = field.type === "money" ? "number" : (field.type || "text");
+  const step = field.type === "money" ? "0.01" : (field.step || null);
+  return `<label class="field${wide}">${label}<input type="${inputType}" name="${escapeAttr(field.name)}" value="${escapeAttr(value)}" ${step ? `step="${step}"` : ""} ${req}></label>`;
+}
+
+function openActionModal({ title, lede, fields, confirmText, submitLabel = "Submit", onSubmit }) {
+  const modal = document.querySelector("[data-action-modal]");
+  modal.querySelector("[data-action-modal-title]").textContent = title;
+  const body = modal.querySelector("[data-action-modal-body]");
+  body.innerHTML = `
+    ${lede ? `<p class="page-lede">${escapeHtml(lede)}</p>` : ""}
+    <form data-action-form novalidate>
+      <div data-action-modal-errors class="form-errors" hidden></div>
+      <div class="form-grid two-col">${fields.map(actionFieldHtml).join("")}</div>
+      ${confirmText ? `<label class="checkbox-row wide" style="margin-top:1rem; color:var(--coral-dark);"><input type="checkbox" data-confirm-checkbox required> ${escapeHtml(confirmText)}</label>` : ""}
+      <div class="form-actions">
+        <button class="button" type="button" data-action-modal-cancel>Cancel</button>
+        <button class="button ${confirmText ? "button-danger" : "button-primary"}" type="submit" data-action-modal-submit>${escapeHtml(submitLabel)}</button>
+      </div>
+    </form>`;
+  const form = body.querySelector("form");
+  const submitBtn = body.querySelector("[data-action-modal-submit]");
+  const confirmBox = body.querySelector("[data-confirm-checkbox]");
+  if (confirmBox) {
+    submitBtn.disabled = true;
+    confirmBox.addEventListener("change", () => { submitBtn.disabled = !confirmBox.checked; });
+  }
+  body.querySelector("[data-action-modal-cancel]").addEventListener("click", closeActionModal);
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const errorsBox = body.querySelector("[data-action-modal-errors]");
+    errorsBox.hidden = true;
+    const payload = {};
+    for (const field of fields) {
+      if (field.type === "checkbox") { payload[field.name] = form[field.name].checked; continue; }
+      const raw = form[field.name].value;
+      if (field.type === "money") { payload[field.name] = raw === "" ? null : Math.round(Number(raw) * 100); continue; }
+      if (field.type === "number") { payload[field.name] = raw === "" ? null : Number(raw); continue; }
+      payload[field.name] = typeof raw === "string" ? raw.trim() : raw;
+    }
+    submitBtn.disabled = true;
+    try {
+      await onSubmit(payload);
+      closeActionModal();
+    } catch (error) {
+      errorsBox.innerHTML = Array.isArray(error.details) && error.details.length
+        ? `<strong>Fix the following:</strong><ul>${error.details.map((d) => `<li>${escapeHtml(d)}</li>`).join("")}</ul>`
+        : escapeHtml(error.message);
+      errorsBox.hidden = false;
+      submitBtn.disabled = confirmBox ? !confirmBox.checked : false;
+    }
+  });
+  modal.hidden = false;
+}
+function closeActionModal() {
+  document.querySelector("[data-action-modal]").hidden = true;
 }
 
 async function boot() {
