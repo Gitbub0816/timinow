@@ -59,6 +59,18 @@ public struct ConsoleView: View {
         return formatter.string(from: date)
     }()
 
+    /// `store.userRole` is the raw wire value ("org:admin" / "org:member" —
+    /// see `ClinicStore.userRole`, set straight from `session.user?.role`),
+    /// which the sidebar previously showed verbatim and uppercased as
+    /// "ORG:ADMIN" — a value nobody outside this codebase would recognize.
+    static func humanRole(_ role: String) -> String {
+        switch role {
+        case "org:admin": return "ADMINISTRATOR"
+        case "org:member": return "TEAM MEMBER"
+        default: return role.uppercased()
+        }
+    }
+
     public var body: some View {
         // The console, with the toast layer over it. Overlaid rather than
         // placed in the stack so a confirmation appearing never moves anything
@@ -213,17 +225,28 @@ public struct ConsoleView: View {
 
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: 0) {
-            VStack(alignment: .leading, spacing: 2) {
-                Image("timinow-wordmark", bundle: .module)
-                    .resizable().scaledToFit().frame(width: 160, height: 56)
-                    .accessibilityLabel("Tími NOW")
+            VStack(alignment: .leading, spacing: 10) {
+                // The mockup's `.brand` is set typography, not an image
+                // (`.brand-word` + `.brand-live`) — matched here directly
+                // rather than through `Image("timinow-wordmark", bundle:
+                // .module)`, which depended on a bundled resource actually
+                // resolving inside the XcodeGen-generated project and, in
+                // practice, was rendering as empty space at the top of the
+                // rail with nothing to say why.
+                HStack(alignment: .lastTextBaseline, spacing: 9) {
+                    Text("Tími").font(TimiVetFont.display(30)).foregroundStyle(.white)
+                    Text("NOW · LIVE").font(TimiVetFont.ui(12, weight: .heavy)).foregroundStyle(TimiVetColor.coral)
+                }
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("Tími NOW, live")
+                Rectangle().fill(Color.white.opacity(0.12)).frame(height: 1)
                 Text("VETERINARY OPERATIONS").font(TimiVetFont.ui(10, weight: .bold)).foregroundStyle(TimiVetColor.railMutedText)
             }
             VStack(alignment: .leading, spacing: 6) {
                 Text(store.clinicName).font(TimiVetFont.ui(18, weight: .semibold)).foregroundStyle(.white)
                 Text(store.clinicAddress).font(TimiVetFont.ui(11)).foregroundStyle(TimiVetColor.railMutedText)
                 if !store.userRole.isEmpty {
-                    Text(store.userRole.uppercased()).font(TimiVetFont.ui(9, weight: .bold)).foregroundStyle(TimiVetColor.railTag)
+                    Text(Self.humanRole(store.userRole)).font(TimiVetFont.ui(9, weight: .bold)).foregroundStyle(TimiVetColor.railTag)
                 }
             }
             .padding(.top, 28)
@@ -244,10 +267,16 @@ public struct ConsoleView: View {
             }
             .padding(.top, 26)
 
+            // These three used TimiVetQuietButtonStyle — solid white pills
+            // with an ink border, built for a card on the light canvas. Sat
+            // on the navy rail they read as stray light rectangles rather
+            // than part of the sidebar. `navButton` (unselected state) is
+            // already this rail's own quiet-button language, so these reuse
+            // it instead of introducing a second one.
             VStack(alignment: .leading, spacing: 8) {
-                Button("Open floating console", action: onOpenMini).buttonStyle(TimiVetQuietButtonStyle())
-                Button("Refresh now") { Task { await store.refresh(initial: false) } }.buttonStyle(TimiVetQuietButtonStyle())
-                Button("Sign out", action: onSignOut).buttonStyle(TimiVetQuietButtonStyle())
+                navButton(icon: "rectangle.on.rectangle", title: "Open floating console", isSelected: false, badge: nil, action: onOpenMini)
+                navButton(icon: "arrow.clockwise", title: "Refresh now", isSelected: false, badge: nil) { Task { await store.refresh(initial: false) } }
+                navButton(icon: "rectangle.portrait.and.arrow.right", title: "Sign out", isSelected: false, badge: nil, action: onSignOut)
             }
             .padding(.top, 22)
 
@@ -319,7 +348,15 @@ public struct ConsoleView: View {
             }
             Spacer()
             VStack(alignment: .trailing, spacing: 8) {
-                Text(store.statusMessage).font(TimiVetFont.ui(11)).foregroundStyle(TimiVetColor.muted)
+                // The mockup's `.sync-dot` — omitted before, which left the
+                // header's poll status as text alone with nothing to catch
+                // the eye toward a live connection versus a stalled one.
+                HStack(spacing: 7) {
+                    Circle()
+                        .fill(store.statusMessage.hasPrefix("Connection issue") ? TimiVetColor.coral : TimiVetColor.green)
+                        .frame(width: 7, height: 7)
+                    Text(store.statusMessage).font(TimiVetFont.ui(11)).foregroundStyle(TimiVetColor.muted)
+                }
                 if store.isBusy {
                     ProgressView().frame(width: 180)
                 }
