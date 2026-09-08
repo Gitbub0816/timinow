@@ -13,12 +13,14 @@
  * one a wave number. `care_search_targets` still gets one row per candidate
  * up front — nothing here defers the INSERT — but a target's
  * `wave_activated_at` stays NULL until `advanceSearchWaves` decides its wave
- * is due. A Cloudflare Worker has no background timer, so "due" is decided
- * lazily: every time the customer polls `GET /api/searches/:id` (or a clinic
- * responds), the elapsed time since the search was requested is checked
- * against the wave schedule and any wave that has come due is activated —
- * which is the point in time its dashboard notification and voice call are
- * finally enqueued.
+ * is due. That happens two ways: lazily, every time the customer polls `GET
+ * /api/searches/:id` or a clinic responds, checking elapsed time against the
+ * wave schedule the instant a human is looking; and on a backstop clock, via
+ * `advanceAllActiveSearchWaves` from the five-minute cron sweep, which is
+ * what guarantees a wave still activates for a pet owner who backgrounded the
+ * tab after wave 1 and never polls again. Either path is the point in time a
+ * wave's dashboard notification and voice call are finally enqueued, and both
+ * funnel through the one `advanceSearchWaves` implementation below.
  *
  * ═══════════════════════════════════════════ the ranking invariant ═══════
  *
@@ -34,7 +36,7 @@
  * about what Tími earns from the clinic.
  */
 
-import { hasDatabase } from "./db.js";
+import { hasDatabase, listActiveCareSearches } from "./db.js";
 
 function newId(prefix) {
   return `${prefix}_${crypto.randomUUID().replaceAll("-", "")}`;
@@ -300,10 +302,12 @@ export async function advanceSearchWaves(env, search) {
     : elapsedSeconds;
 
   if (elapsedSeconds > collectionWindowSeconds) {
-    // The collection window is over. No more waves activate; whatever is
-    // still sitting in a future, unactivated wave is voided now rather than
-    // left to the five-minute cron sweep — see releaseUnactivatedTargets.
-    await releaseUnactivatedTargets(env, search.id);
+    // The collection window is over. No more waves activate, and the status
+    // transition (collecting -> offers_ready/expired) plus the ignored-clinic
+    // reliability penalty happen right here rather than waiting for the next
+    // five-minute cron tick — see closeDueSearchWindows below, the one
+    // implementation both this lazy path and the cron sweep call.
+    await closeDueSearchWindows(env, { searchIds: [search.id] });
     return false;
   }
 
@@ -385,21 +389,121 @@ export async function advanceSearchWaves(env, search) {
 }
 
 /**
- * Voids every target still sitting in a wave that never got to activate —
- * called when the collection window closes without exhausting the candidate
- * list, and reused by the booking/cancellation paths in src/index.js for the
- * same release they already perform on every other still-open target.
- * `released` rather than `expired`: these were never offered a chance to
- * respond, which is a different fact than "asked and ran out of time".
+ * Every active (`collecting`/`offers_ready`) search advanced in one pass —
+ * the backstop clock this module never had. Without this, wave 2 and later
+ * only ever activated because a customer happened to poll `GET
+ * /api/searches/:id` or a clinic happened to respond; a pet owner who closed
+ * the tab after wave 1 meant every later-wave clinic sat un-notified until
+ * the search window ran out and got force-released, never actually asked.
+ *
+ * Called from the five-minute cron sweep (`scheduled()` in src/index.js), in
+ * addition to — not instead of — the lazy per-poll call: the cron guarantees
+ * forward progress with zero pollers, and the lazy path still wins the race
+ * to activate a wave the instant a human is actually looking, since a cron
+ * tick can be up to five minutes late. Both paths funnel through this same
+ * `advanceSearchWaves`, so there is exactly one implementation of "is a wave
+ * due" and one of "what happens when it is".
  */
-export async function releaseUnactivatedTargets(env, searchId) {
-  if (!hasDatabase(env)) return 0;
+export async function advanceAllActiveSearchWaves(env) {
+  if (!hasDatabase(env)) return { checked: 0, advanced: 0 };
+  const searches = await listActiveCareSearches(env, { limit: 500 });
+  let advanced = 0;
+  for (const search of searches) {
+    try {
+      if (await advanceSearchWaves(env, search)) advanced += 1;
+    } catch (error) {
+      // One search's bad data (a corrupt routing snapshot, say) must not stop
+      // the sweep from advancing every other search still waiting on it.
+      console.error(JSON.stringify({ event: "advance_search_waves_failed", searchId: search.id, message: error.message }));
+    }
+  }
+  return { checked: searches.length, advanced };
+}
+
+/**
+ * Closes every search whose collection or search window has elapsed:
+ * transitions `care_searches.status` to `offers_ready` (if it collected at
+ * least one active offer) or `expired`, releases or expires whatever targets
+ * are still open, and records an ignored-clinic reliability strike for every
+ * target that was actually shown to a clinic (`wave_activated_at` set) and
+ * never got a response — see `recordClinicIgnored`. A target still sitting in
+ * a future, unactivated wave was never shown to anyone and is released, not
+ * ignored: nobody ignored it.
+ *
+ * The single implementation of that transition, shared by the five-minute
+ * cron sweep (`searchIds` omitted — sweep every search that is due) and the
+ * lazy per-search path in `advanceSearchWaves` (`searchIds: [search.id]`, the
+ * moment a poll or clinic decision notices that one search's window has
+ * elapsed) — so the same status change and the same reliability penalty land
+ * whichever path notices first, instead of the lazy path silently waiting up
+ * to five minutes for the cron to catch up.
+ */
+export async function closeDueSearchWindows(env, { searchIds = null } = {}) {
+  if (!hasDatabase(env)) return { closedCollections: 0, expiredSearches: 0, ignoredClinicTargets: 0 };
+  if (Array.isArray(searchIds) && !searchIds.length) {
+    // Scoped to explicitly zero ids — nothing to do, and an empty SQL IN ()
+    // would be a syntax error rather than a no-op.
+    return { closedCollections: 0, expiredSearches: 0, ignoredClinicTargets: 0 };
+  }
   const now = new Date().toISOString();
-  const result = await env.DB.prepare(`
-    UPDATE care_search_targets SET status = 'released', released_at = ?, updated_at = ?
-    WHERE search_id = ? AND wave_activated_at IS NULL AND status IN ('contacting', 'awaiting_response')
-  `).bind(now, now, searchId).run();
-  return Number(result?.meta?.changes || 0);
+  const scoped = Array.isArray(searchIds) && searchIds.length > 0;
+  const scopeSql = scoped ? ` AND s.id IN (${searchIds.map(() => "?").join(",")})` : "";
+  const scopeArgs = scoped ? searchIds : [];
+
+  const closedCollections = await env.DB.prepare(`
+    SELECT s.id,
+      (SELECT COUNT(*) FROM care_offers o WHERE o.search_id = s.id AND o.status = 'active' AND datetime(o.expires_at) > datetime(?)) AS active_offers
+    FROM care_searches s
+    WHERE s.status = 'collecting' AND datetime(s.collection_expires_at) <= datetime(?)${scopeSql}
+    LIMIT 200
+  `).bind(now, now, ...scopeArgs).all();
+  const expiredSearches = await env.DB.prepare(`
+    SELECT s.id FROM care_searches s
+    WHERE s.status IN ('collecting', 'offers_ready') AND datetime(s.search_expires_at) <= datetime(?)${scopeSql}
+    LIMIT 200
+  `).bind(now, ...scopeArgs).all();
+
+  const closingSearchIds = [...new Set([
+    ...closedCollections.results.map((row) => row.id),
+    ...expiredSearches.results.map((row) => row.id)
+  ])];
+  let ignoredTenantIds = [];
+  if (closingSearchIds.length) {
+    const placeholders = closingSearchIds.map(() => "?").join(",");
+    const ignoredRows = await env.DB.prepare(`
+      SELECT DISTINCT tenant_id FROM care_search_targets
+      WHERE search_id IN (${placeholders}) AND wave_activated_at IS NOT NULL AND status IN ('contacting', 'awaiting_response')
+    `).bind(...closingSearchIds).all();
+    ignoredTenantIds = ignoredRows.results.map((row) => row.tenant_id);
+  }
+
+  const statements = [];
+  for (const search of closedCollections.results) {
+    statements.push(
+      env.DB.prepare("UPDATE care_searches SET status = ?, updated_at = ? WHERE id = ? AND status = 'collecting'")
+        .bind(Number(search.active_offers) > 0 ? "offers_ready" : "expired", now, search.id),
+      env.DB.prepare("UPDATE care_search_targets SET status = 'released', released_at = ?, updated_at = ? WHERE search_id = ? AND status IN ('contacting', 'awaiting_response')")
+        .bind(now, now, search.id)
+    );
+  }
+  for (const search of expiredSearches.results) {
+    statements.push(
+      env.DB.prepare("UPDATE care_searches SET status = 'expired', updated_at = ? WHERE id = ? AND status IN ('collecting', 'offers_ready')")
+        .bind(now, search.id),
+      env.DB.prepare("UPDATE care_search_targets SET status = 'expired', updated_at = ? WHERE search_id = ? AND status IN ('contacting', 'awaiting_response', 'offered')")
+        .bind(now, search.id),
+      env.DB.prepare("UPDATE care_offers SET status = 'expired', updated_at = ? WHERE search_id = ? AND status = 'active'")
+        .bind(now, search.id)
+    );
+  }
+  if (statements.length) await env.DB.batch(statements);
+  if (ignoredTenantIds.length) await recordClinicIgnored(env, ignoredTenantIds);
+
+  return {
+    closedCollections: closedCollections.results.length,
+    expiredSearches: expiredSearches.results.length,
+    ignoredClinicTargets: ignoredTenantIds.length
+  };
 }
 
 /** Builds the same "no pet name, no diagnosis" summary spokenConcern in src/index.js builds at creation, from what the search row kept. */

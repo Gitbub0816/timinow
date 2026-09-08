@@ -261,6 +261,73 @@ export async function attachEvidence(env, application, input = {}, { now = new D
   return { ok: true, evidenceId: id, retentionDeadline };
 }
 
+/**
+ * Deletes raw evidence past its `retention_deadline` — the retention job
+ * migration 0015 documents and nothing previously implemented. The R2 object
+ * and the D1 row's `deleted_at` are two different systems, so this handles
+ * each row one at a time and in a fixed order: delete the object first, and
+ * mark the row only once that has actually succeeded. Marking `deleted_at`
+ * first and deleting second would let a failed R2 call report a retention
+ * deadline as met when the pay stub is still sitting in the bucket — the
+ * same fail-closed rule src/fund-custody.js applies to money applies here to
+ * somebody's financial documents. A row whose R2 delete throws is left
+ * completely alone (not marked, not partially anything) and is simply a
+ * candidate again on the next sweep — there is no half-deleted state for it
+ * to get stuck in.
+ *
+ * Called from the five-minute cron sweep (`scheduled()` in src/index.js).
+ */
+export async function sweepExpiredEvidence(env, { now = new Date().toISOString(), limit = 100 } = {}) {
+  if (!hasDatabase(env)) return { candidates: 0, deleted: 0, failed: 0 };
+  const rows = await env.DB.prepare(`
+    SELECT id, application_id, storage_bucket, storage_object_ref
+    FROM eligibility_evidence
+    WHERE deleted_at IS NULL AND retention_deadline <= ?
+    ORDER BY retention_deadline
+    LIMIT ?
+  `).bind(now, limit).all();
+  const candidates = rows.results || [];
+  if (!candidates.length) return { candidates: 0, deleted: 0, failed: 0 };
+
+  const bucket = env.EVIDENCE;
+  let deleted = 0;
+  let failed = 0;
+  for (const row of candidates) {
+    // `attachEvidence` always writes "EVIDENCE" as storage_bucket — the only
+    // binding this Worker has for hardship documents — so a row naming
+    // anything else, or a deployment with no EVIDENCE binding at all, is not
+    // something this sweep can safely act on. Skipped, not deleted, and
+    // logged for a human rather than silently dropped.
+    if (row.storage_bucket !== "EVIDENCE" || !bucket || typeof bucket.delete !== "function") {
+      failed += 1;
+      console.warn(JSON.stringify({ event: "hardship_evidence_retention_skip", evidenceId: row.id, applicationId: row.application_id, reason: "EVIDENCE_BINDING_UNAVAILABLE" }));
+      continue;
+    }
+    try {
+      // R2's delete is idempotent on a missing key, which is exactly the
+      // retry case: a previous sweep may have deleted the object and then
+      // failed before it could mark the row.
+      await bucket.delete(row.storage_object_ref);
+    } catch (error) {
+      failed += 1;
+      console.error(JSON.stringify({ event: "hardship_evidence_retention_r2_failed", evidenceId: row.id, applicationId: row.application_id, message: error.message }));
+      continue;
+    }
+    const result = await env.DB.prepare(
+      "UPDATE eligibility_evidence SET deleted_at = ? WHERE id = ? AND deleted_at IS NULL"
+    ).bind(now, row.id).run();
+    if (!Number(result?.meta?.changes || 0)) continue; // raced with another sweep marking it; the object is gone either way
+    deleted += 1;
+    await recordAudit(env, {
+      actorId: null, actorRole: "system", action: "hardship.evidence.retention_deleted",
+      subjectType: "eligibility_evidence", subjectId: row.id,
+      newState: { applicationId: row.application_id, deletedAt: now }
+    });
+  }
+  console.log(JSON.stringify({ event: "hardship_evidence_retention_complete", candidates: candidates.length, deleted, failed }));
+  return { candidates: candidates.length, deleted, failed };
+}
+
 export async function recordFraudSignal(env, { applicationId, identityKey, userId, signalType, severity = "LOW", detail = {} }, { now = new Date().toISOString() } = {}) {
   const id = newId("fsig");
   await env.DB.prepare(`
