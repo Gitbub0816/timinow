@@ -428,7 +428,7 @@ public struct ConsoleView: View {
                     ownerSuppliedRow("MEDICATIONS", request.pet.medications)
                     HStack(spacing: 18) {
                         ownerField("OWNER", request.owner.name)
-                        ownerField("PHONE", request.owner.phone)
+                        ownerField("PHONE", request.contactRevealed ? (request.owner.phone ?? "No phone on file") : "Hidden until booked")
                         ownerField("TRAVEL", request.travelLabel)
                     }
                     Divider()

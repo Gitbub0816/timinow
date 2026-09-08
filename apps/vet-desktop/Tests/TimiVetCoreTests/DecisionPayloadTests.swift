@@ -57,4 +57,52 @@ final class DecisionPayloadTests: XCTestCase {
         let routine = ClinicRequest(urgency: "same_day", redFlags: [])
         XCTAssertFalse(routine.isEmergency)
     }
+
+    /// Regression: `/api/clinic/dashboard` mixes two request shapes in the
+    /// same `requests[]` array — a multi-clinic search target (masked owner,
+    /// `owner.phone: null`, `searchTarget`/`contactRevealed` present) and a
+    /// direct intake (real owner, and *no* `searchTarget` or
+    /// `contactRevealed` key at all — see `normalizeIntakeRow` in
+    /// `src/db.js`). The synthesized `Decodable` required both keys on every
+    /// element and threw on `null` into a non-optional `owner.phone`, so one
+    /// masked search target failed decoding of the *entire* dashboard —
+    /// every poll surfaced as `ClinicAPIError.invalidResponse`
+    /// ("The Tími API returned a response it could not read") with no
+    /// indication a new request had even arrived.
+    func testClinicRequestDecodesMaskedSearchTargetAndPlainIntakeTogether() throws {
+        let json = """
+        {
+          "location": {"id": "loc_1", "name": "Hayward", "availability": {"intakeStatus": "available", "acceptsCritical": true}, "policy": {}},
+          "requests": [
+            {
+              "id": "target_1", "searchId": "search_1", "locationId": "loc_1", "tenantId": "tenant_hearth",
+              "pet": {"name": "Milo", "species": "dog"},
+              "owner": {"name": "M*** L.", "phone": null, "email": null},
+              "concernSummary": "Limping.", "urgency": "urgent", "redFlags": [],
+              "status": "pending", "searchTarget": true, "contactRevealed": false
+            },
+            {
+              "id": "intake_1", "locationId": "loc_1", "tenantId": "tenant_hearth",
+              "pet": {"name": "Rex", "species": "dog"},
+              "owner": {"name": "Sam Rivera", "phone": "(510) 555-0181", "email": null},
+              "concernSummary": "Ear infection.", "urgency": "same_day", "redFlags": [],
+              "status": "pending"
+            }
+          ],
+          "metrics": {"pending": 2, "activeArrivals": 0, "completedToday": 0, "declinedToday": 0}
+        }
+        """
+        let dashboard = try JSONDecoder().decode(ClinicDashboard.self, from: Data(json.utf8))
+        XCTAssertEqual(dashboard.requests.count, 2)
+
+        let target = try XCTUnwrap(dashboard.requests.first { $0.id == "target_1" })
+        XCTAssertTrue(target.searchTarget)
+        XCTAssertFalse(target.contactRevealed)
+        XCTAssertNil(target.owner.phone)
+
+        let intake = try XCTUnwrap(dashboard.requests.first { $0.id == "intake_1" })
+        XCTAssertFalse(intake.searchTarget)
+        XCTAssertTrue(intake.contactRevealed)
+        XCTAssertEqual(intake.owner.phone, "(510) 555-0181")
+    }
 }

@@ -74,10 +74,14 @@ public struct PetSummary: Codable, Hashable, Sendable {
 
 public struct OwnerSummary: Codable, Hashable, Sendable {
     public var name: String
-    public var phone: String
+    /// Optional because a masked owner (see `ClinicRequest.contactRevealed`)
+    /// is sent as `null`, never as an empty string — `JSONDecoder` throws on
+    /// `null` into a non-optional `String`, which previously failed the
+    /// whole dashboard decode the instant one masked search target appeared.
+    public var phone: String?
     public var email: String?
 
-    public init(name: String = "", phone: String = "", email: String? = nil) {
+    public init(name: String = "", phone: String? = nil, email: String? = nil) {
         self.name = name; self.phone = phone; self.email = email
     }
 }
@@ -99,12 +103,48 @@ public struct ClinicRequest: Identifiable, Codable, Hashable, Sendable {
     public var requestExpiresAt: String?
     public var updatedAt: String?
     public var searchTarget: Bool
+    /// False for every search target until the owner books with this clinic
+    /// specifically — see `src/db.js`'s `normalizeClinicSearchTarget`. Always
+    /// true for a direct intake, which never masks contact info.
+    public var contactRevealed: Bool
 
-    public init(id: String = "", searchId: String? = nil, publicCode: String? = nil, locationId: String = "", tenantId: String = "", pet: PetSummary = PetSummary(), owner: OwnerSummary = OwnerSummary(), concernSummary: String = "", urgency: String = "urgent", redFlags: [String] = [], travelMinutes: Int? = nil, status: String = "pending", requestedAt: String? = nil, requestExpiresAt: String? = nil, updatedAt: String? = nil, searchTarget: Bool = false) {
+    public init(id: String = "", searchId: String? = nil, publicCode: String? = nil, locationId: String = "", tenantId: String = "", pet: PetSummary = PetSummary(), owner: OwnerSummary = OwnerSummary(), concernSummary: String = "", urgency: String = "urgent", redFlags: [String] = [], travelMinutes: Int? = nil, status: String = "pending", requestedAt: String? = nil, requestExpiresAt: String? = nil, updatedAt: String? = nil, searchTarget: Bool = false, contactRevealed: Bool = true) {
         self.id = id; self.searchId = searchId; self.publicCode = publicCode; self.locationId = locationId; self.tenantId = tenantId
         self.pet = pet; self.owner = owner; self.concernSummary = concernSummary; self.urgency = urgency; self.redFlags = redFlags
         self.travelMinutes = travelMinutes; self.status = status; self.requestedAt = requestedAt; self.requestExpiresAt = requestExpiresAt
-        self.updatedAt = updatedAt; self.searchTarget = searchTarget
+        self.updatedAt = updatedAt; self.searchTarget = searchTarget; self.contactRevealed = contactRevealed
+    }
+
+    /// A direct intake's JSON (`normalizeIntakeRow` in `src/db.js`) carries
+    /// neither `searchTarget` nor `contactRevealed` at all — only a search
+    /// target does. The synthesized `Decodable` would require both keys on
+    /// every request and fail the *entire* dashboard decode the moment a
+    /// plain intake showed up next to one, which is worse than any single
+    /// field being wrong. Everything else still decodes as a required field,
+    /// so a genuinely malformed request still surfaces as `invalidResponse`.
+    private enum CodingKeys: String, CodingKey {
+        case id, searchId, publicCode, locationId, tenantId, pet, owner, concernSummary, urgency, redFlags, travelMinutes, status, requestedAt, requestExpiresAt, updatedAt, searchTarget, contactRevealed
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        searchId = try container.decodeIfPresent(String.self, forKey: .searchId)
+        publicCode = try container.decodeIfPresent(String.self, forKey: .publicCode)
+        locationId = try container.decode(String.self, forKey: .locationId)
+        tenantId = try container.decode(String.self, forKey: .tenantId)
+        pet = try container.decode(PetSummary.self, forKey: .pet)
+        owner = try container.decode(OwnerSummary.self, forKey: .owner)
+        concernSummary = try container.decode(String.self, forKey: .concernSummary)
+        urgency = try container.decode(String.self, forKey: .urgency)
+        redFlags = try container.decodeIfPresent([String].self, forKey: .redFlags) ?? []
+        travelMinutes = try container.decodeIfPresent(Int.self, forKey: .travelMinutes)
+        status = try container.decode(String.self, forKey: .status)
+        requestedAt = try container.decodeIfPresent(String.self, forKey: .requestedAt)
+        requestExpiresAt = try container.decodeIfPresent(String.self, forKey: .requestExpiresAt)
+        updatedAt = try container.decodeIfPresent(String.self, forKey: .updatedAt)
+        searchTarget = try container.decodeIfPresent(Bool.self, forKey: .searchTarget) ?? false
+        contactRevealed = try container.decodeIfPresent(Bool.self, forKey: .contactRevealed) ?? true
     }
 
     public var petLine: String { "\(pet.name) · \(Self.display(pet.species))" }

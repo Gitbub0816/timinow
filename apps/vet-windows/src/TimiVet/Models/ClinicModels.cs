@@ -102,7 +102,8 @@ public sealed class ClinicRequest : INotifyPropertyChanged
         RequestExpiresAt = latest.RequestExpiresAt;
         UpdatedAt = latest.UpdatedAt;
         SearchTarget = latest.SearchTarget;
-        foreach (var computed in new[] { nameof(PetLine), nameof(RequestType), nameof(TravelLabel), nameof(RequestedLabel), nameof(IsEmergency), nameof(OwnerSuppliedMedicalLine), nameof(HasOwnerSuppliedMedical) })
+        ContactRevealed = latest.ContactRevealed;
+        foreach (var computed in new[] { nameof(PetLine), nameof(RequestType), nameof(PhoneLabel), nameof(TravelLabel), nameof(RequestedLabel), nameof(IsEmergency), nameof(OwnerSuppliedMedicalLine), nameof(HasOwnerSuppliedMedical) })
         {
             Raise(computed);
         }
@@ -146,9 +147,17 @@ public sealed class ClinicRequest : INotifyPropertyChanged
     public DateTimeOffset? UpdatedAt { get => _updatedAt; set => Set(ref _updatedAt, value); }
     private bool _searchTarget;
     public bool SearchTarget { get => _searchTarget; set => Set(ref _searchTarget, value); }
+    // Absent (defaults to false via System.Text.Json) on a direct intake,
+    // which never masks contact info; a search target the owner has not
+    // booked with this clinic sends this as false — see `src/db.js`'s
+    // `normalizeClinicSearchTarget`. Defaulted true here so an intake reads
+    // as revealed without the server needing to say so on every request.
+    private bool _contactRevealed = true;
+    public bool ContactRevealed { get => _contactRevealed; set => Set(ref _contactRevealed, value); }
 
     [JsonIgnore] public string PetLine => $"{Pet.Name} · {Display(Pet.Species)}";
     [JsonIgnore] public string RequestType => SearchTarget ? "MULTI-CLINIC SEARCH" : "DIRECT INTAKE";
+    [JsonIgnore] public string PhoneLabel => !ContactRevealed ? "Hidden until booked" : (string.IsNullOrWhiteSpace(Owner.Phone) ? "No phone on file" : Owner.Phone);
     [JsonIgnore] public string TravelLabel => TravelMinutes is null ? "Travel unknown" : $"{TravelMinutes} min away";
     [JsonIgnore] public string RequestedLabel => RequestedAt is null ? "Just now" : RequestedAt.Value.LocalDateTime.ToString("h:mm tt");
     [JsonIgnore] public bool IsEmergency => Urgency == "emergency" || RedFlags.Count > 0;

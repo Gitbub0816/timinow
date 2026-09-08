@@ -376,7 +376,7 @@
                                         </StackPanel>
                                         <StackPanel>
                                             <TextBlock Text="PHONE" FontSize="9" FontWeight="Bold" Foreground="{StaticResource Muted}"/>
-                                            <TextBlock Text="{Binding SelectedRequest.Owner.Phone}" FontWeight="SemiBold" TextWrapping="Wrap"/>
+                                            <TextBlock Text="{Binding SelectedRequest.PhoneLabel}" FontWeight="SemiBold" TextWrapping="Wrap"/>
                                         </StackPanel>
                                         <StackPanel>
                                             <TextBlock Text="TRAVEL" FontSize="9" FontWeight="Bold" Foreground="{StaticResource Muted}"/>
