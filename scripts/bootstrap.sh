@@ -555,8 +555,11 @@ set_var MAPBOX_NAVIGATION_STYLE_URL "$CUSTOMER" "$VET" "$ADMIN"
 set_var STRIPE_PUBLISHABLE_KEY "$CUSTOMER" "$ADMIN"
 set_var STRIPE_ACCOUNTS_API    "$ADMIN"
 set_var TWILIO_FROM_NUMBER     "$VOICE"
-set_var TWILIO_MESSAGING_FROM  "$VOICE"
-set_var TWILIO_MESSAGING_SERVICE_SID "$VOICE"
+# Also the customer Worker: alert-breach SMS (src/alert-notifications.js) is
+# sent from the customer Worker's own cron, calling Twilio directly rather
+# than through the voice Worker's service binding.
+set_var TWILIO_MESSAGING_FROM  "$CUSTOMER" "$VOICE"
+set_var TWILIO_MESSAGING_SERVICE_SID "$CUSTOMER" "$VOICE"
 set_var PUBLIC_APP_URL         "$CUSTOMER"
 set_var VOICE_PUBLIC_URL       "$VOICE"
 set_var VOICE_CALLS_ENABLED    "$VOICE"
@@ -573,6 +576,17 @@ set_var APNS_KEY_ID             "$CUSTOMER"
 set_var APNS_TEAM_ID            "$CUSTOMER"
 set_var APNS_BUNDLE_ID          "$CUSTOMER"
 set_var APNS_ENVIRONMENT        "$CUSTOMER"
+# Hardship identity verification (src/hardship/providers.js) and its evidence
+# retention sweep (src/hardship/index.js) — both run under the customer Worker.
+set_var DIDIT_WORKFLOW_ID       "$CUSTOMER"
+set_var DIDIT_BASE_URL          "$CUSTOMER"
+set_var EVIDENCE_RETENTION_DAYS "$CUSTOMER"
+# Alert-breach notifications (src/alert-notifications.js), checked by the
+# customer Worker's own cron. All optional and independent of each other.
+set_var ALERT_EMAIL_FROM        "$CUSTOMER"
+set_var ALERT_EMAIL_TO          "$CUSTOMER"
+set_var ALERT_SMS_TO            "$CUSTOMER"
+set_var ALERT_NOTIFICATION_COOLDOWN_MINUTES "$CUSTOMER"
 # Shared by both ends of the immediate-dispatch path, so it goes to both.
 set_var VOICE_DRAIN_TOKEN      "$CUSTOMER" "$VOICE"
 # Optional for the drain itself, which no-ops on an empty queue and is reachable
@@ -910,8 +924,10 @@ put_secret CLERK_SECRET_KEY      "$CUSTOMER" "$VET" "$ADMIN" "$VOICE"
 # would block every future push with a false positive. Delivered as a secret so
 # it never enters version control at all. Worker code reads it identically.
 put_secret MAPBOX_PUBLIC_TOKEN   "$CUSTOMER" "$VET" "$ADMIN"
-put_secret TWILIO_ACCOUNT_SID    "$VOICE"
-put_secret TWILIO_AUTH_TOKEN     "$VOICE"
+# Also the customer Worker, for the same reason TWILIO_MESSAGING_FROM above is:
+# alert-breach SMS is sent from the customer Worker's own cron.
+put_secret TWILIO_ACCOUNT_SID    "$CUSTOMER" "$VOICE"
+put_secret TWILIO_AUTH_TOKEN     "$CUSTOMER" "$VOICE"
 put_secret GEMINI_API_KEY        "$VOICE"
 # Signs Feature B's care-search restore link. Only the customer Worker builds
 # or verifies one.
@@ -932,6 +948,13 @@ put_secret GUEST_SESSION_SECRET       "$CUSTOMER"
 put_secret WORKSTATION_SESSION_SECRET "$CUSTOMER" "$VET"
 # The APNs Auth Key private key. Only the customer Worker sends native push.
 put_secret APNS_AUTH_KEY_P8      "$CUSTOMER"
+# Identity verification vendor key (src/hardship/providers.js). Blank leaves
+# hardship applications on the deterministic never-approves stub — safe, never
+# silently permissive.
+put_secret DIDIT_API_KEY         "$CUSTOMER"
+# MailerSend API key for alert-breach email. Blank skips the email channel;
+# ALERT_SMS_TO above is independent and works without this.
+put_secret ALERT_EMAIL_API_KEY   "$CUSTOMER"
 echo
 
 # Only what a workflow actually consumes. Setting a secret nothing reads is
