@@ -707,6 +707,29 @@ async function enterSettings() {
   if (!state.dashboard) await refreshDashboard(true);
   hydrateSettingsForm(state.dashboard?.location);
   await enterCallPreferences();
+  syncSettingsForm();
+  hydrateAdvancedConnectionSettings();
+}
+
+/**
+ * "Advanced connection settings" (see the mockup's collapsible reconnect
+ * panel) — this deployment has one fixed API origin and one Clerk-org tenant
+ * per workspace, so there is nothing to reconnect; this is a read-only
+ * diagnostic panel for support requests instead, and — like People and
+ * calling preferences — visible only to a workspace administrator
+ * (isSelfAdmin(), the same gate used everywhere else in this file).
+ */
+function hydrateAdvancedConnectionSettings() {
+  const details = $("[data-advanced-connection]");
+  if (!details) return;
+  details.hidden = !isSelfAdmin();
+  if (details.hidden) return;
+  const origin = $("[data-advanced-origin]");
+  if (origin) origin.value = location.origin;
+  const tenant = $("[data-advanced-tenant]");
+  if (tenant) tenant.value = state.session?.tenant?.id || "—";
+  const env = $("[data-advanced-env]");
+  if (env) env.value = state.config?.demoMode ? "Interactive demo" : "Live";
 }
 
 async function refreshDashboard(initial) {
@@ -723,6 +746,9 @@ async function refreshDashboard(initial) {
     $("[data-metric-completed]").textContent = dashboard.metrics.completedToday;
     $("[data-metric-declined]").textContent = dashboard.metrics.declinedToday;
     hydrateAvailabilityForm(dashboard.location.availability);
+    renderLiveSummary(dashboard.location.availability);
+    $$("[data-rail-status-chip]").forEach((chip) => chip.classList.remove("is-offline"));
+    $$("[data-rail-status-text]").forEach((el) => { el.textContent = "Live connection"; });
 
     const pending = dashboard.requests.filter((request) => request.status === "pending");
     const newArrivals = [];
@@ -747,6 +773,10 @@ async function refreshDashboard(initial) {
     renderDecisionWorkspace();
     renderMiniWindow();
     renderPill();
+    $$("[data-nav-count]").forEach((badge) => {
+      badge.textContent = String(pending.length);
+      badge.hidden = pending.length === 0;
+    });
 
     for (const request of newArrivals) await onNewPendingRequest(request);
 
@@ -764,6 +794,8 @@ async function refreshDashboard(initial) {
       await renderRoute();
       return;
     }
+    $$("[data-rail-status-chip]").forEach((chip) => chip.classList.add("is-offline"));
+    $$("[data-rail-status-text]").forEach((el) => { el.textContent = "Connection issue"; });
     setStatus(`Connection issue · ${error.message}`);
   } finally {
     setBusy(false);
@@ -780,6 +812,35 @@ function hydrateAvailabilityForm(availability) {
   form.elements.capacityCount.value = availability.capacityCount ?? 3;
   form.elements.ttlMinutes.value = 30;
   form.elements.acceptsCritical.checked = availability.acceptsCritical !== false;
+}
+
+const INTAKE_STATUS_SUMMARY = {
+  available: "Accepting urgent-care arrivals", limited: "Limited availability", confirm_first: "Confirm first before arrival",
+  critical_only: "Critical patients only", diverting: "Diverting new arrivals", closed: "Temporarily closed", unverified: "Status unverified — publish to confirm"
+};
+
+/** The read-at-a-glance live-summary bar. Editing happens in the capacity
+ *  modal (the same [data-availability-form], just relocated — see
+ *  openCapacityModal()); this only reflects the last published status. */
+function renderLiveSummary(availability) {
+  const title = $("[data-summary-title]");
+  if (!title || !availability) return;
+  title.textContent = INTAKE_STATUS_SUMMARY[availability.intakeStatus] || humanize(availability.intakeStatus || "unverified");
+  const spots = availability.capacityCount != null ? `${availability.capacityCount} spot${availability.capacityCount === 1 ? "" : "s"}` : "Capacity unknown";
+  const wait = availability.stableWaitMin != null && availability.stableWaitMax != null ? `${availability.stableWaitMin}–${availability.stableWaitMax} min wait` : "";
+  const critical = availability.acceptsCritical !== false ? "critical patients accepted" : "stable patients only";
+  $("[data-summary-subtitle]").textContent = [spots, wait, critical].filter(Boolean).join(" · ");
+}
+
+function openCapacityModal() {
+  const modal = $("[data-capacity-modal]");
+  if (!modal) return;
+  modal.hidden = false;
+}
+
+function closeCapacityModal() {
+  const modal = $("[data-capacity-modal]");
+  if (modal) modal.hidden = true;
 }
 
 /**
@@ -845,6 +906,32 @@ function selectedRequest() {
   return state.dashboard?.requests.find((r) => r.id === state.selectedRequestId) || null;
 }
 
+/**
+ * Choice-grid selection: "Available now / Custom availability / Cannot
+ * receive" (see .choice-grid/.choice-button in styles.css). Picking one only
+ * updates this form's own hidden responseType input and toggles the extra
+ * fields — the actual send still goes through the single submit handler
+ * below and the same submitDecision() every other entry point (pill, mini
+ * window) already uses.
+ */
+function setDecisionChoice(form, request, choice) {
+  form.dataset.choice = choice;
+  $$(".choice-button", form).forEach((button) => button.classList.toggle("is-selected", button.dataset.choice === choice));
+  $("[data-custom-fields]", form).classList.toggle("is-visible", choice === "custom");
+  form.elements.responseType.value = choice === "custom" ? "available_at" : (isEmergency(request) ? "emergency_intake" : "available_now");
+  const submit = $("[data-decision-submit]", form);
+  if (choice === "decline") {
+    submit.textContent = "Decline request";
+    submit.className = "button button-coral";
+  } else if (choice === "custom") {
+    submit.textContent = request.searchTarget ? "Send custom offer" : "Accept with details";
+    submit.className = "button button-primary";
+  } else {
+    submit.textContent = request.searchTarget ? "Send availability offer" : "Accept this arrival";
+    submit.className = "button button-primary";
+  }
+}
+
 function renderDecisionWorkspace() {
   const mount = $("[data-workspace-content]");
   const request = selectedRequest();
@@ -853,61 +940,73 @@ function renderDecisionWorkspace() {
     return;
   }
   const availability = state.dashboard?.location?.availability || {};
-  const defaultResponseType = isEmergency(request) ? "emergency_intake" : "available_now";
+  const defaultChoice = "now";
   const now = new Date(Date.now() + 30 * 60_000);
   const dateValue = now.toISOString().slice(0, 10);
   const timeValue = now.toTimeString().slice(0, 5);
 
   mount.innerHTML = `
-    <h2>${escapeHtml(petLine(request))}</h2>
-    ${sponsoredNotice(request)}
-    <p style="font-size:.85rem">${escapeHtml(request.concernSummary)}</p>
-    ${ownerSuppliedMedical(request)}
-    <div class="workspace-facts">
-      <div><small>OWNER</small><strong>${escapeHtml(request.owner?.name || "—")}</strong></div>
-      <div><small>PHONE</small><strong>${escapeHtml(request.owner?.phone || "—")}</strong></div>
-      <div><small>TRAVEL</small><strong>${escapeHtml(travelLabel(request))}</strong></div>
+    <div class="decision-header">
+      <div class="decision-title-row">
+        <div><p class="eyebrow">Patient request</p><h2>${escapeHtml(petLine(request))}</h2></div>
+        <span class="arrival-tag">${escapeHtml(travelLabel(request))}</span>
+      </div>
+      ${sponsoredNotice(request)}
+      <p class="complaint">${escapeHtml(request.concernSummary)}</p>
+      ${ownerSuppliedMedical(request)}
+      <div class="workspace-facts">
+        <div><small>OWNER</small><strong>${escapeHtml(request.owner?.name || "—")}</strong></div>
+        <div><small>PHONE</small><strong>${escapeHtml(request.owner?.phone || "—")}</strong></div>
+        <div><small>REQUESTED</small><strong>${escapeHtml(formatClock(request.requestedAt))}</strong></div>
+      </div>
+      ${request.searchTarget && request.contactRevealed === false ? '<p class="workspace-empty" style="margin-top:.4rem;padding:0">Full name and phone number appear once the owner books with your clinic.</p>' : ""}
     </div>
-    ${request.searchTarget && request.contactRevealed === false ? '<p class="workspace-empty" style="margin-top:.4rem">Full name and phone number appear once the owner books with your clinic.</p>' : ""}
-    <hr class="workspace-divider">
-    <p class="workspace-form-title">Availability response</p>
-    <form data-decision-form>
-      <div class="workspace-grid">
-        <div>
-          <label class="field">Response type
-            <select name="responseType">
-              <option value="available_now" ${defaultResponseType === "available_now" ? "selected" : ""}>Available now</option>
-              <option value="available_at" ${defaultResponseType === "available_at" ? "selected" : ""}>Available at a stated time</option>
-              <option value="emergency_intake" ${defaultResponseType === "emergency_intake" ? "selected" : ""}>Emergency intake, triage on arrival</option>
-            </select>
-          </label>
-          <div class="field-row" style="margin-top:.6rem">
-            <label class="field">Available date<input name="availableDate" type="date" value="${dateValue}"></label>
-            <label class="field">Available time<input name="availableTime" type="time" value="${timeValue}"></label>
-          </div>
-          <label class="field" style="margin-top:.6rem">Message to pet owner
-            <textarea name="note" rows="4" maxlength="500" placeholder="Arrival entrance, parking, or other instructions"></textarea>
-          </label>
+    <div class="decision-body">
+      <p class="workspace-form-title">What can your clinic offer?</p>
+      <form data-decision-form>
+        <input type="hidden" name="responseType" value="available_now">
+        <div class="choice-grid" role="group" aria-label="Response options">
+          <button type="button" class="choice-button" data-choice="now">Available now<small>${isEmergency(request) ? "Emergency intake, triage on arrival" : "Arrival within your usual window"}</small></button>
+          <button type="button" class="choice-button" data-choice="custom">Custom availability<small>Set date, time, and wait</small></button>
+          <button type="button" class="choice-button decline" data-choice="decline">Cannot receive<small>Decline this request</small></button>
         </div>
-        <div>
-          <div class="compact-grid-2x2">
-            <label class="field">Arrival window (min)<input name="arrivalWindowMinutes" type="number" min="5" max="180" value="30"></label>
-            <label class="field">Offer hold (min)<input name="holdMinutes" type="number" min="1" max="30" value="5"></label>
-            <label class="field">Wait min<input name="waitMin" type="number" min="0" max="1440" value="${availability.stableWaitMin ?? 15}"></label>
-            <label class="field">Wait max<input name="waitMax" type="number" min="0" max="1440" value="${availability.stableWaitMax ?? 35}"></label>
+        <div class="custom-fields" data-custom-fields>
+          <div class="workspace-grid">
+            <div>
+              <div class="field-row">
+                <label class="field">Available date<input name="availableDate" type="date" value="${dateValue}"></label>
+                <label class="field">Available time<input name="availableTime" type="time" value="${timeValue}"></label>
+              </div>
+              <label class="field" style="margin-top:.6rem">Message to pet owner <span style="font-weight:400">(optional)</span>
+                <textarea name="note" rows="3" maxlength="500" placeholder="Arrival entrance, parking, or other instructions"></textarea>
+              </label>
+            </div>
+            <div>
+              <div class="compact-grid-2x2">
+                <label class="field">Arrival window (min)<input name="arrivalWindowMinutes" type="number" min="5" max="180" value="30"></label>
+                <label class="field">Offer hold (min)<input name="holdMinutes" type="number" min="1" max="30" value="5"></label>
+                <label class="field">Wait min<input name="waitMin" type="number" min="0" max="1440" value="${availability.stableWaitMin ?? 15}"></label>
+                <label class="field">Wait max<input name="waitMax" type="number" min="0" max="1440" value="${availability.stableWaitMax ?? 35}"></label>
+              </div>
+              <div class="disclaimer-banner">An offer does not book the patient. The owner may compare up to five responses. Unselected offers are released automatically.</div>
+            </div>
           </div>
-          <div class="disclaimer-banner">An offer does not book the patient. The owner may compare up to five responses. Unselected offers are released automatically.</div>
         </div>
-      </div>
-      <div class="workspace-actions">
-        <button class="button button-quiet" type="button" data-decision="decline">Decline request</button>
-        <button class="button button-coral" type="submit" data-decision="offer">Send availability offer</button>
-      </div>
-    </form>`;
+        <div class="workspace-actions">
+          <button class="button button-quiet" type="button" data-decision-reset>Reset</button>
+          <button class="button button-primary" type="submit" data-decision-submit>Accept this arrival</button>
+        </div>
+      </form>
+    </div>`;
 
   const form = $("[data-decision-form]", mount);
-  $('[data-decision="decline"]', form).addEventListener("click", () => submitDecision(request, form, true));
-  form.addEventListener("submit", (event) => { event.preventDefault(); submitDecision(request, form, false); });
+  setDecisionChoice(form, request, defaultChoice);
+  $$(".choice-button", form).forEach((button) => button.addEventListener("click", () => setDecisionChoice(form, request, button.dataset.choice)));
+  $("[data-decision-reset]", form).addEventListener("click", () => setDecisionChoice(form, request, defaultChoice));
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    submitDecision(request, form, form.dataset.choice === "decline");
+  });
 }
 
 async function submitDecision(request, form, decline) {
@@ -974,6 +1073,8 @@ function wireAvailabilityForm() {
       });
       form.dataset.userEdited = "false";
       setStatus("Live intake status published.");
+      closeCapacityModal();
+      showToast("Live status published.");
       await refreshDashboard(true);
     } catch (error) {
       setStatus(error.message);
@@ -1316,8 +1417,9 @@ function syncSettingsForm() {
     else input.value = state.settings[key];
   });
   const permission = window.Notification?.permission || "unsupported";
-  const status = $("[data-notification-status]");
-  if (status) status.textContent = permission === "unsupported" ? "Notifications are not supported in this browser." : `Notification permission: ${permission}.`;
+  $$("[data-notification-status]").forEach((status) => {
+    status.textContent = permission === "unsupported" ? "Notifications are not supported in this browser." : `Notification permission: ${permission}.`;
+  });
 }
 
 function wireSettingsForm() {
@@ -1333,11 +1435,11 @@ function wireSettingsForm() {
       }
     });
   });
-  $('[data-action="request-notifications"]').addEventListener("click", async () => {
+  $$('[data-action="request-notifications"]').forEach((button) => button.addEventListener("click", async () => {
     if (!window.Notification) { showToast("This browser does not support desktop notifications."); return; }
     await Notification.requestPermission();
     syncSettingsForm();
-  });
+  }));
 }
 
 /* -------------------------------------------------------------- alerts --- */
@@ -2040,8 +2142,8 @@ function renderOverflow() {
 
 function wireGlobalActions() {
   $$('[data-route]').forEach((el) => el.addEventListener("click", () => setRoute(el.dataset.route)));
-  $('[data-action="refresh-now"]')?.addEventListener("click", () => refreshDashboard(true));
-  $('[data-action="open-mini"]')?.addEventListener("click", () => openMiniWindow(true));
+  $$('[data-action="refresh-now"]').forEach((el) => el.addEventListener("click", () => refreshDashboard(true)));
+  $$('[data-action="open-mini"]').forEach((el) => el.addEventListener("click", () => openMiniWindow(true)));
   $('[data-workstation-toggle]')?.addEventListener("click", toggleWorkstationEntry);
   $$('[data-action="sign-out"]').forEach((button) => button.addEventListener("click", async () => {
     closeMiniWindow();
@@ -2049,6 +2151,27 @@ function wireGlobalActions() {
     if (isWorkstationOnly()) { await endWorkstation(); return; }
     try { await state.clerk?.signOut(); } catch { /* already signed out */ }
     location.hash = "sign-in";
+  }));
+
+  // Capacity edit modal — the live-summary bar's "Edit status" link opens the
+  // very same [data-availability-form] the old top-grid card used to show
+  // inline; see openCapacityModal()/closeCapacityModal() above.
+  $('[data-action="edit-capacity"]')?.addEventListener("click", openCapacityModal);
+  $$('[data-action="close-capacity-modal"]').forEach((el) => el.addEventListener("click", closeCapacityModal));
+  $("[data-capacity-modal]")?.addEventListener("click", (event) => {
+    if (event.target === event.currentTarget) closeCapacityModal();
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape") return;
+    closeCapacityModal();
+    setPillExpanded(false);
+  });
+
+  // A quick, harmless way to confirm sound + notifications actually work on
+  // this workstation before relying on them for a real intake request.
+  $$('[data-action="test-alert"]').forEach((button) => button.addEventListener("click", () => {
+    playAlertBeep();
+    showToast("Test alert sent.");
   }));
 }
 
