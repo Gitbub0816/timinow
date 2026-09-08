@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Tími Vet · Live Intake</title>
   <meta name="description" content="Tími veterinary operations console — public capacity, live intake queue, and availability decisions.">
-  <meta name="theme-color" content="#111b3b">
+  <meta name="theme-color" content="#101b3d">
   <link rel="icon" href="/assets/icons/icon-32.png" sizes="32x32" type="image/png">
   <link rel="icon" href="/assets/icons/icon-192.png" sizes="192x192" type="image/png">
   <link rel="apple-touch-icon" href="/assets/icons/apple-touch-icon.png" sizes="180x180">
@@ -54,14 +54,15 @@
           <strong data-clinic-name>Tími veterinary console</strong>
           <p data-clinic-address></p>
         </div>
+        <div class="rail-status-chip" data-rail-status-chip><span class="rail-status-dot" data-rail-status-dot></span> <span data-rail-status-text>Live connection</span></div>
         <nav class="rail-nav">
-          <a href="#pill" data-nav="pill">Quick status</a>
-          <a href="#console" data-nav="console">Full dashboard</a>
+          <a href="#pill" data-nav="pill"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 13h6V4H4v9Zm10 7h6v-9h-6v9ZM4 20h6v-3H4v3Zm10-13h6V4h-6v3Z"/></svg>Quick status<span class="nav-count" data-nav-count hidden>0</span></a>
+          <a href="#console" data-nav="console"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 13h6V4H4v9Zm10 7h6v-9h-6v9ZM4 20h6v-3H4v3Zm10-13h6V4h-6v3Z"/></svg>Full dashboard<span class="nav-count" data-nav-count hidden>0</span></a>
           <a href="#billing" data-nav="billing">Billing</a>
           <a href="#payouts" data-nav="payouts">Payouts</a>
           <a href="#overflow" data-nav="overflow">Overflow tools</a>
-          <a href="#people" data-nav="people">People</a>
-          <a href="#settings" data-nav="settings">Facility settings</a>
+          <a href="#people" data-nav="people"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>People</a>
+          <a href="#settings" data-nav="settings"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1a1.7 1.7 0 0 0 1.9.3 1.7 1.7 0 0 0 1-1.6v-.2h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1Z"/></svg>Facility settings</a>
           <a href="#legal?section=clinics" data-nav="legal">Legal</a>
         </nav>
         <div class="rail-mode">
@@ -94,47 +95,21 @@
           </div>
         </header>
 
-        <div class="top-grid">
-          <section class="card capacity-card">
-            <p class="eyebrow">PUBLIC CAPACITY</p>
-            <h2>What pet owners see right now</h2>
-            <form data-availability-form>
-              <div class="capacity-grid">
-                <div>
-                  <label class="field">Intake status
-                    <select name="intakeStatus">
-                      <option value="available">Available</option>
-                      <option value="limited">Limited</option>
-                      <option value="confirm_first">Confirm first</option>
-                      <option value="critical_only">Critical only</option>
-                      <option value="diverting">Diverting</option>
-                      <option value="closed">Closed</option>
-                    </select>
-                  </label>
-                  <label class="field" style="margin-top:12px">Public note
-                    <textarea name="note" rows="4" maxlength="500"></textarea>
-                  </label>
-                </div>
-                <div>
-                  <div class="compact-grid-2x2">
-                    <label class="field">Wait min<input name="stableWaitMin" type="number" min="0" max="1440"></label>
-                    <label class="field">Wait max<input name="stableWaitMax" type="number" min="0" max="1440"></label>
-                    <label class="field">Capacity<input name="capacityCount" type="number" min="0" max="100"></label>
-                    <label class="field">Expires (min)<input name="ttlMinutes" type="number" min="5" max="180"></label>
-                  </div>
-                  <label class="inline-check"><input type="checkbox" name="acceptsCritical"> Accepting critical patients</label>
-                  <button class="button button-primary button-block" type="submit">Publish live status</button>
-                </div>
-              </div>
-            </form>
-          </section>
-
-          <div class="metrics-grid">
-            <div class="card"><p class="eyebrow">WAITING</p><strong data-metric-pending>0</strong></div>
-            <div class="card"><p class="eyebrow">ACTIVE ARRIVALS</p><strong data-metric-active>0</strong></div>
-            <div class="card"><p class="eyebrow">COMPLETED TODAY</p><strong data-metric-completed>0</strong></div>
-            <div class="card"><p class="eyebrow">DECLINED TODAY</p><strong data-metric-declined>0</strong></div>
+        <div class="live-summary card">
+          <div class="summary-main">
+            <div class="capacity-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 21s7-4.35 7-11a4 4 0 0 0-7-2.65A4 4 0 0 0 5 10c0 6.65 7 11 7 11Z"/><path d="M9 12h6M12 9v6"/></svg>
+            </div>
+            <div>
+              <p class="summary-title" data-summary-title>Connecting…</p>
+              <p class="summary-subtitle" data-summary-subtitle>Public capacity, wait range, and who you're accepting right now.</p>
+            </div>
+            <button class="edit-link" type="button" data-action="edit-capacity">Edit status</button>
           </div>
+          <div class="metric"><div class="metric-label">Waiting</div><div class="metric-value coral" data-metric-pending>0</div></div>
+          <div class="metric"><div class="metric-label">Active arrivals</div><div class="metric-value" data-metric-active>0</div></div>
+          <div class="metric"><div class="metric-label">Completed today</div><div class="metric-value" data-metric-completed>0</div></div>
+          <div class="metric"><div class="metric-label">Declined today</div><div class="metric-value" data-metric-declined>0</div></div>
         </div>
 
         <div class="mid-grid">
@@ -156,22 +131,35 @@
           </section>
         </div>
 
-        <details class="settings-details">
-          <summary>Connection, alerts, and startup settings</summary>
-          <div class="settings-body">
-            <div class="settings-col">
-              <label class="field">Polling interval, seconds
-                <input type="number" min="3" max="60" data-setting="pollSeconds">
-              </label>
-              <label class="inline-check"><input type="checkbox" data-setting="alertsEnabled"> Desktop intake alerts</label>
-              <label class="inline-check"><input type="checkbox" data-setting="playSound"> Play alert sound</label>
-              <label class="inline-check"><input type="checkbox" data-setting="autoOpenMini"> Auto-open floating console on new requests (always on top)</label>
+        <!-- Per-device alert/floating-console preferences, kept here too
+             (not only on Facility settings → Desktop alerts): a workstation
+             session (front-desk computer, no individual sign-in) can never
+             route to #settings — see WORKSTATION_ALLOWED_ROUTES in app.js —
+             so this is its only way to reach them. The [data-setting]
+             inputs here and on the settings screen share the same
+             localStorage-backed state (see syncSettingsForm()/
+             wireSettingsForm()), so either copy stays in sync. -->
+        <details class="advanced-settings card" style="margin-top:20px;padding:18px 20px">
+          <summary>Alerts &amp; floating console for this device</summary>
+          <div class="advanced-content">
+            <div class="checkbox-row" style="border-top:0;padding-top:0">
+              <input type="checkbox" data-setting="alertsEnabled" id="console-setting-alerts">
+              <label class="checkbox-copy" for="console-setting-alerts"><strong>Desktop intake alerts</strong><span>Notification, sound, and floating console react to new requests.</span></label>
             </div>
-            <div class="settings-col">
-              <button class="button button-quiet" type="button" data-action="request-notifications">Enable desktop notifications</button>
-              <p style="font-size:.68rem;color:var(--muted);margin:0" data-notification-status></p>
-              <p style="font-size:.68rem;color:var(--muted);line-height:1.5;margin:0">The floating console uses your browser's Document Picture-in-Picture window when available (Chrome, Edge, and other Chromium browsers). Other browsers fall back to a plain pop-up window.</p>
+            <div class="checkbox-row">
+              <input type="checkbox" data-setting="playSound" id="console-setting-sound">
+              <label class="checkbox-copy" for="console-setting-sound"><strong>Play alert sound</strong><span>Uses this computer's normal audio output.</span></label>
+              <button class="button" type="button" data-action="test-alert">Test</button>
             </div>
+            <div class="checkbox-row">
+              <input type="checkbox" data-setting="autoOpenMini" id="console-setting-auto-open">
+              <label class="checkbox-copy" for="console-setting-auto-open"><strong>Auto-open floating console on new requests</strong><span>Always-on-top window via Picture-in-Picture, where supported.</span></label>
+            </div>
+            <label class="field" style="max-width:260px">Check for requests every, seconds
+              <input type="number" min="3" max="60" data-setting="pollSeconds">
+            </label>
+            <button class="button button-quiet" type="button" data-action="request-notifications">Enable desktop notifications</button>
+            <p style="font-size:.68rem;color:var(--muted);margin:0" data-notification-status></p>
           </div>
         </details>
 
@@ -179,6 +167,47 @@
           <span>Independent clinical triage controls all treatment priority.</span>
           <span>Tími NOW · ClearKey Solutions, LLC</span>
         </footer>
+      </div>
+
+      <div class="modal-backdrop" data-capacity-modal role="dialog" aria-modal="true" aria-labelledby="capacity-modal-title" hidden>
+        <div class="modal">
+          <div class="modal-head">
+            <div><p class="eyebrow">PUBLIC CAPACITY</p><h2 id="capacity-modal-title">Update live status</h2></div>
+            <button class="modal-close" type="button" data-action="close-capacity-modal" aria-label="Close">×</button>
+          </div>
+          <form data-availability-form>
+            <div class="capacity-grid">
+              <div>
+                <label class="field">Intake status
+                  <select name="intakeStatus">
+                    <option value="available">Available</option>
+                    <option value="limited">Limited</option>
+                    <option value="confirm_first">Confirm first</option>
+                    <option value="critical_only">Critical only</option>
+                    <option value="diverting">Diverting</option>
+                    <option value="closed">Closed</option>
+                  </select>
+                </label>
+                <label class="field" style="margin-top:12px">Public note
+                  <textarea name="note" rows="4" maxlength="500"></textarea>
+                </label>
+              </div>
+              <div>
+                <div class="compact-grid-2x2">
+                  <label class="field">Wait min<input name="stableWaitMin" type="number" min="0" max="1440"></label>
+                  <label class="field">Wait max<input name="stableWaitMax" type="number" min="0" max="1440"></label>
+                  <label class="field">Capacity<input name="capacityCount" type="number" min="0" max="100"></label>
+                  <label class="field">Expires (min)<input name="ttlMinutes" type="number" min="5" max="180"></label>
+                </div>
+                <label class="inline-check"><input type="checkbox" name="acceptsCritical"> Accepting critical patients</label>
+              </div>
+            </div>
+            <div class="modal-actions">
+              <button class="button" type="button" data-action="close-capacity-modal">Cancel</button>
+              <button class="button button-primary" type="submit">Publish live status</button>
+            </div>
+          </form>
+        </div>
       </div>
     </section>
 
@@ -193,7 +222,7 @@
           <a href="#console" data-nav="console">Operations</a>
           <a href="#billing" data-nav="billing">Billing</a>
           <a href="#payouts" data-nav="payouts">Payouts</a>
-          <a href="#people" data-nav="people">People</a>
+          <a href="#people" data-nav="people"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>People</a>
           <a href="#legal?section=clinics" data-nav="legal">Legal</a>
         </nav>
         <div class="rail-spacer"></div>
@@ -233,7 +262,7 @@
           <a href="#console" data-nav="console">Operations</a>
           <a href="#billing" data-nav="billing">Billing</a>
           <a href="#payouts" data-nav="payouts">Payouts</a>
-          <a href="#people" data-nav="people">People</a>
+          <a href="#people" data-nav="people"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>People</a>
           <a href="#legal?section=clinics" data-nav="legal">Legal</a>
         </nav>
         <div class="rail-spacer"></div>
@@ -324,13 +353,13 @@
           <p class="rail-kicker">VETERINARY OPERATIONS</p>
         </div>
         <nav class="rail-nav" style="margin-top:42px">
-          <a href="#pill" data-nav="pill">Quick status</a>
-          <a href="#console" data-nav="console">Full dashboard</a>
+          <a href="#pill" data-nav="pill"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 13h6V4H4v9Zm10 7h6v-9h-6v9ZM4 20h6v-3H4v3Zm10-13h6V4h-6v3Z"/></svg>Quick status<span class="nav-count" data-nav-count hidden>0</span></a>
+          <a href="#console" data-nav="console"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 13h6V4H4v9Zm10 7h6v-9h-6v9ZM4 20h6v-3H4v3Zm10-13h6V4h-6v3Z"/></svg>Full dashboard<span class="nav-count" data-nav-count hidden>0</span></a>
           <a href="#billing" data-nav="billing">Billing</a>
           <a href="#payouts" data-nav="payouts">Payouts</a>
           <a href="#overflow" data-nav="overflow">Overflow tools</a>
-          <a href="#people" data-nav="people">People</a>
-          <a href="#settings" data-nav="settings">Facility settings</a>
+          <a href="#people" data-nav="people"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>People</a>
+          <a href="#settings" data-nav="settings"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1a1.7 1.7 0 0 0 1.9.3 1.7 1.7 0 0 0 1-1.6v-.2h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1Z"/></svg>Facility settings</a>
           <a href="#legal?section=clinics" data-nav="legal">Legal</a>
         </nav>
         <div class="rail-spacer"></div>
@@ -363,10 +392,10 @@
           <p class="rail-kicker">VETERINARY OPERATIONS</p>
         </div>
         <nav class="rail-nav" style="margin-top:42px">
-          <a href="#pill" data-nav="pill">Quick status</a>
-          <a href="#console" data-nav="console">Full dashboard</a>
-          <a href="#people" data-nav="people">People</a>
-          <a href="#settings" data-nav="settings">Facility settings</a>
+          <a href="#pill" data-nav="pill"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 13h6V4H4v9Zm10 7h6v-9h-6v9ZM4 20h6v-3H4v3Zm10-13h6V4h-6v3Z"/></svg>Quick status<span class="nav-count" data-nav-count hidden>0</span></a>
+          <a href="#console" data-nav="console"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 13h6V4H4v9Zm10 7h6v-9h-6v9ZM4 20h6v-3H4v3Zm10-13h6V4h-6v3Z"/></svg>Full dashboard<span class="nav-count" data-nav-count hidden>0</span></a>
+          <a href="#people" data-nav="people"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>People</a>
+          <a href="#settings" data-nav="settings"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1a1.7 1.7 0 0 0 1.9.3 1.7 1.7 0 0 0 1-1.6v-.2h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1Z"/></svg>Facility settings</a>
           <a href="#legal?section=clinics" data-nav="legal">Legal</a>
         </nav>
         <div class="rail-spacer"></div>
@@ -455,36 +484,77 @@
           </div>
         </form>
 
-        <!-- Automated calling: GET/POST /api/clinic/call-preferences (org
-             member view, org admin edit — see setCallPreferences in
-             src/index.js). Kept on this screen rather than a route of its
-             own since it is one small, rarely-changed decision, same as
-             facility settings. -->
-        <form class="settings-form" data-call-preferences-form style="margin-top:2.2rem">
-          <section class="settings-section">
-            <h2>Automated calling</h2>
-            <p class="people-note" style="margin-top:0">When a nearby pet owner needs urgent care and nobody has answered yet, Tími can place an automated phone call to this clinic asking for a yes or no. Decide when — or whether — that happens.</p>
-            <fieldset class="settings-checklist">
-              <legend>When may Tími call this clinic?</legend>
-              <label><input type="radio" name="callPolicy" value="always"> Always</label>
-              <label><input type="radio" name="callPolicy" value="console_active"> Only while a console is open here</label>
-              <label><input type="radio" name="callPolicy" value="never"> Never call this clinic</label>
-            </fieldset>
-            <div class="form-grid two-column" style="margin-top:12px">
-              <label class="field">Phone Tími dials <span style="font-weight:400">(optional — defaults to your listed number)</span>
-                <input name="voicePhone" type="tel" maxlength="30" placeholder="(555) 555-0100">
-              </label>
-              <div></div>
-              <label class="field">Quiet hours start <span style="font-weight:400">(optional)</span><input name="quietStart" type="time"></label>
-              <label class="field">Quiet hours end <span style="font-weight:400">(optional)</span><input name="quietEnd" type="time"></label>
-            </div>
-            <p class="people-note" data-call-preferences-status></p>
-          </section>
-          <div class="settings-form-actions">
-            <button class="button button-quiet" type="button" data-call-preferences-clear-quiet>Clear quiet hours</button>
-            <button class="button button-primary" type="submit">Save calling preferences</button>
+        <div class="settings-layout" style="margin-top:2.2rem">
+          <div class="settings-stack">
+            <!-- Automated calling: GET/POST /api/clinic/call-preferences (org
+                 member view, org admin edit — see setCallPreferences in
+                 src/index.js). Kept on this screen rather than a route of its
+                 own since it is one small, rarely-changed decision, same as
+                 facility settings. Editing is gated to an administrator by
+                 hydrateCallPreferencesForm()/wireCallPreferencesForm() in
+                 app.js (isSelfAdmin()), same pattern used for People. -->
+            <form class="settings-card card" data-call-preferences-form>
+              <div class="card-title-row"><div><h3>Phone calls from Tími</h3><p>Choose when Tími should call the clinic about a new request.</p></div></div>
+              <p class="people-note" style="margin-top:0">When a nearby pet owner needs urgent care and nobody has answered yet, Tími can place an automated phone call to this clinic asking for a yes or no.</p>
+              <div class="checkbox-row"><input type="radio" name="callPolicy" value="always" id="call-policy-always"><label class="checkbox-copy" for="call-policy-always"><strong>Call for every new request</strong><span>Calls continue even while the console is open.</span></label></div>
+              <div class="checkbox-row"><input type="radio" name="callPolicy" value="console_active" id="call-policy-console"><label class="checkbox-copy" for="call-policy-console"><strong>Call only when no console is open</strong><span>Useful for a consistently staffed reception desk.</span></label></div>
+              <div class="checkbox-row"><input type="radio" name="callPolicy" value="never" id="call-policy-never"><label class="checkbox-copy" for="call-policy-never"><strong>Never call this clinic</strong><span>Use the console and desktop notifications only.</span></label></div>
+              <div class="form-grid two-column" style="margin-top:14px">
+                <label class="field">Phone Tími dials <span style="font-weight:400">(optional — defaults to your listed number)</span>
+                  <input name="voicePhone" type="tel" maxlength="30" placeholder="(555) 555-0100">
+                </label>
+                <div></div>
+                <label class="field">Quiet hours start <span style="font-weight:400">(optional)</span><input name="quietStart" type="time"></label>
+                <label class="field">Quiet hours end <span style="font-weight:400">(optional)</span><input name="quietEnd" type="time"></label>
+              </div>
+              <p class="people-note" data-call-preferences-status></p>
+              <div class="settings-form-actions" style="margin-top:6px">
+                <button class="button button-quiet" type="button" data-call-preferences-clear-quiet>Clear quiet hours</button>
+                <button class="button button-primary" type="submit">Save calling preferences</button>
+              </div>
+            </form>
           </div>
-        </form>
+
+          <div class="settings-stack">
+            <!-- Per-device preferences (localStorage, see DEFAULT_SETTINGS in
+                 app.js) — not tenant configuration, so open to every signed-in
+                 role, same as before this screen existed. -->
+            <section class="settings-card card">
+              <div class="card-title-row">
+                <div><h3>Floating console</h3><p>Keep requests visible while you work in other systems.</p></div>
+                <label class="switch-field"><input type="checkbox" data-setting="autoOpenMini" class="switch-checkbox" aria-label="Auto-open the floating console for new requests"><span class="switch-track" aria-hidden="true"></span></label>
+              </div>
+              <p class="people-note" style="margin-top:0">Opens an always-on-top window (via your browser's Picture-in-Picture, where supported) the moment a new request arrives, so reception never has to keep this tab focused.</p>
+              <button class="button button-quiet button-block" type="button" data-action="open-mini">Preview floating console</button>
+            </section>
+
+            <section class="settings-card card">
+              <div class="card-title-row">
+                <div><h3>Desktop alerts</h3><p>Visual and sound notifications for this workstation.</p></div>
+                <label class="switch-field"><input type="checkbox" data-setting="alertsEnabled" class="switch-checkbox" aria-label="Enable desktop intake alerts"><span class="switch-track" aria-hidden="true"></span></label>
+              </div>
+              <div class="checkbox-row">
+                <input type="checkbox" data-setting="playSound" id="setting-play-sound">
+                <label class="checkbox-copy" for="setting-play-sound"><strong>Play alert sound</strong><span>Uses this computer's normal audio output.</span></label>
+                <button class="button" type="button" data-action="test-alert">Test</button>
+              </div>
+              <label class="field" style="margin-top:6px">Check for requests every, seconds
+                <input type="number" min="3" max="60" data-setting="pollSeconds">
+              </label>
+              <button class="button button-quiet button-block" type="button" data-action="request-notifications" style="margin-top:12px">Enable desktop notifications</button>
+              <p style="font-size:.68rem;color:var(--muted);margin:8px 0 0" data-notification-status></p>
+              <details class="advanced-settings" data-advanced-connection hidden>
+                <summary>Advanced connection settings</summary>
+                <div class="advanced-content">
+                  <p class="people-note" style="margin:0">Diagnostic information for support requests. This deployment's API origin and workspace identifiers are fixed by Tími and cannot be reconfigured here.</p>
+                  <label class="field">Cloudflare Worker HTTPS URL<input type="text" readonly data-advanced-origin></label>
+                  <label class="field">Tenant ID<input type="text" readonly data-advanced-tenant></label>
+                  <label class="field">Environment<input type="text" readonly data-advanced-env></label>
+                </div>
+              </details>
+            </section>
+          </div>
+        </div>
       </div>
     </section>
 
@@ -498,7 +568,7 @@
         <nav class="rail-nav" style="margin-top:42px">
           <a href="#console" data-nav="console">Operations</a>
           <a href="#overflow" data-nav="overflow">Overflow tools</a>
-          <a href="#people" data-nav="people">People</a>
+          <a href="#people" data-nav="people"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>People</a>
           <a href="#legal?section=clinics" data-nav="legal">Legal</a>
         </nav>
         <div class="rail-spacer"></div>
