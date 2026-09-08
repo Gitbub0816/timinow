@@ -6,6 +6,7 @@
 #   ./scripts/bootstrap.sh ~/Downloads/env.example --dry-run
 #   ./scripts/bootstrap.sh ~/Downloads/env.example --secrets-only
 #   ./scripts/bootstrap.sh ~/Downloads/env.example --no-pull
+#   ./scripts/bootstrap.sh ~/Downloads/env.example --all-workers
 #
 # This is the only command needed. It brings the checkout up to date first, so
 # there is no separate pull to remember and no merge conflict to resolve: step
@@ -18,6 +19,18 @@
 #   public values  -> the vars block of the wrangler config that needs them
 #   secrets        -> `wrangler secret put`, per Worker, never written to disk
 #   build secrets  -> `gh secret set`, for the repository
+#
+# By default that's the minimum-necessary set — a Worker only ever gets the
+# credentials its own code reads, so a compromise of one Worker doesn't hand
+# over every credential the platform holds. --all-workers instead pushes
+# every var and every secret in the env file to all four Workers, adding a
+# fresh vars-block entry where a config never had that key, ignoring which
+# code actually reads it. Cloudflare secrets are write-only by design — this
+# cannot pull a value that's already live on one Worker onto another; it can
+# only push whatever is actually written IN THE ENV FILE, so get every real
+# value into it first (the values you're missing have to come from wherever
+# you originally got them: Clerk, Stripe, Twilio, etc. — nothing can recover
+# a secret already set and forgotten).
 #
 # Then migrates the production database, deploys all four Workers, and checks
 # that each one answers.
@@ -43,6 +56,12 @@ INSPECT=false
 TEST_CALL=""
 TEST_VOICE=""
 TTS_CHECK=false
+# Every set_var/put_secret call below targets only the Worker(s) whose code
+# actually reads that key — deliberately, so a compromised Worker only ever
+# holds the credentials it needs. --all-workers overrides that: every value
+# in the env file goes to all four Workers regardless of whether anything
+# there reads it, because you asked for blanket parity over minimal exposure.
+ALL_WORKERS=false
 
 # Every argument is read, in any order, so the flags combine — `--dry-run
 # --no-pull` used to silently ignore the second one.
@@ -53,6 +72,7 @@ while [ $# -gt 0 ]; do
     --secrets-only) SECRETS_ONLY=true ;;
     --no-pull)      PULL=false ;;
     --inspect)      INSPECT=true ;;
+    --all-workers)  ALL_WORKERS=true ;;
     --test-call)    TEST_CALL="${2:-}"; shift ;;
     --voice)        TEST_VOICE="${2:-}"; shift ;;
     --tts-check)    TTS_CHECK=true ;;
@@ -64,8 +84,9 @@ while [ $# -gt 0 ]; do
 done
 
 if [ -z "$ENV_FILE" ]; then
-  echo "usage: $0 <path-to-env-file> [--dry-run] [--secrets-only] [--no-pull] [--inspect] [--tts-check] [--test-call +1... [--voice NAME]]" >&2
+  echo "usage: $0 <path-to-env-file> [--dry-run] [--secrets-only] [--no-pull] [--inspect] [--all-workers] [--tts-check] [--test-call +1... [--voice NAME]]" >&2
   echo "example: $0 ~/Downloads/env.example" >&2
+  echo "example: $0 ~/Downloads/env.example --all-workers   # push every key to all four Workers, not just the ones that read it" >&2
   exit 1
 fi
 
@@ -269,6 +290,10 @@ set_var() { # set_var KEY CONFIG...
   local value
   value="$(env_value "$key")"
   [ -n "$value" ] || { dim "  skip  $key (blank in env file)"; SKIPPED="$SKIPPED $key"; return 0; }
+  # --all-workers: ignore the caller's chosen targets, use every config.
+  # Deduplicated so a key already listing $CUSTOMER twice (it never does, but
+  # a future edit might) doesn't write it twice.
+  if $ALL_WORKERS; then set -- "$CUSTOMER" "$VET" "$ADMIN" "$VOICE"; fi
 
   # A setting whose name ends in _URL has to be one. Catching it here beats
   # letting it reach the configuration check, which can only report that
@@ -313,24 +338,37 @@ set_var() { # set_var KEY CONFIG...
     if $DRY; then
       if grep -q "\"$key\"[[:space:]]*:" "$config"; then
         dim "    would set $key in $config"
+      elif $ALL_WORKERS; then
+        dim "    would add $key to $config's vars block (it has no slot there yet)"
       else
         die "  $key has no slot in $config — add it to that file's vars block first"
       fi
     else
-      KEY="$key" VALUE="$value" CONFIG="$config" node -e '
+      KEY="$key" VALUE="$value" CONFIG="$config" ALL_WORKERS="$ALL_WORKERS" node -e '
         const fs = require("fs");
-        const { KEY, VALUE, CONFIG } = process.env;
+        const { KEY, VALUE, CONFIG, ALL_WORKERS } = process.env;
         const text = fs.readFileSync(CONFIG, "utf8");
         const pattern = new RegExp(`("${KEY}"\\s*:\\s*)"[^"]*"`);
-        if (!pattern.test(text)) {
-          console.error(`    ${KEY} has no slot in ${CONFIG} — add it to that vars block first`);
-          process.exit(1);
-        }
         // A replacement *function*, not a string. A $1 or $& appearing inside a
         // Clerk key or Mapbox token would otherwise be read as a backreference
         // and silently corrupt the file.
         const quoted = JSON.stringify(VALUE);
-        const updated = text.replace(pattern, (_match, prefix) => prefix + quoted);
+        let updated;
+        if (pattern.test(text)) {
+          updated = text.replace(pattern, (_match, prefix) => prefix + quoted);
+        } else if (ALL_WORKERS === "true") {
+          // --all-workers: this config never had this key — add it as a new
+          // line right after the vars block opens, rather than refusing.
+          const opensVars = /("vars"\s*:\s*\{)/;
+          if (!opensVars.test(text)) {
+            console.error(`    ${CONFIG} has no "vars" block at all — cannot add ${KEY}`);
+            process.exit(1);
+          }
+          updated = text.replace(opensVars, (_match, open) => `${open}\n    ${JSON.stringify(KEY)}: ${quoted},`);
+        } else {
+          console.error(`    ${KEY} has no slot in ${CONFIG} — add it to that vars block first`);
+          process.exit(1);
+        }
         // Refuse to leave a config we just broke.
         JSON.parse(updated.replace(/^\s*\/\/.*$/gm, ""));
         fs.writeFileSync(CONFIG, updated);
@@ -812,6 +850,10 @@ put_secret() { # put_secret KEY CONFIG...
   value="$(env_value "$key")"
   [ -n "$value" ] || { dim "  skip  $key (blank in env file)"; SKIPPED="$SKIPPED $key"; return 0; }
   check_secret_shape "$key" "$value"
+  # --all-workers: every secret in the env file goes to all four Workers,
+  # overriding the caller's chosen targets. Unlike set_var, a Worker's secret
+  # store has no fixed schema, so there is no "slot" to add first.
+  if $ALL_WORKERS; then set -- "$CUSTOMER" "$VET" "$ADMIN" "$VOICE"; fi
   local config
   for config in "$@"; do
     if $DRY; then
