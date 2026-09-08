@@ -567,6 +567,12 @@ set_var GEMINI_TTS_MODEL       "$VOICE"
 set_var GEMINI_TTS_STYLE       "$VOICE"
 set_var PLATFORM_ADMIN_EMAILS  "$ADMIN"
 set_var PLATFORM_ADMIN_USER_IDS "$ADMIN"
+# Native push to the customer iOS app — see src/push.js and .env.example's
+# APNS_* section. Only the customer Worker ever calls sendApnsPush.
+set_var APNS_KEY_ID             "$CUSTOMER"
+set_var APNS_TEAM_ID            "$CUSTOMER"
+set_var APNS_BUNDLE_ID          "$CUSTOMER"
+set_var APNS_ENVIRONMENT        "$CUSTOMER"
 # Shared by both ends of the immediate-dispatch path, so it goes to both.
 set_var VOICE_DRAIN_TOKEN      "$CUSTOMER" "$VOICE"
 # Optional for the drain itself, which no-ops on an empty queue and is reachable
@@ -924,6 +930,8 @@ put_secret GUEST_SESSION_SECRET       "$CUSTOMER"
 # enrolls through providers.timinow.pet, but the customer Worker serves the
 # same /api/clinic/* routes too (see docs/PLATFORM-CONTRACT.md).
 put_secret WORKSTATION_SESSION_SECRET "$CUSTOMER" "$VET"
+# The APNs Auth Key private key. Only the customer Worker sends native push.
+put_secret APNS_AUTH_KEY_P8      "$CUSTOMER"
 echo
 
 # Only what a workflow actually consumes. Setting a secret nothing reads is

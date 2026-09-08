@@ -50,6 +50,12 @@ public struct CustomerRootView: View {
         // re-applied if it ever changes. No-op on builds without Mapbox.
         .task { TimiMapboxToken.apply(store.mapToken) }
         .onChange(of: store.mapToken) { token in TimiMapboxToken.apply(token) }
+        // Silent — no prompt, no change to store.notificationsEnabled — so a
+        // phone that already granted notification permission in an earlier
+        // session keeps registering a fresh APNs token every cold start
+        // rather than only when the Settings toggle happens to be flipped
+        // again this launch. See PlatformPermissions.reregisterIfAlreadyAuthorized.
+        .task { _ = await PlatformPermissions.reregisterIfAlreadyAuthorized() }
     }
 
     @ViewBuilder var appContent: some View {

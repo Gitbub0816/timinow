@@ -132,7 +132,17 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
         // remember to.
         gateway.tokenProvider = self.auth
         self.auth.onProfileResolved = { [weak self] profile in self?.adoptOwner(profile) }
-        self.auth.onSignedOut = { [weak self] in self?.forgetAccountData() }
+        self.auth.onSignedOut = { [weak self] in
+            guard let self else { return }
+            self.forgetAccountData()
+            // A phone that just signed out must stop being pushed to for the
+            // account it left — otherwise it keeps receiving that account's
+            // "we found you a clinic" pushes until it happens to register a
+            // fresh token some other way.
+            if let token = self.registeredPushDeviceToken {
+                Task { [gateway = self.gateway] in await gateway.unregisterPushDevice(deviceToken: token) }
+            }
+        }
         self.auth.onCredentialStorageFailed = { [weak self] status in self?.reportKeychainFailure(status) }
         self.auth.onRestoreOutcome = { [weak self] outcome in self?.reportRestoreOutcome(outcome) }
     }
@@ -255,6 +265,50 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
         #endif
         persistPets()
         persistHistory()
+    }
+
+    // MARK: - Push notifications
+
+    /// The most recently registered APNs device token (hex-encoded), kept
+    /// only so sign-out can unregister the same one it registered. Not
+    /// persisted: PushDelegate (Darwin/Sources/PushDelegate.swift) hands this
+    /// in again on every launch's
+    /// `didRegisterForRemoteNotificationsWithDeviceToken`, so nothing is lost
+    /// by forgetting it when the app quits.
+    private var registeredPushDeviceToken: String?
+
+    /// Sends this device's APNs token to the Worker under whatever session is
+    /// active — signed in or guest, `TimiGateway.send` attaches whichever
+    /// applies — so a phone that never signed in can still be pushed to. See
+    /// `POST /api/push/register-device` in src/push.js.
+    public func registerPushToken(_ deviceToken: String) async {
+        registeredPushDeviceToken = deviceToken
+        guard !gateway.isDemo else { return }
+        await gateway.registerPushDevice(deviceToken: deviceToken)
+    }
+
+    /// Called from `PushDelegate`'s notification-tap handler with the search
+    /// id the push payload carried (`searchId` in `sendPushForFirstOffer`,
+    /// src/push.js). Lands wherever `selectOffer` would have: the tracker if
+    /// an offer was already chosen by the time the tap arrived, the offers
+    /// list otherwise — the same fork `refreshSearch`'s polling drives while
+    /// the app is open.
+    public func openSearchFromPush(searchId: String) async {
+        guard !gateway.isDemo, !searchId.isEmpty else { return }
+        do {
+            let search = try await gateway.refreshSearch(searchId)
+            currentSearch = search
+            if let intakeId = search.selectedIntakeId {
+                currentIntake = try? await gateway.refreshIntake(intakeId)
+                route = .tracker
+            } else {
+                route = .searching
+            }
+            selectedTab = 0
+            trackEvent("push_opened", path: "push", meta: ["searchId": searchId])
+        } catch {
+            report(error)
+        }
     }
 
     /// Takes whatever sign-in learned without overwriting anything the owner
