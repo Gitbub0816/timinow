@@ -711,6 +711,52 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
         catch { report(error) }
     }
 
+    // MARK: - Booking payment (Tími's platform fee, bundled with any clinic deposit)
+
+    /// The current combined booking-payment order, or nil until the tracker
+    /// screen asks for one.
+    ///
+    /// Held here rather than in the view for the same reason as
+    /// `depositIntent`: a redraw must not open a second charge, and while the
+    /// Worker's own idempotency key would make that harmless at Stripe, it
+    /// would still be a request per redraw.
+    public var bookingPayment: BookingPaymentOrder?
+    public var bookingPaymentBusy = false
+
+    /// True once nothing more needs collecting for this booking — a real
+    /// paid charge, an already-settled poll, a $0 sponsored-and-no-deposit
+    /// order, or a demo build with no Stripe credentials to collect through.
+    /// `TrackerView` reads this to decide whether clinic details may be
+    /// revealed yet.
+    public var bookingPaymentSettled: Bool {
+        guard let mode = bookingPayment?.mode else { return false }
+        return ["paid", "no_charge", "demo"].contains(mode)
+    }
+
+    /// Ask the Worker for the combined booking payment on the current intake.
+    ///
+    /// Safe to call again after PaymentSheet reports `.completed` — it
+    /// re-polls the same idempotent endpoint rather than opening a second
+    /// charge, exactly like `refreshDepositStatus` re-polling explains for
+    /// the deposit flow: the phone is not the authority on whether a payment
+    /// cleared, the webhook writes the row, this only asks what it says.
+    ///
+    /// `gateway.isDemo` — the whole-app demo mode with no Worker at all, not
+    /// the Worker's own `mode: "demo"` answer for a deployment with no Stripe
+    /// credentials — has nothing to poll, so it settles locally, mirroring
+    /// `prepareDeposit`'s own demo branch.
+    public func prepareBookingPayment() async {
+        guard let intake = currentIntake else { return }
+        if gateway.isDemo {
+            bookingPayment = BookingPaymentOrder(mode: "demo", totalCents: 0)
+            return
+        }
+        bookingPaymentBusy = true
+        do { bookingPayment = try await gateway.createBookingPayment(intakeId: intake.id) }
+        catch { report(error) }
+        bookingPaymentBusy = false
+    }
+
     // MARK: - Paw It Forward Fund (financial hardship)
 
     /// The account's current standing — an active grant, or the standard fee.

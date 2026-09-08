@@ -183,6 +183,17 @@ public final class TimiGateway: @unchecked Sendable {
         return try await send(baseURL.appendingPathComponent("api/intakes/\(intakeId)/payment-intent"), method: "POST", body: EmptyPayload())
     }
 
+    /// Ask the Worker for this intake's combined booking payment — Tími's own
+    /// platform fee bundled with any clinic-required arrival deposit as one
+    /// charge. Mirrors `createDepositIntent` exactly: the Worker creates (or
+    /// finds) the order idempotently, so calling this again — including after
+    /// PaymentSheet reports `.completed` — returns the same order rather than
+    /// opening a second charge.
+    public func createBookingPayment(intakeId: String) async throws -> BookingPaymentOrder {
+        guard let baseURL else { throw TimiAPIError.invalidConfiguration(configuredAddress) }
+        return try await send(baseURL.appendingPathComponent("api/intakes/\(intakeId)/booking-payment"), method: "POST", body: EmptyPayload())
+    }
+
     // MARK: - Pets
 
     /// The account's pets. Empty in demo mode, where there is nothing stored.
@@ -619,5 +630,69 @@ public struct DepositIntent: Decodable, Sendable {
         self.mode = mode; self.clientSecret = clientSecret; self.paymentIntentId = paymentIntentId
         self.publishableKey = publishableKey; self.depositAmountCents = depositAmountCents
         self.currency = currency; self.intake = intake
+    }
+}
+
+/// One line of a booking payment order — src/booking-payment.js's
+/// `getPaymentOrder`. `purpose` is `OWNER_PLATFORM_FEE` or `CLINIC_DEPOSIT`
+/// for every order this endpoint can return (`CLINIC_PLATFORM_FEE` and
+/// `FUND_CONTRIBUTION` exist in the schema but never reach this call).
+public struct BookingPaymentAllocation: Decodable, Sendable {
+    public var id: String
+    public var purpose: String
+    public var amountCents: Int
+    public var refundedCents: Int
+    public var disputedCents: Int
+
+    public init(id: String, purpose: String, amountCents: Int, refundedCents: Int = 0, disputedCents: Int = 0) {
+        self.id = id; self.purpose = purpose; self.amountCents = amountCents
+        self.refundedCents = refundedCents; self.disputedCents = disputedCents
+    }
+}
+
+/// The `payment_orders` row itself, as `getPaymentOrder` shapes it. Every
+/// field here is written at order-creation time and never left null in a
+/// successful response, so none of these are Optional — unlike the fields on
+/// `BookingPaymentOrder` below, which really do vary by `mode`.
+public struct BookingPaymentOrderDetail: Decodable, Sendable {
+    public var id: String
+    public var status: String
+    public var totalCents: Int
+    public var currency: String
+    public var allocations: [BookingPaymentAllocation]
+
+    public init(id: String, status: String, totalCents: Int, currency: String, allocations: [BookingPaymentAllocation]) {
+        self.id = id; self.status = status; self.totalCents = totalCents
+        self.currency = currency; self.allocations = allocations
+    }
+}
+
+/// What the Worker returns for `POST /api/intakes/{id}/booking-payment` —
+/// Tími's own platform fee bundled with any clinic-required arrival deposit
+/// as one combined charge. See `src/booking-payment.js` and
+/// `handleBookingPayment` in src/index.js for the server side.
+///
+/// `mode` says which path answered: `stripe` when a real PaymentIntent was
+/// created, `demo` when this deployment has no Stripe credentials configured
+/// and the order was left `REQUIRES_CONFIRMATION` with nothing to collect
+/// through, `no_charge` when the order totals zero (an active Paw It Forward
+/// grant waived the owner fee and no clinic deposit is owed), and `paid`
+/// when an earlier poll's webhook already settled it — that shortcut is why
+/// `clientSecret` and `totalCents` are only ever populated for `stripe` and
+/// (for `totalCents`) `demo`/`no_charge`, never for `paid`.
+///
+/// The client secret is never logged and never persisted, exactly like
+/// `DepositIntent.clientSecret` — anyone holding it can complete this
+/// payment.
+public struct BookingPaymentOrder: Decodable, Sendable {
+    public var mode: String
+    public var clientSecret: String?
+    public var totalCents: Int?
+    public var order: BookingPaymentOrderDetail?
+    public var publishableKey: String?
+
+    public init(mode: String, clientSecret: String? = nil, totalCents: Int? = nil, order: BookingPaymentOrderDetail? = nil, publishableKey: String? = nil) {
+        self.mode = mode; self.clientSecret = clientSecret; self.totalCents = totalCents
+        self.order = order; self.publishableKey = publishableKey
     }
 }
