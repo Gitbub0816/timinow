@@ -173,11 +173,53 @@ public struct EmergencyPlacesEnvelope: Codable, Sendable {
     public var places: [EmergencyPlace]
 }
 
+/// The wait range on a masked match card. Mirrors
+/// `maskedMatchCard`'s `timinow.estimatedWait` in `src/match-alias.js`.
+public struct MaskedMatchWaitEstimate: Codable, Hashable, Sendable {
+    public var minMinutes: Int?
+    public var maxMinutes: Int?
+}
+
+/// The temporary name shown in place of the clinic's real one. See
+/// `MATCH_ALIAS_LABEL` in `src/match-alias.js` — never the clinic's actual
+/// business name.
+public struct MaskedMatchAlias: Codable, Hashable, Sendable {
+    public var displayName: String?
+    public var label: String?
+}
+
+/// Tími's own operational facts about a masked match — the part of the card
+/// that survives anonymization: distance, wait, availability, capabilities.
+/// Mirrors `maskedMatchCard`'s `timinow` block.
+public struct MaskedMatchFacts: Codable, Hashable, Sendable {
+    public var distanceMiles: Double?
+    public var travelMinutes: Int?
+    public var acceptingNow: Bool?
+    public var availabilityStatus: String?
+    public var estimatedWait: MaskedMatchWaitEstimate?
+    public var acceptsCritical: Bool?
+    public var species: [String]?
+    public var capabilities: [String]?
+    public var kind: String?
+}
+
+/// The pre-confirmation offer card for an offer the customer has not yet
+/// selected — `src/match-alias.js`'s `maskedMatchCard()`. The Worker
+/// withholds the clinic's real name, address, and phone until the customer
+/// books, and sends this shape in the same `location` JSON key a revealed
+/// offer would use, so `CareOffer` tries `ClinicLocation` first and falls
+/// back to this on a shape mismatch.
+public struct MaskedMatchCard: Codable, Hashable, Sendable {
+    public var matchToken: String?
+    public var alias: MaskedMatchAlias?
+    public var timinow: MaskedMatchFacts?
+}
+
 public struct CareOffer: Identifiable, Codable, Hashable, Sendable {
     public var id: String
     public var searchId: String?
     public var targetId: String?
-    public var locationId: String
+    public var locationId: String?
     public var tenantId: String?
     public var responseType: String
     public var status: String
@@ -192,6 +234,57 @@ public struct CareOffer: Identifiable, Codable, Hashable, Sendable {
     public var offeredAt: String?
     public var expiresAt: String?
     public var location: ClinicLocation?
+    /// Set instead of `location` when the Worker sent a masked match card.
+    /// See `MaskedMatchCard`.
+    public var maskedCard: MaskedMatchCard?
+
+    public init(id: String, searchId: String? = nil, targetId: String? = nil, locationId: String? = nil, tenantId: String? = nil, responseType: String, status: String, availableAt: String? = nil, arrivalBy: String? = nil, waitMin: Int? = nil, waitMax: Int? = nil, clinicNote: String? = nil, policy: ClinicPolicy? = nil, depositAmountCents: Int? = nil, baseExamFeeCents: Int? = nil, offeredAt: String? = nil, expiresAt: String? = nil, location: ClinicLocation? = nil, maskedCard: MaskedMatchCard? = nil) {
+        self.id = id; self.searchId = searchId; self.targetId = targetId; self.locationId = locationId; self.tenantId = tenantId
+        self.responseType = responseType; self.status = status; self.availableAt = availableAt; self.arrivalBy = arrivalBy
+        self.waitMin = waitMin; self.waitMax = waitMax; self.clinicNote = clinicNote; self.policy = policy
+        self.depositAmountCents = depositAmountCents; self.baseExamFeeCents = baseExamFeeCents; self.offeredAt = offeredAt
+        self.expiresAt = expiresAt; self.location = location; self.maskedCard = maskedCard
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, searchId, targetId, locationId, tenantId, responseType, status, availableAt, arrivalBy, waitMin, waitMax, clinicNote, policy, depositAmountCents, baseExamFeeCents, offeredAt, expiresAt, location
+    }
+
+    /// A masked offer's `location` key holds a `MaskedMatchCard`, not a
+    /// `ClinicLocation` — no `id`, no `name`, none of `ClinicLocation`'s
+    /// required fields. Decoding it as `ClinicLocation` unconditionally
+    /// (the synthesized behavior) threw on every offer the customer had not
+    /// yet selected, which is the *default* state of a fresh offer — so
+    /// every multi-clinic search broke the moment a clinic responded. This
+    /// tries the revealed shape first and falls back to the masked one
+    /// rather than failing the whole `CareSearch` decode.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        searchId = try container.decodeIfPresent(String.self, forKey: .searchId)
+        targetId = try container.decodeIfPresent(String.self, forKey: .targetId)
+        locationId = try container.decodeIfPresent(String.self, forKey: .locationId)
+        tenantId = try container.decodeIfPresent(String.self, forKey: .tenantId)
+        responseType = try container.decode(String.self, forKey: .responseType)
+        status = try container.decode(String.self, forKey: .status)
+        availableAt = try container.decodeIfPresent(String.self, forKey: .availableAt)
+        arrivalBy = try container.decodeIfPresent(String.self, forKey: .arrivalBy)
+        waitMin = try container.decodeIfPresent(Int.self, forKey: .waitMin)
+        waitMax = try container.decodeIfPresent(Int.self, forKey: .waitMax)
+        clinicNote = try container.decodeIfPresent(String.self, forKey: .clinicNote)
+        policy = try container.decodeIfPresent(ClinicPolicy.self, forKey: .policy)
+        depositAmountCents = try container.decodeIfPresent(Int.self, forKey: .depositAmountCents)
+        baseExamFeeCents = try container.decodeIfPresent(Int.self, forKey: .baseExamFeeCents)
+        offeredAt = try container.decodeIfPresent(String.self, forKey: .offeredAt)
+        expiresAt = try container.decodeIfPresent(String.self, forKey: .expiresAt)
+        if let revealed = try? container.decodeIfPresent(ClinicLocation.self, forKey: .location) {
+            location = revealed
+            maskedCard = nil
+        } else {
+            location = nil
+            maskedCard = try? container.decodeIfPresent(MaskedMatchCard.self, forKey: .location)
+        }
+    }
 }
 
 public struct SearchProgress: Codable, Hashable, Sendable {

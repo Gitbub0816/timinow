@@ -117,7 +117,22 @@ struct OfferSearchView: View {
 struct OfferCard: View {
     var offer: CareOffer; var rank: Int; var isWorking: Bool; var select: () -> Void
     @State var details = false
-    var clinic: ClinicLocation { offer.location ?? ClinicLocation(id: offer.locationId, name: "Veterinary clinic") }
+    /// A masked offer (the default until the customer selects one — see
+    /// `MaskedMatchCard`) has no real clinic to show, so this stands in
+    /// with the temporary alias name and the facts that survive masking.
+    /// `address`/`phone` are left nil either way: the existing "Address
+    /// shown on confirmation" copy below already covers that case.
+    var clinic: ClinicLocation {
+        if let location = offer.location { return location }
+        if let masked = offer.maskedCard {
+            return ClinicLocation(
+                id: masked.matchToken ?? offer.id,
+                name: masked.alias?.displayName ?? "New clinic match",
+                distanceMiles: masked.timinow?.distanceMiles
+            )
+        }
+        return ClinicLocation(id: offer.locationId ?? offer.id, name: "Veterinary clinic")
+    }
     var isEmergency: Bool { offer.responseType == "emergency_intake" }
 
     var body: some View {
