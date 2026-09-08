@@ -32,6 +32,7 @@
  */
 
 import { getIntake, hasDatabase } from "./db.js";
+import { markBookingPaymentOrderStatus } from "./booking-payment.js";
 import {
   accountCapabilities,
   createPaymentIntent,
@@ -851,6 +852,9 @@ async function applyEvent(env, event) {
           .bind(object.id, nowIso(), intakeId).run();
         await recordIntakeEvent(env, intakeId, "deposit_paid", { paymentIntentId: object.id, amountCents: object.amount_received ?? object.amount });
       }
+      if (object.metadata?.timi_payment_order_id) {
+        await markBookingPaymentOrderStatus(env, { paymentOrderId: object.metadata.timi_payment_order_id, status: "PAID", stripeEventId: event.id });
+      }
       return { handled: true, intakeId };
     }
 
@@ -886,6 +890,9 @@ async function applyEvent(env, event) {
         await env.DB.prepare("UPDATE intake_requests SET payment_status = 'failed', updated_at = ? WHERE id = ? AND payment_status <> 'paid'")
           .bind(nowIso(), intakeId).run();
       }
+      if (object.metadata?.timi_payment_order_id) {
+        await markBookingPaymentOrderStatus(env, { paymentOrderId: object.metadata.timi_payment_order_id, status: "FAILED", stripeEventId: event.id });
+      }
       return { handled: true, intakeId };
     }
 
@@ -907,6 +914,9 @@ async function applyEvent(env, event) {
         stripeEventId: event.id,
         raw: { reason: object.cancellation_reason || null }
       });
+      if (object.metadata?.timi_payment_order_id) {
+        await markBookingPaymentOrderStatus(env, { paymentOrderId: object.metadata.timi_payment_order_id, status: "CANCELLED", stripeEventId: event.id });
+      }
       return { handled: true, intakeId };
     }
 

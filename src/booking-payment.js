@@ -27,6 +27,7 @@
 import { hasDatabase } from "./db.js";
 import { activePricingPolicy, validateContributionAmount } from "./pricing.js";
 import { createPaymentIntent, idempotencyKey, stripeConfigured, StripeError } from "./stripe.js";
+import { activeGrantFor, recordSponsoredCompletion } from "./hardship/index.js";
 
 function newId(prefix) {
   return `${prefix}_${crypto.randomUUID().replaceAll("-", "")}`;
@@ -184,6 +185,13 @@ export async function chargeBookingOrder(env, paymentOrderId) {
        */
       metadata: {
         clearkey_product: "timinow",
+        // Deliberately not the deposit flow's own `intake_id` key: that key
+        // is what src/payments.js's intakeIdFromMetadata reads to mark
+        // intake_requests.payment_status "paid" and write a "deposit_*"
+        // payment_ledger row, and this can be an owner-fee-only charge with
+        // no deposit in it at all — mislabeling that as a deposit event
+        // would corrupt reconciliation. This charge is looked up by
+        // timi_payment_order_id instead; see markBookingPaymentOrderStatus.
         timi_payment_order_id: paymentOrderId,
         timi_intake_id: order.intake_id || "",
         timi_tenant_id: order.tenant_id || "",
@@ -211,6 +219,102 @@ export async function chargeBookingOrder(env, paymentOrderId) {
     }
     throw error;
   }
+}
+
+/**
+ * The customer-facing entry point: get (or start) the one combined charge
+ * for an intake — the $15 owner fee, plus the clinic's own arrival deposit
+ * when its deposit policy calls for one, as a single card charge.
+ *
+ * Idempotent across repeated calls (a screen that reappears, a retry after a
+ * dropped connection): once a `payment_orders` row exists for this intake
+ * and has not failed or been cancelled, this reuses it and re-charges the
+ * *same* order id, which carries the same Stripe idempotency key — so a
+ * second call never opens a second PaymentIntent.
+ *
+ * `depositCents` is read from the intake's own `depositAmountCents` —
+ * already the deposit-policy engine's answer for this specific booking at
+ * `selectCareOffer` time — rather than recomputed here.
+ */
+export async function ensureBookingPaymentOrder(env, { intake }) {
+  if (!hasDatabase(env)) return { ok: false, code: "DATABASE_REQUIRED", message: "D1 is required to take a payment." };
+
+  const existing = await env.DB.prepare(
+    "SELECT id FROM payment_orders WHERE intake_id = ? AND purpose = 'BOOKING' AND status NOT IN ('FAILED', 'CANCELLED') ORDER BY created_at DESC LIMIT 1"
+  ).bind(intake.id).first();
+
+  let orderId;
+  if (existing) {
+    orderId = existing.id;
+  } else {
+    // A grant only ever waives the $15 owner fee — never the clinic's own
+    // deposit, which is the clinic's money, not Tími's, and is owed
+    // regardless of the customer's hardship standing.
+    const grant = await activeGrantFor(env, intake.customerUserId);
+    const depositCents = intake.policy?.depositRequired ? Math.trunc(Number(intake.depositAmountCents) || 0) : 0;
+    const quote = await quoteBooking(env, { sponsored: Boolean(grant), depositCents });
+    if (!quote.ok) return quote;
+    const created = await createBookingPaymentOrder(env, {
+      quote,
+      intakeId: intake.id,
+      tenantId: intake.tenantId,
+      payerUserId: intake.customerUserId,
+      // Recorded so the webhook can find which grant to consume once this
+      // order is actually paid — never eagerly here, since an order that is
+      // merely quoted and never paid must not spend somebody's one
+      // sponsored connection.
+      confirmationSnapshot: { sponsoredGrantId: grant?.id || null }
+    });
+    if (!created.ok) return created;
+    orderId = created.paymentOrderId;
+  }
+
+  const charge = await chargeBookingOrder(env, orderId);
+  if (!charge.ok) return charge;
+  return { ...charge, order: await getPaymentOrder(env, orderId) };
+}
+
+/**
+ * Applies a Stripe payment_intent event to the `payment_orders` row it
+ * belongs to. Deliberately touches nothing else — not `intake_requests`,
+ * not either ledger — so this stays additive to the existing deposit
+ * webhook handling in src/payments.js rather than risking it.
+ *
+ * Consumes a sponsorship grant on the transition to PAID, if this order's
+ * quote waived the owner fee against one. The hardship module's own
+ * `recordSponsoredCompletion` is written for "consume when the visit is
+ * actually seen," which this is not — consuming on confirmed payment
+ * instead is a deliberate, simpler substitute so a paid, sponsored booking
+ * can never be reused for a second free connection while that larger
+ * completion-time wiring remains unbuilt.
+ */
+export async function markBookingPaymentOrderStatus(env, { paymentOrderId, status, stripeEventId }) {
+  if (!hasDatabase(env) || !paymentOrderId) return { updated: false };
+  const order = await env.DB.prepare("SELECT * FROM payment_orders WHERE id = ? AND purpose = 'BOOKING' LIMIT 1").bind(paymentOrderId).first();
+  if (!order) return { updated: false };
+  // A webhook can arrive out of order; once paid, nothing should move an
+  // order backwards to e.g. a late "processing" event for the same intent.
+  if (order.status === "PAID" && status !== "PAID") return { updated: false };
+  if (order.status === status) return { updated: false };
+
+  await env.DB.prepare("UPDATE payment_orders SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
+    .bind(status, paymentOrderId).run();
+
+  if (status === "PAID") {
+    let snapshot = {};
+    try { snapshot = JSON.parse(order.confirmation_snapshot_json || "{}"); } catch { /* malformed snapshot, nothing to consume */ }
+    if (snapshot.sponsoredGrantId) {
+      const consumed = await recordSponsoredCompletion(env, {
+        grantId: snapshot.sponsoredGrantId,
+        userId: order.payer_user_id,
+        reservationId: paymentOrderId
+      });
+      if (!consumed.ok) {
+        console.warn(JSON.stringify({ event: "booking_payment_grant_consume_failed", paymentOrderId, grantId: snapshot.sponsoredGrantId, reason: consumed.code, stripeEventId }));
+      }
+    }
+  }
+  return { updated: true };
 }
 
 /** An order with its allocations, for receipts and for reconciliation. */

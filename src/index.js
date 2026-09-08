@@ -31,6 +31,7 @@ import {
   settleIntake
 } from "./payments.js";
 import { stripeConfigured, StripeError, verifyWebhookSignature } from "./stripe.js";
+import { ensureBookingPaymentOrder } from "./booking-payment.js";
 import { findEmergencyVeterinaryPlaces, phoneKey } from "./mapbox-places.js";
 import { recordAnalyticsEvents } from "./analytics.js";
 import { listPets, savePet, removePet, syncPets, validatePet } from "./pets.js";
@@ -1680,6 +1681,36 @@ async function handlePaymentIntent(request, env, actor, intakeId) {
   }
 }
 
+/**
+ * The customer's one combined charge for a confirmed booking: the $15 owner
+ * fee, plus the clinic's own arrival deposit when its policy calls for one.
+ * Safe to call repeatedly — `ensureBookingPaymentOrder` reuses whatever
+ * order already exists for this intake rather than opening a second charge,
+ * so the client can call this again just to re-read status after Stripe's
+ * SDK reports success on-device.
+ */
+async function handleBookingPayment(request, env, actor, intakeId) {
+  if (!hasDatabase(env)) return apiError(503, "DATABASE_REQUIRED", "D1 is required for payments.");
+  const intake = await getIntake(env, intakeId);
+  if (!intake) return apiError(404, "INTAKE_NOT_FOUND", "The intake request was not found.");
+  if (signInRequired(env) && intake.customerUserId !== actor?.userId) return apiError(403, "INTAKE_ACCESS_DENIED", "This intake belongs to another account.");
+  if (!new Set(["accepted", "en_route"]).has(intake.status)) return apiError(409, "INTAKE_NOT_ACCEPTED", "The clinic must accept the intake before this can be charged.");
+
+  try {
+    const result = await ensureBookingPaymentOrder(env, { intake });
+    if (!result.ok) return apiError(result.code === "DATABASE_REQUIRED" ? 503 : 422, result.code, result.message);
+    return json({
+      mode: result.mode,
+      clientSecret: result.clientSecret || null,
+      totalCents: result.totalCents,
+      order: result.order,
+      publishableKey: env.STRIPE_PUBLISHABLE_KEY || null
+    }, { status: 201 });
+  } catch (error) {
+    return paymentFailure(error);
+  }
+}
+
 function paymentFailure(error) {
   if (error.message === "PAYMENTS_NOT_CONFIGURED") {
     return apiError(503, "PAYMENTS_NOT_CONFIGURED", "Deposits are not configured on this deployment.");
@@ -1857,12 +1888,29 @@ async function expireStaleState(env) {
   const expired = await env.DB.prepare("SELECT id, status FROM intake_requests WHERE status = 'pending' AND request_expires_at <= ? LIMIT 200").bind(now).all();
   const noShows = await env.DB.prepare("SELECT id, status FROM intake_requests WHERE status IN ('accepted', 'en_route') AND arrival_by IS NOT NULL AND datetime(arrival_by) <= datetime(?, '-15 minutes') LIMIT 200").bind(now).all();
   const expiredOffers = await env.DB.prepare("SELECT id, search_id FROM care_offers WHERE status = 'active' AND datetime(expires_at) <= datetime(?) LIMIT 200").bind(now).all();
+  // A clinic accepted this intake and is holding capacity for it, but the
+  // customer never finished the booking charge (closed the app, a declined
+  // card, changed their mind) — 15 minutes after the booking was made, same
+  // grace window as an accepted intake's arrival_by no-show above.
+  const unpaidBookings = await env.DB.prepare(`
+    SELECT ir.id FROM intake_requests ir
+    WHERE ir.status = 'accepted' AND datetime(ir.decision_at) <= datetime(?, '-15 minutes')
+      AND NOT EXISTS (SELECT 1 FROM payment_orders po WHERE po.intake_id = ir.id AND po.purpose = 'BOOKING' AND po.status = 'PAID')
+    LIMIT 200
+  `).bind(now).all();
 
   const statements = [];
   for (const intake of expired.results) {
     statements.push(
       env.DB.prepare("UPDATE intake_requests SET status = 'expired', updated_at = ? WHERE id = ? AND status = 'pending'").bind(now, intake.id),
       env.DB.prepare("INSERT INTO intake_events (id, intake_id, event_type, actor_type, actor_id, detail_json) VALUES (?, ?, 'expired', 'system', NULL, ?)").bind(newId("event"), intake.id, JSON.stringify({ previousStatus: intake.status }))
+    );
+  }
+  for (const intake of unpaidBookings.results) {
+    statements.push(
+      env.DB.prepare("UPDATE intake_requests SET status = 'expired', updated_at = ? WHERE id = ? AND status = 'accepted'").bind(now, intake.id),
+      env.DB.prepare("INSERT INTO intake_events (id, intake_id, event_type, actor_type, actor_id, detail_json) VALUES (?, ?, 'expired', 'system', NULL, ?)").bind(newId("event"), intake.id, JSON.stringify({ previousStatus: "accepted", reason: "booking_payment_not_completed" })),
+      env.DB.prepare("UPDATE payment_orders SET status = 'CANCELLED', updated_at = ? WHERE intake_id = ? AND purpose = 'BOOKING' AND status IN ('DRAFT', 'REQUIRES_CONFIRMATION')").bind(now, intake.id)
     );
   }
   for (const intake of noShows.results) {
@@ -1895,7 +1943,7 @@ async function expireStaleState(env) {
 
   console.log(JSON.stringify({
     event: "scheduled_expiry_complete", at: now,
-    expired: expired.results.length, noShows: noShows.results.length,
+    expired: expired.results.length, unpaidBookings: unpaidBookings.results.length, noShows: noShows.results.length,
     closedCollections: searchWindows.closedCollections, expiredSearches: searchWindows.expiredSearches,
     expiredOffers: expiredOffers.results.length, ignoredClinicTargets: searchWindows.ignoredClinicTargets,
     activeSearchesChecked: waveProgress.checked, wavesAdvanced: waveProgress.advanced
@@ -2120,7 +2168,7 @@ async function handleAuthenticatedApi(request, env, ctx, actor, url, path, metho
     }
   }
 
-  const intakeMatch = path.match(/^\/api\/intakes\/([^/]+)(?:\/(status|payment|payment-intent|payment-status))?$/);
+  const intakeMatch = path.match(/^\/api\/intakes\/([^/]+)(?:\/(status|payment|payment-intent|payment-status|booking-payment))?$/);
   if (intakeMatch) {
     const intakeId = decodeURIComponent(intakeMatch[1]);
     const action = intakeMatch[2] || null;
@@ -2134,6 +2182,7 @@ async function handleAuthenticatedApi(request, env, ctx, actor, url, path, metho
     if (method === "POST" && action === "payment") return handlePayment(request, env, actor, intakeId);
     if (method === "POST" && action === "payment-intent") return handlePaymentIntent(request, env, actor, intakeId);
     if (method === "GET" && action === "payment-status") return refreshPayment(env, actor, intakeId);
+    if (method === "POST" && action === "booking-payment") return handleBookingPayment(request, env, actor, intakeId);
   }
 
   if (path.startsWith("/api/clinic/")) {
