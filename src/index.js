@@ -73,6 +73,7 @@ import {
 } from "./routing.js";
 import { recordAudit } from "./ledger.js";
 import { signSearchToken, verifySearchToken } from "./search-links.js";
+import { registerPushDevice, sendPushForFirstOffer, unregisterPushDevice } from "./push.js";
 
 const JSON_HEADERS = { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" };
 const SECURITY_HEADERS = {
@@ -1059,6 +1060,14 @@ export async function respondToCareSearch(request, env, actor, tenantId, targetI
       console.error(JSON.stringify({ event: "search_sms_failed", searchId: result.search.id, message: error.message }));
     });
     if (ctx?.waitUntil) ctx.waitUntil(notify);
+    // Native-push equivalent of the SMS above, firing independently of it —
+    // see src/push.js sendPushForFirstOffer. A backgrounded app that has
+    // registered a device token is woken the same moment the text goes out,
+    // and neither channel's failure holds up the other.
+    const push = sendPushForFirstOffer(env, result.search.id).catch((error) => {
+      console.error(JSON.stringify({ event: "search_push_failed", searchId: result.search.id, message: error.message }));
+    });
+    if (ctx?.waitUntil) ctx.waitUntil(push);
   }
   return result.target
     ? json({ target: result.target })
@@ -2070,6 +2079,15 @@ async function handleAuthenticatedApi(request, env, ctx, actor, url, path, metho
     const petsResponse = await handlePets(request, env, actor, path, method);
     if (petsResponse) return petsResponse;
   }
+
+  // ══════════════════════════════════════════════════════ push notifications ══
+  // Native-push registration for the iOS app — see src/push.js. Reuses
+  // whatever actor was resolved above (Clerk session or guest session), the
+  // same as every other customer route in this function; a guest who never
+  // signed in can still register a device and be pushed to.
+  if (method === "POST" && path === "/api/push/register-device") return registerPushDevice(request, env, actor);
+  if (method === "DELETE" && path === "/api/push/register-device") return unregisterPushDevice(request, env, actor);
+  // ══════════════════════════════════════════════════ end push notifications ══
 
   /**
    * Paw It Forward. Contributions are public on purpose: a guest may fund

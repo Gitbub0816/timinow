@@ -231,6 +231,45 @@ public final class TimiGateway: @unchecked Sendable {
         let _: ObservationEnvelope = try await send(baseURL.appendingPathComponent("api/observations"), method: "POST", body: ObservationPayload(intakeId: intake.id, locationId: intake.locationId, milestone: milestone))
     }
 
+    // MARK: - Push notifications
+
+    /// Hands the device's APNs token to the Worker (src/push.js), under
+    /// whichever session — Clerk or guest — `send(_:)` already attaches. Never
+    /// throws to the caller: a phone that cannot reach the Worker at the
+    /// moment permission was granted should not surface an error over
+    /// something the customer never asked to see; the next successful launch
+    /// re-registers it, since `PushDelegate` calls this on every
+    /// `didRegisterForRemoteNotificationsWithDeviceToken`, not only the first.
+    public func registerPushDevice(deviceToken: String, platform: String = "ios") async {
+        guard let baseURL else { return }
+        do {
+            let _: RegisterPushDeviceEnvelope = try await send(
+                baseURL.appendingPathComponent("api/push/register-device"), method: "POST",
+                body: PushDeviceTokenPayload(deviceToken: deviceToken, platform: platform)
+            )
+        } catch {
+            // Offline at the moment permission was granted, most likely.
+            // PushDelegate calls this on every launch's
+            // didRegisterForRemoteNotificationsWithDeviceToken, not only the
+            // first, so the next one retries — nothing here needs a queue.
+        }
+    }
+
+    /// Unregisters this device's token — called on sign-out, so a phone that
+    /// signed out does not keep receiving another account's search pushes.
+    public func unregisterPushDevice(deviceToken: String) async {
+        guard let baseURL else { return }
+        do {
+            let _: UnregisterPushDeviceEnvelope = try await send(
+                baseURL.appendingPathComponent("api/push/register-device"), method: "DELETE",
+                body: PushDeviceTokenPayload(deviceToken: deviceToken, platform: "ios")
+            )
+        } catch {
+            // Best-effort — a token left registered after sign-out is only
+            // ever pushed to for a search this phone no longer has open.
+        }
+    }
+
     /// `GET /api/config` → `map`: the Mapbox public token and the style URL,
     /// per docs/PLATFORM-CONTRACT.md. Returns `nil` in demo mode so callers
     /// keep the compiled-in `MapDefaults.styleURL`.
@@ -425,6 +464,9 @@ private struct StatusPayload: Encodable { var status: String }
 private struct ObservationPayload: Encodable { var intakeId: String; var locationId: String; var milestone: String }
 private struct ObservationEnvelope: Decodable { var recorded: Bool }
 private struct EmptyPayload: Encodable {}
+private struct PushDeviceTokenPayload: Encodable { var deviceToken: String; var platform: String }
+private struct RegisterPushDeviceEnvelope: Decodable { var registered: Bool }
+private struct UnregisterPushDeviceEnvelope: Decodable { var unregistered: Bool }
 
 /// What the Worker returns for `POST /api/intakes/{id}/payment-intent`.
 ///

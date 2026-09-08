@@ -29,5 +29,25 @@
     -->
     <key>com.apple.developer.carplay-driving-navigation</key>
     <true/>
+    <!--
+      Native push (APNs) for the "a clinic answered" moment — the phone-side
+      half of the Worker's sendApnsPush (src/push.js). "production" is right
+      for every build that leaves this machine: a TestFlight or App Store
+      archive (scripts/upload-testflight.sh), and a device install signed
+      with a distribution profile.
+
+      A Debug build run straight from Xcode on a development-signed device is
+      the one case this does not cover — a development-signed app must carry
+      "development" here to receive push at all, and the server side has to
+      agree (APNS_ENVIRONMENT=sandbox in that deployment's .env, see
+      .env.example). Xcode's automatic signing does not rewrite this value
+      for you the way it does for the CarPlay entitlement's provisioning
+      profile match, so testing sandbox push locally means editing this key
+      to "development" on your own machine — never commit that edit, the
+      same rule scripts/install-ios-device.sh's TimiNow.local.entitlements
+      already follows for CarPlay.
+    -->
+    <key>aps-environment</key>
+    <string>production</string>
 </dict>
 </plist>
