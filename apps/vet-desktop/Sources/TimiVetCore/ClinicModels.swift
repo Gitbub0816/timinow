@@ -38,6 +38,27 @@ public struct ClinicAvailability: Codable, Hashable, Sendable {
     }
 }
 
+/// `{note}` object under `location.hours` (`src/db.js`'s `locationFromRow`
+/// parses `hours_json`, defaulting to `{}`). Every row written before
+/// facility settings existed decodes as `{}` with no `note` key at all, so
+/// `note` must be `Optional` — a non-optional `String` here would fail
+/// decoding the whole dashboard for a clinic that had never touched this
+/// form.
+public struct ClinicHours: Codable, Hashable, Sendable {
+    public var note: String?
+    public init(note: String? = nil) { self.note = note }
+}
+
+/// Read-only display shape of `/api/clinic/dashboard`'s `location`, and also
+/// the shape `POST /api/clinic/settings` echoes back — both are
+/// `enrichLocation(location)` in `src/index.js`, the same object either way.
+///
+/// The facility-settings fields (`species` through `baseExamFeeCents`) are
+/// all `Optional`: `DemoClinicData`'s hand-built location and any location
+/// row from before facility settings existed carry none of them, and a
+/// non-optional field here would fail the *entire* dashboard decode for
+/// those cases — the same discipline `HardshipModels.swift` documents for
+/// every other backend-optional field in this app.
 public struct ClinicLocationSummary: Codable, Hashable, Sendable {
     public var id: String
     public var tenantId: String?
@@ -45,14 +66,55 @@ public struct ClinicLocationSummary: Codable, Hashable, Sendable {
     public var address: String?
     public var phone: String?
     public var kind: String?
+    public var species: [String]?
+    public var capabilities: [String]?
+    public var hours: ClinicHours?
+    public var open24Hours: Bool?
+    public var acceptsWalkIns: Bool?
+    public var arrivalWindowMinutes: Int?
+    public var staffingLevel: String?
+    public var staffingNote: String?
+    public var baseExamFeeCents: Int?
     public var availability: ClinicAvailability
     public var policy: ClinicPolicy
 
-    public init(id: String = "", tenantId: String? = nil, name: String = "Veterinary clinic", address: String? = nil, phone: String? = nil, kind: String? = nil, availability: ClinicAvailability = ClinicAvailability(), policy: ClinicPolicy = ClinicPolicy()) {
+    public init(id: String = "", tenantId: String? = nil, name: String = "Veterinary clinic", address: String? = nil, phone: String? = nil, kind: String? = nil, species: [String]? = nil, capabilities: [String]? = nil, hours: ClinicHours? = nil, open24Hours: Bool? = nil, acceptsWalkIns: Bool? = nil, arrivalWindowMinutes: Int? = nil, staffingLevel: String? = nil, staffingNote: String? = nil, baseExamFeeCents: Int? = nil, availability: ClinicAvailability = ClinicAvailability(), policy: ClinicPolicy = ClinicPolicy()) {
         self.id = id; self.tenantId = tenantId; self.name = name; self.address = address; self.phone = phone; self.kind = kind
+        self.species = species; self.capabilities = capabilities; self.hours = hours
+        self.open24Hours = open24Hours; self.acceptsWalkIns = acceptsWalkIns; self.arrivalWindowMinutes = arrivalWindowMinutes
+        self.staffingLevel = staffingLevel; self.staffingNote = staffingNote; self.baseExamFeeCents = baseExamFeeCents
         self.availability = availability; self.policy = policy
     }
 }
+
+/// Body of `POST /api/clinic/settings` (`updateClinicLocationSettings` in
+/// `src/index.js`). Field names match the Worker's request body exactly.
+/// `baseExamFeeCents` is the one truly optional field: the Worker keeps the
+/// location's existing fee whenever the key is absent
+/// (`numberInRange(body.baseExamFeeCents, 0, 100_000, location.baseExamFeeCents)`),
+/// so Swift's synthesized `Encodable` — which omits a `nil` Optional property
+/// via `encodeIfPresent` — is what lets "leave the fee alone" round-trip.
+public struct ClinicSettingsUpdate: Encodable, Sendable {
+    public var kind: String
+    public var species: [String]
+    public var capabilities: [String]
+    public var open24Hours: Bool
+    public var acceptsWalkIns: Bool
+    public var arrivalWindowMinutes: Int
+    public var baseExamFeeCents: Int?
+    public var hoursNote: String
+    public var staffingLevel: String
+    public var staffingNote: String
+
+    public init(kind: String, species: [String], capabilities: [String], open24Hours: Bool, acceptsWalkIns: Bool, arrivalWindowMinutes: Int, baseExamFeeCents: Int? = nil, hoursNote: String, staffingLevel: String, staffingNote: String) {
+        self.kind = kind; self.species = species; self.capabilities = capabilities
+        self.open24Hours = open24Hours; self.acceptsWalkIns = acceptsWalkIns; self.arrivalWindowMinutes = arrivalWindowMinutes
+        self.baseExamFeeCents = baseExamFeeCents; self.hoursNote = hoursNote
+        self.staffingLevel = staffingLevel; self.staffingNote = staffingNote
+    }
+}
+
+public struct ClinicLocationSettingsEnvelope: Codable, Sendable { public var location: ClinicLocationSummary }
 
 public struct PetSummary: Codable, Hashable, Sendable {
     public var name: String
@@ -223,6 +285,12 @@ public enum TimiVetEnvironment {
     /// DNS rather than at a blank field in Settings. Settings still overrides
     /// it; this is only the starting point.
     public static let defaultAPIBaseURL = "https://providers.timinow.pet"
+
+    /// Where the referral link (`ReferralLink.slug`) actually resolves.
+    /// Matches `apps/vet-web/public/app.js`'s `customerAppOrigin()` fallback
+    /// — `AppConfig` carries no `customerAppUrl` field for either client to
+    /// prefer instead, so both fall back to the same constant.
+    public static let defaultCustomerAppURL = "https://timinow.pet"
 }
 
 /// Whether Tími may ring this clinic, and on what number.
@@ -267,6 +335,63 @@ public struct QuietHours: Codable, Hashable, Sendable {
 
 public struct CallPreferencesEnvelope: Codable, Sendable {
     public var preferences: CallPreferences
+}
+
+// MARK: - Overflow tools (referral link + website status widget tokens)
+
+/// A clinic's stable overflow referral link (`GET /api/clinic/referral-link`,
+/// `src/referrals.js`'s `rowToReferralLink`). `getOrCreateReferralLink`
+/// returns `null` when the Worker has no database attached, so the envelope
+/// below carries this as `Optional` rather than requiring it.
+public struct ReferralLink: Codable, Hashable, Sendable {
+    public var id: String
+    public var slug: String
+    public var status: String
+    public var clickCount: Int
+    public var createdAt: String?
+    public var updatedAt: String?
+
+    public init(id: String = "", slug: String = "", status: String = "active", clickCount: Int = 0, createdAt: String? = nil, updatedAt: String? = nil) {
+        self.id = id; self.slug = slug; self.status = status; self.clickCount = clickCount
+        self.createdAt = createdAt; self.updatedAt = updatedAt
+    }
+}
+
+public struct ReferralLinkEnvelope: Codable, Sendable { public var referralLink: ReferralLink? }
+
+/// One embeddable website-status-widget token (`src/widget.js`'s
+/// `rowToTokenSummary`, plus the one-time `secret` the create response adds).
+/// `secret` is `nil` on every list response and on every token after the
+/// moment it was created — the Worker stores only its hash, so this is the
+/// one and only time the plaintext is ever sent back.
+public struct WidgetToken: Identifiable, Codable, Hashable, Sendable {
+    public var id: String
+    public var label: String?
+    public var prefix: String
+    public var allowedOrigins: [String]
+    public var status: String
+    public var createdAt: String?
+    public var revokedAt: String?
+    public var lastUsedAt: String?
+    public var secret: String?
+
+    public init(id: String = "", label: String? = nil, prefix: String = "", allowedOrigins: [String] = [], status: String = "active", createdAt: String? = nil, revokedAt: String? = nil, lastUsedAt: String? = nil, secret: String? = nil) {
+        self.id = id; self.label = label; self.prefix = prefix; self.allowedOrigins = allowedOrigins; self.status = status
+        self.createdAt = createdAt; self.revokedAt = revokedAt; self.lastUsedAt = lastUsedAt; self.secret = secret
+    }
+}
+
+public struct WidgetTokenListEnvelope: Codable, Sendable { public var tokens: [WidgetToken] }
+public struct WidgetTokenCreateEnvelope: Codable, Sendable { public var token: WidgetToken }
+
+/// Body of `POST /api/clinic/widget-tokens` (`handleCreateWidgetToken` in
+/// `src/widget.js`). `allowedOrigins` is one `https://` origin per line in the
+/// console's textarea, matching `apps/vet-web/public/app.js`'s
+/// `enterOverflow`/`renderOverflow` exactly.
+public struct WidgetTokenCreatePayload: Encodable, Sendable {
+    public var label: String
+    public var allowedOrigins: [String]
+    public init(label: String, allowedOrigins: [String]) { self.label = label; self.allowedOrigins = allowedOrigins }
 }
 
 public struct AppSettings: Codable, Sendable {

@@ -30,6 +30,13 @@ import Observation
     /// Failures linger. "Sent" needs a glance; "could not send" needs reading.
     func fail(_ message: String) { statusMessage = message; show(ClinicToast(message: message, isFailure: true), seconds: 7) }
 
+    /// A small confirmation for a clipboard copy. `succeed`/`fail` above are
+    /// `internal` (this module only) on purpose, so the overflow-tools page
+    /// in `TimiVetUI` — where the actual `NSPasteboard` call lives, this
+    /// module stays plain Foundation — reaches the same toast through this
+    /// one `public` entry point instead of widening either.
+    public func noteCopied(_ label: String) { succeed("\(label) copied to clipboard.") }
+
     private func show(_ toast: ClinicToast, seconds: Double) {
         // Three is the most that can be read before the first one goes. Past
         // that they stop being confirmations and become a log.
@@ -52,6 +59,18 @@ import Observation
 
     public var requests: [ClinicRequest] = []
     public var pendingRequests: [ClinicRequest] = []
+
+    /// The dashboard's own `location`, carrying the facility-settings fields
+    /// (`species`, `capabilities`, `hours`, …) alongside the display fields
+    /// the rest of the console already used. Set on every `refresh()`, same
+    /// as `pending`/`activeArrivals`/etc.
+    public var location = ClinicLocationSummary()
+    /// True from the first successful `refresh()` onward. `ConsoleView` seeds
+    /// its facility-settings form fields the one time this flips to `true` —
+    /// never on a later poll, so mid-edit typing in that form is never
+    /// clobbered by the six-second refresh loop the way a form bound
+    /// straight to `location` would be.
+    public var locationLoaded = false
 
     public static let availabilityStatuses = ["available", "limited", "confirm_first", "critical_only", "diverting", "closed"]
     public static let responseTypes = ["available_now", "available_at", "emergency_intake"]
@@ -140,6 +159,8 @@ import Observation
             completedToday = dashboard.metrics.completedToday
             declinedToday = dashboard.metrics.declinedToday
             applyAvailability(dashboard.location.availability)
+            location = dashboard.location
+            if !locationLoaded { locationLoaded = true }
 
             let selectedId = selectedRequest?.id
             var nextRequests: [ClinicRequest] = []
@@ -276,6 +297,88 @@ import Observation
             default: message = "Tími will call this clinic about new requests."
             }
             succeed(message)
+        } catch let error as ClinicAPIError { fail(error.message) }
+        catch { fail(error.localizedDescription) }
+    }
+
+    // MARK: - Facility settings
+
+    /// Mirrors `apps/vet-web/public/app.js`'s `wireSettingsPageForm`: the
+    /// checkbox capability list, the "accepts emergency" checkbox, and the
+    /// free-text "other capabilities" field are all folded into one
+    /// `capabilities` array before the Worker ever sees them — there is no
+    /// separate `emergencyCapable` field on the wire, only `"emergency"`
+    /// joining (or leaving) the same array the checkboxes populate.
+    public func saveLocationSettings(
+        kind: String, species: Set<String>, capabilities: Set<String>, emergencyCapable: Bool, otherCapabilities: String,
+        open24Hours: Bool, acceptsWalkIns: Bool, arrivalWindowMinutes: Int, baseExamFeeDollars: String,
+        hoursNote: String, staffingLevel: String, staffingNote: String
+    ) async {
+        if species.isEmpty { fail("Choose at least one species this location treats."); return }
+        isBusy = true
+        defer { isBusy = false }
+        var mergedCapabilities = capabilities
+        if emergencyCapable { mergedCapabilities.insert("emergency") } else { mergedCapabilities.remove("emergency") }
+        otherCapabilities.split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespaces).lowercased() }
+            .filter { !$0.isEmpty }
+            .forEach { mergedCapabilities.insert($0) }
+        // Dollars in the form, cents on the wire — left absent (rather than
+        // 0) when the field is blank, so the Worker keeps whatever fee this
+        // location already had instead of zeroing it out.
+        let trimmedFee = baseExamFeeDollars.trimmingCharacters(in: .whitespaces)
+        let baseExamFeeCents: Int? = trimmedFee.isEmpty ? nil : Double(trimmedFee).map { Int(($0 * 100).rounded()) }
+        do {
+            location = try await api.updateClinicSettings(ClinicSettingsUpdate(
+                kind: kind, species: Array(species), capabilities: Array(mergedCapabilities),
+                open24Hours: open24Hours, acceptsWalkIns: acceptsWalkIns, arrivalWindowMinutes: arrivalWindowMinutes,
+                baseExamFeeCents: baseExamFeeCents, hoursNote: hoursNote, staffingLevel: staffingLevel, staffingNote: staffingNote
+            ))
+            succeed("Facility settings saved.")
+        } catch let error as ClinicAPIError { fail(error.message) }
+        catch { fail(error.localizedDescription) }
+    }
+
+    // MARK: - Overflow tools (referral link + website status widget tokens)
+
+    public var referralLink: ReferralLink?
+    public var widgetTokens: [WidgetToken] = []
+    public var overflowToolsLoaded = false
+    /// The plaintext secret of a token just created — shown once, exactly
+    /// like `apps/vet-web/public/app.js`'s `state.overflow.newSecret`, and
+    /// cleared as soon as the operator dismisses it.
+    public var newWidgetTokenSecret: String?
+
+    public func loadOverflowTools() async {
+        do {
+            async let referralTask = api.getReferralLink()
+            async let tokensTask = api.getWidgetTokens()
+            referralLink = try await referralTask
+            widgetTokens = try await tokensTask
+            overflowToolsLoaded = true
+        } catch let error as ClinicAPIError { fail(error.message) }
+        catch { fail(error.localizedDescription) }
+    }
+
+    public func createWidgetToken(label: String, allowedOrigins: [String]) async {
+        isBusy = true
+        defer { isBusy = false }
+        do {
+            let token = try await api.createWidgetToken(label: label, allowedOrigins: allowedOrigins)
+            newWidgetTokenSecret = token.secret
+            succeed("Widget token created.")
+            await loadOverflowTools()
+        } catch let error as ClinicAPIError { fail(error.message) }
+        catch { fail(error.localizedDescription) }
+    }
+
+    public func revokeWidgetToken(_ token: WidgetToken) async {
+        isBusy = true
+        defer { isBusy = false }
+        do {
+            try await api.revokeWidgetToken(id: token.id)
+            succeed("Widget token revoked.")
+            await loadOverflowTools()
         } catch let error as ClinicAPIError { fail(error.message) }
         catch { fail(error.localizedDescription) }
     }

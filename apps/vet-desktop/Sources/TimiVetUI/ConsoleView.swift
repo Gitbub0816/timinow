@@ -1,6 +1,7 @@
 import Foundation
 import TimiVetCore
 import SwiftUI
+import AppKit
 
 // SwiftUI port of apps/vet-windows/src/TimiVet/Views/MainWindow.xaml, reskinned
 // to the clinic owner's HTML mockup (navy sidebar, cream capacity card, blue/
@@ -27,8 +28,30 @@ public struct ConsoleView: View {
     @State var quietStart = ""
     @State var quietEnd = ""
 
-    /// Which of the sidebar's two in-window destinations is showing.
-    private enum ConsoleSection { case operations, settings }
+    // Facility settings form — seeded once from `store.location` the moment
+    // `store.locationLoaded` first flips true (see `.onChange` below), never
+    // re-seeded on a later poll so mid-edit typing survives the six-second
+    // dashboard refresh. Field set and merge behavior match
+    // `apps/vet-web/public/app.js`'s `hydrateSettingsForm`/`wireSettingsPageForm`.
+    @State private var facilityKind = "general"
+    @State private var facilitySpecies: Set<String> = []
+    @State private var facilityCapabilities: Set<String> = []
+    @State private var facilityEmergencyCapable = false
+    @State private var facilityOtherCapabilities = ""
+    @State private var facilityOpen24Hours = false
+    @State private var facilityAcceptsWalkIns = true
+    @State private var facilityArrivalWindowMinutes = 20
+    @State private var facilityBaseExamFeeDollars = ""
+    @State private var facilityHoursNote = ""
+    @State private var facilityStaffingLevel = "veterinarian"
+    @State private var facilityStaffingNote = ""
+
+    // Overflow tools — new widget token draft fields.
+    @State private var widgetLabel = ""
+    @State private var widgetAllowedSites = ""
+
+    /// Which of the sidebar's in-window destinations is showing.
+    private enum ConsoleSection { case operations, settings, overflow }
     @State private var section: ConsoleSection = .operations
 
     /// The decision workspace's three-way choice — "Available now" / "Custom
@@ -109,13 +132,16 @@ public struct ConsoleView: View {
                 header
                 ScrollView {
                     VStack(alignment: .leading, spacing: 22) {
-                        if section == .operations {
+                        switch section {
+                        case .operations:
                             liveSummaryBar
                             queueAndWorkspace
                             lowerGrid
                             payoutsSection
-                        } else {
+                        case .settings:
                             settingsPage
+                        case .overflow:
+                            overflowToolsPage
                         }
                     }
                     .padding(24)
@@ -136,7 +162,40 @@ public struct ConsoleView: View {
             quietEnd = store.callPreferences.quietHours?.end ?? ""
         }
         .task { await store.loadPayouts() }
+        .task { await store.loadOverflowTools() }
+        // Facility settings are bundled into the dashboard response rather
+        // than fetched separately (there is no GET /api/clinic/settings) —
+        // see `ClinicStore.locationLoaded`. Seeded exactly once so a form
+        // in progress is never overwritten by the poll loop.
+        .onChange(of: store.locationLoaded) { _, loaded in
+            if loaded { seedFacilitySettingsForm() }
+        }
         .sheet(isPresented: $showCapacitySheet) { capacitySheet }
+    }
+
+    /// Copies `store.location` into the facility-settings form's local
+    /// `@State`. Called once, the moment `store.locationLoaded` first flips
+    /// true — see the `.onChange` above.
+    private func seedFacilitySettingsForm() {
+        let location = store.location
+        facilityKind = location.kind ?? "general"
+        facilitySpecies = Set(location.species ?? [])
+        let allCapabilities = Set(location.capabilities ?? [])
+        facilityEmergencyCapable = allCapabilities.contains("emergency")
+        let known = Set(Self.capabilityOptions.map(\.0))
+        facilityCapabilities = allCapabilities.intersection(known)
+        facilityOtherCapabilities = allCapabilities.subtracting(known).subtracting(["emergency"]).sorted().joined(separator: ", ")
+        facilityOpen24Hours = location.open24Hours ?? false
+        facilityAcceptsWalkIns = location.acceptsWalkIns ?? true
+        facilityArrivalWindowMinutes = location.arrivalWindowMinutes ?? 20
+        // `Math.round(location.baseExamFeeCents / 100)` in
+        // apps/vet-web/public/app.js's `hydrateSettingsForm` — rounded, not
+        // truncated, so a fee that is not an exact multiple of 100 cents
+        // still shows the nearest dollar.
+        facilityBaseExamFeeDollars = location.baseExamFeeCents.map { String(Int((Double($0) / 100).rounded())) } ?? ""
+        facilityHoursNote = location.hours?.note ?? ""
+        facilityStaffingLevel = location.staffingLevel ?? "veterinarian"
+        facilityStaffingNote = location.staffingNote ?? ""
     }
 
     // MARK: Payouts
@@ -259,6 +318,9 @@ public struct ConsoleView: View {
                 navButton(icon: "gearshape.fill", title: "Clinic settings", isSelected: section == .settings, badge: nil) {
                     section = .settings
                 }
+                navButton(icon: "arrow.triangle.branch", title: "Overflow tools", isSelected: section == .overflow, badge: nil) {
+                    section = .overflow
+                }
                 // Its own window, not a page: the app already has a dedicated
                 // people/roles surface with its own admin gating
                 // (PeopleView), and folding it into this window's two pages
@@ -337,8 +399,20 @@ public struct ConsoleView: View {
 
     // MARK: Header / footer
 
-    private var headerEyebrow: String { section == .operations ? "IMMEDIATE INTAKE CONTROL" : "CLINIC CONFIGURATION" }
-    private var headerTitle: String { section == .operations ? "Clinic operations" : "Clinic settings" }
+    private var headerEyebrow: String {
+        switch section {
+        case .operations: return "IMMEDIATE INTAKE CONTROL"
+        case .settings: return "CLINIC CONFIGURATION"
+        case .overflow: return "WHEN YOU CAN'T TAKE THEM"
+        }
+    }
+    private var headerTitle: String {
+        switch section {
+        case .operations: return "Clinic operations"
+        case .settings: return "Clinic settings"
+        case .overflow: return "Overflow tools"
+        }
+    }
 
     private var header: some View {
         HStack(alignment: .top) {
@@ -868,15 +942,22 @@ public struct ConsoleView: View {
     }
 
     private var settingsPage: some View {
-        HStack(alignment: .top, spacing: 20) {
-            VStack(alignment: .leading, spacing: 20) {
-                publicIntakeStatusCard
-                phoneCallsCard
-            }.frame(maxWidth: .infinity)
-            VStack(alignment: .leading, spacing: 20) {
-                floatingConsoleCard
-                desktopAlertsCard
-            }.frame(maxWidth: .infinity)
+        VStack(alignment: .leading, spacing: 20) {
+            HStack(alignment: .top, spacing: 20) {
+                VStack(alignment: .leading, spacing: 20) {
+                    publicIntakeStatusCard
+                    phoneCallsCard
+                }.frame(maxWidth: .infinity)
+                VStack(alignment: .leading, spacing: 20) {
+                    floatingConsoleCard
+                    desktopAlertsCard
+                }.frame(maxWidth: .infinity)
+            }
+            // Full-width, not a third column: this card alone carries as many
+            // fields as the four above combined, and a narrow column would
+            // squeeze the species/capabilities checklists into a scroll well
+            // before the rest of the page did.
+            facilitySettingsCard
         }
     }
 
@@ -1010,6 +1091,136 @@ public struct ConsoleView: View {
         .timiVetCard()
     }
 
+    // Static option lists — value/label pairs, in the same order as the
+    // `<option>`/`<input>` elements in apps/vet-web/public/index.html's
+    // `data-settings-form` (lines ~410-478), so the picker and checklist
+    // order matches the web console exactly.
+    private static let facilityKinds: [(value: String, label: String)] = [
+        ("general", "General practice"), ("urgent", "Urgent care"),
+        ("emergency", "Emergency hospital"), ("specialty", "Specialty clinic")
+    ]
+    private static let speciesOptions: [(value: String, label: String)] = [
+        ("dog", "Dog"), ("cat", "Cat"), ("bird", "Bird"), ("rabbit", "Rabbit"),
+        ("reptile", "Reptile"), ("small_mammal", "Small mammal"), ("other", "Other")
+    ]
+    private static let capabilityOptions: [(value: String, label: String)] = [
+        ("surgery", "Surgery"), ("oxygen", "Oxygen support"), ("imaging", "Imaging"),
+        ("overnight", "Overnight stay"), ("toxin", "Toxin/poison cases"), ("same_day", "Same-day appointments"),
+        ("wellness", "Wellness care"), ("minor_injury", "Minor injury"), ("vaccines", "Vaccines")
+    ]
+    private static let staffingLevels: [(value: String, label: String)] = [
+        ("veterinarian", "A veterinarian"), ("veterinary_technician", "A veterinary technician")
+    ]
+
+    /// Two-way binding into a `Set<String>` `@State` for one checkbox — lets
+    /// the species/capabilities checklists below bind directly to
+    /// `$facilitySpecies`/`$facilityCapabilities` the way a single `Toggle`
+    /// binds to a `Bool`.
+    private func membershipBinding(_ value: String, in set: Binding<Set<String>>) -> Binding<Bool> {
+        Binding(
+            get: { set.wrappedValue.contains(value) },
+            set: { isOn in if isOn { set.wrappedValue.insert(value) } else { set.wrappedValue.remove(value) } }
+        )
+    }
+
+    private func checklistGrid(_ options: [(value: String, label: String)], set: Binding<Set<String>>) -> some View {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 140), spacing: 6)], alignment: .leading, spacing: 6) {
+            ForEach(options, id: \.value) { option in
+                Toggle(option.label, isOn: membershipBinding(option.value, in: set)).toggleStyle(.checkbox)
+            }
+        }
+    }
+
+    /// Stable facility settings — what kind of practice this is, what it
+    /// treats, hours, and client-facing defaults. Field set and merge
+    /// behavior match `apps/vet-web/public/index.html`'s
+    /// `data-settings-form` and `apps/vet-web/public/app.js`'s
+    /// `hydrateSettingsForm`/`wireSettingsPageForm` exactly — see
+    /// `ClinicStore.saveLocationSettings` for how the checkbox list, the
+    /// "accepts emergency" checkbox, and the free-text field are folded into
+    /// one `capabilities` array before the Worker ever sees them.
+    private var facilitySettingsCard: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Facility settings").font(TimiVetFont.ui(17, weight: .semibold))
+                Text("What pet owners see about your practice by default, and what a request is matched against. This changes rarely.")
+                    .font(TimiVetFont.ui(12)).foregroundStyle(TimiVetColor.muted)
+            }
+
+            HStack(alignment: .top, spacing: 20) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Facility type").font(TimiVetFont.ui(13, weight: .semibold))
+                    Picker("", selection: $facilityKind) {
+                        ForEach(Self.facilityKinds, id: \.value) { Text($0.label).tag($0.value) }
+                    }.labelsHidden()
+                }
+                Toggle("Accepts emergency-level patients", isOn: $facilityEmergencyCapable)
+                    .toggleStyle(.checkbox)
+                    .padding(.top, 22)
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Species accepted").font(TimiVetFont.ui(13, weight: .semibold))
+                checklistGrid(Self.speciesOptions, set: $facilitySpecies)
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Capabilities").font(TimiVetFont.ui(13, weight: .semibold))
+                checklistGrid(Self.capabilityOptions, set: $facilityCapabilities)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Other capabilities (comma separated)").font(TimiVetFont.ui(12))
+                    TextField("dental, exotics, cardiology", text: $facilityOtherCapabilities).textFieldStyle(.roundedBorder)
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 20) {
+                    Toggle("Open 24 hours", isOn: $facilityOpen24Hours).toggleStyle(.checkbox)
+                    Toggle("Accepts walk-ins", isOn: $facilityAcceptsWalkIns).toggleStyle(.checkbox)
+                }
+                HStack(spacing: 16) {
+                    labeledIntField("Typical arrival window (min)", value: $facilityArrivalWindowMinutes)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Base exam fee (USD)").font(TimiVetFont.ui(12))
+                        TextField("185", text: $facilityBaseExamFeeDollars).textFieldStyle(.roundedBorder).frame(width: 110)
+                    }
+                }
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Hours & operating notes, shown to pet owners").font(TimiVetFont.ui(13, weight: .semibold))
+                    TextField("Mon–Fri 8am–8pm, Sat 9am–4pm. Closed major holidays.", text: $facilityHoursNote, axis: .vertical)
+                        .lineLimit(3, reservesSpace: true)
+                        .textFieldStyle(.roundedBorder)
+                }
+            }
+
+            HStack(alignment: .top, spacing: 20) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Staffed by").font(TimiVetFont.ui(13, weight: .semibold))
+                    Picker("", selection: $facilityStaffingLevel) {
+                        ForEach(Self.staffingLevels, id: \.value) { Text($0.label).tag($0.value) }
+                    }.labelsHidden()
+                }
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Staffing note (optional)").font(TimiVetFont.ui(12))
+                    TextField("", text: $facilityStaffingNote).textFieldStyle(.roundedBorder)
+                }.frame(maxWidth: .infinity)
+            }
+
+            Button("Save facility settings") {
+                Task {
+                    await store.saveLocationSettings(
+                        kind: facilityKind, species: facilitySpecies, capabilities: facilityCapabilities,
+                        emergencyCapable: facilityEmergencyCapable, otherCapabilities: facilityOtherCapabilities,
+                        open24Hours: facilityOpen24Hours, acceptsWalkIns: facilityAcceptsWalkIns,
+                        arrivalWindowMinutes: facilityArrivalWindowMinutes, baseExamFeeDollars: facilityBaseExamFeeDollars,
+                        hoursNote: facilityHoursNote, staffingLevel: facilityStaffingLevel, staffingNote: facilityStaffingNote
+                    )
+                }
+            }.buttonStyle(TimiVetPrimaryButtonStyle()).disabled(store.isBusy)
+        }
+        .timiVetCard()
+    }
+
     /// The mockup's collapsible "Advanced connection settings" — gated to
     /// `store.isAdmin` (see `phoneCallsCard`'s doc comment for the role
     /// vocabulary). This gate is new: the fields existed before with no
@@ -1087,5 +1298,162 @@ public struct ConsoleView: View {
             Text(title).font(TimiVetFont.ui(12))
             TextField(title, value: value, format: .number).textFieldStyle(.roundedBorder).frame(width: 110)
         }
+    }
+
+    // MARK: Overflow tools
+    //
+    // Mirrors apps/vet-web/public/app.js's enterOverflow()/renderOverflow():
+    // the tenant's stable referral link (src/referrals.js) and its website
+    // status widget tokens (src/widget.js), both loaded once via
+    // `store.loadOverflowTools()` — see the `.task` on `consoleBody`.
+
+    private var overflowToolsPage: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            referralLinkCard
+            widgetTokensCard
+        }
+    }
+
+    /// `store.referralLink?.slug` turned into the URL a pet owner actually
+    /// taps — matches `apps/vet-web/public/app.js`'s `referralUrl()`
+    /// (`customerAppOrigin() + "/r/" + encodeURIComponent(slug)`).
+    private var referralURL: String {
+        guard let slug = store.referralLink?.slug, !slug.isEmpty else { return "" }
+        let encodedSlug = slug.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? slug
+        return "\(TimiVetEnvironment.defaultCustomerAppURL)/r/\(encodedSlug)"
+    }
+
+    private var referralLinkCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Stable referral link").font(TimiVetFont.ui(17, weight: .semibold))
+                Text("Send owners to Tími when you can't take them — this always leads into Tími's own nearby-clinic search, never a named competitor.")
+                    .font(TimiVetFont.ui(12)).foregroundStyle(TimiVetColor.muted)
+            }
+            if !store.overflowToolsLoaded {
+                Text("Loading…").font(TimiVetFont.ui(12)).foregroundStyle(TimiVetColor.muted)
+            } else if referralURL.isEmpty {
+                Text("Could not load your referral link.").font(TimiVetFont.ui(12)).foregroundStyle(TimiVetColor.muted)
+            } else {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Your link").font(TimiVetFont.ui(12, weight: .semibold))
+                    TextField("", text: .constant(referralURL)).textFieldStyle(.roundedBorder).disabled(true)
+                }
+                HStack(spacing: 14) {
+                    Button("Copy link") { copyToClipboard(referralURL, label: "Referral link") }
+                        .buttonStyle(TimiVetQuietButtonStyle())
+                    let clicks = store.referralLink?.clickCount ?? 0
+                    Text("Clicked \(clicks) time\(clicks == 1 ? "" : "s").")
+                        .font(TimiVetFont.ui(11)).foregroundStyle(TimiVetColor.muted)
+                }
+            }
+        }
+        .timiVetCard()
+    }
+
+    /// Admin-gated exactly like `phoneCallsCard`: token creation and
+    /// revocation both require `isOrgAdmin` server-side
+    /// (`handleCreateWidgetToken`/`handleRevokeWidgetToken` in
+    /// `src/widget.js`), so a non-admin sees the list read-only rather than
+    /// controls that would only fail on submit.
+    private var widgetTokensCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Website status widget").font(TimiVetFont.ui(17, weight: .semibold))
+                Text("A small card pet owners see on your own website: whether you're currently accepting urgent patients, and — if not — a link into Tími. It never shows your name, address, exact capacity, or any customer data.")
+                    .font(TimiVetFont.ui(12)).foregroundStyle(TimiVetColor.muted)
+            }
+
+            if store.isAdmin {
+                VStack(alignment: .leading, spacing: 8) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Label (optional)").font(TimiVetFont.ui(12))
+                        TextField("Front page badge", text: $widgetLabel).textFieldStyle(.roundedBorder)
+                    }
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Allowed sites (optional, one per line)").font(TimiVetFont.ui(12))
+                        TextField("https://www.yourclinic.example", text: $widgetAllowedSites, axis: .vertical)
+                            .lineLimit(2, reservesSpace: true)
+                            .textFieldStyle(.roundedBorder)
+                    }
+                    Button("Create widget token") {
+                        let origins = widgetAllowedSites.split(separator: "\n")
+                            .map { $0.trimmingCharacters(in: .whitespaces) }
+                            .filter { !$0.isEmpty }
+                        Task {
+                            await store.createWidgetToken(label: widgetLabel, allowedOrigins: origins)
+                            widgetLabel = ""
+                            widgetAllowedSites = ""
+                        }
+                    }.buttonStyle(TimiVetPrimaryButtonStyle()).disabled(store.isBusy)
+                }
+            }
+
+            if let secret = store.newWidgetTokenSecret {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Save this now — it won't be shown again.").font(TimiVetFont.ui(12, weight: .bold))
+                    Text(secret).font(.system(size: 11, design: .monospaced)).textSelection(.enabled)
+                    HStack(spacing: 10) {
+                        Button("Copy token") { copyToClipboard(secret, label: "Widget token") }.buttonStyle(TimiVetQuietButtonStyle())
+                        Button("I've saved it") { store.newWidgetTokenSecret = nil }.buttonStyle(TimiVetQuietButtonStyle())
+                    }
+                }
+                .padding(10)
+                .background(TimiVetColor.goldSoft, in: RoundedRectangle(cornerRadius: 8))
+            }
+
+            if store.widgetTokens.isEmpty {
+                Text(store.overflowToolsLoaded ? "No widget tokens yet." : "Loading…")
+                    .font(TimiVetFont.ui(12)).foregroundStyle(TimiVetColor.muted)
+            } else {
+                VStack(spacing: 0) {
+                    ForEach(store.widgetTokens) { token in
+                        widgetTokenRow(token)
+                        if token.id != store.widgetTokens.last?.id { Divider() }
+                    }
+                }
+            }
+
+            if !store.isAdmin {
+                Text("Only a workspace administrator can create or revoke widget tokens.")
+                    .font(TimiVetFont.ui(10)).foregroundStyle(TimiVetColor.muted)
+            }
+        }
+        .timiVetCard()
+    }
+
+    private func widgetTokenRow(_ token: WidgetToken) -> some View {
+        HStack(alignment: .top) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(token.label ?? "—").font(TimiVetFont.ui(13, weight: .semibold))
+                Text("\(token.prefix)…").font(TimiVetFont.ui(11)).foregroundStyle(TimiVetColor.muted)
+                Text(token.allowedOrigins.isEmpty ? "Any site" : token.allowedOrigins.joined(separator: ", "))
+                    .font(TimiVetFont.ui(10)).foregroundStyle(TimiVetColor.muted)
+            }
+            Spacer()
+            VStack(alignment: .trailing, spacing: 4) {
+                Text(token.status == "revoked" ? "Revoked" : (token.lastUsedAt != nil ? "Used" : "Never used"))
+                    .font(TimiVetFont.ui(10, weight: .bold))
+                    .foregroundStyle(token.status == "revoked" ? TimiVetColor.muted : TimiVetColor.green)
+                if token.status == "active" && store.isAdmin {
+                    Button("Revoke") { Task { await store.revokeWidgetToken(token) } }
+                        .buttonStyle(.plain)
+                        .font(TimiVetFont.ui(11, weight: .bold))
+                        .foregroundStyle(TimiVetColor.coral)
+                }
+            }
+        }
+        .padding(.vertical, 10)
+    }
+
+    /// `NSPasteboard` lives here (`TimiVetUI`, which already imports
+    /// `AppKit` for `AlertCenter`/`FloatingPanel`) rather than on
+    /// `ClinicStore` in the plain-Foundation `TimiVetCore` module —
+    /// `ClinicStore.noteCopied` only raises the confirmation toast.
+    private func copyToClipboard(_ text: String, label: String) {
+        guard !text.isEmpty else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+        store.noteCopied(label)
     }
 }
