@@ -56,6 +56,14 @@
         <string>location</string>
     </array>
     <key>NSLocationWhenInUseUsageDescription</key><string>Tími uses your location to find participating veterinary clinics near you and estimate travel distance.</string>
+    <!--
+      Upgrades the tracker screen's arrival automation from "ask iOS for one
+      fix" to "watch two geofences while backgrounded" — leaving the pickup
+      spot marks the visit en route and arriving at the clinic marks it
+      arrived, with no taps. Declined or downgraded to When In Use, the
+      manual status buttons in TrackerView remain the fallback.
+    -->
+    <key>NSLocationAlwaysAndWhenInUseUsageDescription</key><string>Tími can track your drive to the clinic in the background so your arrival status updates automatically, without you needing to open the app.</string>
     <key>NSUserNotificationsUsageDescription</key><string>Tími can notify you when a clinic sends an availability offer or updates your arrival.</string>
     <key>UILaunchScreen</key><dict><key>UIColorName</key><string>LaunchBackground</string></dict>
     <key>UISupportedInterfaceOrientations</key><array><string>UIInterfaceOrientationPortrait</string></array>

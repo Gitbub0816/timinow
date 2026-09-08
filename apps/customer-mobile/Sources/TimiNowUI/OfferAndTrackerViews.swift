@@ -201,6 +201,8 @@ struct TrackerView: View {
             routePreview = preview?.coordinates ?? []
             if let summary = preview?.summary { store.updateNavigationProgress(step: store.currentNavigationStep, summary: summary) }
         }
+        .onAppear { if ["accepted", "en_route"].contains(intake?.status ?? "") { Task { await beginArrivalAutomation() } } }
+        .onDisappear { PlatformPermissions.stopArrivalTracking(); store.arrivalAutomationEnabled = false }
         // fullScreenCover does not exist on macOS. The customer app ships to
         // iOS and Android only — macOS is just the host `swift test` builds
         // for — so the macOS branch only has to compile, not look right.
@@ -242,6 +244,34 @@ struct TrackerView: View {
         if intake?.status == "accepted" { Task { await store.updateIntake(status: "en_route") } }
     }
 
+    /// Arms geofences around wherever the customer is now and the clinic so
+    /// leaving marks "en_route" and arriving marks "arrived" with no taps.
+    /// Silently no-ops on anything short of full cooperation (no clinic
+    /// coordinates, Always permission declined, no location fix available)
+    /// — the manual buttons in `actionButtons` are always still there.
+    func beginArrivalAutomation() async {
+        guard let clinic, let clinicLatitude = clinic.latitude, let clinicLongitude = clinic.longitude else { return }
+        guard await PlatformPermissions.requestAlwaysLocation() else { return }
+        guard let origin = await PlatformPermissions.currentLocation() else { return }
+        store.arrivalAutomationEnabled = true
+        PlatformPermissions.startArrivalTracking(
+            originLatitude: origin.0, originLongitude: origin.1,
+            clinicLatitude: clinicLatitude, clinicLongitude: clinicLongitude,
+            onLeftOrigin: { [weak store] in
+                Task { @MainActor [weak store] in
+                    guard let store, store.currentIntake?.status == "accepted" else { return }
+                    await store.updateIntake(status: "en_route")
+                }
+            },
+            onArrivedAtClinic: { [weak store] in
+                Task { @MainActor [weak store] in
+                    guard let store, store.currentIntake?.status == "en_route" else { return }
+                    await store.record("arrived")
+                }
+            }
+        )
+    }
+
     /// One button for whatever comes next, not one per step. The timeline
     /// above already shows every step; stacking a button per step next to it
     /// repeated the same information and, at "accepted", showed both
@@ -249,10 +279,26 @@ struct TrackerView: View {
     /// arrival before the customer had even left.
     @ViewBuilder var actionButtons: some View {
         switch intake?.status {
-        case "accepted":
-            Button { Task { await store.updateIntake(status: "en_route") } } label: { Label("We're leaving now", systemImage: "car.fill") }.buttonStyle(TimiPrimaryButtonStyle())
-        case "en_route":
-            Button { Task { await store.record("arrived") } } label: { Label("We arrived", systemImage: "mappin.circle.fill") }.buttonStyle(TimiPrimaryButtonStyle())
+        case "accepted", "en_route":
+            VStack(alignment: .leading, spacing: 10) {
+                if store.arrivalAutomationEnabled {
+                    Label("Tími is tracking your arrival automatically. Tap below only if that's wrong.", systemImage: "location.fill")
+                        .font(.caption).fontWeight(.semibold).foregroundStyle(TimiColor.blue)
+                }
+                if intake?.status == "accepted" {
+                    if store.arrivalAutomationEnabled {
+                        Button { Task { await store.updateIntake(status: "en_route") } } label: { Label("We're leaving now", systemImage: "car.fill") }.buttonStyle(TimiQuietButtonStyle())
+                    } else {
+                        Button { Task { await store.updateIntake(status: "en_route") } } label: { Label("We're leaving now", systemImage: "car.fill") }.buttonStyle(TimiPrimaryButtonStyle())
+                    }
+                } else {
+                    if store.arrivalAutomationEnabled {
+                        Button { Task { await store.record("arrived") } } label: { Label("We arrived", systemImage: "mappin.circle.fill") }.buttonStyle(TimiQuietButtonStyle())
+                    } else {
+                        Button { Task { await store.record("arrived") } } label: { Label("We arrived", systemImage: "mappin.circle.fill") }.buttonStyle(TimiPrimaryButtonStyle())
+                    }
+                }
+            }
         case "arrived", "triaged":
             Button { Task { await store.record("seen") } } label: { Label("My pet was seen", systemImage: "checkmark.seal.fill") }.buttonStyle(TimiPrimaryButtonStyle(color: TimiColor.blue))
         default:

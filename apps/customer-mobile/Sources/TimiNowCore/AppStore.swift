@@ -648,6 +648,15 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
         }
     }
 
+    // MARK: - Automatic arrival tracking
+
+    /// True once geofences are armed — drives whether `TrackerView` shows
+    /// "Timi is tracking your arrival automatically" instead of asking the
+    /// customer to tap the status buttons themselves. Set from
+    /// `TrackerView`, which owns the `PlatformPermissions` calls (a
+    /// TimiNowUI-only API; this Core type cannot see it).
+    public var arrivalAutomationEnabled = false
+
     // MARK: - Deposit
 
     /// The current deposit intent, or nil until the screen asks for one.
