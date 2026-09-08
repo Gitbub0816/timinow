@@ -58,6 +58,7 @@
           <a href="#pill" data-nav="pill">Quick status</a>
           <a href="#console" data-nav="console">Full dashboard</a>
           <a href="#billing" data-nav="billing">Billing</a>
+          <a href="#payouts" data-nav="payouts">Payouts</a>
           <a href="#overflow" data-nav="overflow">Overflow tools</a>
           <a href="#people" data-nav="people">People</a>
           <a href="#settings" data-nav="settings">Facility settings</a>
@@ -191,6 +192,7 @@
         <nav class="rail-nav" style="margin-top:42px">
           <a href="#console" data-nav="console">Operations</a>
           <a href="#billing" data-nav="billing">Billing</a>
+          <a href="#payouts" data-nav="payouts">Payouts</a>
           <a href="#people" data-nav="people">People</a>
           <a href="#legal?section=clinics" data-nav="legal">Legal</a>
         </nav>
@@ -213,6 +215,52 @@
           <div data-billing-receivables><p class="billing-empty">Loading…</p></div>
         </section>
         <p class="billing-note">Questions about a line item or a payment: <a href="mailto:billing@clearkey.solutions">billing@clearkey.solutions</a>. A completion or fee can be disputed inside the window set out in the <a href="#legal?section=clinics">clinic participation terms</a>.</p>
+      </div>
+    </section>
+
+    <!-- ============================================================= payouts -->
+    <!-- What Tími's own settlement ledger has transferred to this clinic and
+         paid out to its bank, plus the clinic's Stripe Connect status — org
+         member only, never a workstation session (see requireTenantAdmin-
+         adjacent gating on GET /api/clinic/payouts in src/index.js). -->
+    <section class="screen payouts-screen billing-screen" data-screen="payouts" aria-labelledby="payouts-title">
+      <aside class="vet-rail">
+        <div>
+          <img class="brand-mark" src="/assets/brand/timinow-wordmark.svg" alt="Tími NOW">
+          <p class="rail-kicker">VETERINARY OPERATIONS</p>
+        </div>
+        <nav class="rail-nav" style="margin-top:42px">
+          <a href="#console" data-nav="console">Operations</a>
+          <a href="#billing" data-nav="billing">Billing</a>
+          <a href="#payouts" data-nav="payouts">Payouts</a>
+          <a href="#people" data-nav="people">People</a>
+          <a href="#legal?section=clinics" data-nav="legal">Legal</a>
+        </nav>
+        <div class="rail-spacer"></div>
+        <div class="rail-footer">
+          <button class="button rail-signout" type="button" data-action="sign-out">Sign out</button>
+        </div>
+      </aside>
+      <div class="billing-main">
+        <p class="eyebrow">WHAT TÍMI HAS SETTLED TO YOU</p>
+        <h1 id="payouts-title">Payouts</h1>
+        <p class="billing-note">Every figure below comes from Tími's own settlement ledger, not from your live Stripe balance — this explains Tími's arithmetic, not Stripe's. Your bank connection status is Stripe's own record of whether it can currently send you money.</p>
+        <div class="billing-summary" data-payouts-summary></div>
+        <section class="card billing-card">
+          <div class="billing-card-head"><h2>Stripe connection</h2></div>
+          <div data-payouts-connect><p class="billing-empty">Loading…</p></div>
+        </section>
+        <section class="card billing-card">
+          <div class="billing-card-head"><h2>Transfers to your account</h2><span data-payouts-transfer-count>—</span></div>
+          <div data-payouts-transfers><p class="billing-empty">Loading…</p></div>
+        </section>
+        <section class="card billing-card">
+          <div class="billing-card-head"><h2>Payouts to your bank</h2><span data-payouts-payout-count>—</span></div>
+          <div data-payouts-payouts><p class="billing-empty">Loading…</p></div>
+        </section>
+      </div>
+    </section>
+
     <!-- ================================================================= pill -->
     <!-- Reception's default screen: a small persistent availability status,
          nothing else, expandable for the three things reception actually
@@ -279,6 +327,7 @@
           <a href="#pill" data-nav="pill">Quick status</a>
           <a href="#console" data-nav="console">Full dashboard</a>
           <a href="#billing" data-nav="billing">Billing</a>
+          <a href="#payouts" data-nav="payouts">Payouts</a>
           <a href="#overflow" data-nav="overflow">Overflow tools</a>
           <a href="#people" data-nav="people">People</a>
           <a href="#settings" data-nav="settings">Facility settings</a>
@@ -403,6 +452,37 @@
           <div class="settings-form-actions">
             <button class="button button-quiet" type="button" data-route="pill">Back to quick status</button>
             <button class="button button-primary" type="submit">Save facility settings</button>
+          </div>
+        </form>
+
+        <!-- Automated calling: GET/POST /api/clinic/call-preferences (org
+             member view, org admin edit — see setCallPreferences in
+             src/index.js). Kept on this screen rather than a route of its
+             own since it is one small, rarely-changed decision, same as
+             facility settings. -->
+        <form class="settings-form" data-call-preferences-form style="margin-top:2.2rem">
+          <section class="settings-section">
+            <h2>Automated calling</h2>
+            <p class="people-note" style="margin-top:0">When a nearby pet owner needs urgent care and nobody has answered yet, Tími can place an automated phone call to this clinic asking for a yes or no. Decide when — or whether — that happens.</p>
+            <fieldset class="settings-checklist">
+              <legend>When may Tími call this clinic?</legend>
+              <label><input type="radio" name="callPolicy" value="always"> Always</label>
+              <label><input type="radio" name="callPolicy" value="console_active"> Only while a console is open here</label>
+              <label><input type="radio" name="callPolicy" value="never"> Never call this clinic</label>
+            </fieldset>
+            <div class="form-grid two-column" style="margin-top:12px">
+              <label class="field">Phone Tími dials <span style="font-weight:400">(optional — defaults to your listed number)</span>
+                <input name="voicePhone" type="tel" maxlength="30" placeholder="(555) 555-0100">
+              </label>
+              <div></div>
+              <label class="field">Quiet hours start <span style="font-weight:400">(optional)</span><input name="quietStart" type="time"></label>
+              <label class="field">Quiet hours end <span style="font-weight:400">(optional)</span><input name="quietEnd" type="time"></label>
+            </div>
+            <p class="people-note" data-call-preferences-status></p>
+          </section>
+          <div class="settings-form-actions">
+            <button class="button button-quiet" type="button" data-call-preferences-clear-quiet>Clear quiet hours</button>
+            <button class="button button-primary" type="submit">Save calling preferences</button>
           </div>
         </form>
       </div>
