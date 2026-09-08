@@ -240,8 +240,15 @@ export async function ensureBookingPaymentOrder(env, { intake }) {
   if (!hasDatabase(env)) return { ok: false, code: "DATABASE_REQUIRED", message: "D1 is required to take a payment." };
 
   const existing = await env.DB.prepare(
-    "SELECT id FROM payment_orders WHERE intake_id = ? AND purpose = 'BOOKING' AND status NOT IN ('FAILED', 'CANCELLED') ORDER BY created_at DESC LIMIT 1"
+    "SELECT id, status FROM payment_orders WHERE intake_id = ? AND purpose = 'BOOKING' AND status NOT IN ('FAILED', 'CANCELLED') ORDER BY created_at DESC LIMIT 1"
   ).bind(intake.id).first();
+
+  // Already settled — the webhook already marked this order PAID, so there
+  // is no reason to ask Stripe about a PaymentIntent that has already
+  // succeeded every time this screen re-polls.
+  if (existing?.status === "PAID") {
+    return { ok: true, mode: "paid", totalCents: null, order: await getPaymentOrder(env, existing.id) };
+  }
 
   let orderId;
   if (existing) {
