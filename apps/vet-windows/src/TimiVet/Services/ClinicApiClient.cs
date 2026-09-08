@@ -141,6 +141,67 @@ public sealed class ClinicApiClient
         return envelope.Preferences;
     }
 
+    // ---- Facility settings (POST /api/clinic/settings) -------------------
+
+    /// <summary>
+    /// Stable facility settings — what kind of practice this is, what it treats, hours, and
+    /// client-facing defaults. Open to any signed-in clinic member; see updateClinicLocationSettings in
+    /// src/index.js. There is no GET counterpart — current values arrive on the ordinary dashboard
+    /// payload (see <see cref="ClinicLocation"/>), same as apps/vet-web/public/app.js hydrates its form
+    /// from <c>state.dashboard.location</c> rather than a request of its own.
+    /// </summary>
+    public async Task<ClinicLocation> UpdateClinicSettingsAsync(FacilitySettingsUpdate update, CancellationToken cancellationToken)
+    {
+        if (IsDemo) return _demo.UpdateSettings(update);
+        using var response = await SendAsync(HttpMethod.Post, "/api/clinic/settings", update, cancellationToken);
+        var envelope = await ReadAsync<ClinicLocationEnvelope>(response, cancellationToken);
+        return envelope.Location;
+    }
+
+    // ---- Overflow tools (referral link + website status widget tokens) ---
+
+    /// <summary>GET /api/clinic/referral-link — the tenant's one stable referral link, auto-provisioned
+    /// on first request. Any signed-in clinic member may read it.</summary>
+    public async Task<ReferralLink?> GetReferralLinkAsync(CancellationToken cancellationToken)
+    {
+        if (IsDemo) return _demo.ReferralLinkSnapshot();
+        using var response = await SendAsync(HttpMethod.Get, "/api/clinic/referral-link", null, cancellationToken);
+        var envelope = await ReadAsync<ReferralLinkEnvelope>(response, cancellationToken);
+        return envelope.ReferralLink;
+    }
+
+    /// <summary>GET /api/clinic/widget-tokens — every website status widget token this tenant has
+    /// created, active or revoked. Any signed-in clinic member may read the list; creating and revoking
+    /// are clinic-admin-only (enforced by the Worker itself, not only by this client's command gating).</summary>
+    public async Task<List<WidgetToken>> GetWidgetTokensAsync(CancellationToken cancellationToken)
+    {
+        if (IsDemo) return _demo.WidgetTokens();
+        using var response = await SendAsync(HttpMethod.Get, "/api/clinic/widget-tokens", null, cancellationToken);
+        var envelope = await ReadAsync<WidgetTokensEnvelope>(response, cancellationToken);
+        return envelope.Tokens;
+    }
+
+    /// <summary>
+    /// POST /api/clinic/widget-tokens. The returned token carries the plaintext secret exactly once —
+    /// see <see cref="WidgetToken.Secret"/> — so the caller must show it to the operator immediately
+    /// rather than expecting to fetch it again later.
+    /// </summary>
+    public async Task<WidgetToken> CreateWidgetTokenAsync(string? label, List<string> allowedOrigins, CancellationToken cancellationToken)
+    {
+        if (IsDemo) return _demo.CreateWidgetToken(label, allowedOrigins);
+        var request = new CreateWidgetTokenRequest { Label = label, AllowedOrigins = allowedOrigins };
+        using var response = await SendAsync(HttpMethod.Post, "/api/clinic/widget-tokens", request, cancellationToken);
+        var envelope = await ReadAsync<CreateWidgetTokenResponse>(response, cancellationToken);
+        return envelope.Token;
+    }
+
+    public async Task RevokeWidgetTokenAsync(string tokenId, CancellationToken cancellationToken)
+    {
+        if (IsDemo) { _demo.RevokeWidgetToken(tokenId); return; }
+        using var response = await SendAsync(HttpMethod.Delete, $"/api/clinic/widget-tokens/{Uri.EscapeDataString(tokenId)}", null, cancellationToken);
+        await EnsureSuccessAsync(response, cancellationToken);
+    }
+
     public async Task PublishAvailabilityAsync(AvailabilityUpdate update, CancellationToken cancellationToken)
     {
         if (IsDemo) { _demo.Publish(update); return; }

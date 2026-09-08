@@ -22,6 +22,31 @@ public sealed class ClinicLocation
     public string? Kind { get; set; }
     public ClinicAvailability Availability { get; set; } = new();
     public ClinicPolicy Policy { get; set; } = new();
+
+    // ---- Stable facility settings (GET /api/clinic/dashboard, POST /api/clinic/settings) ----
+    // Everything below changes rarely — see updateClinicLocationSettings in src/index.js — and
+    // arrives on the ordinary dashboard payload as well as this endpoint's own response, which is
+    // why the settings screen hydrates from whichever one loaded most recently rather than issuing
+    // a GET of its own.
+    public List<string> Species { get; set; } = [];
+    public List<string> Capabilities { get; set; } = [];
+    public ClinicHours Hours { get; set; } = new();
+    public bool Open24Hours { get; set; }
+    public bool AcceptsWalkIns { get; set; } = true;
+    public int ArrivalWindowMinutes { get; set; } = 20;
+    /// <summary>Cents. Null means the location has never set one — the server leaves the column
+    /// untouched rather than assuming zero, and a zero exam fee is a real (if unusual) answer.</summary>
+    public int? BaseExamFeeCents { get; set; }
+    public string StaffingLevel { get; set; } = "veterinarian";
+    public string? StaffingNote { get; set; }
+    /// <summary>Composed server-side (enrichLocation in src/index.js) from StaffingLevel and
+    /// StaffingNote — null whenever a veterinarian staffs the place, which is the ordinary case.</summary>
+    public string? StaffingNotice { get; set; }
+}
+
+public sealed class ClinicHours
+{
+    public string? Note { get; set; }
 }
 
 public sealed class ClinicAvailability
@@ -400,6 +425,10 @@ public sealed class AppConfig
     public string? ClerkFrontendApi { get; set; }
     public bool? DemoMode { get; set; }
     public string? Surface { get; set; }
+    /// <summary>The customer-facing app's origin (e.g. https://timinow.pet) — where a referral link
+    /// resolves. Defaulted the same way the Worker defaults it (src/config.js) so a console that could
+    /// not fetch config yet still builds a link that works.</summary>
+    public string? CustomerAppUrl { get; set; }
 }
 
 /// <summary>
@@ -462,6 +491,119 @@ public sealed class CallPreferencesUpdate
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public bool? CallsEnabled { get; set; }
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public string? VoicePhone { get; set; }
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public QuietHours? QuietHours { get; set; }
+}
+
+// --------------------------------------------------------- facility settings ---
+
+/// <summary>
+/// Body of POST /api/clinic/settings — see updateClinicLocationSettings in src/index.js. Open to any
+/// signed-in clinic member, not just an administrator (unlike calling preferences and widget tokens):
+/// the Worker itself draws no <c>isOrgAdmin</c> line here, and apps/vet-web/public/app.js's settings
+/// form does not either.
+/// </summary>
+/// <remarks>
+/// Every property is sent, never omitted — the Worker replaces the whole record on every save (there is
+/// no PATCH-style partial update for this endpoint the way there is for calling preferences), so nothing
+/// here is nullable the way <see cref="CallPreferencesUpdate"/>'s fields are.
+/// </remarks>
+public sealed class FacilitySettingsUpdate
+{
+    /// <summary>"general", "urgent", "emergency", or "specialty" — validated by the Worker against
+    /// VALID_LOCATION_KIND.</summary>
+    public string Kind { get; set; } = "general";
+    /// <summary>Validated against VALID_SPECIES; the Worker rejects a save with none checked.</summary>
+    public List<string> Species { get; set; } = [];
+    /// <summary>Free-form, lower-cased and de-duplicated by the Worker — this is where "Accepts
+    /// emergency-level patients" and the "Other capabilities" free text end up too, exactly as
+    /// apps/vet-web/public/app.js's wireSettingsPageForm folds them in before sending. There is no
+    /// separate emergencyCapable field on the wire.</summary>
+    public List<string> Capabilities { get; set; } = [];
+    public bool Open24Hours { get; set; }
+    public bool AcceptsWalkIns { get; set; } = true;
+    public int ArrivalWindowMinutes { get; set; } = 20;
+    /// <summary>Cents. Omitted (left as the Worker's own default) when the operator left the dollar
+    /// field blank — <see cref="MainViewModel"/> is what decides between blank and a value.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public int? BaseExamFeeCents { get; set; }
+    public string HoursNote { get; set; } = "";
+    /// <summary>"veterinarian" or "veterinary_technician" — validated by the Worker against
+    /// VALID_STAFFING.</summary>
+    public string StaffingLevel { get; set; } = "veterinarian";
+    public string StaffingNote { get; set; } = "";
+}
+
+/// <summary>Envelope for POST /api/clinic/settings' response: <c>{ location }</c>.</summary>
+public sealed class ClinicLocationEnvelope
+{
+    public ClinicLocation Location { get; set; } = new();
+}
+
+// ------------------------------------------------------------- overflow tools ---
+//
+// Referral link (src/referrals.js) and website status widget tokens (src/widget.js) — the "overflow
+// tools" panel apps/vet-web/public/app.js calls enterOverflow()/renderOverflow(). Reading either is open
+// to any signed-in clinic member; creating or revoking a widget token is clinic-admin-only, enforced by
+// the Worker itself (isOrgAdmin in handleCreateWidgetToken/handleRevokeWidgetToken) as well as by
+// MainViewModel's command gating.
+
+/// <summary>GET /api/clinic/referral-link's <c>referralLink</c> — display-only, so nothing here is a
+/// capability grant the way a widget token is.</summary>
+public sealed class ReferralLink
+{
+    public string Id { get; set; } = "";
+    public string Slug { get; set; } = "";
+    public string Status { get; set; } = "active";
+    public int ClickCount { get; set; }
+    public string? CreatedAt { get; set; }
+    public string? UpdatedAt { get; set; }
+}
+
+public sealed class ReferralLinkEnvelope
+{
+    /// <summary>Null when the Worker has no database configured (demo/offline dev) — see
+    /// getOrCreateReferralLink's <c>hasDatabase</c> guard.</summary>
+    public ReferralLink? ReferralLink { get; set; }
+}
+
+/// <summary>
+/// One website status widget token, as GET /api/clinic/widget-tokens and POST's response both describe
+/// it (rowToTokenSummary in src/widget.js). <see cref="Secret"/> is populated only in the POST response,
+/// and only that once — the Worker stores just its hash, so a token list fetched afterward never carries
+/// it again.
+/// </summary>
+public sealed class WidgetToken
+{
+    public string Id { get; set; } = "";
+    public string? Label { get; set; }
+    public string Prefix { get; set; } = "";
+    public List<string> AllowedOrigins { get; set; } = [];
+    public string Status { get; set; } = "active";
+    public string? CreatedAt { get; set; }
+    public string? RevokedAt { get; set; }
+    public string? LastUsedAt { get; set; }
+    /// <summary>The plaintext secret to paste into the clinic's own site — present only on the response
+    /// to creating this token.</summary>
+    public string? Secret { get; set; }
+
+    [JsonIgnore] public string SitesLabel => AllowedOrigins.Count > 0 ? string.Join(", ", AllowedOrigins) : "Any site";
+    [JsonIgnore] public string LastUsedLabel => string.IsNullOrWhiteSpace(LastUsedAt) ? "Never" : ClinicMoney.ShortDate(LastUsedAt);
+}
+
+public sealed class WidgetTokensEnvelope
+{
+    public List<WidgetToken> Tokens { get; set; } = [];
+}
+
+/// <summary>Body of POST /api/clinic/widget-tokens.</summary>
+public sealed class CreateWidgetTokenRequest
+{
+    public string? Label { get; set; }
+    public List<string> AllowedOrigins { get; set; } = [];
+}
+
+/// <summary>Envelope for POST /api/clinic/widget-tokens' response: <c>{ token }</c>.</summary>
+public sealed class CreateWidgetTokenResponse
+{
+    public WidgetToken Token { get; set; } = new();
 }
 
 // ---------------------------------------------------------------- payouts ---

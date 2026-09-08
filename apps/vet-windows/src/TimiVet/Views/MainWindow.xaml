@@ -200,6 +200,8 @@
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
 
                     <!-- ========== Public capacity + metrics ========== -->
@@ -748,6 +750,213 @@
                                     </Border>
                                 </StackPanel>
                             </Grid>
+                        </Border>
+                    </Expander>
+
+                    <!-- ========== Facility settings ========== -->
+                    <!--
+                        Stable facility settings — what kind of practice this is, what it treats, hours,
+                        and client-facing defaults: POST /api/clinic/settings (updateClinicLocationSettings
+                        in src/index.js). Kept on this same settings page, right below calling/alerts, the
+                        way apps/vet-desktop and apps/vet-web both put it — one settings destination rather
+                        than a second one an operator has to go find. Open to any signed-in member, not
+                        gated to IsAdmin: neither the Worker nor apps/vet-web/public/app.js's settings form
+                        draws that line here.
+                    -->
+                    <Expander x:Name="FacilitySettingsExpander" Grid.Row="4" Header="Facility settings — what pet owners see about this practice" Margin="0,20,0,0">
+                        <Border Style="{StaticResource Card}" Margin="0,10,0,0">
+                            <StackPanel>
+                                <TextBlock Style="{StaticResource Hint}" Margin="0,0,0,16"
+                                           Text="This is what pet owners see about your practice by default, and what a request is matched against. It changes rarely — day-to-day status lives in Public capacity above."/>
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" MinWidth="230"/>
+                                        <ColumnDefinition Width="16"/>
+                                        <ColumnDefinition Width="*" MinWidth="230"/>
+                                        <ColumnDefinition Width="16"/>
+                                        <ColumnDefinition Width="*" MinWidth="230"/>
+                                    </Grid.ColumnDefinitions>
+
+                                    <!-- Facility type & species -->
+                                    <StackPanel Grid.Column="0">
+                                        <TextBlock Text="FACILITY TYPE &amp; SPECIES" Style="{StaticResource Eyebrow}" Margin="0,0,0,10"/>
+                                        <TextBlock Text="Facility type" Style="{StaticResource FieldLabel}"/>
+                                        <ComboBox ItemsSource="{Binding FacilityKindOptions}" SelectedItem="{Binding FacilityKind}" Margin="0,0,0,10"/>
+                                        <CheckBox Content="Accepts emergency-level patients" IsChecked="{Binding EmergencyCapable}" Margin="0,0,0,16"/>
+
+                                        <TextBlock Text="Species accepted" Style="{StaticResource FieldLabel}"/>
+                                        <ItemsControl ItemsSource="{Binding SpeciesOptions}">
+                                            <ItemsControl.ItemsPanel>
+                                                <ItemsPanelTemplate>
+                                                    <WrapPanel/>
+                                                </ItemsPanelTemplate>
+                                            </ItemsControl.ItemsPanel>
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <CheckBox Content="{Binding Label}" IsChecked="{Binding IsChecked}" Margin="0,2,16,4"/>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </StackPanel>
+
+                                    <!-- Capabilities -->
+                                    <StackPanel Grid.Column="2">
+                                        <TextBlock Text="CAPABILITIES" Style="{StaticResource Eyebrow}" Margin="0,0,0,10"/>
+                                        <TextBlock Text="Select everything this location can do" Style="{StaticResource FieldLabel}"/>
+                                        <ItemsControl ItemsSource="{Binding CapabilityOptions}">
+                                            <ItemsControl.ItemsPanel>
+                                                <ItemsPanelTemplate>
+                                                    <WrapPanel/>
+                                                </ItemsPanelTemplate>
+                                            </ItemsControl.ItemsPanel>
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <CheckBox Content="{Binding Label}" IsChecked="{Binding IsChecked}" Margin="0,2,16,4"/>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                        <TextBlock Text="Other capabilities (comma separated)" Style="{StaticResource FieldLabel}" Margin="0,14,0,5"/>
+                                        <TextBox Text="{Binding OtherCapabilities, UpdateSourceTrigger=PropertyChanged}" MaxLength="200"/>
+                                        <TextBlock Style="{StaticResource Hint}" Text="For example: dental, exotics, cardiology"/>
+                                    </StackPanel>
+
+                                    <!-- Operating information & client-facing defaults -->
+                                    <StackPanel Grid.Column="4">
+                                        <TextBlock Text="OPERATING INFORMATION" Style="{StaticResource Eyebrow}" Margin="0,0,0,10"/>
+                                        <CheckBox Content="Open 24 hours" IsChecked="{Binding Open24Hours}"/>
+                                        <CheckBox Content="Accepts walk-ins" IsChecked="{Binding AcceptsWalkIns}" Margin="0,6,0,12"/>
+
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition/>
+                                                <ColumnDefinition Width="10"/>
+                                                <ColumnDefinition/>
+                                            </Grid.ColumnDefinitions>
+                                            <StackPanel Grid.Column="0">
+                                                <TextBlock Text="Typical arrival window (min)" Style="{StaticResource FieldLabel}"/>
+                                                <TextBox Text="{Binding FacilityArrivalWindowMinutes}"/>
+                                            </StackPanel>
+                                            <StackPanel Grid.Column="2">
+                                                <TextBlock Text="Base exam fee (USD)" Style="{StaticResource FieldLabel}"/>
+                                                <TextBox Text="{Binding BaseExamFeeText, UpdateSourceTrigger=PropertyChanged}"/>
+                                            </StackPanel>
+                                        </Grid>
+                                        <TextBlock Style="{StaticResource Hint}" Text="Arrival window: 5-180 minutes."/>
+
+                                        <TextBlock Text="Hours &amp; operating notes, shown to pet owners" Style="{StaticResource FieldLabel}" Margin="0,12,0,5"/>
+                                        <TextBox Text="{Binding HoursNote, UpdateSourceTrigger=PropertyChanged}" TextWrapping="Wrap" AcceptsReturn="True"
+                                                 VerticalContentAlignment="Top" Height="64" MaxLength="500"/>
+
+                                        <TextBlock Text="Staffed by" Style="{StaticResource FieldLabel}" Margin="0,12,0,5"/>
+                                        <ComboBox ItemsSource="{Binding StaffingLevelOptions}" SelectedItem="{Binding StaffingLevel}"/>
+                                        <TextBlock Text="Staffing note (optional)" Style="{StaticResource FieldLabel}" Margin="0,12,0,5"/>
+                                        <TextBox Text="{Binding StaffingNote, UpdateSourceTrigger=PropertyChanged}" MaxLength="300"/>
+
+                                        <Button Content="Save facility settings" Command="{Binding SaveFacilitySettingsCommand}"
+                                                Style="{StaticResource PrimaryButton}" Margin="0,14,0,0"/>
+                                        <TextBlock Style="{StaticResource Hint}" Foreground="{StaticResource CoralDark}"
+                                                   Visibility="{Binding FacilitySettingsLoaded, Converter={StaticResource InverseB2V}}"
+                                                   Text="Current facility settings could not be read from the Worker yet. Saving will still write them."/>
+                                    </StackPanel>
+                                </Grid>
+                            </StackPanel>
+                        </Border>
+                    </Expander>
+
+                    <!-- ========== Overflow tools ========== -->
+                    <!--
+                        Referral link (src/referrals.js) and website status widget tokens (src/widget.js) —
+                        mirrors apps/vet-web/public/app.js's enterOverflow()/renderOverflow(). Reading
+                        either is open to any signed-in member; creating or revoking a widget token is
+                        clinic-admin-only, both here (IsAdmin-gated visibility and command CanExecute) and
+                        on the Worker itself.
+                    -->
+                    <Expander x:Name="OverflowToolsExpander" Grid.Row="5" Header="Overflow tools — referral link and website status widget" Margin="0,20,0,0">
+                        <Border Style="{StaticResource Card}" Margin="0,10,0,0">
+                            <StackPanel>
+                                <TextBlock Text="STABLE REFERRAL LINK" Style="{StaticResource Eyebrow}"/>
+                                <TextBlock Text="Send owners to Tími when you can't take them" Style="{StaticResource SectionHeading}" Margin="0,5,0,10"/>
+                                <StackPanel Visibility="{Binding HasReferralLink, Converter={StaticResource B2V}}">
+                                    <TextBlock Text="Your link" Style="{StaticResource FieldLabel}"/>
+                                    <TextBox Text="{Binding ReferralUrl, Mode=OneWay}" IsReadOnly="True" MaxWidth="480" HorizontalAlignment="Left"/>
+                                    <Button Content="Copy link" Command="{Binding CopyReferralLinkCommand}"
+                                            Style="{StaticResource QuietButton}" Margin="0,8,0,0" HorizontalAlignment="Left"/>
+                                    <TextBlock Style="{StaticResource Hint}" Text="{Binding ReferralClickCountLabel}"/>
+                                    <TextBlock Style="{StaticResource Hint}"
+                                               Text="This link always leads into Tími's own nearby-clinic search — never a named competitor."/>
+                                </StackPanel>
+                                <TextBlock Style="{StaticResource Hint}" Foreground="{StaticResource CoralDark}"
+                                           Visibility="{Binding HasReferralLink, Converter={StaticResource InverseB2V}}"
+                                           Text="Could not load your referral link yet."/>
+
+                                <TextBlock Text="WEBSITE STATUS WIDGET" Style="{StaticResource Eyebrow}" Margin="0,24,0,0"/>
+                                <TextBlock Text="Embed live status on your own site" Style="{StaticResource SectionHeading}" Margin="0,5,0,10"/>
+                                <TextBlock Style="{StaticResource Hint}" Margin="0,0,0,14"
+                                           Text="A small card pet owners see on your website: whether you're currently accepting urgent patients, and — if not — a link into Tími to find another available team. It never shows your name, address, exact capacity, or any customer data."/>
+
+                                <StackPanel Visibility="{Binding IsAdmin, Converter={StaticResource B2V}}" Margin="0,0,0,14">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition/>
+                                            <ColumnDefinition Width="16"/>
+                                            <ColumnDefinition/>
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel Grid.Column="0">
+                                            <TextBlock Text="Label (optional)" Style="{StaticResource FieldLabel}"/>
+                                            <TextBox Text="{Binding NewWidgetLabel, UpdateSourceTrigger=PropertyChanged}" MaxLength="80"/>
+                                        </StackPanel>
+                                        <StackPanel Grid.Column="2">
+                                            <TextBlock Text="Allowed sites (optional, one per line)" Style="{StaticResource FieldLabel}"/>
+                                            <TextBox Text="{Binding NewWidgetOrigins, UpdateSourceTrigger=PropertyChanged}" TextWrapping="Wrap"
+                                                     AcceptsReturn="True" VerticalContentAlignment="Top" Height="48"/>
+                                        </StackPanel>
+                                    </Grid>
+                                    <Button Content="Create widget token" Command="{Binding CreateWidgetTokenCommand}"
+                                            Style="{StaticResource PrimaryButton}" Margin="0,10,0,0" HorizontalAlignment="Left"/>
+                                </StackPanel>
+                                <TextBlock Style="{StaticResource Hint}" Margin="0,0,0,14"
+                                           Visibility="{Binding IsAdmin, Converter={StaticResource InverseB2V}}"
+                                           Text="Only a workspace administrator can create or revoke widget tokens."/>
+
+                                <Border Style="{StaticResource NoticePanel}" Margin="0,0,0,14"
+                                        Visibility="{Binding HasNewWidgetSecret, Converter={StaticResource B2V}}">
+                                    <StackPanel>
+                                        <TextBlock Text="Save this now — it won't be shown again." FontWeight="Bold" TextWrapping="Wrap"/>
+                                        <TextBlock Text="{Binding NewWidgetSecret}" FontFamily="Consolas" FontSize="11" TextWrapping="Wrap" Margin="0,8,0,8"/>
+                                        <TextBlock Text="Paste this on your site:" Margin="0,0,0,5"/>
+                                        <TextBox Text="{Binding NewWidgetEmbedSnippet, Mode=OneWay}" IsReadOnly="True" FontFamily="Consolas" FontSize="11"
+                                                 TextWrapping="Wrap" AcceptsReturn="True" Height="60"/>
+                                        <Button Content="I've saved it" Command="{Binding DismissNewWidgetSecretCommand}"
+                                                Style="{StaticResource QuietButton}" Margin="0,10,0,0" HorizontalAlignment="Left"/>
+                                    </StackPanel>
+                                </Border>
+
+                                <ItemsControl ItemsSource="{Binding WidgetTokens}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Border Style="{StaticResource InnerCard}" Margin="0,0,0,8">
+                                                <Grid>
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="*"/>
+                                                        <ColumnDefinition Width="Auto"/>
+                                                    </Grid.ColumnDefinitions>
+                                                    <StackPanel Grid.Column="0">
+                                                        <TextBlock Text="{Binding Label}" FontWeight="SemiBold" FontSize="13"
+                                                                   Visibility="{Binding Label, Converter={StaticResource TextVisibility}}"/>
+                                                        <TextBlock Text="{Binding Prefix}" FontFamily="Consolas" Foreground="{StaticResource Muted}" FontSize="11"/>
+                                                        <TextBlock Text="{Binding SitesLabel}" Foreground="{StaticResource Muted}" FontSize="11"/>
+                                                        <TextBlock Text="{Binding LastUsedLabel}" Foreground="{StaticResource Muted}" FontSize="11"/>
+                                                    </StackPanel>
+                                                    <Button Grid.Column="1" Content="Revoke" Style="{StaticResource QuietButton}"
+                                                            Command="{Binding DataContext.RevokeWidgetTokenCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                            CommandParameter="{Binding}"
+                                                            Visibility="{Binding DataContext.IsAdmin, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource B2V}}"/>
+                                                </Grid>
+                                            </Border>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </StackPanel>
                         </Border>
                     </Expander>
                 </Grid>

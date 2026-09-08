@@ -18,6 +18,22 @@ public enum ConsoleConnectionState
     SignInRequired
 }
 
+/// <summary>
+/// One row of a fixed facility-settings checklist — species accepted, capabilities — with its own
+/// change notification so a CheckBox bound inside an ItemsControl can flip without WPF rebuilding the
+/// whole row the way <see cref="Commands"/>'s AsyncCommand.CanExecuteChanged does for buttons.
+/// </summary>
+/// <remarks><see cref="Value"/> is the wire value the Worker validates (VALID_SPECIES, or one of the
+/// known capability strings apps/vet-web/public/app.js's checklist offers); <see cref="Label"/> is only
+/// ever shown, never sent.</remarks>
+public sealed class SettingsCheckOption(string value, string label) : ObservableObject
+{
+    public string Value { get; } = value;
+    public string Label { get; } = label;
+    private bool _isChecked;
+    public bool IsChecked { get => _isChecked; set => Set(ref _isChecked, value); }
+}
+
 public sealed class MainViewModel : ObservableObject, IDisposable
 {
     private readonly SettingsStore _settingsStore;
@@ -56,6 +72,17 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         // the whole "Advanced connection settings" panel for a non-admin — this is the belt to that braces.
         SaveSettingsCommand = new AsyncCommand(SaveSettingsAsync, () => !IsBusy && IsAdmin);
         SaveCallPreferencesCommand = new AsyncCommand(SaveCallPreferencesAsync, () => !IsBusy && IsAdmin);
+        // Not IsAdmin-gated: the Worker draws no such line for /api/clinic/settings (unlike calling
+        // preferences), and neither does apps/vet-web/public/app.js's settings form — any signed-in
+        // member may change what kind of practice this is, what it treats, and its hours.
+        SaveFacilitySettingsCommand = new AsyncCommand(SaveFacilitySettingsAsync, () => !IsBusy);
+        // Reading the widget-token list and the referral link is open to any member; creating and
+        // revoking a token is clinic-admin-only, same split as apps/vet-web/public/app.js's
+        // renderOverflow() draws with isSelfAdmin() — and the Worker enforces it either way.
+        CreateWidgetTokenCommand = new AsyncCommand(CreateWidgetTokenAsync, () => !IsBusy && IsAdmin);
+        RevokeWidgetTokenCommand = new AsyncCommand<WidgetToken>(RevokeWidgetTokenAsync, token => !IsBusy && IsAdmin && token is not null);
+        CopyReferralLinkCommand = new RelayCommand(CopyReferralLink, () => !string.IsNullOrWhiteSpace(ReferralUrl));
+        DismissNewWidgetSecretCommand = new RelayCommand(() => NewWidgetSecret = null);
         SignOutCommand = new AsyncCommand(SignOutAsync, () => !IsBusy);
         OpenPeopleCommand = new RelayCommand(() => OpenPeopleRequested?.Invoke(this, EventArgs.Empty));
         TestAlertCommand = new RelayCommand(() => TestAlertRequested?.Invoke(this, EventArgs.Empty));
@@ -166,6 +193,11 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public AsyncCommand<ClinicRequest> DeclineRequestCommand { get; }
     public AsyncCommand SaveSettingsCommand { get; }
     public AsyncCommand SaveCallPreferencesCommand { get; }
+    public AsyncCommand SaveFacilitySettingsCommand { get; }
+    public AsyncCommand CreateWidgetTokenCommand { get; }
+    public AsyncCommand<WidgetToken> RevokeWidgetTokenCommand { get; }
+    public RelayCommand CopyReferralLinkCommand { get; }
+    public RelayCommand DismissNewWidgetSecretCommand { get; }
     public AsyncCommand SignOutCommand { get; }
     public RelayCommand OpenPeopleCommand { get; }
     public RelayCommand TestAlertCommand { get; }
@@ -330,6 +362,276 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public string ListedPhoneHint => string.IsNullOrWhiteSpace(ListedPhone) ? "" : $"Listed number: {ListedPhone}";
     public bool CallPreferencesLoaded { get => _callPreferencesLoaded; private set => Set(ref _callPreferencesLoaded, value); }
 
+    // ---- Facility settings (POST /api/clinic/settings) -------------------
+    //
+    // What kind of practice this is, what it treats, hours, and client-facing defaults — mirrors
+    // apps/vet-web/public/index.html's data-settings-form field for field. There is no GET of its own:
+    // values are hydrated from the same ClinicLocation the dashboard already carries (see
+    // ApplyFacilitySettings, called once from RefreshAsync), exactly as
+    // apps/vet-web/public/app.js's hydrateSettingsForm reads state.dashboard.location rather than
+    // issuing a request of its own.
+
+    private string _facilityKind = "general";
+    private bool _emergencyCapable;
+    private string _otherCapabilities = "";
+    private bool _open24Hours;
+    private bool _acceptsWalkIns = true;
+    private int _facilityArrivalWindowMinutes = 20;
+    private string _baseExamFeeText = "";
+    private string _hoursNote = "";
+    private string _staffingLevel = "veterinarian";
+    private string _staffingNote = "";
+    private bool _facilitySettingsLoaded;
+
+    /// <summary>"general", "urgent", "emergency", or "specialty" — validated by the Worker against
+    /// VALID_LOCATION_KIND.</summary>
+    public string FacilityKind { get => _facilityKind; set => Set(ref _facilityKind, value); }
+    public IReadOnlyList<string> FacilityKindOptions { get; } = ["general", "urgent", "emergency", "specialty"];
+
+    /// <summary>Folded into the "capabilities" array as the literal string "emergency" on save — there
+    /// is no separate wire field, matching wireSettingsPageForm in apps/vet-web/public/app.js.</summary>
+    public bool EmergencyCapable { get => _emergencyCapable; set => Set(ref _emergencyCapable, value); }
+
+    public ObservableCollection<SettingsCheckOption> SpeciesOptions { get; } =
+    [
+        new("dog", "Dog"), new("cat", "Cat"), new("bird", "Bird"), new("rabbit", "Rabbit"),
+        new("reptile", "Reptile"), new("small_mammal", "Small mammal"), new("other", "Other")
+    ];
+
+    public ObservableCollection<SettingsCheckOption> CapabilityOptions { get; } =
+    [
+        new("surgery", "Surgery"), new("oxygen", "Oxygen support"), new("imaging", "Imaging"),
+        new("overnight", "Overnight stay"), new("toxin", "Toxin/poison cases"), new("same_day", "Same-day appointments"),
+        new("wellness", "Wellness care"), new("minor_injury", "Minor injury"), new("vaccines", "Vaccines")
+    ];
+
+    /// <summary>Comma-separated free text — anything here that is not already one of
+    /// <see cref="CapabilityOptions"/> or "emergency" is added to the capabilities array as-is (the
+    /// Worker lower-cases and de-duplicates it).</summary>
+    public string OtherCapabilities { get => _otherCapabilities; set => Set(ref _otherCapabilities, value); }
+
+    public bool Open24Hours { get => _open24Hours; set => Set(ref _open24Hours, value); }
+    public bool AcceptsWalkIns { get => _acceptsWalkIns; set => Set(ref _acceptsWalkIns, value); }
+    /// <summary>Minutes, 5-180 — the Worker clamps anything outside that range to the location's
+    /// current value rather than rejecting the save.</summary>
+    public int FacilityArrivalWindowMinutes { get => _facilityArrivalWindowMinutes; set => Set(ref _facilityArrivalWindowMinutes, value); }
+
+    /// <summary>
+    /// Typed and shown as dollars, same as apps/vet-web/public/index.html's field — the Worker's column
+    /// is cents, so <see cref="SaveFacilitySettingsAsync"/> is what does the ×100. Kept as text rather
+    /// than a numeric type so an empty field round-trips as "never set" instead of as zero.
+    /// </summary>
+    public string BaseExamFeeText { get => _baseExamFeeText; set => Set(ref _baseExamFeeText, value); }
+
+    /// <summary>Shown to pet owners. Up to 500 characters — enforced by the TextBox's MaxLength, the
+    /// same limit the Worker applies server-side.</summary>
+    public string HoursNote { get => _hoursNote; set => Set(ref _hoursNote, value); }
+
+    /// <summary>"veterinarian" or "veterinary_technician" — validated by the Worker against
+    /// VALID_STAFFING.</summary>
+    public string StaffingLevel { get => _staffingLevel; set => Set(ref _staffingLevel, value); }
+    public IReadOnlyList<string> StaffingLevelOptions { get; } = ["veterinarian", "veterinary_technician"];
+    /// <summary>Up to 300 characters.</summary>
+    public string StaffingNote { get => _staffingNote; set => Set(ref _staffingNote, value); }
+    public bool FacilitySettingsLoaded { get => _facilitySettingsLoaded; private set => Set(ref _facilitySettingsLoaded, value); }
+
+    /// <summary>Populates the facility-settings fields from a location the dashboard (or a save) just
+    /// returned. Called once — see the <c>!FacilitySettingsLoaded</c> guard in RefreshAsync — so an
+    /// operator mid-edit is never overwritten by the next six-second poll, the same reasoning behind
+    /// LoadCallPreferencesAsync being a one-shot load rather than part of the poll loop.</summary>
+    private void ApplyFacilitySettings(ClinicLocation location)
+    {
+        FacilityKind = string.IsNullOrWhiteSpace(location.Kind) ? "general" : location.Kind!;
+        var capabilities = location.Capabilities ?? [];
+        EmergencyCapable = capabilities.Contains("emergency");
+        var species = location.Species ?? [];
+        foreach (var option in SpeciesOptions) option.IsChecked = species.Contains(option.Value);
+        foreach (var option in CapabilityOptions) option.IsChecked = capabilities.Contains(option.Value);
+        var known = new HashSet<string>(CapabilityOptions.Select(o => o.Value)) { "emergency" };
+        OtherCapabilities = string.Join(", ", capabilities.Where(value => !known.Contains(value)));
+        Open24Hours = location.Open24Hours;
+        AcceptsWalkIns = location.AcceptsWalkIns;
+        FacilityArrivalWindowMinutes = location.ArrivalWindowMinutes;
+        BaseExamFeeText = location.BaseExamFeeCents is int cents ? (cents / 100m).ToString("0.##", System.Globalization.CultureInfo.InvariantCulture) : "";
+        HoursNote = location.Hours.Note ?? "";
+        StaffingLevel = string.IsNullOrWhiteSpace(location.StaffingLevel) ? "veterinarian" : location.StaffingLevel;
+        StaffingNote = location.StaffingNote ?? "";
+        FacilitySettingsLoaded = true;
+    }
+
+    private async Task SaveFacilitySettingsAsync()
+    {
+        var species = SpeciesOptions.Where(option => option.IsChecked).Select(option => option.Value).ToList();
+        if (species.Count == 0) { Fail("Choose at least one species this location treats."); return; }
+        IsBusy = true;
+        try
+        {
+            var capabilities = CapabilityOptions.Where(option => option.IsChecked).Select(option => option.Value).ToList();
+            if (EmergencyCapable) capabilities.Add("emergency");
+            foreach (var extra in OtherCapabilities.Split(',').Select(value => value.Trim().ToLowerInvariant()).Where(value => value.Length > 0))
+            {
+                if (!capabilities.Contains(extra)) capabilities.Add(extra);
+            }
+            int? feeCents = null;
+            var feeText = BaseExamFeeText.Trim();
+            if (feeText.Length > 0 && decimal.TryParse(feeText, System.Globalization.NumberStyles.Number, System.Globalization.CultureInfo.InvariantCulture, out var dollars))
+            {
+                feeCents = (int)Math.Round(dollars * 100m);
+            }
+            var location = await _api.UpdateClinicSettingsAsync(new FacilitySettingsUpdate
+            {
+                Kind = FacilityKind,
+                Species = species,
+                Capabilities = capabilities,
+                Open24Hours = Open24Hours,
+                AcceptsWalkIns = AcceptsWalkIns,
+                ArrivalWindowMinutes = FacilityArrivalWindowMinutes,
+                BaseExamFeeCents = feeCents,
+                HoursNote = HoursNote.Trim(),
+                StaffingLevel = StaffingLevel,
+                StaffingNote = StaffingNote.Trim()
+            }, _lifetime.Token);
+            ApplyFacilitySettings(location);
+            Succeed("Facility settings saved.");
+        }
+        catch (Exception ex) { Fail(ex.Message); }
+        finally { IsBusy = false; }
+    }
+
+    // ---- Overflow tools: referral link + website status widget tokens ----
+    //
+    // GET /api/clinic/referral-link and GET/POST/DELETE /api/clinic/widget-tokens (src/referrals.js,
+    // src/widget.js) — mirrors apps/vet-web/public/app.js's enterOverflow()/renderOverflow(). Reading
+    // either is open to any signed-in clinic member; creating or revoking a widget token is
+    // clinic-admin-only, enforced by the Worker itself as well as by this console's command gating.
+
+    private ReferralLink? _referralLink;
+    private string _customerAppUrl = "https://timinow.pet";
+    private bool _customerAppUrlLoaded;
+    private string _newWidgetLabel = "";
+    private string _newWidgetOrigins = "";
+    private string? _newWidgetSecret;
+    private bool _overflowLoaded;
+
+    public ObservableCollection<WidgetToken> WidgetTokens { get; } = [];
+
+    public ReferralLink? ReferralLink
+    {
+        get => _referralLink;
+        private set
+        {
+            if (!Set(ref _referralLink, value)) return;
+            Raise(nameof(HasReferralLink));
+            Raise(nameof(ReferralUrl));
+            Raise(nameof(ReferralClickCountLabel));
+            CopyReferralLinkCommand.RaiseCanExecuteChanged();
+        }
+    }
+    public bool HasReferralLink => ReferralLink is not null;
+    /// <summary>Built client-side from the slug the Worker returns, the same way
+    /// apps/vet-web/public/app.js's referralUrl() does — the Worker itself never sends the full URL,
+    /// only the slug, since /r/:slug is served by the customer Worker, not this one.</summary>
+    public string ReferralUrl => ReferralLink is null ? "" : $"{_customerAppUrl}/r/{Uri.EscapeDataString(ReferralLink.Slug)}";
+    public string ReferralClickCountLabel => ReferralLink is null ? "" : $"Clicked {ReferralLink.ClickCount} time{(ReferralLink.ClickCount == 1 ? "" : "s")}.";
+
+    public string NewWidgetLabel { get => _newWidgetLabel; set => Set(ref _newWidgetLabel, value); }
+    /// <summary>One site per line, becoming <c>allowedOrigins</c> on save — same shape as
+    /// apps/vet-web/public/app.js's "Allowed sites" textarea.</summary>
+    public string NewWidgetOrigins { get => _newWidgetOrigins; set => Set(ref _newWidgetOrigins, value); }
+
+    /// <summary>The plaintext secret for a token just created — shown once, exactly as the Worker only
+    /// ever sends it once (see <see cref="WidgetToken.Secret"/>).</summary>
+    public string? NewWidgetSecret
+    {
+        get => _newWidgetSecret;
+        private set
+        {
+            if (!Set(ref _newWidgetSecret, value)) return;
+            Raise(nameof(HasNewWidgetSecret));
+            Raise(nameof(NewWidgetEmbedSnippet));
+        }
+    }
+    public bool HasNewWidgetSecret => !string.IsNullOrEmpty(NewWidgetSecret);
+    /// <summary>What to paste onto the clinic's own site — mirrors the snippet
+    /// apps/vet-web/public/app.js builds in renderOverflow().</summary>
+    public string? NewWidgetEmbedSnippet => HasNewWidgetSecret ? $"<script src=\"{_customerAppUrl}/widget.js\" data-timi-widget=\"{NewWidgetSecret}\"></script>" : null;
+
+    public bool OverflowLoaded { get => _overflowLoaded; private set => Set(ref _overflowLoaded, value); }
+
+    /// <summary>Loads the referral link and widget-token list together, same as enterOverflow() fetches
+    /// both in parallel. Not fatal on failure — the panel shows its own "could not load" state and the
+    /// rest of the console carries on.</summary>
+    public async Task LoadOverflowToolsAsync()
+    {
+        try
+        {
+            if (!_customerAppUrlLoaded && !_api.IsDemo)
+            {
+                try
+                {
+                    var config = await _api.GetConfigAsync(_lifetime.Token);
+                    if (!string.IsNullOrWhiteSpace(config.CustomerAppUrl)) _customerAppUrl = config.CustomerAppUrl!.TrimEnd('/');
+                    _customerAppUrlLoaded = true;
+                }
+                catch
+                {
+                    // Keep the built-in default (https://timinow.pet, same as the Worker's own — see
+                    // src/config.js) and try again on the next load rather than failing the whole panel
+                    // over a config fetch that is not on the critical path for the token list itself.
+                }
+            }
+            var tokensTask = _api.GetWidgetTokensAsync(_lifetime.Token);
+            var referralTask = _api.GetReferralLinkAsync(_lifetime.Token);
+            await Task.WhenAll(tokensTask, referralTask);
+            WidgetTokens.Clear();
+            foreach (var token in tokensTask.Result) WidgetTokens.Add(token);
+            ReferralLink = referralTask.Result;
+            OverflowLoaded = true;
+        }
+        catch (Exception ex)
+        {
+            OverflowLoaded = false;
+            System.Diagnostics.Debug.WriteLine($"Overflow tools unavailable: {ex.Message}");
+        }
+    }
+
+    private async Task CreateWidgetTokenAsync()
+    {
+        IsBusy = true;
+        try
+        {
+            var origins = NewWidgetOrigins.Split('\n').Select(line => line.Trim()).Where(line => line.Length > 0).ToList();
+            var token = await _api.CreateWidgetTokenAsync(string.IsNullOrWhiteSpace(NewWidgetLabel) ? null : NewWidgetLabel.Trim(), origins, _lifetime.Token);
+            NewWidgetSecret = token.Secret;
+            NewWidgetLabel = "";
+            NewWidgetOrigins = "";
+            await LoadOverflowToolsAsync();
+            Succeed("Widget token created.");
+        }
+        catch (Exception ex) { Fail(ex.Message); }
+        finally { IsBusy = false; }
+    }
+
+    private async Task RevokeWidgetTokenAsync(WidgetToken token)
+    {
+        IsBusy = true;
+        try
+        {
+            await _api.RevokeWidgetTokenAsync(token.Id, _lifetime.Token);
+            Succeed("Widget token revoked.");
+            await LoadOverflowToolsAsync();
+        }
+        catch (Exception ex) { Fail(ex.Message); }
+        finally { IsBusy = false; }
+    }
+
+    private void CopyReferralLink()
+    {
+        if (string.IsNullOrWhiteSpace(ReferralUrl)) return;
+        try { System.Windows.Clipboard.SetText(ReferralUrl); Succeed("Referral link copied."); }
+        catch (Exception ex) { Fail(ex.Message); }
+    }
+
     /// <summary>Applies the descriptor from GET /api/session so the left rail shows the real workspace, not the dashboard's echo.</summary>
     public void ApplySession(SessionDescriptor session)
     {
@@ -341,6 +643,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         Raise(nameof(IsAdmin));
         SaveCallPreferencesCommand.RaiseCanExecuteChanged();
         SaveSettingsCommand.RaiseCanExecuteChanged();
+        CreateWidgetTokenCommand.RaiseCanExecuteChanged();
+        RevokeWidgetTokenCommand.RaiseCanExecuteChanged();
 
         // A launch that resumed offline opens with a placeholder descriptor: authenticated, clinic
         // surface, and nothing else, because there was no network to ask. Recognising that here is what
@@ -368,6 +672,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     {
         await RefreshAsync(true);
         _ = LoadCallPreferencesAsync();
+        _ = LoadOverflowToolsAsync();
         _ = LoadPayoutsAsync();
         _ = PollLoopAsync(_lifetime.Token);
     }
@@ -381,6 +686,9 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             var dashboard = await _api.GetDashboardAsync(_lifetime.Token);
             Pending = dashboard.Metrics.Pending; ActiveArrivals = dashboard.Metrics.ActiveArrivals; CompletedToday = dashboard.Metrics.CompletedToday; DeclinedToday = dashboard.Metrics.DeclinedToday;
             ApplyAvailability(dashboard.Location.Availability);
+            // Once only, same reasoning as CallPreferencesLoaded below: a poll landing mid-edit must
+            // never clobber what an operator is typing into the facility-settings form.
+            if (!FacilitySettingsLoaded) ApplyFacilitySettings(dashboard.Location);
 
             foreach (var request in dashboard.Requests)
             {
@@ -495,6 +803,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         StatusMessage = ConnectionDetail;
         await RefreshAsync(true);
         if (!CallPreferencesLoaded) await LoadCallPreferencesAsync();
+        if (!OverflowLoaded) await LoadOverflowToolsAsync();
         WakePoll();
     }
 
@@ -708,6 +1017,9 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         DeclineRequestCommand.RaiseCanExecuteChanged();
         SaveSettingsCommand.RaiseCanExecuteChanged();
         SaveCallPreferencesCommand.RaiseCanExecuteChanged();
+        SaveFacilitySettingsCommand.RaiseCanExecuteChanged();
+        CreateWidgetTokenCommand.RaiseCanExecuteChanged();
+        RevokeWidgetTokenCommand.RaiseCanExecuteChanged();
         SignOutCommand.RaiseCanExecuteChanged();
     }
 
