@@ -6,6 +6,10 @@
 #   ./scripts/install-ios-device.sh --device "Caleb's iPhone"
 #   ./scripts/install-ios-device.sh --team ABCDE12345
 #   ./scripts/install-ios-device.sh --build-only
+#   ./scripts/install-ios-device.sh --no-stripe
+#
+# In-app card payment (StripePaymentSheet) is compiled in by default — pass
+# --no-stripe to build the hosted-fallback deposit screen instead.
 #
 # No Xcode window at any point. What it does need, once:
 #
@@ -37,12 +41,14 @@ TEAM="${DEVELOPMENT_TEAM:-}"
 DEVICE=""
 INSTALL=true
 CARPLAY=false
+export NO_STRIPE="${NO_STRIPE:-}"
 while [ $# -gt 0 ]; do
   case "$1" in
     --team)       TEAM="${2:-}"; shift 2 ;;
     --device)     DEVICE="${2:-}"; shift 2 ;;
     --build-only) INSTALL=false; shift ;;
     --carplay)    CARPLAY=true; shift ;;
+    --no-stripe)  NO_STRIPE=1; shift ;;
     *)            die "unknown option: $1" ;;
   esac
 done
@@ -155,6 +161,9 @@ echo "  $DEVICE_NAME — iOS $DEVICE_OS, $DEVICE_LINK"
 
 bold "4. Mapbox"
 select_mapbox
+
+bold "4b. Card payment"
+select_stripe
 
 bold "5. Xcode project"
 ( cd "$APP_DIR/Darwin" && xcodegen generate >/dev/null )

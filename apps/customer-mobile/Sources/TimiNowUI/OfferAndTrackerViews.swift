@@ -223,7 +223,7 @@ struct TrackerView: View {
             HStack { Image(systemName: "building.2.fill").font(.title).foregroundStyle(.white).frame(width: 54, height: 54).background(TimiColor.blue, in: RoundedRectangle(cornerRadius: 16)); VStack(alignment: .leading) { Text(clinic?.name ?? "Veterinary clinic").font(.title3).fontWeight(.black); Text(clinic?.address ?? "Address unavailable").font(.caption).foregroundStyle(TimiColor.muted) } }
             StaffingNotice(notice: clinic?.staffingNotice)
             Divider(); Text(intake?.clinicNote ?? "The clinic is expecting your arrival. Capacity and clinical priority can still change.").font(.callout)
-            HStack { if let phone = clinic?.phone, let url = URL(string: "tel:\(phone.filter { $0.isNumber || $0 == "+" })") { Link(destination: url) { Label("Call", systemImage: "phone.fill") } }; Spacer(); Button { showNavigation = true } label: { Label("Navigate", systemImage: "arrow.triangle.turn.up.right.diamond.fill") }.disabled(navigationDestination == nil) }.fontWeight(.bold).foregroundStyle(TimiColor.blue)
+            HStack { if let phone = clinic?.phone, let url = URL(string: "tel:\(phone.filter { $0.isNumber || $0 == "+" })") { Link(destination: url) { Label("Call", systemImage: "phone.fill") } }; Spacer(); Button { startNavigating() } label: { Label("Navigate", systemImage: "arrow.triangle.turn.up.right.diamond.fill") }.disabled(navigationDestination == nil) }.fontWeight(.bold).foregroundStyle(TimiColor.blue)
         }.timiCard(Color.white)
     }
 
@@ -232,6 +232,15 @@ struct TrackerView: View {
     }
 
     func timelineRow(_ complete: Bool, _ title: String, _ detail: String) -> some View { HStack(alignment: .top, spacing: 13) { Image(systemName: complete ? "checkmark.circle.fill" : "circle").font(.title2).foregroundStyle(complete ? TimiColor.blue : TimiColor.ink.opacity(0.2)); VStack(alignment: .leading) { Text(title).fontWeight(.bold); Text(detail).font(.caption).foregroundStyle(TimiColor.muted) } } }
+
+    /// Opening in-app turn-by-turn is itself the "I'm leaving" signal — no
+    /// reason to also make the customer tap a separate button to say so.
+    /// The manual "We're leaving now" button below still covers driving
+    /// there without in-app navigation (or declining it and going anyway).
+    func startNavigating() {
+        showNavigation = true
+        if intake?.status == "accepted" { Task { await store.updateIntake(status: "en_route") } }
+    }
 
     var actionButtons: some View {
         VStack(spacing: 11) {

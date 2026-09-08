@@ -16,6 +16,10 @@
 # ~/.netrc; this script sets TIMI_MAPBOX itself when it finds it there. Without
 # it you get the non-Mapbox fallback — a ranked clinic list, no live map — and
 # the run below says so rather than leaving you to notice.
+#
+# In-app card payment (StripePaymentSheet) needs no such credential and is
+# compiled in by default; pass --no-stripe to build the hosted-fallback
+# deposit screen instead.
 
 if [ -z "${BASH_VERSION:-}" ]; then
   echo "Run with bash: bash scripts/build-ios-app.sh" >&2
@@ -32,10 +36,12 @@ trap 'stop_heartbeat' EXIT INT TERM
 
 DEVICE=""
 RUN=true
+export NO_STRIPE="${NO_STRIPE:-}"
 while [ $# -gt 0 ]; do
   case "$1" in
     --device)     DEVICE="${2:-}"; shift 2 ;;
     --build-only) RUN=false; shift ;;
+    --no-stripe)  NO_STRIPE=1; shift ;;
     *)            die "unknown option: $1" ;;
   esac
 done
@@ -48,6 +54,9 @@ command -v xcodegen   >/dev/null || die "xcodegen is required: brew install xcod
 
 bold "1. Mapbox"
 select_mapbox
+
+bold "1b. Card payment"
+select_stripe
 
 bold "2. Simulator"
 if [ -z "$DEVICE" ]; then

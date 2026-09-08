@@ -12,6 +12,7 @@ import TimiNowCore
 // including CI — this file compiles to the fallback path below.
 #if canImport(StripePaymentSheet) && !SKIP && os(iOS)
 import StripePaymentSheet
+import UIKit
 #endif
 
 /// The arrival-deposit section of the tracker.
@@ -136,6 +137,33 @@ struct DepositSection: View {
         }
     }
 
+    /// The row and confirm button above are entirely Tími's own SwiftUI —
+    /// this only reaches the one surface that is still Stripe's: the card
+    /// form the payment-options sheet opens. Values are `TimiColor` and the
+    /// `timiCard`/button corner radii translated to `UIColor`/`CGFloat`,
+    /// since `PaymentSheet.Appearance` is a UIKit type and cannot reference
+    /// a SwiftUI `Color` directly.
+    static var appearance: PaymentSheet.Appearance {
+        var appearance = PaymentSheet.Appearance()
+        appearance.cornerRadius = 14
+        appearance.borderWidth = 2
+        appearance.colors.primary = UIColor(red: 0.137, green: 0.341, blue: 0.851, alpha: 1) // TimiColor.blue
+        appearance.colors.background = .white
+        appearance.colors.componentBackground = .white
+        appearance.colors.componentBorder = UIColor(red: 0.067, green: 0.106, blue: 0.231, alpha: 1) // TimiColor.ink
+        appearance.colors.componentDivider = UIColor(red: 0.067, green: 0.106, blue: 0.231, alpha: 0.15)
+        appearance.colors.text = UIColor(red: 0.067, green: 0.106, blue: 0.231, alpha: 1) // TimiColor.ink
+        appearance.colors.textSecondary = UIColor(red: 0.435, green: 0.455, blue: 0.514, alpha: 1) // TimiColor.muted
+        appearance.colors.componentText = UIColor(red: 0.067, green: 0.106, blue: 0.231, alpha: 1)
+        appearance.colors.componentPlaceholderText = UIColor(red: 0.435, green: 0.455, blue: 0.514, alpha: 1)
+        appearance.colors.icon = UIColor(red: 0.137, green: 0.341, blue: 0.851, alpha: 1)
+        appearance.colors.danger = UIColor(red: 0.949, green: 0.373, blue: 0.298, alpha: 1) // TimiColor.coral
+        appearance.font.base = .systemFont(ofSize: 15, weight: .medium)
+        appearance.primaryButton.cornerRadius = 14
+        appearance.primaryButton.font = .systemFont(ofSize: 16, weight: .black)
+        return appearance
+    }
+
     func prepareElements() async {
         guard let intent = store.depositIntent, intent.mode == "stripe",
               let secret = intent.clientSecret, let publishable = intent.publishableKey else { return }
@@ -151,6 +179,7 @@ struct DepositSection: View {
         // misdescribe who the customer is paying.
         configuration.allowsDelayedPaymentMethods = false
         configuration.returnURL = "timinow://stripe-redirect"
+        configuration.appearance = Self.appearance
 
         let created: PaymentSheet.FlowController? = await withCheckedContinuation { continuation in
             PaymentSheet.FlowController.create(paymentIntentClientSecret: secret, configuration: configuration) { result in

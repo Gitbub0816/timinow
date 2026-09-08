@@ -45,6 +45,7 @@ KEY_PATH="${ASC_KEY_PATH:-}"
 BUILD_NUMBER=""
 CARPLAY=false
 UPLOAD=true
+export NO_STRIPE="${NO_STRIPE:-}"
 while [ $# -gt 0 ]; do
   case "$1" in
     --team)        TEAM="${2:-}"; shift 2 ;;
@@ -54,6 +55,7 @@ while [ $# -gt 0 ]; do
     --build)       BUILD_NUMBER="${2:-}"; shift 2 ;;
     --carplay)     CARPLAY=true; shift ;;
     --export-only) UPLOAD=false; shift ;;
+    --no-stripe)   NO_STRIPE=1; shift ;;
     *)             die "unknown option: $1" ;;
   esac
 done
@@ -141,6 +143,9 @@ fi
 
 bold "5. Mapbox"
 select_mapbox
+
+bold "5b. Card payment"
+select_stripe
 
 bold "6. Xcode project"
 ( cd "$APP_DIR/Darwin" && xcodegen generate >/dev/null )

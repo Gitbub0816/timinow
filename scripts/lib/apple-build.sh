@@ -174,3 +174,18 @@ select_mapbox() {
     dim  "  ./scripts/bootstrap.sh <your-env-file> writes that entry for you."
   fi
 }
+
+# Unlike Mapbox, StripePaymentSheet needs no download credential — the
+# package is public — so this has nothing to check for and defaults on.
+# Still its own function and its own printed line, so a build's console
+# output says what it compiled in rather than requiring a diff of
+# Package.swift to find out. Pass no_stripe=1 to build the hosted-fallback
+# path on purpose (e.g. to reproduce what a machine without this flag sees).
+select_stripe() {
+  if [ "${NO_STRIPE:-}" = "1" ]; then
+    dim "  --no-stripe: building the hosted-fallback deposit screen on purpose"
+    return
+  fi
+  export TIMI_STRIPE=1
+  echo "  building with in-app card payment (StripePaymentSheet)"
+}
