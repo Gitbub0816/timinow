@@ -433,3 +433,41 @@ export function inboundFallbackTwiml() {
     "If Tími called you about a patient, you can respond at providers dot timinow dot pet. Goodbye.";
   return `<?xml version="1.0" encoding="UTF-8"?><Response>${sayXml(message)}<Hangup/></Response>`;
 }
+
+/**
+ * Ask the voice gateway to place its queued calls and drain its SMS queue
+ * now, over the `VOICE` service binding — a Worker-to-Worker call that never
+ * touches the public internet.
+ *
+ * The one deliberate exception to this file's "no Worker globals beyond fetch
+ * and crypto" rule: `env.VOICE.fetch` is that same shape, and callers in both
+ * src/index.js and src/alert-notifications.js need this exact poke, so it
+ * lives here rather than being duplicated or creating a circular import
+ * between those two modules.
+ *
+ * Twilio credentials exist only in the voice gateway Worker (see
+ * apps/voice-gateway/README.md) — this is *why* every caller that needs an
+ * SMS or a phone call sent enqueues a `notification_outbox` row and pokes
+ * this instead of calling Twilio directly. A search stops collecting offers
+ * after ninety seconds, which is why this poke exists at all rather than
+ * leaving delivery to a scheduler: most of that window would pass before the
+ * first clinic phone rang. The gateway's own sweep is the retry path.
+ *
+ * Best effort by design: a clinic not reached by phone still sees the
+ * request on its console, and an alert not texted is still logged and
+ * visible in GET /api/admin/alerts — so a failure here must never throw.
+ */
+export async function dispatchVoiceCalls(env) {
+  if (!env.VOICE) return;
+  try {
+    const response = await env.VOICE.fetch("https://voice.internal/api/voice/drain", {
+      method: "POST",
+      headers: env.VOICE_DRAIN_TOKEN ? { "x-timi-drain-token": env.VOICE_DRAIN_TOKEN } : {}
+    });
+    if (!response.ok) {
+      console.warn(JSON.stringify({ event: "voice_dispatch_rejected", status: response.status }));
+    }
+  } catch (error) {
+    console.warn(JSON.stringify({ event: "voice_dispatch_failed", message: error.message }));
+  }
+}

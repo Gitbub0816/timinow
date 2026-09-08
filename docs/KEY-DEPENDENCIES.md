@@ -58,7 +58,7 @@ independently optional.
 | `ALERT_EMAIL_API_KEY` | SECRET | customer | A MailerSend API key (Bearer token). All three email vars are required together — partial config is treated as unset. |
 | `ALERT_EMAIL_FROM` | VAR | customer | Verified sender address in your MailerSend account. |
 | `ALERT_EMAIL_TO` | VAR | customer | Where breach emails go. |
-| `ALERT_SMS_TO` | VAR | customer | Phone number for SMS on the most severe breach category only. **Also requires** `TWILIO_ACCOUNT_SID` / `TWILIO_AUTH_TOKEN` / `TWILIO_MESSAGING_FROM` to be set **on the customer Worker itself** (`wrangler.jsonc`) — the customer Worker calls Twilio directly here rather than through the voice Worker's service binding. |
+| `ALERT_SMS_TO` | VAR | customer | Phone number for SMS on the most severe breach category only. No Twilio credentials needed on the customer Worker — the text is enqueued and sent through the voice Worker's existing service binding, the same path `notifyFirstOfferBySms` already uses. Twilio credentials stay only on the voice Worker. |
 | `ALERT_NOTIFICATION_COOLDOWN_MINUTES` | VAR | customer | Default 60. Prevents re-notifying the same ongoing breach every 5 minutes; a cleared-then-recurring breach notifies immediately, bypassing cooldown. |
 
 ```bash

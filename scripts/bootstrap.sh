@@ -593,11 +593,8 @@ set_var MAPBOX_NAVIGATION_STYLE_URL "$CUSTOMER" "$VET" "$ADMIN"
 set_var STRIPE_PUBLISHABLE_KEY "$CUSTOMER" "$ADMIN"
 set_var STRIPE_ACCOUNTS_API    "$ADMIN"
 set_var TWILIO_FROM_NUMBER     "$VOICE"
-# Also the customer Worker: alert-breach SMS (src/alert-notifications.js) is
-# sent from the customer Worker's own cron, calling Twilio directly rather
-# than through the voice Worker's service binding.
-set_var TWILIO_MESSAGING_FROM  "$CUSTOMER" "$VOICE"
-set_var TWILIO_MESSAGING_SERVICE_SID "$CUSTOMER" "$VOICE"
+set_var TWILIO_MESSAGING_FROM  "$VOICE"
+set_var TWILIO_MESSAGING_SERVICE_SID "$VOICE"
 set_var PUBLIC_APP_URL         "$CUSTOMER"
 set_var VOICE_PUBLIC_URL       "$VOICE"
 set_var VOICE_CALLS_ENABLED    "$VOICE"
@@ -966,10 +963,8 @@ put_secret CLERK_SECRET_KEY      "$CUSTOMER" "$VET" "$ADMIN" "$VOICE"
 # would block every future push with a false positive. Delivered as a secret so
 # it never enters version control at all. Worker code reads it identically.
 put_secret MAPBOX_PUBLIC_TOKEN   "$CUSTOMER" "$VET" "$ADMIN"
-# Also the customer Worker, for the same reason TWILIO_MESSAGING_FROM above is:
-# alert-breach SMS is sent from the customer Worker's own cron.
-put_secret TWILIO_ACCOUNT_SID    "$CUSTOMER" "$VOICE"
-put_secret TWILIO_AUTH_TOKEN     "$CUSTOMER" "$VOICE"
+put_secret TWILIO_ACCOUNT_SID    "$VOICE"
+put_secret TWILIO_AUTH_TOKEN     "$VOICE"
 put_secret GEMINI_API_KEY        "$VOICE"
 # Signs Feature B's care-search restore link. Only the customer Worker builds
 # or verifies one.

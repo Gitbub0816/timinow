@@ -33,7 +33,11 @@
 
 import { hasDatabase } from "./db.js";
 import { checkAlerts } from "./metrics.js";
-import { sendSms } from "./voice.js";
+import { dispatchVoiceCalls } from "./voice.js";
+
+function newId(prefix) {
+  return `${prefix}_${crypto.randomUUID().replaceAll("-", "")}`;
+}
 
 const DEFAULT_COOLDOWN_MINUTES = 60;
 
@@ -116,27 +120,31 @@ export async function sendAlertEmail(env, { subject, text }) {
 }
 
 /**
- * Best-effort SMS via the existing Twilio integration. Every destination in
- * ALERT_SMS_TO gets its own attempt; one bad number must not stop the others.
+ * Best-effort SMS, routed the same way every other outbound text in this
+ * codebase is: enqueued to `notification_outbox` with `channel = 'sms'`, then
+ * a poke asking the voice gateway Worker to drain it — never a direct Twilio
+ * call from here. Twilio credentials live only in that Worker (see
+ * dispatchVoiceCalls in src/voice.js and apps/voice-gateway/README.md); this
+ * Worker never needs its own copy of them just to send an alert text. Every
+ * destination in ALERT_SMS_TO gets its own row, so one bad number can't
+ * cancel the others.
  */
 export async function sendAlertSms(env, { body }) {
+  if (!hasDatabase(env)) return { ok: false, skipped: true, reason: "DATABASE_REQUIRED" };
   const destinations = splitList(env?.ALERT_SMS_TO);
   if (!destinations.length) return { ok: false, skipped: true, reason: "ALERT_SMS_TO_NOT_CONFIGURED" };
-  const results = [];
+  const now = new Date().toISOString();
   for (const to of destinations) {
-    try {
-      await sendSms(env, { to, body });
-      results.push({ to, ok: true });
-    } catch (error) {
-      // Twilio being unreachable, or ALERT_SMS_TO set without the Twilio
-      // credentials sendSms itself requires, both land here — logged, not
-      // thrown, exactly like every other optional-SMS path in this codebase
-      // (see sendSms's own docstring on drainSmsQueue's handling).
-      console.error(JSON.stringify({ event: "alert_sms_failed", to, message: error.message }));
-      results.push({ to, ok: false, error: error.message });
-    }
+    await env.DB.prepare(`
+      INSERT INTO notification_outbox (id, channel, recipient, template_key, payload_json, available_at)
+      VALUES (?, 'sms', ?, 'alert_breach_sms', ?, ?)
+    `).bind(newId("notification"), to, JSON.stringify({ body }), now).run();
   }
-  return { ok: results.some((result) => result.ok), results };
+  // Best effort: even if the poke itself fails (network hiccup, VOICE binding
+  // unavailable), the rows are queued and the gateway's own sweep picks them
+  // up — see dispatchVoiceCalls's docstring.
+  await dispatchVoiceCalls(env);
+  return { ok: true, queued: destinations.length };
 }
 
 /**

@@ -40,6 +40,7 @@ import { handleClinicApplicationSubmit, handleClinicBillingSummary } from "./cli
 import { resolveSearchMarket } from "./markets.js";
 import { marketplaceEventStatement, recordMarketplaceEvent } from "./metrics.js";
 import { notifyAlertBreaches } from "./alert-notifications.js";
+import { dispatchVoiceCalls } from "./voice.js";
 import {
   handleCreateWidgetToken,
   handleListWidgetTokens,
@@ -508,32 +509,6 @@ function validateIntake(body, { requireLocation = true } = {}) {
     referralSlug: cleanString(body.referralSlug, 64) || null
   };
   return { errors, pet, owner, species, urgency, concernSummary, clinicConcernSummary, symptoms, startedWhen, redFlags, medications, allergies, legalVersion: LEGAL_VERSION, ...attribution };
-}
-
-/**
- * Ask the voice gateway to place its queued calls now.
- *
- * A care search stops collecting offers after ninety seconds. Leaving the queue
- * to a scheduler would spend most of that window before the first clinic phone
- * rang, so the customer Worker pokes the gateway the moment the fan-out lands
- * and the gateway's own sweep is left to handle retries.
- *
- * Best effort by design: a clinic that is not reached by phone is still
- * notified on its console, so a failure here must never fail the search.
- */
-async function dispatchVoiceCalls(env) {
-  if (!env.VOICE) return;
-  try {
-    const response = await env.VOICE.fetch("https://voice.internal/api/voice/drain", {
-      method: "POST",
-      headers: env.VOICE_DRAIN_TOKEN ? { "x-timi-drain-token": env.VOICE_DRAIN_TOKEN } : {}
-    });
-    if (!response.ok) {
-      console.warn(JSON.stringify({ event: "voice_dispatch_rejected", status: response.status }));
-    }
-  } catch (error) {
-    console.warn(JSON.stringify({ event: "voice_dispatch_failed", message: error.message }));
-  }
 }
 
 async function createIntake(request, env, actor) {
