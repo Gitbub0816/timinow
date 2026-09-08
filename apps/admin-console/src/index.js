@@ -62,6 +62,7 @@ import {
   deleteOrganization,
   displayName,
   findOrCreateUserByEmail,
+  findUserByEmail,
   mergeMembershipPublicMetadata,
   mergeOrganizationPublicMetadata,
   mergeUserPublicMetadata,
@@ -69,13 +70,16 @@ import {
   updateOrganization
 } from "../../../src/clerk.js";
 import {
+  addPlatformAdmin,
   getTenant,
   insertTenant,
   insertTenantInvitation,
   isPlatformAdmin,
+  listPlatformAdmins,
   listTenantMembers,
   listTenants,
   recordAudit,
+  removePlatformAdmin,
   setTenantStatus,
   slugAvailable,
   slugify,
@@ -197,6 +201,51 @@ async function handleBootstrap(env, actor) {
     env.DB.prepare("SELECT COUNT(*) AS total FROM tenants").first()
   ]);
   return json({ ...base, adminCount: Number(adminRow?.total || 0), tenantCount: Number(tenantRow?.total || 0) });
+}
+
+async function listPlatformAdminsRoute(env) {
+  if (!hasDatabase(env)) return apiError(503, "DATABASE_REQUIRED", "D1 is required to manage platform operators.");
+  return json({ admins: await listPlatformAdmins(env) });
+}
+
+async function addPlatformAdminRoute(request, env, actor) {
+  if (!hasDatabase(env)) return apiError(503, "DATABASE_REQUIRED", "D1 is required to manage platform operators.");
+  let body;
+  try {
+    body = await readJson(request);
+  } catch (error) {
+    return apiError(error.message === "PAYLOAD_TOO_LARGE" ? 413 : 400, error.message, "A valid JSON request body is required.");
+  }
+  const email = cleanString(body.email, 160).toLowerCase();
+  const label = cleanString(body.label, 120);
+  if (!email || !EMAIL_PATTERN.test(email)) return apiError(422, "VALIDATION_FAILED", "A valid email is required.");
+  if (!env.CLERK_SECRET_KEY) return apiError(503, "CLERK_NOT_CONFIGURED", "Clerk is not configured on this Worker, so a new operator's account cannot be resolved.");
+
+  let user;
+  try {
+    user = await findUserByEmail(env, email);
+  } catch (error) {
+    if (error instanceof ClerkError) return apiError(error.status >= 400 && error.status < 600 ? error.status : 502, "CLERK_REQUEST_FAILED", error.message);
+    throw error;
+  }
+  // Unlike a clinic invitation, this deliberately does not create the
+  // account — a platform operator is the highest tier there is, so the
+  // person has to have signed in to Tími at least once under their own name
+  // before anyone can hand them that.
+  if (!user) return apiError(404, "USER_NOT_FOUND", "No Tími account exists yet for that email. Ask them to sign in once, then add them.");
+
+  const resolvedLabel = label || displayName(user) || null;
+  await addPlatformAdmin(env, { clerkUserId: user.id, email, label: resolvedLabel });
+  await recordAudit(env, { actorUserId: actor.userId, actorScope: "platform", action: "platform_admin.add", target: user.id, detail: { email } });
+  return json({ admin: { clerkUserId: user.id, email, label: resolvedLabel } }, { status: 201 });
+}
+
+async function removePlatformAdminRoute(env, actor, clerkUserId) {
+  if (!hasDatabase(env)) return apiError(503, "DATABASE_REQUIRED", "D1 is required to manage platform operators.");
+  if (clerkUserId === actor.userId) return apiError(422, "CANNOT_REMOVE_SELF", "You cannot remove your own operator access. Ask another platform operator to do it.");
+  await removePlatformAdmin(env, clerkUserId);
+  await recordAudit(env, { actorUserId: actor.userId, actorScope: "platform", action: "platform_admin.remove", target: clerkUserId, detail: {} });
+  return json({ removed: true });
 }
 
 function validateLocationInput(input, { requireAll = true } = {}) {
@@ -1115,6 +1164,14 @@ async function handleApi(request, env) {
     if (method === "GET" && path === "/api/admin/tenants") return json({ tenants: await listTenants(env) });
     if (method === "POST" && path === "/api/admin/tenants") return createTenant(request, env, actor);
     if (method === "GET" && path === "/api/admin/audit") return handleAudit(url, env);
+
+    // Platform operators. Every operator can add or remove another — there is
+    // no tier above this one — but nobody can remove themselves, so a lone
+    // operator can never accidentally lock the whole console out.
+    if (method === "GET" && path === "/api/admin/platform-admins") return listPlatformAdminsRoute(env);
+    if (method === "POST" && path === "/api/admin/platform-admins") return addPlatformAdminRoute(request, env, actor);
+    const platformAdminMatch = path.match(/^\/api\/admin\/platform-admins\/([^/]+)$/);
+    if (method === "DELETE" && platformAdminMatch) return removePlatformAdminRoute(env, actor, decodeURIComponent(platformAdminMatch[1]));
 
     const tenantMatch = path.match(/^\/api\/admin\/tenants\/([^/]+)$/);
     if (tenantMatch) {

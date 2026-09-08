@@ -68,6 +68,37 @@ export async function isPlatformAdmin(env, actor) {
   return false;
 }
 
+/**
+ * The D1-backed half of platform-operator access — the other half is the
+ * PLATFORM_ADMIN_USER_IDS / PLATFORM_ADMIN_EMAILS Worker variables, which
+ * exist only to bootstrap the very first row here and are not editable from
+ * the console (they require a redeploy).
+ */
+export async function listPlatformAdmins(env) {
+  if (!hasDatabase(env)) return [];
+  const result = await env.DB.prepare(
+    "SELECT clerk_user_id, email, label, created_at FROM platform_admins ORDER BY created_at ASC"
+  ).all();
+  return result.results.map((row) => ({
+    clerkUserId: row.clerk_user_id,
+    email: row.email || null,
+    label: row.label || null,
+    createdAt: row.created_at
+  }));
+}
+
+export async function addPlatformAdmin(env, { clerkUserId, email, label }) {
+  await env.DB.prepare(`
+    INSERT INTO platform_admins (clerk_user_id, email, label)
+    VALUES (?, ?, ?)
+    ON CONFLICT (clerk_user_id) DO UPDATE SET email = excluded.email, label = excluded.label
+  `).bind(clerkUserId, email || null, label || null).run();
+}
+
+export async function removePlatformAdmin(env, clerkUserId) {
+  await env.DB.prepare("DELETE FROM platform_admins WHERE clerk_user_id = ?").bind(clerkUserId).run();
+}
+
 export async function recordAudit(env, { actorUserId, actorScope, tenantId = null, action, target = null, detail = {} }) {
   if (!hasDatabase(env)) return;
   await env.DB.prepare(`

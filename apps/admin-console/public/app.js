@@ -154,6 +154,7 @@ function parseHash() {
   if (raw === "tenants/new") return { screen: "tenants-new" };
   const detailMatch = raw.match(/^tenants\/([^/]+)$/);
   if (detailMatch) return { screen: "tenant-detail", id: decodeURIComponent(detailMatch[1]) };
+  if (raw === "operators") return { screen: "operators" };
   if (raw === "audit") return { screen: "audit" };
   if (raw === "errors") return { screen: "errors" };
   if (raw === "ledger") return { screen: "ledger" };
@@ -174,7 +175,7 @@ function parseHash() {
 }
 
 function updateNavActive() {
-  const top = ["audit", "errors", "ledger", "analytics", "applications", "metrics", "clinic-applications", "clinic-contracts", "pif"].includes(state.route.screen)
+  const top = ["operators", "audit", "errors", "ledger", "analytics", "applications", "metrics", "clinic-applications", "clinic-contracts", "pif"].includes(state.route.screen)
     ? state.route.screen
     : ["markets", "market-detail"].includes(state.route.screen) ? "markets"
     : state.route.screen === "clinic-contract-detail" ? "clinic-contracts"
@@ -229,6 +230,11 @@ async function renderRoute() {
   if (state.route.screen === "tenant-detail") {
     showScreen("tenant-detail");
     await loadTenantDetail(state.route.id);
+    return;
+  }
+  if (state.route.screen === "operators") {
+    showScreen("operators");
+    await loadOperators();
     return;
   }
   if (state.route.screen === "audit") {
@@ -506,6 +512,87 @@ async function ensureTenantNames() {
 }
 function tenantLabel(tenantId) {
   return (state.tenantNames && state.tenantNames[tenantId]) || tenantId;
+}
+
+/* ------------------------------------------------------------ operators --- */
+
+async function loadOperators() {
+  const mount = document.querySelector("[data-operators-body]");
+  mount.innerHTML = '<div class="loading-state"><span class="spinner" aria-hidden="true"></span><p>Loading operators…</p></div>';
+  try {
+    const { admins = [] } = await apiFetch("/api/admin/platform-admins");
+    renderOperators(admins);
+  } catch (error) {
+    mount.innerHTML = `<div class="empty-state"><p>${escapeHtml(error.message)}</p></div>`;
+  }
+}
+
+function operatorRow(admin) {
+  const isSelf = state.bootstrap?.actor?.id === admin.clerkUserId;
+  return `<div class="member-row">
+    <div class="who"><strong>${escapeHtml(admin.label || admin.email || admin.clerkUserId)}</strong><small>${escapeHtml(admin.email || admin.clerkUserId)}</small></div>
+    <div class="member-actions">
+      ${isSelf
+        ? '<span class="hint">This is you</span>'
+        : `<button class="button button-small button-danger" type="button" data-remove-operator="${escapeAttr(admin.clerkUserId)}">Remove</button>`}
+    </div>
+  </div>`;
+}
+
+function renderOperators(admins) {
+  const mount = document.querySelector("[data-operators-body]");
+  mount.innerHTML = `
+    <form class="form-grid two-col" data-form="add-operator" style="margin-bottom:1.25rem;">
+      <label class="field"><span>Email</span><input type="email" name="email" required placeholder="name@clinic.com"></label>
+      <label class="field"><span>Label (optional)</span><input type="text" name="label" placeholder="How you'll recognize them"></label>
+      <div class="form-actions"><button class="button" type="submit">Add operator</button></div>
+      <p class="hint" data-form-errors hidden></p>
+    </form>
+    <div class="panel">
+      ${admins.length
+        ? admins.map(operatorRow).join("")
+        : '<div class="empty-state"><p>No operators recorded in the database yet. Anyone named in this Worker’s PLATFORM_ADMIN_USER_IDS or PLATFORM_ADMIN_EMAILS variables also has access, but is not listed here — that allowlist only changes with a redeploy.</p></div>'}
+    </div>
+  `;
+  wireOperatorEvents();
+}
+
+function wireOperatorEvents() {
+  document.querySelector('form[data-form="add-operator"]').addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.target;
+    const errorsBox = form.querySelector("[data-form-errors]");
+    errorsBox.hidden = true;
+    const email = form.email.value.trim();
+    const label = form.label.value.trim();
+    const submitButton = form.querySelector('button[type="submit"]');
+    submitButton.disabled = true;
+    try {
+      await apiFetch("/api/admin/platform-admins", { method: "POST", body: JSON.stringify({ email, label }) });
+      toast(`${email} can now sign in as a platform operator.`);
+      await loadOperators();
+    } catch (error) {
+      errorsBox.textContent = error.message;
+      errorsBox.hidden = false;
+      submitButton.disabled = false;
+    }
+  });
+
+  document.querySelectorAll("[data-remove-operator]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const clerkUserId = button.dataset.removeOperator;
+      if (!window.confirm("Remove this operator's platform access?")) return;
+      button.disabled = true;
+      try {
+        await apiFetch(`/api/admin/platform-admins/${encodeURIComponent(clerkUserId)}`, { method: "DELETE" });
+        toast("Operator removed.");
+        await loadOperators();
+      } catch (error) {
+        toast(error.message, true);
+        button.disabled = false;
+      }
+    });
+  });
 }
 
 /* ---------------------------------------------------------------- audit --- */
