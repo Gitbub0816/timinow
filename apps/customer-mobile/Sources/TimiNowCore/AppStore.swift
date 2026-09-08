@@ -701,6 +701,134 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
         catch { report(error) }
     }
 
+    // MARK: - Paw It Forward Fund (financial hardship)
+
+    /// The account's current standing — an active grant, or the standard fee.
+    /// Nil until `loadHardshipEligibility()` answers.
+    public var hardshipEligibility: HardshipEligibility?
+    /// The application in progress, if one has been started this session.
+    /// Lost on relaunch like `depositIntent` — reopening the screen re-fetches
+    /// it, since the Worker is the source of truth and an application id is
+    /// not worth persisting for how rarely this flow runs.
+    public var hardshipApplication: HardshipApplication?
+    /// The sanitized status to actually render — see `HardshipApplicantView`.
+    public var hardshipView: HardshipApplicantView?
+    /// What this device has uploaded this session, for display only — the
+    /// Worker never echoes back a content list. See `HardshipEvidenceSummary`.
+    public var hardshipEvidence: [HardshipEvidenceSummary] = []
+    public var hardshipBusy = false
+    public var hardshipError: String?
+
+    public func loadHardshipEligibility() async {
+        hardshipBusy = true; hardshipError = nil
+        do { hardshipEligibility = try await gateway.hardshipEligibility() }
+        catch { setHardshipError(error) }
+        hardshipBusy = false
+    }
+
+    /// Opens a DRAFT application with the household facts already attested.
+    /// There is no route to change household size after creation — the
+    /// Worker only ever reads it at `POST /applications` — so this is asked
+    /// for up front rather than as an editable field on the in-progress
+    /// screen.
+    public func startHardshipApplication(householdSize: Int?, householdAttested: Bool) async {
+        hardshipBusy = true; hardshipError = nil
+        do {
+            let envelope = try await gateway.createHardshipApplication(householdSize: householdSize, householdAttested: householdAttested)
+            hardshipApplication = envelope.application
+            hardshipView = envelope.view
+            hardshipEvidence = []
+        } catch { setHardshipError(error) }
+        hardshipBusy = false
+    }
+
+    public func refreshHardshipApplication() async {
+        guard let id = hardshipApplication?.id else { return }
+        do {
+            let envelope = try await gateway.hardshipApplication(id: id)
+            hardshipApplication = envelope.application
+            hardshipView = envelope.view
+        } catch { setHardshipError(error) }
+    }
+
+    /// Opens a HOSTED Didit session and hands back the URL to load in a web
+    /// sheet. Nil on failure — the caller has nothing to present.
+    public func startHardshipIdentityVerification() async -> URL? {
+        guard let id = hardshipApplication?.id else { return nil }
+        hardshipError = nil
+        do {
+            let session = try await gateway.startHardshipIdentitySession(applicationId: id)
+            return session.launchURL
+        } catch { setHardshipError(error); return nil }
+    }
+
+    /// Called after the identity web sheet is closed — closing it is not the
+    /// same as verification finishing, so this asks the Worker rather than
+    /// trusting the device. Mirrors `refreshDepositStatus`'s "ask the source
+    /// of truth" pattern for Stripe.
+    public func refreshHardshipIdentityStatus() async {
+        guard let id = hardshipApplication?.id else { return }
+        do {
+            let envelope = try await gateway.hardshipIdentityStatus(applicationId: id)
+            hardshipApplication = envelope.application
+        } catch { setHardshipError(error) }
+    }
+
+    /// Uploads one document and, on success, remembers it locally under
+    /// `label` for display — see `HardshipEvidenceSummary`.
+    public func uploadHardshipEvidence(type: HardshipEvidenceType, data: Data, contentType: String, label: String) async {
+        guard let id = hardshipApplication?.id else { return }
+        hardshipBusy = true; hardshipError = nil
+        do {
+            let result = try await gateway.uploadHardshipEvidence(applicationId: id, data: data, contentType: contentType, evidenceType: type.rawValue)
+            if let evidenceId = result.evidenceId {
+                hardshipEvidence.append(HardshipEvidenceSummary(id: evidenceId, type: type, label: label, byteSize: result.byteSize))
+            }
+        } catch { setHardshipError(error) }
+        hardshipBusy = false
+    }
+
+    /// Runs the eligibility decision. The Worker decides what is sufficient;
+    /// an insufficient application comes back as a normal error rather than
+    /// something this method tries to predict first.
+    public func submitHardshipApplication() async {
+        guard let id = hardshipApplication?.id else { return }
+        hardshipBusy = true; hardshipError = nil
+        do {
+            let envelope = try await gateway.submitHardshipApplication(applicationId: id)
+            hardshipApplication = envelope.application
+            hardshipView = envelope.view
+        } catch { setHardshipError(error) }
+        hardshipBusy = false
+    }
+
+    /// Requests a human review after a soft denial. Returns the Worker's
+    /// confirmation sentence for the screen to show, or nil on failure.
+    @discardableResult
+    public func appealHardshipApplication(contactEmail: String?) async -> String? {
+        guard let id = hardshipApplication?.id else { return nil }
+        hardshipBusy = true; hardshipError = nil
+        defer { hardshipBusy = false }
+        do {
+            return try await gateway.appealHardshipApplication(applicationId: id, contactEmail: contactEmail).message
+        } catch { setHardshipError(error); return nil }
+    }
+
+    public func resetHardshipFlow() {
+        hardshipApplication = nil
+        hardshipView = nil
+        hardshipEvidence = []
+        hardshipError = nil
+    }
+
+    /// Same cancellation-safety rule every polling method in this file
+    /// follows: a screen going away cancels its in-flight request, and that
+    /// is not a failure worth showing.
+    private func setHardshipError(_ error: Error) {
+        if error is CancellationError || Task.isCancelled { return }
+        hardshipError = Self.describe(error)
+    }
+
     public func record(_ milestone: String) async {
         guard var intake = currentIntake else { return }
         do { try await gateway.recordObservation(intake: intake, milestone: milestone); intake.status = milestone; currentIntake = intake }
