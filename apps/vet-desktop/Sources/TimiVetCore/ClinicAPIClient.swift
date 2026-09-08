@@ -135,6 +135,45 @@ public final class ClinicAPIClient: @unchecked Sendable {
         return envelope.preferences
     }
 
+    // MARK: - Facility settings
+
+    /// `POST /api/clinic/settings` (`updateClinicLocationSettings` in
+    /// `src/index.js`). There is no dedicated GET for this — the current
+    /// values arrive bundled into `/api/clinic/dashboard`'s `location`
+    /// (`ClinicStore.location`), the same way `apps/vet-web/public/app.js`'s
+    /// `hydrateSettingsForm` reads `state.dashboard?.location`.
+    public func updateClinicSettings(_ update: ClinicSettingsUpdate) async throws -> ClinicLocationSummary {
+        if isDemo { return demo.updateSettings(update) }
+        let envelope: ClinicLocationSettingsEnvelope = try await send("POST", "/api/clinic/settings", body: update)
+        return envelope.location
+    }
+
+    // MARK: - Overflow tools (referral link + website status widget tokens)
+
+    public func getReferralLink() async throws -> ReferralLink? {
+        if isDemo { return demo.referralLink() }
+        let envelope: ReferralLinkEnvelope = try await send("GET", "/api/clinic/referral-link")
+        return envelope.referralLink
+    }
+
+    public func getWidgetTokens() async throws -> [WidgetToken] {
+        if isDemo { return demo.widgetTokens() }
+        let envelope: WidgetTokenListEnvelope = try await send("GET", "/api/clinic/widget-tokens")
+        return envelope.tokens
+    }
+
+    public func createWidgetToken(label: String, allowedOrigins: [String]) async throws -> WidgetToken {
+        if isDemo { return demo.createWidgetToken(label: label, allowedOrigins: allowedOrigins) }
+        let envelope: WidgetTokenCreateEnvelope = try await send("POST", "/api/clinic/widget-tokens", body: WidgetTokenCreatePayload(label: label, allowedOrigins: allowedOrigins))
+        return envelope.token
+    }
+
+    public func revokeWidgetToken(id: String) async throws {
+        if isDemo { demo.revokeWidgetToken(id: id); return }
+        let path = "/api/clinic/widget-tokens/\(Self.escape(id))"
+        try await sendVoid("DELETE", path, data: nil)
+    }
+
     // MARK: - Payouts
 
     /// What Tími has transferred to this clinic and what Stripe has paid out.
