@@ -330,12 +330,45 @@ public final class TimiGateway: @unchecked Sendable {
         try await send(url, method: method, data: try encoder.encode(body))
     }
 
-    private func send<Response: Decodable>(_ url: URL, method: String, data: Data?, retried: Bool = false) async throws -> Response {
+    private func send<Response: Decodable>(_ url: URL, method: String, data: Data?) async throws -> Response {
         var request = URLRequest(url: url)
         request.httpMethod = method
         request.timeoutInterval = 20
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         if let data { request.httpBody = data; request.setValue("application/json", forHTTPHeaderField: "Content-Type") }
+        let (responseData, http) = try await attachAndSend(request)
+        return try decodeResult(responseData, http, path: url.path)
+    }
+
+    /// A raw-bytes body with an explicit content type — hardship evidence
+    /// uploads, which are never JSON. Shares the same auth-attach, 401-retry,
+    /// and error-envelope logic as every JSON call through `attachAndSend` and
+    /// `decodeResult`; only the body's content type and any extra headers
+    /// differ, which is what the plain `send(_:method:data:)` above could not
+    /// express — it always forces `Content-Type: application/json` whenever a
+    /// body is present.
+    private func sendRawBody<Response: Decodable>(_ url: URL, method: String = "POST", data: Data, contentType: String, extraHeaders: [String: String] = [:]) async throws -> Response {
+        var request = URLRequest(url: url)
+        request.httpMethod = method
+        // Longer than the JSON default: this carries up to 12 MB of document
+        // bytes rather than a few kilobytes of JSON.
+        request.timeoutInterval = 45
+        request.httpBody = data
+        request.setValue(contentType, forHTTPHeaderField: "Content-Type")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        for (key, value) in extraHeaders { request.setValue(value, forHTTPHeaderField: key) }
+        let (responseData, http) = try await attachAndSend(request)
+        return try decodeResult(responseData, http, path: url.path)
+    }
+
+    /// Attaches whichever session is active, performs the request, and
+    /// retries once on a 401 with a token minted from scratch. The shared core
+    /// of every gateway call — JSON body, raw bytes, or none — so the auth and
+    /// retry logic exists in exactly one place rather than being copied into
+    /// every new send variant.
+    private func attachAndSend(_ request: URLRequest, retried: Bool = false) async throws -> (Data, HTTPURLResponse) {
+        var request = request
+        let path = request.url?.path ?? ""
         // Minted here, per request, rather than whenever somebody remembered
         // to call ensureFreshToken. A Clerk session token lives about a
         // minute; two callers out of seven refreshed, so anything done more
@@ -349,7 +382,6 @@ public final class TimiGateway: @unchecked Sendable {
         } else if let bearerToken, !bearerToken.isEmpty {
             request.setValue("Bearer \(bearerToken)", forHTTPHeaderField: "Authorization")
         }
-        let path = url.path
         let responseData: Data
         let response: URLResponse
         do {
@@ -366,7 +398,7 @@ public final class TimiGateway: @unchecked Sendable {
             // couldn't be completed" with no host and no reason, which is the
             // same dead end as before. Wrapped, it says which address failed
             // and how.
-            throw TimiAPIError.transport(reason: error.localizedDescription, path: url.absoluteString)
+            throw TimiAPIError.transport(reason: error.localizedDescription, path: request.url?.absoluteString ?? path)
         }
         guard let http = response as? HTTPURLResponse else { throw TimiAPIError.invalidResponse(path: path) }
         // One retry on a 401, with a token minted from scratch. A token can
@@ -375,8 +407,18 @@ public final class TimiGateway: @unchecked Sendable {
         // a person being told to sign in while they are signed in.
         if http.statusCode == 401, !retried, let tokenProvider, await tokenProvider.hasSession,
            let minted = try? await tokenProvider.forceRefreshToken(), !minted.isEmpty {
-            return try await send(url, method: method, data: data, retried: true)
+            var retryRequest = request
+            retryRequest.setValue("Bearer \(minted)", forHTTPHeaderField: "Authorization")
+            return try await attachAndSend(retryRequest, retried: true)
         }
+        return (responseData, http)
+    }
+
+    /// Turns a non-2xx response into `TimiAPIError.server` with the Worker's
+    /// own message, and a 2xx one into the decoded response. Shared by every
+    /// send variant so the error-envelope handling — and the historical bug it
+    /// fixed, see `APIErrorEnvelope`'s doc comment — exists once.
+    private func decodeResult<Response: Decodable>(_ responseData: Data, _ http: HTTPURLResponse, path: String) throws -> Response {
         guard (200..<300).contains(http.statusCode) else {
             let envelope = try? decoder.decode(APIErrorEnvelope.self, from: responseData)
             let failure = envelope?.error
@@ -390,6 +432,83 @@ public final class TimiGateway: @unchecked Sendable {
         }
         do { return try decoder.decode(Response.self, from: responseData) }
         catch { throw TimiAPIError.invalidResponse(path: path) }
+    }
+
+    // MARK: - Paw It Forward Fund (financial hardship)
+    //
+    // src/hardship/index.js, verbatim — see HardshipModels.swift's header
+    // comment. No demo-mode fallback: unlike search or pets, there is no
+    // offline story for a fraud-and-identity-sensitive flow, so every method
+    // below simply requires a real Worker.
+
+    public func hardshipEligibility() async throws -> HardshipEligibility {
+        guard let baseURL else { throw TimiAPIError.invalidConfiguration(configuredAddress) }
+        return try await send(baseURL.appendingPathComponent("api/hardship/eligibility"))
+    }
+
+    public func createHardshipApplication(householdSize: Int?, householdAttested: Bool) async throws -> HardshipApplicationEnvelope {
+        guard let baseURL else { throw TimiAPIError.invalidConfiguration(configuredAddress) }
+        return try await send(
+            baseURL.appendingPathComponent("api/hardship/applications"), method: "POST",
+            body: HardshipApplicationCreatePayload(householdSize: householdSize, householdAttested: householdAttested)
+        )
+    }
+
+    public func hardshipApplication(id: String) async throws -> HardshipApplicationEnvelope {
+        guard let baseURL else { throw TimiAPIError.invalidConfiguration(configuredAddress) }
+        return try await send(baseURL.appendingPathComponent("api/hardship/applications/\(id)"))
+    }
+
+    /// Always asks for HOSTED. There is no native Didit SDK, only a web
+    /// widget, so "in-app identity verification" here means a WKWebView sheet
+    /// loading Didit's hosted page (see `WebSheetView.swift`) rather than an
+    /// embedded control — EMBEDDED is the Worker's own default, so this has to
+    /// ask explicitly.
+    public func startHardshipIdentitySession(applicationId: String) async throws -> HardshipIdentitySession {
+        guard let baseURL else { throw TimiAPIError.invalidConfiguration(configuredAddress) }
+        let envelope: HardshipIdentitySessionEnvelope = try await send(
+            baseURL.appendingPathComponent("api/hardship/applications/\(applicationId)/identity-session"),
+            method: "POST", body: HardshipIdentitySessionPayload(mode: "HOSTED")
+        )
+        return envelope.session
+    }
+
+    public func hardshipIdentityStatus(applicationId: String) async throws -> HardshipIdentityStatusEnvelope {
+        guard let baseURL else { throw TimiAPIError.invalidConfiguration(configuredAddress) }
+        return try await send(baseURL.appendingPathComponent("api/hardship/applications/\(applicationId)/identity-status"))
+    }
+
+    /// Raw bytes, not JSON — see `sendRawBody`. `contentType` must be one of
+    /// the Worker's accepted evidence MIME types and `evidenceType` one of its
+    /// `DOCUMENT_ROUTES` constants (`HardshipEvidenceType.rawValue`).
+    public func uploadHardshipEvidence(applicationId: String, data: Data, contentType: String, evidenceType: String) async throws -> HardshipEvidenceUploadResult {
+        guard let baseURL else { throw TimiAPIError.invalidConfiguration(configuredAddress) }
+        return try await sendRawBody(
+            baseURL.appendingPathComponent("api/hardship/applications/\(applicationId)/uploads"),
+            data: data, contentType: contentType, extraHeaders: ["x-timi-evidence-type": evidenceType]
+        )
+    }
+
+    /// Runs the actual eligibility decision. The Worker enforces what counts
+    /// as sufficient — identity, household attestation, at least one document
+    /// it can extract — and answers with a normal error envelope when it is
+    /// not satisfied, so this makes no attempt to replicate that judgement
+    /// client-side; a failure here surfaces via `TimiAPIError.server.message`
+    /// like any other.
+    public func submitHardshipApplication(applicationId: String) async throws -> HardshipApplicationEnvelope {
+        guard let baseURL else { throw TimiAPIError.invalidConfiguration(configuredAddress) }
+        return try await send(baseURL.appendingPathComponent("api/hardship/applications/\(applicationId)/submit"), method: "POST", body: EmptyPayload())
+    }
+
+    /// Only meaningful once `view.status == "NOT_VERIFIED"` — the Worker does
+    /// not reject an appeal on any other state, but nothing else in this app
+    /// offers the button.
+    public func appealHardshipApplication(applicationId: String, contactEmail: String?) async throws -> HardshipAppealResult {
+        guard let baseURL else { throw TimiAPIError.invalidConfiguration(configuredAddress) }
+        return try await send(
+            baseURL.appendingPathComponent("api/hardship/applications/\(applicationId)/appeal"), method: "POST",
+            body: HardshipAppealPayload(contactEmail: contactEmail)
+        )
     }
 }
 
@@ -467,6 +586,14 @@ private struct EmptyPayload: Encodable {}
 private struct PushDeviceTokenPayload: Encodable { var deviceToken: String; var platform: String }
 private struct RegisterPushDeviceEnvelope: Decodable { var registered: Bool }
 private struct UnregisterPushDeviceEnvelope: Decodable { var unregistered: Bool }
+
+/// Only the two fields a first build needs to send — `selectedPathway`,
+/// `geography`, `termsVersion`, `attestationVersion`, `intakeId`, and `petId`
+/// are all optional server-side too, and none of them is something this build
+/// has a source for yet.
+private struct HardshipApplicationCreatePayload: Encodable { var householdSize: Int?; var householdAttested: Bool? }
+private struct HardshipIdentitySessionPayload: Encodable { var mode: String }
+private struct HardshipAppealPayload: Encodable { var contactEmail: String? }
 
 /// What the Worker returns for `POST /api/intakes/{id}/payment-intent`.
 ///

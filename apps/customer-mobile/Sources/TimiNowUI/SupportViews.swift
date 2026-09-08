@@ -479,6 +479,10 @@ struct SettingsView: View {
 
     var legal: some View {
         card("LEGAL AND SUPPORT") {
+            NavigationLink { HardshipEntryView(store: store) } label: {
+                row("Paw It Forward Fund — financial assistance", "chevron.right")
+            }.buttonStyle(.plain)
+            Divider()
             NavigationLink { LegalView() } label: {
                 row("Terms, privacy, and veterinary safety", "chevron.right")
             }.buttonStyle(.plain)
