@@ -44,27 +44,22 @@ struct DepositSection: View {
     var depositCents: Int { intake?.depositAmountCents ?? 0 }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 11) {
-            Eyebrow(text: isPaid ? "DEPOSIT PAID" : "ARRIVAL DEPOSIT")
-            HStack {
-                Text(TimiFormat.money(depositCents)).font(.system(size: 34, weight: .bold, design: .serif))
-                Spacer()
-                Image(systemName: isPaid ? "checkmark.shield.fill" : "creditcard.fill")
-                    .font(.title).foregroundStyle(TimiColor.blue)
-            }
-            Text("The deposit is credited to the clinic's invoice. Remaining veterinary charges are billed by the clinic; Tími does not submit insurance claims.")
-                .font(.caption).foregroundStyle(TimiColor.muted)
-            // The fee disclosure the terms promise happens at checkout. The
-            // amount comes from /api/config (store.customerFeeCents, 1500
-            // compiled in), so a clinic passing the whole service fee through
-            // is disclosed correctly without an app release.
-            Text("Includes a \(TimiFormat.money(store.customerFeeCents)) Tími service fee, charged at the time of service.")
-                .font(.caption).fontWeight(.semibold).foregroundStyle(TimiColor.ink)
-
-            if !isPaid { collectionControls }
-
-            if !errorText.isEmpty {
-                Text(errorText).font(.caption).foregroundStyle(TimiColor.coral)
+        Group {
+            // `TrackerView` shows this section whenever the client's cached
+            // `depositAmountCents` is positive, which is only ever a guess —
+            // the Worker's own policy is what actually decides whether a
+            // deposit is owed (`ensureDepositPaymentIntent` in
+            // src/payments.js answers `mode: "none"` when
+            // `!intake.policy.depositRequired`, amount notwithstanding). This
+            // used to render the full "$50 ARRIVAL DEPOSIT" card regardless,
+            // with "No payment is needed right now" contradicting it one line
+            // down — a card that both asked for money and said it wasn't
+            // needed. Once the Worker answers "none", this whole card
+            // switches to saying that plainly instead.
+            if store.depositIntent?.mode == "none" {
+                noDepositNeeded
+            } else {
+                depositCard
             }
         }
         .timiCard(TimiColor.goldSoft)
@@ -91,6 +86,47 @@ struct DepositSection: View {
         }
     }
 
+    /// The Worker's policy says this visit needs no deposit at all — not a
+    /// transient state, and not the same thing as "not paid yet". No dollar
+    /// figure belongs on screen here; showing `depositCents` (a client-side
+    /// guess `TrackerView` used just to decide whether to show this section
+    /// at all) would be the exact contradiction this replaces.
+    var noDepositNeeded: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "checkmark.circle.fill").font(.title2).foregroundStyle(TimiColor.blue)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("No deposit required").font(.headline)
+                Text("This visit does not require an arrival deposit.").font(.caption).foregroundStyle(TimiColor.muted)
+            }
+        }
+    }
+
+    var depositCard: some View {
+        VStack(alignment: .leading, spacing: 11) {
+            Eyebrow(text: isPaid ? "DEPOSIT PAID" : "ARRIVAL DEPOSIT")
+            HStack {
+                Text(TimiFormat.money(depositCents)).font(.system(size: 34, weight: .bold, design: .serif))
+                Spacer()
+                Image(systemName: isPaid ? "checkmark.shield.fill" : "creditcard.fill")
+                    .font(.title).foregroundStyle(TimiColor.blue)
+            }
+            Text("The deposit is credited to the clinic's invoice. Remaining veterinary charges are billed by the clinic; Tími does not submit insurance claims.")
+                .font(.caption).foregroundStyle(TimiColor.muted)
+            // The fee disclosure the terms promise happens at checkout. The
+            // amount comes from /api/config (store.customerFeeCents, 1500
+            // compiled in), so a clinic passing the whole service fee through
+            // is disclosed correctly without an app release.
+            Text("Includes a \(TimiFormat.money(store.customerFeeCents)) Tími service fee, charged at the time of service.")
+                .font(.caption).fontWeight(.semibold).foregroundStyle(TimiColor.ink)
+
+            if !isPaid { collectionControls }
+
+            if !errorText.isEmpty {
+                Text(errorText).font(.caption).foregroundStyle(TimiColor.coral)
+            }
+        }
+    }
+
     @ViewBuilder
     var collectionControls: some View {
         if store.depositBusy {
@@ -112,11 +148,12 @@ struct DepositSection: View {
         } else if store.depositIntent?.mode == "stripe" {
             elementsControls
         } else {
-            // "none" (no deposit actually required after all) or "paid"
-            // (already settled, this device just has not refreshed) — either
-            // way there is nothing to collect, and showing the Stripe UI here
-            // would offer to pay for something that is not owed.
-            Text("No payment is needed right now.").font(.caption).foregroundStyle(TimiColor.muted)
+            // "none" is handled a level up (`body`'s `noDepositNeeded`), so
+            // the only mode left reachable through `isPaid == false` here is
+            // "paid" — the Worker settled it (a webhook, or paid at the
+            // desk) faster than this device's cached `intake.paymentStatus`
+            // caught up. Nothing to collect either way.
+            Text("This deposit has already been paid.").font(.caption).foregroundStyle(TimiColor.muted)
         }
     }
 
