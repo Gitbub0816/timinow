@@ -225,8 +225,11 @@ A care search fans out to as many as 30 clinics, most of which have nobody
 watching a console. `timinow-voice` calls them.
 
 `createCareSearch` writes one `notification_outbox` row per clinic with
-`channel = 'voice'`; the voice Worker's cron drains that queue every minute and
-places a Twilio call:
+`channel = 'voice'`; the customer Worker pokes the voice Worker's drain
+endpoint the moment a search fans out (there is no per-minute cron — see
+wrangler.voice.jsonc's note on keeping this project to one cron trigger for
+the whole account), with the customer Worker's own five-minute sweep as a
+retry backstop. It places a Twilio call:
 
 > "Hi, this is Tími calling for {clinic}. A pet owner nearby is looking for
 > immediate care for **a dog with vomiting or diarrhea, starting today**, about

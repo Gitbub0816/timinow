@@ -6,7 +6,7 @@ Product copy and acceptance points are implemented in `public/index.html`. This 
 
 - A versioned Terms, Privacy/Notice at Collection, Veterinary Safety, Deposit/Refund, Clinic Participation, and Accessibility legal center.
 - Separate, unchecked acceptance for the current terms/safety notice and transactional contact consent.
-- Server-side enforcement of legal version `2026-08-22` (`LEGAL_VERSION` in `src/catalog.js`, served on `/api/config`); the acceptance version and timestamp are written into the intake event audit trail.
+- Server-side enforcement of the current legal version (`LEGAL_VERSION` in `src/catalog.js`, served on `/api/config`); the acceptance version and timestamp are written into the intake event audit trail.
 - A non-diagnostic boundary: Tími routes structured intake and never claims to diagnose, treat, prescribe, clinically triage, establish a VCPR, or guarantee an appointment.
 - Capacity source/age disclosure and a warning that critical patients can change waits and order.
 - Clinic-specific deposit policy disclosure before a request, repeated terms before payment, and a stored policy snapshot.

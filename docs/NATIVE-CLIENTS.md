@@ -8,7 +8,7 @@ Tími NOW has two intentionally separate native products. Customer care intake b
 | App | Path | Platform | Role |
 | --- | --- | --- | --- |
 | Tími NOW | `apps/customer-mobile` | iOS 17+, Skip Fuse ready | Customer intake, offers, map, turn-by-turn, CarPlay, Watch |
-| Tími Vet | `apps/vet-windows` | Windows 10/11, .NET 8 WPF | Veterinary operations, tray alerts, floating queue |
+| Tími Vet | `apps/vet-windows` | Windows 10/11, .NET 10 WPF | Veterinary operations, tray alerts, floating queue |
 | Tími Vet | `apps/vet-desktop` | macOS 14+, SwiftUI | Same console, native NSPanel floating queue, menu-bar item |
 | Tími Vet Web | `apps/vet-web` | Any Chromium browser | Same console, Document Picture-in-Picture floating queue |
 
@@ -30,7 +30,7 @@ Demo mode is complete and interactive. Live mode uses the existing Cloudflare Wo
 
 Location: `apps/vet-windows`
 
-The veterinary app is a native .NET 8 WPF operations console. It publishes capacity, polls the clinic queue, reviews complete customer submissions, sends availability offers or declines, raises tray alerts, and can start with Windows.
+The veterinary app is a native .NET 10 WPF operations console. It publishes capacity, polls the clinic queue, reviews complete customer submissions, sends availability offers or declines, raises tray alerts, and can start with Windows.
 
 Its compact queue is a separate draggable and resizable `Topmost` window. It remains above ordinary windows while visible, can be minimized normally, and can reopen the full review workspace. Users can disable always-on-top at any time.
 
