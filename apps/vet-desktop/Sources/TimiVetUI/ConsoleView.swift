@@ -929,6 +929,7 @@ public struct ConsoleView: View {
                 Text("Phone calls from Tími").font(TimiVetFont.ui(17, weight: .semibold))
                 Text("Choose when Tími should call the clinic about a new request.").font(TimiVetFont.ui(12)).foregroundStyle(TimiVetColor.muted)
             }
+            Text("Call this clinic about new requests").font(TimiVetFont.ui(13, weight: .semibold))
             VStack(alignment: .leading, spacing: 6) {
                 policyRow("always", "Every request — call even while this console is open")
                 policyRow("console_active", "Only while a console is open")
