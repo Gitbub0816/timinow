@@ -29,12 +29,20 @@ public struct PeopleView: View {
             if let errorMessage {
                 Text(errorMessage).font(TimiVetFont.ui(12)).foregroundStyle(TimiVetColor.danger)
             }
-            if isAdmin { addMemberForm }
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
+                    // The invite row and the roster/invitations table both
+                    // read as one "people" card in the mockup — an
+                    // always-visible add row above a table, not a form that
+                    // appears only for admins. A non-admin still sees the
+                    // row; every field and the Add button in it are disabled,
+                    // matching "read-only, not hidden" for the rest of this
+                    // gate.
+                    addMemberForm
                     membersSection
                     invitationsSection
                 }
+                .timiVetCard()
             }
             footnote
         }
@@ -45,7 +53,7 @@ public struct PeopleView: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text("WORKSPACE PEOPLE").timiVetEyebrow()
+            Text("WORKSPACE ACCESS").timiVetEyebrow()
             Text("Manage people").font(TimiVetFont.display(27))
             if !isAdmin {
                 Text("You have read-only access. Ask a workspace administrator to make changes.")
@@ -54,18 +62,44 @@ public struct PeopleView: View {
         }
     }
 
+    /// The mockup's `.invite-row` — a blue-tinted strip above the table. Kept
+    /// visible for a non-admin (rather than hidden, per the task's "read-only,
+    /// not hidden" rule for a gated section) with every control disabled.
     private var addMemberForm: some View {
         HStack(spacing: 10) {
             TextField("Work email", text: $newEmail).textFieldStyle(.roundedBorder).autocorrectionDisabled()
+                .disabled(!isAdmin)
             Picker("", selection: $newRole) {
                 Text("Member").tag("org:member")
                 Text("Administrator").tag("org:admin")
-            }.labelsHidden().frame(width: 150)
-            Button("Add") { Task { await addMember() } }
+            }.labelsHidden().frame(width: 150).disabled(!isAdmin)
+            Button("Add person") { Task { await addMember() } }
                 .buttonStyle(TimiVetPrimaryButtonStyle())
-                .disabled(isLoading || newEmail.trimmingCharacters(in: .whitespaces).isEmpty)
-                .frame(width: 90)
+                .disabled(!isAdmin || isLoading || newEmail.trimmingCharacters(in: .whitespaces).isEmpty)
+                .frame(width: 120)
         }
+        .padding(14)
+        .background(TimiVetColor.blueSoft, in: RoundedRectangle(cornerRadius: 12))
+    }
+
+    private func initials(_ name: String) -> String {
+        let parts = name.split(separator: " ")
+        let letters = parts.prefix(2).compactMap { $0.first }
+        return letters.isEmpty ? "?" : String(letters).uppercased()
+    }
+
+    private func avatar(_ text: String) -> some View {
+        Text(text)
+            .font(TimiVetFont.ui(12, weight: .bold)).foregroundStyle(TimiVetColor.navy)
+            .frame(width: 38, height: 38)
+            .background(TimiVetColor.publicCapacityBackground, in: RoundedRectangle(cornerRadius: 11))
+            .overlay(RoundedRectangle(cornerRadius: 11).stroke(TimiVetColor.sectionBorder, lineWidth: 1))
+    }
+
+    private func statusPill(_ text: String, color: Color = TimiVetColor.green) -> some View {
+        Text(text).font(TimiVetFont.ui(11, weight: .bold)).foregroundStyle(color)
+            .padding(.horizontal, 9).padding(.vertical, 4)
+            .background(color.opacity(0.14), in: Capsule())
     }
 
     private var membersSection: some View {
@@ -76,12 +110,14 @@ public struct PeopleView: View {
     }
 
     private func memberRow(_ member: TenantMember) -> some View {
-        HStack {
+        HStack(spacing: 12) {
+            avatar(initials(member.name))
             VStack(alignment: .leading, spacing: 2) {
                 Text(member.name).font(TimiVetFont.ui(14, weight: .semibold))
                 Text(member.email ?? "").font(TimiVetFont.ui(11)).foregroundStyle(TimiVetColor.muted)
             }
             Spacer()
+            statusPill("Active")
             if isAdmin && !member.isSelf {
                 Picker("", selection: Binding(
                     get: { member.role },
@@ -94,7 +130,7 @@ public struct PeopleView: View {
             } else {
                 Text(member.role.replacingOccurrences(of: "org:", with: "").capitalized)
                     .font(TimiVetFont.ui(12)).foregroundStyle(TimiVetColor.muted)
-                    .frame(width: 240, alignment: .trailing)
+                    .frame(width: 150, alignment: .trailing)
             }
         }
         .padding(.vertical, 8)
@@ -106,13 +142,15 @@ public struct PeopleView: View {
             VStack(alignment: .leading, spacing: 8) {
                 Text("PENDING INVITATIONS").timiVetEyebrow()
                 ForEach(invitations) { invitation in
-                    HStack {
+                    HStack(spacing: 12) {
+                        avatar(initials(invitation.email))
                         VStack(alignment: .leading, spacing: 2) {
                             Text(invitation.email).font(TimiVetFont.ui(13, weight: .semibold))
                             Text(invitation.role.replacingOccurrences(of: "org:", with: "").capitalized)
                                 .font(TimiVetFont.ui(11)).foregroundStyle(TimiVetColor.muted)
                         }
                         Spacer()
+                        statusPill("Invited", color: TimiVetColor.gold)
                         if isAdmin {
                             Button("Revoke") { Task { await revoke(invitation) } }.buttonStyle(TimiVetQuietButtonStyle()).frame(width: 90)
                         }

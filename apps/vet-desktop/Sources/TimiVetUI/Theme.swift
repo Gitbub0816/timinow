@@ -23,22 +23,34 @@ enum TimiVetColor {
         )
     }
 
-    // Platform-contract tokens.
-    static let ink = hex(0x111B3B)
+    // Platform-contract tokens, retuned to the clinic owner's mockup palette
+    // (see the Artifact skill session that produced apps/vet-desktop's
+    // reskin: navy #101b3d, ink #242323, coral #f65f50, blue #2d5bd7, page
+    // #f3f5fb) while keeping every existing token *name* stable — nothing
+    // that reads `TimiVetColor.blue` needed to change, only what `blue` is.
+    static let ink = hex(0x242323)
     static let inkSoft = hex(0x3F4862)
     static let paper = hex(0xFFFAF0)
-    static let blue = hex(0x2357D9)
-    static let blueDark = hex(0x173C9A)
-    static let blueSoft = hex(0xE5ECFF)
-    static let coral = hex(0xF25F4C)
+    static let blue = hex(0x2D5BD7)
+    static let blueDark = hex(0x2449AC)
+    static let blueSoft = hex(0xE8EFFF)
+    static let coral = hex(0xF65F50)
     static let coralDark = hex(0xBD3E31)
-    static let coralSoft = hex(0xFFE5DF)
+    static let coralSoft = hex(0xFFF0ED)
     static let gold = hex(0xF7C84B)
     static let goldSoft = hex(0xFFF0B9)
-    static let canvas = hex(0xF3F5FA)
-    static let line = hex(0xD9D8D2)
-    static let muted = hex(0x6F7483)
+    static let canvas = hex(0xF3F5FB)
+    static let line = hex(0xD7DCE7)
+    static let muted = hex(0x6D7487)
     static let danger = hex(0xBD3E31)
+    /// The mockup's `--green`/`--green-soft` — status pills ("Active",
+    /// "Published", "On the way") and the connection dot.
+    static let green = hex(0x12845D)
+    static let greenSoft = hex(0xE9F7F1)
+    /// The mockup's `--navy`, i.e. the sidebar/rail background specifically.
+    /// Kept distinct from `ink` (now a *text* tone) so retuning body text
+    /// never also retunes the sidebar, and vice versa.
+    static let navy = hex(0x101B3D)
 
     // Inline values used throughout Theme.xaml / MainWindow.xaml — the dark
     // left rail, cards, and mini console specifically.
@@ -48,13 +60,13 @@ enum TimiVetColor {
     static let railDisclaimer = hex(0x96A0B9)
     static let railFootnote = hex(0x69738E)
     static let railTag = hex(0x9DA7C1)
-    static let publicCapacityBackground = hex(0xFFF9E8)
-    static let cardBorder = hex(0xE0E3EA)
+    static let publicCapacityBackground = hex(0xFFF8E8)
+    static let cardBorder = hex(0xD7DCE7)
     static let cardBorderAlt = hex(0xE4E6EC)
     static let miniCardBackground = hex(0xFBFCFF)
     static let miniDivider = hex(0xE3E6EE)
     static let fieldBorder = hex(0xCCD1DC)
-    static let sectionBorder = hex(0xD9DCE5)
+    static let sectionBorder = hex(0xD7DCE7)
     static let offerBannerBackground = hex(0xFFF1ED)
 }
 
@@ -70,7 +82,7 @@ enum TimiVetFont {
 }
 
 enum TimiVetMetrics {
-    static let cardRadius: CGFloat = 14
+    static let cardRadius: CGFloat = 16
     static let miniRadius: CGFloat = 18
 }
 
@@ -83,7 +95,11 @@ struct TimiVetPrimaryButtonStyle: ButtonStyle {
             .frame(maxWidth: .infinity, minHeight: 38)
             .padding(.horizontal, 15)
             .background(color.opacity(configuration.isPressed ? 0.85 : 1), in: RoundedRectangle(cornerRadius: 8))
-            .overlay(RoundedRectangle(cornerRadius: 8).stroke(TimiVetColor.ink, lineWidth: 1))
+            // No dark outline: the mockup's `.button.primary` sets its
+            // border-color to the same blue as its fill, i.e. no visible
+            // ring. A high-contrast ink stroke around a colour-filled action
+            // button was this app's older look; the flatter filled button
+            // reads closer to the clinic owner's target language.
             .timiVetPress(configuration.isPressed)
     }
 }
