@@ -39,11 +39,21 @@
             A DockPanel, not a four-row Grid with a star spacer: the disclaimer belongs at the bottom of a
             tall window and must still be reachable in a short one. The middle scrolls; the notice does not
             move.
+
+            The mockup's sidebar is a page-per-destination nav (Live intake / Clinic settings / Manage
+            people), each swapping which <section> is visible. This console is one continuously-scrolling
+            page instead — the operations view, the settings panel and the payouts panel are all already on
+            screen at once inside the same ScrollViewer, which is what lets a receptionist glance from the
+            queue straight down to a setting without losing their place. So "Live intake" and "Clinic
+            settings" below are nav items in the mockup's visual language but scroll-to/expand actions here
+            rather than page switches; "Manage people" is a genuine destination (its own window) either way.
         -->
         <Border Grid.Column="0" Background="{StaticResource Ink}" Padding="20,22">
             <DockPanel LastChildFill="True">
 
                 <StackPanel DockPanel.Dock="Bottom" Margin="0,16,0,0">
+                    <TextBlock Text="Independent clinical triage" Foreground="{StaticResource RailFootnote}"
+                               FontSize="10" FontWeight="Bold" Margin="0,0,0,3"/>
                     <TextBlock Text="Tími routes operational intake. It does not diagnose or replace clinical triage."
                                Foreground="{StaticResource RailDisclaimer}" FontSize="10" TextWrapping="Wrap"/>
                     <TextBlock Text="Closing this window keeps alerts running in the tray."
@@ -52,16 +62,22 @@
 
                 <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                     <StackPanel>
-                        <Image Source="/Assets/timinow-wordmark.png" Width="172" Height="60"
-                               Stretch="Uniform" HorizontalAlignment="Left"/>
+                        <!-- Brand -->
+                        <StackPanel Orientation="Horizontal" VerticalAlignment="Bottom">
+                            <Image Source="/Assets/timinow-wordmark.png" Width="150" Height="52"
+                                   Stretch="Uniform" HorizontalAlignment="Left"/>
+                            <TextBlock Text="NOW · LIVE" Foreground="{StaticResource Coral}" FontSize="10"
+                                       FontWeight="Bold" VerticalAlignment="Bottom" Margin="7,0,0,10"/>
+                        </StackPanel>
                         <TextBlock Text="VETERINARY OPERATIONS" FontSize="10" FontWeight="Bold"
-                                   Foreground="{StaticResource RailMutedText}" Margin="1,2,0,0"/>
+                                   Foreground="{StaticResource RailMutedText}" Margin="1,4,0,0"/>
 
-                        <StackPanel Margin="0,36,0,0">
+                        <!-- Clinic block -->
+                        <StackPanel Margin="0,26,0,0">
                             <TextBlock Text="LIVE OPERATIONS" Foreground="{StaticResource RailFooterText}"
                                        FontSize="10" FontWeight="Bold"/>
                             <TextBlock Text="{Binding ClinicName}" TextWrapping="Wrap" Foreground="White"
-                                       FontSize="17" FontWeight="SemiBold" Margin="0,8,0,0"/>
+                                       FontSize="19" FontWeight="SemiBold" Margin="0,8,0,0"/>
                             <TextBlock Text="{Binding ClinicAddress}" TextWrapping="Wrap"
                                        Foreground="{StaticResource RailMutedText}" FontSize="11" Margin="0,5,0,0"
                                        Visibility="{Binding ClinicAddress, Converter={StaticResource TextVisibility}}"/>
@@ -71,29 +87,60 @@
                         </StackPanel>
 
                         <!--
+                            Status chip — the mockup's small pill with a dot and "Live connection". Kept
+                            deliberately terse; the fuller CURRENT MODE panel just below still carries the
+                            explanation and the Reconnect action for when it is not healthy.
+                        -->
+                        <Border Background="{StaticResource RailDeepInk}" CornerRadius="12" Padding="12,10" Margin="0,20,0,0">
+                            <StackPanel Orientation="Horizontal">
+                                <Ellipse Width="9" Height="9" VerticalAlignment="Center"
+                                         Fill="{Binding IsConnectionHealthy, Converter={StaticResource ConnectionBrush}}"/>
+                                <TextBlock Text="{Binding ConnectionMode}" Foreground="#DFE7FF" FontSize="12"
+                                           FontWeight="Bold" Margin="9,0,0,0" TextTrimming="CharacterEllipsis"/>
+                            </StackPanel>
+                        </Border>
+
+                        <!--
                             The connection panel. It used to say LIVE CLOUDFLARE CONNECTION whatever was
                             actually happening, including while the console had not reached the Worker for
                             twenty minutes and the queue on screen was from before lunch.
                         -->
-                        <Border Background="{StaticResource RailDeepInk}" CornerRadius="9" Padding="12" Margin="0,32,0,0">
+                        <Border Background="{StaticResource RailDeepInk}" CornerRadius="9" Padding="12" Margin="0,10,0,0">
                             <StackPanel>
-                                <TextBlock Text="CURRENT MODE" Foreground="{StaticResource RailTag}"
-                                           FontSize="9" FontWeight="Bold"/>
-                                <TextBlock Text="{Binding ConnectionMode}" TextWrapping="Wrap"
-                                           Foreground="{Binding IsConnectionHealthy, Converter={StaticResource ConnectionBrush}}"
-                                           FontSize="11" FontWeight="Bold" Margin="0,4,0,0"/>
                                 <TextBlock Text="{Binding ConnectionDetail}" TextWrapping="Wrap"
-                                           Foreground="{StaticResource RailMutedText}" FontSize="10" Margin="0,6,0,0"/>
+                                           Foreground="{StaticResource RailMutedText}" FontSize="10"/>
                                 <Button Content="Reconnect now" Command="{Binding ReconnectCommand}"
                                         Style="{StaticResource QuietButton}" Margin="0,10,0,0" MinHeight="30" FontSize="12"
                                         Visibility="{Binding IsConnectionHealthy, Converter={StaticResource InverseB2V}}"/>
                             </StackPanel>
                         </Border>
 
-                        <StackPanel Margin="0,16,0,0">
+                        <!-- Nav list -->
+                        <StackPanel Margin="0,22,0,0">
+                            <Button Style="{StaticResource SidebarNavButton}" Click="NavOperations_Click"
+                                    HorizontalContentAlignment="Stretch">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="Live intake"/>
+                                    <Border Grid.Column="1" Style="{StaticResource SidebarNavBadge}">
+                                        <TextBlock Text="{Binding Pending}" Foreground="White" FontSize="11"
+                                                   FontWeight="Bold" HorizontalAlignment="Center"/>
+                                    </Border>
+                                </Grid>
+                            </Button>
+                            <Button Content="Clinic settings" Style="{StaticResource SidebarNavButton}"
+                                    Margin="0,4,0,0" Click="NavSettings_Click"/>
+                            <Button Content="Manage people" Style="{StaticResource SidebarNavButton}"
+                                    Margin="0,4,0,0" Command="{Binding OpenPeopleCommand}"/>
+                        </StackPanel>
+
+                        <!-- Secondary, less frequent actions — quieter than the nav list above it. -->
+                        <StackPanel Margin="0,20,0,0">
                             <Button Content="Open floating console" Style="{StaticResource QuietButton}" Click="OpenMini_Click"/>
                             <Button Content="Refresh now" Command="{Binding RefreshCommand}" Style="{StaticResource QuietButton}" Margin="0,8,0,0"/>
-                            <Button Content="Manage people" Command="{Binding OpenPeopleCommand}" Style="{StaticResource QuietButton}" Margin="0,8,0,0"/>
                             <Button Content="Sign out" Command="{Binding SignOutCommand}" Style="{StaticResource QuietButton}" Margin="0,8,0,0"/>
                         </StackPanel>
                     </StackPanel>
@@ -146,7 +193,7 @@
                 and every Stretch inside it into Auto. The columns below carry MinWidths instead, and the
                 window's own MinWidth is set so that they all fit.
             -->
-            <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+            <ScrollViewer x:Name="WorkspaceScroll" Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                 <Grid Margin="22,20">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
@@ -209,41 +256,41 @@
                             </StackPanel>
                         </Border>
 
-                        <Grid Grid.Column="2">
-                            <Grid.RowDefinitions>
-                                <RowDefinition/>
-                                <RowDefinition/>
-                            </Grid.RowDefinitions>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition/>
-                                <ColumnDefinition/>
-                            </Grid.ColumnDefinitions>
+                        <!--
+                            One continuous card with the four counts side by side and a hairline divider
+                            between each — the mockup's live-summary metric strip, rather than four separate
+                            cards stacked 2x2. Same four bindings as before; only the container changed.
+                        -->
+                        <Border Grid.Column="2" Style="{StaticResource Card}" Padding="0">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition/>
+                                    <ColumnDefinition/>
+                                    <ColumnDefinition/>
+                                    <ColumnDefinition/>
+                                </Grid.ColumnDefinitions>
 
-                            <Border Grid.Row="0" Grid.Column="0" Style="{StaticResource Card}" Margin="0,0,10,10">
-                                <StackPanel>
+                                <StackPanel Grid.Column="0" Margin="18,16">
                                     <TextBlock Text="WAITING" Style="{StaticResource Eyebrow}"/>
-                                    <TextBlock Text="{Binding Pending}" Style="{StaticResource MetricValue}"/>
+                                    <TextBlock Text="{Binding Pending}" Style="{StaticResource MetricValue}" Foreground="{StaticResource Coral}"/>
                                 </StackPanel>
-                            </Border>
-                            <Border Grid.Row="0" Grid.Column="1" Style="{StaticResource Card}" Margin="0,0,0,10">
-                                <StackPanel>
+                                <Border Grid.Column="1" Width="1" Background="{StaticResource CardBorder}" HorizontalAlignment="Left"/>
+                                <StackPanel Grid.Column="1" Margin="18,16">
                                     <TextBlock Text="ACTIVE ARRIVALS" Style="{StaticResource Eyebrow}"/>
                                     <TextBlock Text="{Binding ActiveArrivals}" Style="{StaticResource MetricValue}"/>
                                 </StackPanel>
-                            </Border>
-                            <Border Grid.Row="1" Grid.Column="0" Style="{StaticResource Card}" Margin="0,0,10,0">
-                                <StackPanel>
+                                <Border Grid.Column="2" Width="1" Background="{StaticResource CardBorder}" HorizontalAlignment="Left"/>
+                                <StackPanel Grid.Column="2" Margin="18,16">
                                     <TextBlock Text="COMPLETED TODAY" Style="{StaticResource Eyebrow}"/>
                                     <TextBlock Text="{Binding CompletedToday}" Style="{StaticResource MetricValue}"/>
                                 </StackPanel>
-                            </Border>
-                            <Border Grid.Row="1" Grid.Column="1" Style="{StaticResource Card}">
-                                <StackPanel>
+                                <Border Grid.Column="3" Width="1" Background="{StaticResource CardBorder}" HorizontalAlignment="Left"/>
+                                <StackPanel Grid.Column="3" Margin="18,16">
                                     <TextBlock Text="DECLINED TODAY" Style="{StaticResource Eyebrow}"/>
                                     <TextBlock Text="{Binding DeclinedToday}" Style="{StaticResource MetricValue}"/>
                                 </StackPanel>
-                            </Border>
-                        </Grid>
+                            </Grid>
+                        </Border>
                     </Grid>
 
                     <!-- ========== Review queue + decision workspace ========== -->
@@ -386,52 +433,84 @@
 
                                     <Border Height="1" Background="{StaticResource CardBorder}"/>
 
-                                    <TextBlock Text="Availability response" Style="{StaticResource SectionHeading}" FontSize="17" Margin="0,16,0,10"/>
+                                    <TextBlock Text="What can your clinic offer?" Style="{StaticResource SectionHeading}" FontSize="17" Margin="0,16,0,10"/>
 
-                                    <Grid>
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="*" MinWidth="170"/>
-                                            <ColumnDefinition Width="14"/>
-                                            <ColumnDefinition Width="*" MinWidth="170"/>
-                                        </Grid.ColumnDefinitions>
+                                    <!--
+                                        The mockup's three-choice grid: Available now / Custom availability /
+                                        Emergency intake — the same three values ResponseType has always
+                                        taken, now chosen as tiles instead of a ComboBox row. Selecting
+                                        "Available now" needs nothing further, since the fields it would set
+                                        already default to this clinic's own stable-wait numbers; the other
+                                        two reveal the field group below so they can be tuned.
+                                    -->
+                                    <UniformGrid Columns="3">
+                                        <RadioButton GroupName="ResponseChoice" Style="{StaticResource ChoiceCardButton}"
+                                                     IsChecked="{Binding ResponseTypeIsNow}" Margin="0,0,6,0">
+                                            <StackPanel>
+                                                <TextBlock Text="Available now" FontWeight="Bold" TextWrapping="Wrap"/>
+                                                <TextBlock Text="Arrival within 30 min" Style="{StaticResource ChoiceCardCaption}"/>
+                                            </StackPanel>
+                                        </RadioButton>
+                                        <RadioButton GroupName="ResponseChoice" Style="{StaticResource ChoiceCardButton}"
+                                                     IsChecked="{Binding ResponseTypeIsCustom}" Margin="3,0">
+                                            <StackPanel>
+                                                <TextBlock Text="Custom availability" FontWeight="Bold" TextWrapping="Wrap"/>
+                                                <TextBlock Text="Set arrival and wait" Style="{StaticResource ChoiceCardCaption}"/>
+                                            </StackPanel>
+                                        </RadioButton>
+                                        <RadioButton GroupName="ResponseChoice" Style="{StaticResource ChoiceCardButton}"
+                                                     IsChecked="{Binding ResponseTypeIsEmergency}" Margin="6,0,0,0">
+                                            <StackPanel>
+                                                <TextBlock Text="Emergency intake" FontWeight="Bold" TextWrapping="Wrap"/>
+                                                <TextBlock Text="Flags this as critical" Style="{StaticResource ChoiceCardCaption}"/>
+                                            </StackPanel>
+                                        </RadioButton>
+                                    </UniformGrid>
 
-                                        <StackPanel Grid.Column="0">
-                                            <TextBlock Text="Response type" Style="{StaticResource FieldLabel}"/>
-                                            <ComboBox ItemsSource="{Binding ResponseTypes}" SelectedItem="{Binding ResponseType}" Margin="0,0,0,10"/>
-                                            <TextBlock Text="Available date" Style="{StaticResource FieldLabel}"/>
-                                            <DatePicker SelectedDate="{Binding AvailableAt}" Margin="0,0,0,10"/>
-                                            <TextBlock Text="Available time" Style="{StaticResource FieldLabel}"/>
-                                            <TextBox Text="{Binding AvailableTimeText, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,10"/>
-                                            <TextBlock Text="Message to pet owner" Style="{StaticResource FieldLabel}"/>
-                                            <TextBox Text="{Binding ClinicNote, UpdateSourceTrigger=PropertyChanged}"
-                                                     AcceptsReturn="True" TextWrapping="Wrap" VerticalContentAlignment="Top" Height="86"/>
-                                        </StackPanel>
+                                    <StackPanel Visibility="{Binding ShowCustomOfferFields, Converter={StaticResource B2V}}" Margin="0,17,0,0">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" MinWidth="170"/>
+                                                <ColumnDefinition Width="14"/>
+                                                <ColumnDefinition Width="*" MinWidth="170"/>
+                                            </Grid.ColumnDefinitions>
 
-                                        <StackPanel Grid.Column="2">
-                                            <UniformGrid Columns="2">
-                                                <StackPanel Margin="0,0,8,8">
-                                                    <TextBlock Text="Arrival window" Style="{StaticResource FieldLabel}"/>
-                                                    <TextBox Text="{Binding ArrivalWindowMinutes}"/>
-                                                </StackPanel>
-                                                <StackPanel Margin="0,0,0,8">
-                                                    <TextBlock Text="Offer hold" Style="{StaticResource FieldLabel}"/>
-                                                    <TextBox Text="{Binding HoldMinutes}"/>
-                                                </StackPanel>
-                                                <StackPanel Margin="0,0,8,8">
-                                                    <TextBlock Text="Wait min" Style="{StaticResource FieldLabel}"/>
-                                                    <TextBox Text="{Binding OfferWaitMin}"/>
-                                                </StackPanel>
-                                                <StackPanel Margin="0,0,0,8">
-                                                    <TextBlock Text="Wait max" Style="{StaticResource FieldLabel}"/>
-                                                    <TextBox Text="{Binding OfferWaitMax}"/>
-                                                </StackPanel>
-                                            </UniformGrid>
-                                            <Border Background="{StaticResource OfferBannerBackground}" CornerRadius="10" Padding="12" Margin="0,8,0,0">
-                                                <TextBlock TextWrapping="Wrap" FontSize="11"
-                                                           Text="An offer does not book the patient. The owner may compare up to five responses. Unselected offers are released automatically."/>
-                                            </Border>
-                                        </StackPanel>
-                                    </Grid>
+                                            <StackPanel Grid.Column="0">
+                                                <TextBlock Text="Available date" Style="{StaticResource FieldLabel}"/>
+                                                <DatePicker SelectedDate="{Binding AvailableAt}" Margin="0,0,0,10"/>
+                                                <TextBlock Text="Available time" Style="{StaticResource FieldLabel}"/>
+                                                <TextBox Text="{Binding AvailableTimeText, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,10"/>
+                                                <TextBlock Text="Message to pet owner" Style="{StaticResource FieldLabel}"/>
+                                                <TextBox Text="{Binding ClinicNote, UpdateSourceTrigger=PropertyChanged}"
+                                                         AcceptsReturn="True" TextWrapping="Wrap" VerticalContentAlignment="Top" Height="86"/>
+                                            </StackPanel>
+
+                                            <StackPanel Grid.Column="2">
+                                                <UniformGrid Columns="2">
+                                                    <StackPanel Margin="0,0,8,8">
+                                                        <TextBlock Text="Arrival window" Style="{StaticResource FieldLabel}"/>
+                                                        <TextBox Text="{Binding ArrivalWindowMinutes}"/>
+                                                    </StackPanel>
+                                                    <StackPanel Margin="0,0,0,8">
+                                                        <TextBlock Text="Offer hold" Style="{StaticResource FieldLabel}"/>
+                                                        <TextBox Text="{Binding HoldMinutes}"/>
+                                                    </StackPanel>
+                                                    <StackPanel Margin="0,0,8,8">
+                                                        <TextBlock Text="Wait min" Style="{StaticResource FieldLabel}"/>
+                                                        <TextBox Text="{Binding OfferWaitMin}"/>
+                                                    </StackPanel>
+                                                    <StackPanel Margin="0,0,0,8">
+                                                        <TextBlock Text="Wait max" Style="{StaticResource FieldLabel}"/>
+                                                        <TextBox Text="{Binding OfferWaitMax}"/>
+                                                    </StackPanel>
+                                                </UniformGrid>
+                                                <Border Background="{StaticResource OfferBannerBackground}" CornerRadius="10" Padding="12" Margin="0,8,0,0">
+                                                    <TextBlock TextWrapping="Wrap" FontSize="11"
+                                                               Text="An offer does not book the patient. The owner may compare up to five responses. Unselected offers are released automatically."/>
+                                                </Border>
+                                            </StackPanel>
+                                        </Grid>
+                                    </StackPanel>
 
                                     <Grid Margin="0,18,0,0">
                                         <Grid.ColumnDefinitions>
@@ -440,7 +519,7 @@
                                             <ColumnDefinition/>
                                         </Grid.ColumnDefinitions>
                                         <Button Grid.Column="0" Content="Decline request" Command="{Binding DeclineCommand}" Style="{StaticResource QuietButton}"/>
-                                        <Button Grid.Column="2" Content="Send availability offer" Command="{Binding OfferCommand}" Style="{StaticResource CoralButton}"/>
+                                        <Button Grid.Column="2" Content="{Binding OfferActionLabel}" Command="{Binding OfferCommand}" Style="{StaticResource CoralButton}"/>
                                     </Grid>
                                 </StackPanel>
                             </StackPanel>
@@ -536,7 +615,7 @@
                     </Expander>
 
                     <!-- ========== Settings ========== -->
-                    <Expander Grid.Row="3" Header="Connection, calling, alerts, and startup settings" Margin="0,20,0,0">
+                    <Expander x:Name="SettingsExpander" Grid.Row="3" Header="Clinic settings — calling, alerts, and connection" Margin="0,20,0,0">
                         <Border Style="{StaticResource Card}" Margin="0,10,0,0">
                             <Grid>
                                 <Grid.ColumnDefinitions>
@@ -547,25 +626,41 @@
                                     <ColumnDefinition Width="*" MinWidth="230"/>
                                 </Grid.ColumnDefinitions>
 
-                                <!-- Connection -->
+                                <!--
+                                    Advanced connection settings — the mockup's own collapsible "Advanced
+                                    connection settings" panel, and one this app had left wide open: every
+                                    other write here (calling preferences, people, roles) already checked
+                                    IsAdmin, but the Worker address and tenant ID a single receptionist could
+                                    silently repoint the whole console at had no such check at all. Collapsed
+                                    by default — it is not a setting anybody needs open by habit — and
+                                    disabled outright for a non-admin rather than merely hidden, so a member
+                                    who does open it sees exactly why the fields will not take input.
+                                -->
                                 <StackPanel Grid.Column="0">
                                     <TextBlock Text="CONNECTION" Style="{StaticResource Eyebrow}" Margin="0,0,0,10"/>
-                                    <TextBlock Text="Cloudflare Worker HTTPS URL" Style="{StaticResource FieldLabel}"/>
-                                    <TextBox Text="{Binding Settings.ApiBaseUrl, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,4"/>
-                                    <TextBlock Style="{StaticResource Hint}"
-                                               Text="Filled in with Tími NOW's production address. Change it only if your practice was given a different one."/>
-                                    <TextBlock Text="Tenant ID (loopback development only)" Style="{StaticResource FieldLabel}" Margin="0,12,0,5"/>
-                                    <TextBox Text="{Binding Settings.TenantId, UpdateSourceTrigger=PropertyChanged}"/>
-                                    <Border Style="{StaticResource NoticePanel}" Margin="0,12,0,0">
-                                        <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="{StaticResource Muted}"
-                                                   Text="Sign-in is handled by the Tími sign-in window shown at launch. There is no token field here — credentials are encrypted with Windows DPAPI and never written to this settings file."/>
-                                    </Border>
-                                    <TextBlock Text="Polling interval, seconds" Style="{StaticResource FieldLabel}" Margin="0,12,0,5"/>
-                                    <TextBox Text="{Binding Settings.PollSeconds}"/>
-                                    <TextBlock Style="{StaticResource Hint}"
-                                               Text="Between 3 and 60. When the Worker cannot be reached the console backs off on its own and reconnects as soon as Windows says the network is back."/>
-                                    <Button Content="Save settings and reconnect" Command="{Binding SaveSettingsCommand}"
-                                            Style="{StaticResource PrimaryButton}" Margin="0,14,0,0"/>
+                                    <Expander Header="Advanced connection settings" IsExpanded="False" IsEnabled="{Binding IsAdmin}">
+                                        <StackPanel Margin="0,12,0,0">
+                                            <TextBlock Text="Cloudflare Worker HTTPS URL" Style="{StaticResource FieldLabel}"/>
+                                            <TextBox Text="{Binding Settings.ApiBaseUrl, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,4"/>
+                                            <TextBlock Style="{StaticResource Hint}"
+                                                       Text="Filled in with Tími NOW's production address. Change it only if your practice was given a different one."/>
+                                            <TextBlock Text="Tenant ID (loopback development only)" Style="{StaticResource FieldLabel}" Margin="0,12,0,5"/>
+                                            <TextBox Text="{Binding Settings.TenantId, UpdateSourceTrigger=PropertyChanged}"/>
+                                            <Border Style="{StaticResource NoticePanel}" Margin="0,12,0,0">
+                                                <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="{StaticResource Muted}"
+                                                           Text="Sign-in is handled by the Tími sign-in window shown at launch. There is no token field here — credentials are encrypted with Windows DPAPI and never written to this settings file."/>
+                                            </Border>
+                                            <TextBlock Text="Polling interval, seconds" Style="{StaticResource FieldLabel}" Margin="0,12,0,5"/>
+                                            <TextBox Text="{Binding Settings.PollSeconds}"/>
+                                            <TextBlock Style="{StaticResource Hint}"
+                                                       Text="Between 3 and 60. When the Worker cannot be reached the console backs off on its own and reconnects as soon as Windows says the network is back."/>
+                                            <Button Content="Save and reconnect" Command="{Binding SaveSettingsCommand}"
+                                                    Style="{StaticResource PrimaryButton}" Margin="0,14,0,0"/>
+                                        </StackPanel>
+                                    </Expander>
+                                    <TextBlock Style="{StaticResource Hint}" Margin="0,10,0,0" Foreground="{StaticResource CoralDark}"
+                                               Visibility="{Binding IsAdmin, Converter={StaticResource InverseB2V}}"
+                                               Text="Only a workspace administrator can change the Worker address, tenant ID, or polling interval. Ask whoever set this clinic up on Tími."/>
                                 </StackPanel>
 
                                 <!-- Calling preferences -->
@@ -639,9 +734,17 @@
                                     <CheckBox Content="Floating console stays on top" IsChecked="{Binding Settings.MiniWindowTopmost}" Margin="0,10,0,4"/>
                                     <CheckBox Content="Open the floating console automatically on a new request" IsChecked="{Binding Settings.AutoShowMiniOnNewRequest}"/>
                                     <CheckBox Content="Start Tími Vet with Windows" IsChecked="{Binding Settings.StartWithWindows}"/>
+                                    <!--
+                                        The mockup's "Preview floating console" button. Same destination as
+                                        "Open floating console" in the left rail — this one exists so the two
+                                        checkboxes just above it and the window they describe are one press
+                                        apart, without leaving Settings to find it.
+                                    -->
+                                    <Button Content="Preview floating console" Style="{StaticResource QuietButton}"
+                                            Margin="0,10,0,0" Click="OpenMini_Click"/>
                                     <Border Style="{StaticResource NoticePanel}" Margin="0,12,0,0">
                                         <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="{StaticResource Muted}"
-                                                   Text="Alert and floating-console settings apply as you change them. Press Save settings and reconnect to write them to disk."/>
+                                                   Text="Alert and floating-console settings apply as you change them. Opening the advanced connection panel and pressing Save and reconnect is only needed for the Worker address, tenant ID, or polling interval."/>
                                     </Border>
                                 </StackPanel>
                             </Grid>

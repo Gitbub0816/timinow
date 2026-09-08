@@ -14,14 +14,20 @@
 
     <!-- ============================ Palette ============================ -->
 
+    <!--
+        Tuned against the clinic owner's HTML/CSS mockup (2026): coral #F65F50, blue #2D5BD7, cream
+        #FFF8E8, page #F3F5FB, border #D7DCE7. Ink, canvas and border were already close enough that
+        moving them would be motion without a visible difference; coral and blue were the two the mockup
+        called out by hex and are the ones this app is actually branded by, so those are the ones nudged.
+    -->
     <Color x:Key="InkColor">#111B3B</Color>
     <Color x:Key="InkSoftColor">#3F4862</Color>
-    <Color x:Key="BlueColor">#2357D9</Color>
-    <Color x:Key="BlueDarkColor">#173C9A</Color>
-    <Color x:Key="BlueSoftColor">#E5ECFF</Color>
-    <Color x:Key="CoralColor">#F25F4C</Color>
+    <Color x:Key="BlueColor">#2D5BD7</Color>
+    <Color x:Key="BlueDarkColor">#2449AC</Color>
+    <Color x:Key="BlueSoftColor">#E8EFFF</Color>
+    <Color x:Key="CoralColor">#F65F50</Color>
     <Color x:Key="CoralDarkColor">#BD3E31</Color>
-    <Color x:Key="CoralSoftColor">#FFE5DF</Color>
+    <Color x:Key="CoralSoftColor">#FFF0ED</Color>
     <Color x:Key="GoldColor">#F7C84B</Color>
     <Color x:Key="GoldSoftColor">#FFF0B9</Color>
     <Color x:Key="CanvasColor">#F3F5FA</Color>
@@ -292,6 +298,117 @@
         <Setter Property="MinHeight" Value="32"/>
         <Setter Property="Padding" Value="12,5"/>
         <Setter Property="FontSize" Value="12"/>
+    </Style>
+
+    <!--
+        A left-rail destination — the mockup's ".nav-button": full-width, an icon glyph, a label, and an
+        optional count badge pinned to the right. Built as a plain Button rather than a ToggleButton
+        because this console is one continuously-scrolling page, not a page-per-destination shell — a nav
+        item here scrolls to or opens its destination rather than toggling a persistent "current page"
+        state, so there is no IsChecked to template against.
+    -->
+    <Style x:Key="SidebarNavButton" TargetType="Button">
+        <Setter Property="MinHeight" Value="46"/>
+        <Setter Property="Padding" Value="13,10"/>
+        <Setter Property="HorizontalContentAlignment" Value="Left"/>
+        <Setter Property="VerticalContentAlignment" Value="Center"/>
+        <Setter Property="Cursor" Value="Hand"/>
+        <Setter Property="FontWeight" Value="Bold"/>
+        <Setter Property="FontSize" Value="13"/>
+        <Setter Property="Foreground" Value="{StaticResource RailMutedText}"/>
+        <Setter Property="Background" Value="Transparent"/>
+        <Setter Property="BorderThickness" Value="0"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Button">
+                    <Border x:Name="Shell" Background="{TemplateBinding Background}" CornerRadius="12" SnapsToDevicePixels="True">
+                        <ContentPresenter Margin="{TemplateBinding Padding}"
+                                          HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                          VerticalAlignment="{TemplateBinding VerticalContentAlignment}"
+                                          RecognizesAccessKey="True"/>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Shell" Property="Background" Value="#14FFFFFF"/>
+                            <Setter Property="Foreground" Value="White"/>
+                        </Trigger>
+                        <Trigger Property="IsPressed" Value="True">
+                            <Setter TargetName="Shell" Property="Background" Value="#0AFFFFFF"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- The count pill on a nav item, e.g. how many requests are waiting. -->
+    <Style x:Key="SidebarNavBadge" TargetType="Border">
+        <Setter Property="Background" Value="{StaticResource Coral}"/>
+        <Setter Property="CornerRadius" Value="999"/>
+        <Setter Property="MinWidth" Value="24"/>
+        <Setter Property="Padding" Value="6,2"/>
+        <Setter Property="HorizontalAlignment" Value="Right"/>
+    </Style>
+
+    <!--
+        One tile of the decision workspace's three-choice grid — "Available now / Custom availability /
+        Emergency intake", the WPF reading of the mockup's Available now / Custom availability / Cannot
+        receive buttons. A RadioButton rather than a fresh ToggleButton, because ResponseType is exactly a
+        three-way exclusive choice already and the group's mutual exclusivity is what RadioButton gives for
+        free. Deliberately not based on the dot-and-row RadioButton style above: that one is for a settings
+        list where several short options sit in a column; this is a bigger, squarer tile where the selected
+        state has to read from across a front desk, so selection is a solid fill rather than a small dot.
+    -->
+    <Style x:Key="ChoiceCardButton" TargetType="RadioButton">
+        <Setter Property="MinHeight" Value="60"/>
+        <Setter Property="Padding" Value="13,10"/>
+        <Setter Property="Margin" Value="0"/>
+        <Setter Property="Cursor" Value="Hand"/>
+        <Setter Property="HorizontalContentAlignment" Value="Left"/>
+        <Setter Property="Foreground" Value="{StaticResource Ink}"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="RadioButton">
+                    <Border x:Name="Shell"
+                            Background="{StaticResource Paper}"
+                            BorderBrush="{StaticResource FieldBorder}"
+                            BorderThickness="1"
+                            CornerRadius="13"
+                            Padding="{TemplateBinding Padding}"
+                            SnapsToDevicePixels="True">
+                        <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                          VerticalAlignment="Center"/>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsChecked" Value="True">
+                            <Setter TargetName="Shell" Property="Background" Value="{StaticResource Blue}"/>
+                            <Setter TargetName="Shell" Property="BorderBrush" Value="{StaticResource Blue}"/>
+                            <Setter Property="Foreground" Value="White"/>
+                        </Trigger>
+                        <MultiTrigger>
+                            <MultiTrigger.Conditions>
+                                <Condition Property="IsMouseOver" Value="True"/>
+                                <Condition Property="IsChecked" Value="False"/>
+                            </MultiTrigger.Conditions>
+                            <Setter TargetName="Shell" Property="BorderBrush" Value="{StaticResource InkSoft}"/>
+                        </MultiTrigger>
+                        <Trigger Property="IsKeyboardFocused" Value="True">
+                            <Setter TargetName="Shell" Property="BorderThickness" Value="2"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- Small caption inside a selected/unselected ChoiceCardButton — Foreground is not set here so it
+         inherits the white-on-selected / ink-on-unselected the parent's trigger already produced. -->
+    <Style x:Key="ChoiceCardCaption" TargetType="TextBlock">
+        <Setter Property="FontSize" Value="11"/>
+        <Setter Property="FontWeight" Value="Normal"/>
+        <Setter Property="Margin" Value="0,3,0,0"/>
+        <Setter Property="TextWrapping" Value="Wrap"/>
+        <Setter Property="Opacity" Value="0.78"/>
     </Style>
 
     <!-- ============================= Fields ============================= -->
@@ -615,11 +732,13 @@
 
     <!-- ============================ Surfaces ============================ -->
 
+    <!-- CornerRadius 18, matching the mockup's "radius" custom property exactly — this is the single most
+         recognisable proportion of the design and costs nothing to take literally. -->
     <Style x:Key="Card" TargetType="Border">
         <Setter Property="Background" Value="{StaticResource Paper}"/>
         <Setter Property="BorderBrush" Value="{StaticResource SectionBorder}"/>
         <Setter Property="BorderThickness" Value="1"/>
-        <Setter Property="CornerRadius" Value="14"/>
+        <Setter Property="CornerRadius" Value="18"/>
         <Setter Property="Padding" Value="18"/>
         <Setter Property="SnapsToDevicePixels" Value="True"/>
     </Style>
@@ -630,7 +749,7 @@
         <Setter Property="Background" Value="{StaticResource Canvas}"/>
         <Setter Property="BorderBrush" Value="{StaticResource CardBorderAlt}"/>
         <Setter Property="BorderThickness" Value="1"/>
-        <Setter Property="CornerRadius" Value="12"/>
+        <Setter Property="CornerRadius" Value="14"/>
         <Setter Property="Padding" Value="14"/>
         <Setter Property="SnapsToDevicePixels" Value="True"/>
     </Style>

@@ -109,11 +109,15 @@ private deployment or a loopback development Worker.
 
 The operations console does not appear until a session with clinic workspace access is established, and
 closing the sign-in window exits the app rather than falling back to a bypass. Once
-signed in, **Connection, calling, alerts, and startup settings** in the main window lets you change the Worker URL,
-polling interval, calling preferences, and alert preferences — there is no token field there; credentials live only in the
-encrypted store described below. The interactive fixture mode (no backend required) still exists for UI
-exploration, but only once already signed in and pointed at a non-HTTPS address — it is no longer a way to
-skip sign-in at startup.
+signed in, **Clinic settings — calling, alerts, and connection** in the main window lets you change calling
+preferences, alert preferences, and — inside the collapsed **Advanced connection settings** panel — the
+Worker URL and polling interval; there is no token field there, credentials live only in the encrypted store
+described below. The Worker URL, tenant ID, polling interval, calling preferences, and the People roster are
+all restricted to `org:admin` members (`MainViewModel.IsAdmin` / `PeopleViewModel.IsAdmin`, matching the
+`org:admin`/`org:member` roles the Worker and the other Tími consoles already use) — a member sees them
+disabled or read-only rather than hitting a permission error after typing into them. The interactive fixture
+mode (no backend required) still exists for UI exploration, but only once already signed in and pointed at a
+non-HTTPS address — it is no longer a way to skip sign-in at startup.
 
 ## Security and production notes
 

@@ -51,7 +51,10 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         DeclineCommand = new AsyncCommand(() => RespondAsync(SelectedRequest, true), () => SelectedRequest is not null && !IsBusy);
         AcceptRequestCommand = new AsyncCommand<ClinicRequest>(request => AnswerAsync(request, decline: false), request => request is not null && !IsBusy);
         DeclineRequestCommand = new AsyncCommand<ClinicRequest>(request => AnswerAsync(request, decline: true), request => request is not null && !IsBusy);
-        SaveSettingsCommand = new AsyncCommand(SaveSettingsAsync, () => !IsBusy);
+        // Same admin gate as calling preferences: the Worker address, tenant ID and polling interval are
+        // workspace-wide connection settings, not a per-workstation preference, and the UI already disables
+        // the whole "Advanced connection settings" panel for a non-admin — this is the belt to that braces.
+        SaveSettingsCommand = new AsyncCommand(SaveSettingsAsync, () => !IsBusy && IsAdmin);
         SaveCallPreferencesCommand = new AsyncCommand(SaveCallPreferencesAsync, () => !IsBusy && IsAdmin);
         SignOutCommand = new AsyncCommand(SignOutAsync, () => !IsBusy);
         OpenPeopleCommand = new RelayCommand(() => OpenPeopleRequested?.Invoke(this, EventArgs.Empty));
@@ -96,7 +99,6 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public ObservableCollection<ClinicRequest> Requests { get; } = [];
     public ObservableCollection<ClinicRequest> PendingRequests { get; } = [];
     public IReadOnlyList<string> AvailabilityStatuses { get; } = ["available", "limited", "confirm_first", "critical_only", "diverting", "closed"];
-    public IReadOnlyList<string> ResponseTypes { get; } = ["available_now", "available_at", "emergency_intake"];
 
     private ClinicPayouts _payouts = new();
     public ClinicPayouts Payouts { get => _payouts; set { _payouts = value; Raise(nameof(Payouts)); Raise(nameof(TransferredLabel)); Raise(nameof(PaidOutLabel)); Raise(nameof(AwaitingLabel)); Raise(nameof(HasSettlements)); Raise(nameof(PayoutsNotice)); } }
@@ -233,7 +235,48 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private string _responseType = "available_now", _clinicNote = "", _availableTimeText = DateTime.Now.AddMinutes(30).ToString("h:mm tt");
     private DateTime? _availableAt = DateTime.Now.AddMinutes(30);
     private int _arrivalWindowMinutes = 30, _holdMinutes = 5, _offerWaitMin = 15, _offerWaitMax = 35;
-    public string ResponseType { get => _responseType; set => Set(ref _responseType, value); }
+
+    /// <summary>
+    /// "available_now", "available_at", or "emergency_intake" — the same three values the ComboBox used to
+    /// offer, now driving a three-tile choice grid instead. The three bool projections below exist for the
+    /// same reason <see cref="CallPolicyAlways"/> and its siblings do: RadioButton.IsChecked binds to a
+    /// bool, not to "is this string equal to that one".
+    /// </summary>
+    public string ResponseType
+    {
+        get => _responseType;
+        set
+        {
+            if (!Set(ref _responseType, value)) return;
+            Raise(nameof(ResponseTypeIsNow));
+            Raise(nameof(ResponseTypeIsCustom));
+            Raise(nameof(ResponseTypeIsEmergency));
+            Raise(nameof(ShowCustomOfferFields));
+            Raise(nameof(OfferActionLabel));
+        }
+    }
+    public bool ResponseTypeIsNow { get => ResponseType == "available_now"; set { if (value) ResponseType = "available_now"; } }
+    public bool ResponseTypeIsCustom { get => ResponseType == "available_at"; set { if (value) ResponseType = "available_at"; } }
+    public bool ResponseTypeIsEmergency { get => ResponseType == "emergency_intake"; set { if (value) ResponseType = "emergency_intake"; } }
+
+    /// <summary>What the primary send button says — the mockup relabels its one dynamic button per choice;
+    /// this console keeps Offer and Decline as two separate buttons (see MainWindow.xaml), so only the
+    /// offer button's wording moves.</summary>
+    public string OfferActionLabel => ResponseType switch
+    {
+        "emergency_intake" => "Send emergency intake offer",
+        "available_at" => "Send custom offer",
+        _ => "Send availability offer"
+    };
+
+    /// <summary>
+    /// Whether the arrival date/time, arrival window, hold, wait range and note fields are worth showing.
+    /// "Available now" is the routine case and answers with the clinic's own stable-wait defaults — see
+    /// <see cref="ApplyAvailability"/> — so nothing here needs a second look for it. Both other choices can
+    /// want every one of those fields tuned, so the whole group appears together rather than field by
+    /// field.
+    /// </summary>
+    public bool ShowCustomOfferFields => ResponseType != "available_now";
     public DateTime? AvailableAt { get => _availableAt; set => Set(ref _availableAt, value); }
     public string AvailableTimeText { get => _availableTimeText; set => Set(ref _availableTimeText, value); }
     public int ArrivalWindowMinutes { get => _arrivalWindowMinutes; set => Set(ref _arrivalWindowMinutes, value); }
@@ -297,6 +340,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         if (!string.IsNullOrWhiteSpace(session.Location?.Phone)) ListedPhone = session.Location!.Phone!;
         Raise(nameof(IsAdmin));
         SaveCallPreferencesCommand.RaiseCanExecuteChanged();
+        SaveSettingsCommand.RaiseCanExecuteChanged();
 
         // A launch that resumed offline opens with a placeholder descriptor: authenticated, clinic
         // surface, and nothing else, because there was no network to ask. Recognising that here is what
