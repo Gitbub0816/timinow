@@ -31,7 +31,10 @@ public struct MiniConsoleView: View {
         }
         .background(TimiVetColor.miniCardBackground)
         .clipShape(RoundedRectangle(cornerRadius: TimiVetMetrics.miniRadius))
-        .overlay(RoundedRectangle(cornerRadius: TimiVetMetrics.miniRadius).stroke(TimiVetColor.ink, lineWidth: 2))
+        // `navy`, not `ink`: this is the mockup's floating-pill panel chrome
+        // (`.floating-panel` border), and `ink` is now a text tone rather
+        // than the sidebar-dark one — see Theme.swift.
+        .overlay(RoundedRectangle(cornerRadius: TimiVetMetrics.miniRadius).stroke(TimiVetColor.navy, lineWidth: 2))
     }
 
     private var header: some View {
@@ -50,7 +53,7 @@ public struct MiniConsoleView: View {
         }
         .padding(.horizontal, 14)
         .frame(height: 48)
-        .background(TimiVetColor.ink)
+        .background(TimiVetColor.navy)
         .clipShape(UnevenRoundedRectangle(topLeadingRadius: TimiVetMetrics.miniRadius - 2, bottomLeadingRadius: 0, bottomTrailingRadius: 0, topTrailingRadius: TimiVetMetrics.miniRadius - 2))
     }
 

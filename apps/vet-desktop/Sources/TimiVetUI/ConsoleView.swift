@@ -2,7 +2,17 @@ import Foundation
 import TimiVetCore
 import SwiftUI
 
-// SwiftUI port of apps/vet-windows/src/TimiVet/Views/MainWindow.xaml.
+// SwiftUI port of apps/vet-windows/src/TimiVet/Views/MainWindow.xaml, reskinned
+// to the clinic owner's HTML mockup (navy sidebar, cream capacity card, blue/
+// coral accents, Georgia display type) — see the sidebar nav, live-summary
+// bar, and three-choice decision workspace below. The mockup is a *reference*
+// for the visual language, not something ported literally: it is a single
+// scrolling web page with client-side view-switching, so its "Live intake" /
+// "Clinic settings" / "Manage people" nav becomes a `ConsoleSection` switch
+// for the first two (drawn in this one window) and the existing separate
+// "Manage people" `NSWindow` for the third — a window per distinct task is
+// the native idiom the rest of this app already uses (see AppDelegate's
+// `showPeopleWindow`), so that split is kept rather than folded into tabs.
 public struct ConsoleView: View {
     @Bindable var store: ClinicStore
     var onOpenMini: () -> Void
@@ -16,6 +26,20 @@ public struct ConsoleView: View {
     @State var voicePhone = ""
     @State var quietStart = ""
     @State var quietEnd = ""
+
+    /// Which of the sidebar's two in-window destinations is showing.
+    private enum ConsoleSection { case operations, settings }
+    @State private var section: ConsoleSection = .operations
+
+    /// The decision workspace's three-way choice — "Available now" / "Custom
+    /// availability" / "Cannot receive", mirroring the mockup's choice-grid.
+    /// Distinct from `store.responseType` (which is the wire value): this is
+    /// only which tile is highlighted and which fields show, and every tile
+    /// handler also sets `store.responseType` so the two never disagree.
+    private enum DecisionChoice { case now, custom, decline }
+    @State private var choice: DecisionChoice = .now
+
+    @State private var showCapacitySheet = false
 
     public init(store: ClinicStore, onOpenMini: @escaping () -> Void, onManagePeople: @escaping () -> Void, onSignOut: @escaping () -> Void, onTestAlert: @escaping () -> Void = { }) {
         self.store = store
@@ -57,7 +81,7 @@ public struct ConsoleView: View {
                 }
                 .padding(.horizontal, 16).padding(.vertical, 12)
                 .frame(maxWidth: 420, alignment: .leading)
-                .background(toast.isFailure ? TimiVetColor.coralDark : TimiVetColor.ink, in: RoundedRectangle(cornerRadius: 12))
+                .background(toast.isFailure ? TimiVetColor.coralDark : TimiVetColor.navy, in: RoundedRectangle(cornerRadius: 12))
                 .transition(.move(edge: .trailing).combined(with: .opacity))
             }
         }
@@ -68,15 +92,19 @@ public struct ConsoleView: View {
 
     private var consoleBody: some View {
         HStack(spacing: 0) {
-            sidebar.frame(width: 230)
+            sidebar.frame(width: 240)
             VStack(spacing: 0) {
                 header
                 ScrollView {
                     VStack(alignment: .leading, spacing: 22) {
-                        topRow
-                        queueAndWorkspace
-                        payoutsSection
-                        settingsSection
+                        if section == .operations {
+                            liveSummaryBar
+                            queueAndWorkspace
+                            lowerGrid
+                            payoutsSection
+                        } else {
+                            settingsPage
+                        }
                     }
                     .padding(24)
                 }
@@ -96,6 +124,7 @@ public struct ConsoleView: View {
             quietEnd = store.callPreferences.quietHours?.end ?? ""
         }
         .task { await store.loadPayouts() }
+        .sheet(isPresented: $showCapacitySheet) { capacitySheet }
     }
 
     // MARK: Payouts
@@ -108,6 +137,11 @@ public struct ConsoleView: View {
     /// that here would mean two screens that can disagree. This answers the
     /// one question a practice manager actually asks the console: has the
     /// money for last week's arrivals gone out yet.
+    ///
+    /// The mockup has no equivalent screen for this — it is Tími-owned
+    /// financial data this console already surfaces and the reskin does not
+    /// remove. It stays on the Live intake page, below the day's arrivals,
+    /// since it is operational (today's money) rather than a preference.
     private var payoutsSection: some View {
         DisclosureGroup("Payouts from Tími") {
             VStack(alignment: .leading, spacing: 14) {
@@ -181,34 +215,42 @@ public struct ConsoleView: View {
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 2) {
                 Image("timinow-wordmark", bundle: .module)
-                    .resizable().scaledToFit().frame(width: 172, height: 60)
+                    .resizable().scaledToFit().frame(width: 160, height: 56)
                     .accessibilityLabel("Tími NOW")
                 Text("VETERINARY OPERATIONS").font(TimiVetFont.ui(10, weight: .bold)).foregroundStyle(TimiVetColor.railMutedText)
             }
-            VStack(alignment: .leading, spacing: 8) {
-                Text("LIVE OPERATIONS").font(TimiVetFont.ui(10, weight: .bold)).foregroundStyle(TimiVetColor.railFooterText)
-                Text(store.clinicName).font(TimiVetFont.ui(17, weight: .semibold)).foregroundStyle(.white)
+            VStack(alignment: .leading, spacing: 6) {
+                Text(store.clinicName).font(TimiVetFont.ui(18, weight: .semibold)).foregroundStyle(.white)
                 Text(store.clinicAddress).font(TimiVetFont.ui(11)).foregroundStyle(TimiVetColor.railMutedText)
                 if !store.userRole.isEmpty {
-                    Text(store.userRole.uppercased()).font(TimiVetFont.ui(10, weight: .bold)).foregroundStyle(TimiVetColor.railTag)
+                    Text(store.userRole.uppercased()).font(TimiVetFont.ui(9, weight: .bold)).foregroundStyle(TimiVetColor.railTag)
                 }
             }
-            .padding(.top, 42)
-            VStack(alignment: .leading, spacing: 8) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("CURRENT MODE").font(TimiVetFont.ui(9, weight: .bold)).foregroundStyle(TimiVetColor.railTag)
-                    Text(store.connectionMode).font(TimiVetFont.ui(11, weight: .bold)).foregroundStyle(TimiVetColor.gold)
-                }
-                .padding(12)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(TimiVetColor.railDeepInk, in: RoundedRectangle(cornerRadius: 9))
+            .padding(.top, 28)
+            statusChip.padding(.top, 18)
 
+            VStack(alignment: .leading, spacing: 8) {
+                navButton(icon: "tray.full.fill", title: "Live intake", isSelected: section == .operations, badge: store.pending) {
+                    section = .operations
+                }
+                navButton(icon: "gearshape.fill", title: "Clinic settings", isSelected: section == .settings, badge: nil) {
+                    section = .settings
+                }
+                // Its own window, not a page: the app already has a dedicated
+                // people/roles surface with its own admin gating
+                // (PeopleView), and folding it into this window's two pages
+                // would mean re-plumbing that gate rather than reusing it.
+                navButton(icon: "person.2.fill", title: "Manage people", isSelected: false, badge: nil, action: onManagePeople)
+            }
+            .padding(.top, 26)
+
+            VStack(alignment: .leading, spacing: 8) {
                 Button("Open floating console", action: onOpenMini).buttonStyle(TimiVetQuietButtonStyle())
                 Button("Refresh now") { Task { await store.refresh(initial: false) } }.buttonStyle(TimiVetQuietButtonStyle())
-                Button("Manage people", action: onManagePeople).buttonStyle(TimiVetQuietButtonStyle())
                 Button("Sign out", action: onSignOut).buttonStyle(TimiVetQuietButtonStyle())
             }
-            .padding(.top, 45)
+            .padding(.top, 22)
+
             Spacer(minLength: 24)
             VStack(alignment: .leading, spacing: 10) {
                 Text("Tími routes operational intake. It does not diagnose or replace clinical triage.")
@@ -219,16 +261,61 @@ public struct ConsoleView: View {
         }
         .padding(22)
         .frame(maxHeight: .infinity, alignment: .top)
-        .background(TimiVetColor.ink)
+        .background(TimiVetColor.navy)
+    }
+
+    /// The mockup's `.status-chip` — a dot plus a word, translated from a
+    /// literal "we polled the Worker 4 seconds ago" reading into the same
+    /// two states the rest of the console already tracks: `connectionMode`.
+    private var statusChip: some View {
+        HStack(spacing: 8) {
+            Circle()
+                .fill(store.connectionMode.contains("DEMO") ? TimiVetColor.gold : TimiVetColor.green)
+                .frame(width: 9, height: 9)
+            Text(store.connectionMode.contains("DEMO") ? "Interactive demo" : "Live connection")
+                .font(TimiVetFont.ui(12, weight: .bold))
+                .foregroundStyle(Color.white.opacity(0.92))
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 12).padding(.vertical, 10)
+        .background(TimiVetColor.railDeepInk, in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    private func navCountBadge(_ count: Int) -> some View {
+        Text("\(count)")
+            .font(TimiVetFont.ui(11, weight: .bold))
+            .foregroundStyle(TimiVetColor.navy)
+            .frame(minWidth: 20)
+            .padding(.horizontal, 6).padding(.vertical, 2)
+            .background(Color.white, in: Capsule())
+    }
+
+    private func navButton(icon: String, title: String, isSelected: Bool, badge: Int?, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                Image(systemName: icon).frame(width: 20)
+                Text(title).font(TimiVetFont.ui(13, weight: .bold))
+                Spacer(minLength: 8)
+                if let badge, badge > 0 { navCountBadge(badge) }
+            }
+            .padding(.horizontal, 13).padding(.vertical, 11)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .foregroundStyle(isSelected ? .white : TimiVetColor.railMutedText)
+            .background(isSelected ? TimiVetColor.blue : Color.clear, in: RoundedRectangle(cornerRadius: 12))
+        }
+        .buttonStyle(.plain)
     }
 
     // MARK: Header / footer
 
+    private var headerEyebrow: String { section == .operations ? "IMMEDIATE INTAKE CONTROL" : "CLINIC CONFIGURATION" }
+    private var headerTitle: String { section == .operations ? "Clinic operations" : "Clinic settings" }
+
     private var header: some View {
         HStack(alignment: .top) {
             VStack(alignment: .leading, spacing: 3) {
-                Text("IMMEDIATE INTAKE CONTROL").timiVetEyebrow()
-                Text("Clinic operations").font(TimiVetFont.display(31))
+                Text(headerEyebrow).timiVetEyebrow()
+                Text(headerTitle).font(TimiVetFont.display(31))
             }
             Spacer()
             VStack(alignment: .trailing, spacing: 8) {
@@ -260,63 +347,124 @@ public struct ConsoleView: View {
         .overlay(Rectangle().frame(height: 1).foregroundStyle(TimiVetColor.cardBorder), alignment: .top)
     }
 
-    // MARK: Public Capacity + metrics
+    // MARK: Live summary bar (mockup's `.live-summary`)
 
-    private var topRow: some View {
-        HStack(alignment: .top, spacing: 18) {
-            publicCapacityCard.frame(maxWidth: .infinity)
-            metricsGrid.frame(maxWidth: .infinity)
+    private var statusHeadline: String {
+        switch store.availabilityStatus {
+        case "available": return "Accepting urgent-care arrivals"
+        case "limited": return "Limited availability"
+        case "confirm_first": return "Confirm before arrival"
+        case "critical_only": return "Critical patients only"
+        case "diverting": return "Diverting new arrivals"
+        case "closed": return "Temporarily closed"
+        default: return store.availabilityStatus.replacingOccurrences(of: "_", with: " ").capitalized
         }
     }
 
-    private var publicCapacityCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("PUBLIC CAPACITY").timiVetEyebrow()
-            Text("What pet owners see right now").font(TimiVetFont.ui(20, weight: .semibold))
-            HStack(alignment: .top, spacing: 16) {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Intake status").font(TimiVetFont.ui(13, weight: .semibold))
-                    Picker("", selection: $store.availabilityStatus) {
-                        ForEach(ClinicStore.availabilityStatuses, id: \.self) { Text($0.replacingOccurrences(of: "_", with: " ").capitalized).tag($0) }
-                    }.labelsHidden()
-                    Text("Public note").font(TimiVetFont.ui(13, weight: .semibold))
-                    TextField("Public note", text: $store.publicNote, axis: .vertical)
-                        .lineLimit(3, reservesSpace: true)
-                        .textFieldStyle(.roundedBorder)
-                }
-                VStack(alignment: .leading, spacing: 8) {
-                    labeledIntField("Wait min", value: $store.stableWaitMin)
-                    labeledIntField("Wait max", value: $store.stableWaitMax)
-                    labeledIntField("Capacity", value: $store.capacityCount)
-                    labeledIntField("Expires (min)", value: $store.ttlMinutes)
-                    Toggle("Accepting critical patients", isOn: $store.acceptsCritical)
-                    Button("Publish live status") { Task { await store.publish() } }.buttonStyle(TimiVetPrimaryButtonStyle())
-                }
-            }
-        }
-        .timiVetCard(TimiVetColor.publicCapacityBackground)
+    private var capacitySubtitle: String {
+        let spots = "\(store.capacityCount) spot\(store.capacityCount == 1 ? "" : "s")"
+        let wait = "\(store.stableWaitMin)–\(store.stableWaitMax) min wait"
+        let critical = store.acceptsCritical ? "critical patients accepted" : "stable patients only"
+        return "\(spots) · \(wait) · \(critical)"
     }
 
-    private var metricsGrid: some View {
-        VStack(spacing: 10) {
-            HStack(spacing: 10) {
-                metricCard("WAITING", store.pending)
-                metricCard("ACTIVE ARRIVALS", store.activeArrivals)
+    private var liveSummaryBar: some View {
+        HStack(spacing: 0) {
+            summaryMain
+                .padding(18)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(TimiVetColor.publicCapacityBackground)
+            Divider()
+            metricTile("WAITING", store.pending, color: TimiVetColor.coral)
+            Divider()
+            metricTile("ACTIVE ARRIVALS", store.activeArrivals, color: TimiVetColor.ink)
+            Divider()
+            metricTile("COMPLETED TODAY", store.completedToday, color: TimiVetColor.ink)
+            Divider()
+            metricTile("DECLINED TODAY", store.declinedToday, color: TimiVetColor.ink)
+        }
+        .background(Color.white)
+        .clipShape(RoundedRectangle(cornerRadius: TimiVetMetrics.cardRadius))
+        .overlay(RoundedRectangle(cornerRadius: TimiVetMetrics.cardRadius).stroke(TimiVetColor.sectionBorder, lineWidth: 1))
+    }
+
+    private var summaryMain: some View {
+        HStack(spacing: 14) {
+            Image(systemName: "cross.case.fill")
+                .foregroundStyle(TimiVetColor.blue)
+                .frame(width: 44, height: 44)
+                .background(Color.white, in: RoundedRectangle(cornerRadius: 12))
+                .overlay(RoundedRectangle(cornerRadius: 12).stroke(TimiVetColor.sectionBorder, lineWidth: 1))
+            VStack(alignment: .leading, spacing: 3) {
+                Text(statusHeadline).font(TimiVetFont.ui(15, weight: .bold))
+                Text(capacitySubtitle).font(TimiVetFont.ui(12)).foregroundStyle(TimiVetColor.muted)
             }
-            HStack(spacing: 10) {
-                metricCard("COMPLETED TODAY", store.completedToday)
-                metricCard("DECLINED TODAY", store.declinedToday)
-            }
+            Spacer(minLength: 10)
+            Button("Edit status") { showCapacitySheet = true }
+                .buttonStyle(.plain)
+                .font(TimiVetFont.ui(13, weight: .bold))
+                .foregroundStyle(TimiVetColor.blue)
         }
     }
 
-    private func metricCard(_ title: String, _ value: Int) -> some View {
+    private func metricTile(_ title: String, _ value: Int, color: Color) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(title).timiVetEyebrow()
-            Text("\(value)").font(TimiVetFont.display(30))
+            Text(title).font(TimiVetFont.ui(10, weight: .bold)).foregroundStyle(TimiVetColor.muted)
+            Text("\(value)").font(TimiVetFont.display(24)).foregroundStyle(color)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .timiVetCard()
+        .padding(16)
+        .frame(minWidth: 118, alignment: .leading)
+    }
+
+    /// The mockup's capacity-edit modal, as a native `.sheet`. Edits the same
+    /// `store` fields the settings page's "Public intake status" card does —
+    /// this is a second entry point onto one piece of state, not a separate
+    /// draft, matching how the mockup's modal and settings-page form both
+    /// write straight through to the same published status.
+    private var capacitySheet: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("PUBLIC CAPACITY").timiVetEyebrow()
+                    Text("Update live status").font(TimiVetFont.display(23))
+                }
+                Spacer()
+                Button { showCapacitySheet = false } label: {
+                    Image(systemName: "xmark.circle.fill").foregroundStyle(TimiVetColor.muted)
+                }
+                .buttonStyle(.plain)
+            }
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Intake status").font(TimiVetFont.ui(13, weight: .semibold))
+                Picker("", selection: $store.availabilityStatus) {
+                    ForEach(ClinicStore.availabilityStatuses, id: \.self) { Text($0.replacingOccurrences(of: "_", with: " ").capitalized).tag($0) }
+                }.labelsHidden()
+            }
+            HStack(spacing: 14) {
+                labeledIntField("Min wait", value: $store.stableWaitMin)
+                labeledIntField("Max wait", value: $store.stableWaitMax)
+                labeledIntField("Capacity", value: $store.capacityCount)
+                labeledIntField("Expires (min)", value: $store.ttlMinutes)
+            }
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Public note").font(TimiVetFont.ui(13, weight: .semibold))
+                TextField("Public note", text: $store.publicNote, axis: .vertical)
+                    .lineLimit(3, reservesSpace: true)
+                    .textFieldStyle(.roundedBorder)
+            }
+            Toggle("Accepting critical patients", isOn: $store.acceptsCritical).toggleStyle(.checkbox)
+            HStack {
+                Spacer()
+                Button("Cancel") { showCapacitySheet = false }.buttonStyle(TimiVetQuietButtonStyle()).frame(width: 100)
+                Button("Publish status") {
+                    Task { await store.publish() }
+                    showCapacitySheet = false
+                }.buttonStyle(TimiVetPrimaryButtonStyle()).frame(width: 170)
+            }
+        }
+        .padding(28)
+        .frame(width: 540)
+        .background(TimiVetColor.canvas)
     }
 
     // MARK: Review queue + decision workspace
@@ -341,42 +489,65 @@ public struct ConsoleView: View {
                     .background(TimiVetColor.coral, in: Capsule())
             }
             .padding(18)
-            ScrollView {
-                VStack(spacing: 0) {
-                    // Pending, not everything. This heading says "awaiting a
-                    // decision" and the list under it was every request the
-                    // clinic had — so an answered one stayed put, looking
-                    // undecided apart from its buttons, while the count beside
-                    // the heading correctly said none were waiting.
-                    ForEach(store.pendingRequests) { request in
-                        VStack(spacing: 0) {
-                            Button { store.select(request) } label: { requestRow(request) }
-                                .buttonStyle(.plain)
-                            // Answering is the ordinary case, so it happens
-                            // here. Opening the workspace is for shaping an
-                            // offer — a later time, a different window, a note.
-                            if request.status == "pending" {
-                                HStack(spacing: 8) {
-                                    Button("Yes, we can see them") { Task { await store.answer(request, decline: false) } }
-                                        .buttonStyle(TimiVetPrimaryButtonStyle(color: TimiVetColor.blue))
-                                        .disabled(store.isBusy)
-                                    Button("No") { Task { await store.answer(request, decline: true) } }
-                                        .buttonStyle(TimiVetQuietButtonStyle())
-                                        .disabled(store.isBusy)
+            if store.pendingRequests.isEmpty {
+                emptyQueueState
+            } else {
+                ScrollView {
+                    VStack(spacing: 0) {
+                        // Pending, not everything. This heading says "awaiting a
+                        // decision" and the list under it was every request the
+                        // clinic had — so an answered one stayed put, looking
+                        // undecided apart from its buttons, while the count beside
+                        // the heading correctly said none were waiting.
+                        ForEach(store.pendingRequests) { request in
+                            VStack(spacing: 0) {
+                                Button { store.select(request) } label: { requestRow(request) }
+                                    .buttonStyle(.plain)
+                                // Answering is the ordinary case, so it happens
+                                // here. Opening the workspace is for shaping an
+                                // offer — a later time, a different window, a note.
+                                if request.status == "pending" {
+                                    HStack(spacing: 8) {
+                                        Button("Yes, we can see them") { Task { await store.answer(request, decline: false) } }
+                                            .buttonStyle(TimiVetPrimaryButtonStyle(color: TimiVetColor.blue))
+                                            .disabled(store.isBusy)
+                                        Button("No") { Task { await store.answer(request, decline: true) } }
+                                            .buttonStyle(TimiVetQuietButtonStyle())
+                                            .disabled(store.isBusy)
+                                    }
+                                    .padding(.horizontal, 16)
+                                    .padding(.bottom, 14)
+                                    .background(request.id == store.selectedRequest?.id ? TimiVetColor.blueSoft : Color.clear)
                                 }
-                                .padding(.horizontal, 16)
-                                .padding(.bottom, 14)
-                                .background(request.id == store.selectedRequest?.id ? TimiVetColor.blueSoft : Color.clear)
                             }
+                            Divider().foregroundStyle(TimiVetColor.cardBorderAlt)
                         }
-                        Divider().foregroundStyle(TimiVetColor.cardBorderAlt)
                     }
                 }
+                .frame(minHeight: 400, maxHeight: 520)
             }
-            .frame(minHeight: 400, maxHeight: 520)
         }
         .timiVetCard()
         .padding(0)
+    }
+
+    /// The mockup's `.empty-state` — a checkmark and a line, shown only when
+    /// the queue is actually clear (not when it just hasn't loaded yet:
+    /// `store.pendingRequests` starts empty before the first refresh too, but
+    /// that first paint is brief enough this is still the right call).
+    private var emptyQueueState: some View {
+        VStack(spacing: 10) {
+            Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: 22))
+                .foregroundStyle(TimiVetColor.green)
+                .frame(width: 48, height: 48)
+                .background(TimiVetColor.greenSoft, in: Circle())
+            Text("Queue is clear").font(TimiVetFont.ui(17, weight: .semibold))
+            Text("New intake requests will appear here automatically.")
+                .font(TimiVetFont.ui(12)).foregroundStyle(TimiVetColor.muted)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 46)
     }
 
     private func requestRow(_ request: ClinicRequest) -> some View {
@@ -414,61 +585,174 @@ public struct ConsoleView: View {
         }
     }
 
+    /// Minutes until `request.requestExpiresAt`, formatted the way the
+    /// mockup's "Search expires" field reads. Parsed locally with
+    /// `ISO8601DateFormatter` rather than `TimiVetCore`'s internal
+    /// `ClinicDateFormat` — that helper is deliberately non-public (it is an
+    /// implementation detail of `ClinicRequest`'s own computed labels), so a
+    /// different module reaches the same ISO-8601 parsing on its own.
+    private func expiresLabel(_ request: ClinicRequest) -> String {
+        guard let iso = request.requestExpiresAt, let date = ISO8601DateFormatter().date(from: iso) else { return "—" }
+        let minutes = Int(date.timeIntervalSinceNow / 60)
+        if minutes <= 0 { return "Expired" }
+        return "\(minutes) min"
+    }
+
     private var decisionWorkspace: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 Text("DECISION WORKSPACE").timiVetEyebrow()
                 if let request = store.selectedRequest {
-                    Text(request.petLine).font(TimiVetFont.display(27))
-                    Text(request.concernSummary).font(TimiVetFont.ui(15))
-                    // Owner-supplied and unverified, and labelled as such: it
-                    // arrives so the desk is not hearing it for the first time
-                    // at the door, not as a record to act on.
-                    ownerSuppliedRow("ALLERGIES", request.pet.allergies)
-                    ownerSuppliedRow("MEDICATIONS", request.pet.medications)
-                    HStack(spacing: 18) {
-                        ownerField("OWNER", request.owner.name)
-                        ownerField("PHONE", request.contactRevealed ? (request.owner.phone ?? "No phone on file") : "Hidden until booked")
-                        ownerField("TRAVEL", request.travelLabel)
-                    }
+                    decisionHeader(request)
                     Divider()
-                    Text("Availability response").font(TimiVetFont.ui(17, weight: .semibold))
-                    HStack(alignment: .top, spacing: 16) {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("Response type").font(TimiVetFont.ui(13, weight: .semibold))
-                            Picker("", selection: $store.responseType) {
-                                ForEach(ClinicStore.responseTypes, id: \.self) { Text($0.replacingOccurrences(of: "_", with: " ").capitalized).tag($0) }
-                            }.labelsHidden()
-                            if store.responseType == "available_at" {
-                                Text("Available at").font(TimiVetFont.ui(13, weight: .semibold))
-                                DatePicker("", selection: $store.availableAt).labelsHidden()
-                            }
-                            Text("Message to pet owner").font(TimiVetFont.ui(13, weight: .semibold))
-                            TextField("Message", text: $store.clinicNote, axis: .vertical)
-                                .lineLimit(4, reservesSpace: true)
-                                .textFieldStyle(.roundedBorder)
-                        }
-                        VStack(alignment: .leading, spacing: 8) {
-                            labeledIntField("Arrival window", value: $store.arrivalWindowMinutes)
-                            labeledIntField("Offer hold", value: $store.holdMinutes)
-                            labeledIntField("Wait min", value: $store.offerWaitMin)
-                            labeledIntField("Wait max", value: $store.offerWaitMax)
-                            Text("An offer does not book the patient. The owner may compare up to five responses. Unselected offers are released automatically.")
-                                .font(TimiVetFont.ui(11))
-                                .padding(12)
-                                .background(TimiVetColor.offerBannerBackground, in: RoundedRectangle(cornerRadius: 10))
-                        }
-                    }
-                    HStack(spacing: 12) {
-                        Button("Decline request") { Task { await store.decline() } }.buttonStyle(TimiVetQuietButtonStyle())
-                        Button("Send availability offer") { Task { await store.offer() } }.buttonStyle(TimiVetCoralButtonStyle())
-                    }
+                    decisionBody(request)
                 } else {
                     Text("Select a request").font(TimiVetFont.display(27)).foregroundStyle(TimiVetColor.muted)
                 }
             }
         }
         .timiVetCard()
+        // Keeps the choice-grid and `store.responseType` in lockstep with
+        // whichever request is selected. Without this, picking a new request
+        // reset the visible tile to "Available now" but left `responseType`
+        // holding whatever a previous request's "Custom availability" choice
+        // set it to — so a quick accept on the next patient could silently
+        // send a stale custom offer. Two-parameter `onChange` is the
+        // macOS 14+ form; this package targets exactly that.
+        .onChange(of: store.selectedRequest?.id) { _, _ in
+            choice = .now
+            if let request = store.selectedRequest {
+                store.responseType = request.isEmergency ? "emergency_intake" : "available_now"
+            }
+        }
+    }
+
+    private func decisionHeader(_ request: ClinicRequest) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("PATIENT REQUEST").timiVetEyebrow()
+                    Text(request.petLine).font(TimiVetFont.display(26))
+                    Text(request.requestType).font(TimiVetFont.ui(10, weight: .bold)).foregroundStyle(TimiVetColor.coral)
+                }
+                Spacer()
+                Text(request.travelLabel)
+                    .font(TimiVetFont.ui(11, weight: .bold)).foregroundStyle(TimiVetColor.blueDark)
+                    .padding(.horizontal, 10).padding(.vertical, 6)
+                    .background(Color.white, in: Capsule())
+                    .overlay(Capsule().stroke(TimiVetColor.blueSoft, lineWidth: 1))
+            }
+            Text(request.concernSummary).font(TimiVetFont.ui(14))
+            ownerSuppliedRow("ALLERGIES", request.pet.allergies)
+            ownerSuppliedRow("MEDICATIONS", request.pet.medications)
+            HStack(spacing: 22) {
+                ownerField("OWNER", request.owner.name)
+                // Masked until the owner books with this clinic specifically
+                // — `contactRevealed` is false for every search target until
+                // then, and always true for a direct intake. Preserved as-is.
+                ownerField("PHONE", request.contactRevealed ? (request.owner.phone ?? "No phone on file") : "Hidden until booked")
+                ownerField("SEARCH EXPIRES", expiresLabel(request))
+            }
+        }
+    }
+
+    private func decisionBody(_ request: ClinicRequest) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("What can your clinic offer?").font(TimiVetFont.ui(14, weight: .bold))
+            HStack(spacing: 10) {
+                choiceButton(title: "Available now", subtitle: "Send the standard offer", selected: choice == .now) {
+                    choice = .now
+                    store.responseType = request.isEmergency ? "emergency_intake" : "available_now"
+                }
+                choiceButton(title: "Custom availability", subtitle: "Set arrival and wait", selected: choice == .custom) {
+                    choice = .custom
+                    store.responseType = "available_at"
+                }
+                choiceButton(title: "Cannot receive", subtitle: "Decline this request", selected: choice == .decline, isDecline: true) {
+                    choice = .decline
+                }
+            }
+            if choice == .custom {
+                customFields
+            }
+            HStack(spacing: 12) {
+                Button("Reset") {
+                    choice = .now
+                    store.responseType = request.isEmergency ? "emergency_intake" : "available_now"
+                    store.clinicNote = ""
+                }.buttonStyle(TimiVetQuietButtonStyle()).frame(width: 100)
+                decisionActionButton(request)
+            }
+        }
+    }
+
+    /// One tile of the mockup's `.choice-grid`. `isDecline` only changes the
+    /// selected fill color (coral instead of blue), matching
+    /// `.choice-button.decline.selected`.
+    private func choiceButton(title: String, subtitle: String, selected: Bool, isDecline: Bool = false, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title).font(TimiVetFont.ui(13, weight: .bold))
+                Text(subtitle).font(TimiVetFont.ui(11))
+                    .foregroundStyle(selected ? Color.white.opacity(0.85) : TimiVetColor.muted)
+            }
+            .frame(maxWidth: .infinity, minHeight: 54, alignment: .leading)
+            .padding(.horizontal, 12).padding(.vertical, 10)
+            .foregroundStyle(selected ? Color.white : TimiVetColor.ink)
+            .background(selected ? (isDecline ? TimiVetColor.coral : TimiVetColor.blue) : Color.white, in: RoundedRectangle(cornerRadius: 12))
+            .overlay(RoundedRectangle(cornerRadius: 12).stroke(selected ? Color.clear : TimiVetColor.fieldBorder, lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+    }
+
+    /// Only shown for "Custom availability" — the mockup's `.custom-fields`,
+    /// revealed just for that one choice. "Available now" and "Cannot
+    /// receive" send with the clinic's already-published wait window
+    /// (`offerWaitMin`/`Max`, kept in sync with the public capacity card) and
+    /// the standard 30-minute arrival / 5-minute hold, so the fast path stays
+    /// a single click the way the mockup intends.
+    private var customFields: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Divider()
+            HStack(alignment: .top, spacing: 16) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Available at").font(TimiVetFont.ui(12, weight: .semibold))
+                    DatePicker("", selection: $store.availableAt).labelsHidden()
+                }
+                labeledIntField("Arrival window (min)", value: $store.arrivalWindowMinutes)
+                labeledIntField("Offer hold (min)", value: $store.holdMinutes)
+            }
+            HStack(spacing: 16) {
+                labeledIntField("Wait min", value: $store.offerWaitMin)
+                labeledIntField("Wait max", value: $store.offerWaitMax)
+            }
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Message to pet owner").font(TimiVetFont.ui(12, weight: .semibold))
+                    + Text(" (optional)").font(TimiVetFont.ui(11)).foregroundColor(TimiVetColor.muted)
+                TextField("Add a short arrival instruction or helpful note.", text: $store.clinicNote, axis: .vertical)
+                    .lineLimit(4, reservesSpace: true)
+                    .textFieldStyle(.roundedBorder)
+            }
+            Text("An offer does not book the patient. The owner may compare up to five responses. Unselected offers are released automatically.")
+                .font(TimiVetFont.ui(11))
+                .padding(12)
+                .background(TimiVetColor.offerBannerBackground, in: RoundedRectangle(cornerRadius: 10))
+        }
+    }
+
+    @ViewBuilder
+    private func decisionActionButton(_ request: ClinicRequest) -> some View {
+        switch choice {
+        case .decline:
+            Button("Decline request") { Task { await store.decline() } }
+                .buttonStyle(TimiVetCoralButtonStyle()).disabled(store.isBusy)
+        case .custom:
+            Button("Send custom offer") { Task { await store.offer() } }
+                .buttonStyle(TimiVetPrimaryButtonStyle()).disabled(store.isBusy)
+        case .now:
+            Button(request.searchTarget ? "Send availability offer" : "Accept arrival") { Task { await store.offer() } }
+                .buttonStyle(TimiVetPrimaryButtonStyle()).disabled(store.isBusy)
+        }
     }
 
     private func ownerField(_ title: String, _ value: String) -> some View {
@@ -478,78 +762,255 @@ public struct ConsoleView: View {
         }
     }
 
-    // MARK: Settings
+    // MARK: Active arrivals + at-a-glance (mockup's `.lower-grid`)
 
-    private var settingsSection: some View {
-        DisclosureGroup("Connection, alerts, and startup settings") {
-            HStack(alignment: .top, spacing: 16) {
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("Cloudflare Worker HTTPS URL").font(TimiVetFont.ui(13, weight: .semibold))
-                    TextField("https://your-clinic.example.workers.dev", text: $store.settings.apiBaseUrl).textFieldStyle(.roundedBorder)
-                    Text("Tenant ID (loopback demo header)").font(TimiVetFont.ui(13, weight: .semibold))
-                    TextField("tenant_hearth", text: $store.settings.tenantId).textFieldStyle(.roundedBorder)
-                    Text("Sign in above establishes the real Clerk session; this field only matters against a loopback dev Worker with no session.")
-                        .font(TimiVetFont.ui(10)).foregroundStyle(TimiVetColor.muted)
-                }
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("Phone calls from Tími").font(TimiVetFont.ui(13, weight: .semibold))
-                    Text("Call this clinic about new requests").font(TimiVetFont.ui(12, weight: .semibold))
-                    VStack(alignment: .leading, spacing: 6) {
-                        policyRow("always", "Every request — call even while this console is open")
-                        policyRow("console_active", "Only while a console is open")
-                        policyRow("never", "Never — console and notifications only")
-                    }
-                    Text("Quiet hours below still silence calls in every mode.")
-                        .font(TimiVetFont.ui(10)).foregroundStyle(TimiVetColor.muted)
-                    Text("Requests always arrive in this console and on the floating panel — the choice is only about ringing the phone. Some practices want the call; a single-handed front desk usually does not.")
-                        .font(TimiVetFont.ui(10)).foregroundStyle(TimiVetColor.muted)
-                    Text("Number to call").font(TimiVetFont.ui(12, weight: .semibold))
-                    TextField(store.callPreferences.locationPhone ?? "Clinic's listed number", text: $voicePhone)
-                        .textFieldStyle(.roundedBorder)
-                        .disabled(callPolicy == "never")
-                    Text("Leave blank to use the clinic's listed number. A back line that is not the public one is usually the right answer.")
-                        .font(TimiVetFont.ui(10)).foregroundStyle(TimiVetColor.muted)
-                    HStack(spacing: 10) {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Quiet from").font(TimiVetFont.ui(12, weight: .semibold))
-                            TextField("22:00", text: $quietStart).textFieldStyle(.roundedBorder).disabled(callPolicy == "never")
+    /// `store.requests` already carries every status the dashboard returns;
+    /// this was previously read only for its count (`store.activeArrivals`).
+    /// Filtering it here to actually list who is on the way is new surface
+    /// area for data the console already had, matching the mockup's "Active
+    /// arrivals" card — no new API call.
+    private var activeArrivalsList: [ClinicRequest] {
+        store.requests.filter { ["accepted", "en_route", "arrived", "triaged"].contains($0.status) }
+    }
+
+    private var lowerGrid: some View {
+        HStack(alignment: .top, spacing: 18) {
+            activeArrivalsCard.frame(maxWidth: .infinity)
+            tipCard.frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private var activeArrivalsCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("ACTIVE ARRIVALS").timiVetEyebrow()
+            if activeArrivalsList.isEmpty {
+                Text("No active arrivals right now.").font(TimiVetFont.ui(12)).foregroundStyle(TimiVetColor.muted)
+            } else {
+                VStack(spacing: 0) {
+                    ForEach(activeArrivalsList) { request in
+                        HStack(spacing: 12) {
+                            Text(String(request.pet.name.prefix(2)))
+                                .font(TimiVetFont.ui(12, weight: .bold)).foregroundStyle(.white)
+                                .frame(width: 36, height: 36)
+                                .background(TimiVetColor.green, in: RoundedRectangle(cornerRadius: 11))
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(request.petLine).font(TimiVetFont.ui(13, weight: .bold))
+                                Text(request.travelLabel).font(TimiVetFont.ui(11)).foregroundStyle(TimiVetColor.muted)
+                            }
+                            Spacer()
+                            Text(request.status.replacingOccurrences(of: "_", with: " ").capitalized)
+                                .font(TimiVetFont.ui(11, weight: .bold)).foregroundStyle(TimiVetColor.green)
+                                .padding(.horizontal, 9).padding(.vertical, 5)
+                                .background(TimiVetColor.greenSoft, in: Capsule())
                         }
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Quiet until").font(TimiVetFont.ui(12, weight: .semibold))
-                            TextField("07:00", text: $quietEnd).textFieldStyle(.roundedBorder).disabled(callPolicy == "never")
-                        }
+                        .padding(.vertical, 10)
+                        if request.id != activeArrivalsList.last?.id { Divider() }
                     }
-                    Text("24-hour times. Leave both blank for no quiet hours. Requests raised during quiet hours still appear in the console.")
-                        .font(TimiVetFont.ui(10)).foregroundStyle(TimiVetColor.muted)
-                    Button("Save calling preferences") {
-                        Task { await store.saveCallPreferences(callPolicy: callPolicy, voicePhone: voicePhone, quietStart: quietStart, quietEnd: quietEnd) }
-                    }.buttonStyle(TimiVetPrimaryButtonStyle()).disabled(store.isBusy || !store.isAdmin)
-                    if !store.isAdmin {
-                        Text("Only a workspace administrator can change these. Ask whoever set up this clinic on Tími.")
-                            .font(TimiVetFont.ui(10)).foregroundStyle(TimiVetColor.muted)
-                    }
-                }
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("Polling interval, seconds").font(TimiVetFont.ui(13, weight: .semibold))
-                    Stepper("\(store.settings.pollSeconds) sec", value: $store.settings.pollSeconds, in: 3...60)
-                    Toggle("Desktop intake alerts", isOn: $store.settings.alertsEnabled)
-                    HStack {
-                        Toggle("Play alert sound", isOn: $store.settings.playSound)
-                        Spacer()
-                        Button("Test", action: onTestAlert).buttonStyle(TimiVetQuietButtonStyle())
-                    }
-                    Text("The alert plays through normal output, not the system alert beep — that follows a separate Alert Volume slider, and macOS silences a notification's own sound while this window is frontmost.")
-                        .font(TimiVetFont.ui(10)).foregroundStyle(TimiVetColor.muted)
-                    Toggle("Floating console stays on top", isOn: $store.settings.miniWindowTopmost)
-                    Toggle("Floating console stays above everything (screen saver level)", isOn: $store.settings.stayAboveEverything)
-                    Toggle("Open floating console automatically on a new request", isOn: $store.settings.autoShowMiniOnNewRequest)
-                    Toggle("Start Tími Vet at login", isOn: $store.settings.startAtLogin)
-                    Button("Save settings and reconnect") { Task { await store.saveSettings() } }.buttonStyle(TimiVetPrimaryButtonStyle())
                 }
             }
-            .padding(.top, 10)
         }
         .timiVetCard()
+    }
+
+    private var tipCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("AT A GLANCE").timiVetEyebrow()
+            Text("One decision, one send.").font(TimiVetFont.ui(14, weight: .bold))
+            Text("Available now sends the clinic's standard offer immediately. Custom availability only appears when a request needs a different arrival window or wait estimate, keeping the routine response fast.")
+                .font(TimiVetFont.ui(12)).foregroundStyle(TimiVetColor.muted)
+        }
+        .timiVetCard()
+    }
+
+    // MARK: Settings
+
+    private func statusPill(_ text: String, color: Color) -> some View {
+        Text(text).font(TimiVetFont.ui(11, weight: .bold)).foregroundStyle(color)
+            .padding(.horizontal, 9).padding(.vertical, 4)
+            .background(color.opacity(0.14), in: Capsule())
+    }
+
+    private var settingsPage: some View {
+        HStack(alignment: .top, spacing: 20) {
+            VStack(alignment: .leading, spacing: 20) {
+                publicIntakeStatusCard
+                phoneCallsCard
+            }.frame(maxWidth: .infinity)
+            VStack(alignment: .leading, spacing: 20) {
+                floatingConsoleCard
+                desktopAlertsCard
+            }.frame(maxWidth: .infinity)
+        }
+    }
+
+    /// The mockup's cream "Public intake status" card — the settings-page
+    /// twin of the live-summary bar's edit sheet, writing through to the
+    /// same `store` fields.
+    private var publicIntakeStatusCard: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Public intake status").font(TimiVetFont.ui(17, weight: .semibold))
+                    Text("What pet owners see right now.").font(TimiVetFont.ui(12)).foregroundStyle(TimiVetColor.muted)
+                }
+                Spacer()
+                statusPill("Published", color: TimiVetColor.green)
+            }
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Intake status").font(TimiVetFont.ui(13, weight: .semibold))
+                Picker("", selection: $store.availabilityStatus) {
+                    ForEach(ClinicStore.availabilityStatuses, id: \.self) { Text($0.replacingOccurrences(of: "_", with: " ").capitalized).tag($0) }
+                }.labelsHidden()
+            }
+            HStack(spacing: 12) {
+                labeledIntField("Capacity", value: $store.capacityCount)
+                labeledIntField("Min wait", value: $store.stableWaitMin)
+                labeledIntField("Max wait", value: $store.stableWaitMax)
+                labeledIntField("Expires (min)", value: $store.ttlMinutes)
+            }
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Public note").font(TimiVetFont.ui(13, weight: .semibold))
+                TextField("Public note", text: $store.publicNote, axis: .vertical)
+                    .lineLimit(3, reservesSpace: true)
+                    .textFieldStyle(.roundedBorder)
+            }
+            Toggle("Accepting critical patients", isOn: $store.acceptsCritical).toggleStyle(.checkbox)
+            Button("Publish live status") { Task { await store.publish() } }
+                .buttonStyle(TimiVetPrimaryButtonStyle())
+        }
+        .timiVetCard(TimiVetColor.publicCapacityBackground)
+    }
+
+    /// Calling preferences — admin-gated exactly as before: the Save button
+    /// stays disabled and an explanatory line appears for anyone who is not
+    /// `store.isAdmin` (the same `org:admin`/`org:member` role the Worker and
+    /// `apps/vet-web/public/app.js`'s `isSelfAdmin()` use — see
+    /// `ClinicStore.isAdmin`).
+    private var phoneCallsCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Phone calls from Tími").font(TimiVetFont.ui(17, weight: .semibold))
+                Text("Choose when Tími should call the clinic about a new request.").font(TimiVetFont.ui(12)).foregroundStyle(TimiVetColor.muted)
+            }
+            VStack(alignment: .leading, spacing: 6) {
+                policyRow("always", "Every request — call even while this console is open")
+                policyRow("console_active", "Only while a console is open")
+                policyRow("never", "Never — console and notifications only")
+            }
+            Text("Quiet hours below still silence calls in every mode. Requests always arrive in this console and on the floating panel — the choice is only about ringing the phone.")
+                .font(TimiVetFont.ui(11)).foregroundStyle(TimiVetColor.muted)
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Number to call").font(TimiVetFont.ui(12, weight: .semibold))
+                TextField(store.callPreferences.locationPhone ?? "Clinic's listed number", text: $voicePhone)
+                    .textFieldStyle(.roundedBorder)
+                    .disabled(callPolicy == "never")
+                Text("Leave blank to use the clinic's listed number.")
+                    .font(TimiVetFont.ui(10)).foregroundStyle(TimiVetColor.muted)
+            }
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Quiet from").font(TimiVetFont.ui(12, weight: .semibold))
+                    TextField("22:00", text: $quietStart).textFieldStyle(.roundedBorder).disabled(callPolicy == "never")
+                }
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Quiet until").font(TimiVetFont.ui(12, weight: .semibold))
+                    TextField("07:00", text: $quietEnd).textFieldStyle(.roundedBorder).disabled(callPolicy == "never")
+                }
+            }
+            Text("24-hour times. Leave both blank for no quiet hours.")
+                .font(TimiVetFont.ui(10)).foregroundStyle(TimiVetColor.muted)
+            Button("Save calling preferences") {
+                Task { await store.saveCallPreferences(callPolicy: callPolicy, voicePhone: voicePhone, quietStart: quietStart, quietEnd: quietEnd) }
+            }.buttonStyle(TimiVetPrimaryButtonStyle()).disabled(store.isBusy || !store.isAdmin)
+            if !store.isAdmin {
+                Text("Only a workspace administrator can change these. Ask whoever set up this clinic on Tími.")
+                    .font(TimiVetFont.ui(10)).foregroundStyle(TimiVetColor.muted)
+            }
+        }
+        .timiVetCard()
+    }
+
+    private var floatingConsoleCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Floating console").font(TimiVetFont.ui(17, weight: .semibold))
+                Text("Keep requests visible while you work in other apps.").font(TimiVetFont.ui(12)).foregroundStyle(TimiVetColor.muted)
+            }
+            Toggle("Keep above other windows", isOn: $store.settings.miniWindowTopmost).toggleStyle(.checkbox)
+            Toggle("Stay above full-screen apps", isOn: $store.settings.stayAboveEverything).toggleStyle(.checkbox)
+            Toggle("Open automatically for a new request", isOn: $store.settings.autoShowMiniOnNewRequest).toggleStyle(.checkbox)
+            Toggle("Start Tími Vet at login", isOn: $store.settings.startAtLogin).toggleStyle(.checkbox)
+            Button("Preview floating console", action: onOpenMini).buttonStyle(TimiVetQuietButtonStyle())
+        }
+        .timiVetCard()
+    }
+
+    private var desktopAlertsCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Desktop alerts").font(TimiVetFont.ui(17, weight: .semibold))
+                    Text("Visual and sound notifications for this workstation.").font(TimiVetFont.ui(12)).foregroundStyle(TimiVetColor.muted)
+                }
+                Spacer()
+                Toggle("Desktop intake alerts", isOn: $store.settings.alertsEnabled).toggleStyle(.switch).labelsHidden()
+            }
+            HStack {
+                Toggle("Play alert sound", isOn: $store.settings.playSound).toggleStyle(.checkbox)
+                Spacer()
+                Button("Test", action: onTestAlert).buttonStyle(TimiVetQuietButtonStyle()).frame(width: 80)
+            }
+            Text("The alert plays through normal output, not the system alert beep — that follows a separate Alert Volume slider, and macOS silences a notification's own sound while this window is frontmost.")
+                .font(TimiVetFont.ui(10)).foregroundStyle(TimiVetColor.muted)
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Check for requests every").font(TimiVetFont.ui(12, weight: .semibold))
+                Stepper("\(store.settings.pollSeconds) sec", value: $store.settings.pollSeconds, in: 3...60)
+            }
+            Button("Save alert settings") { Task { await store.saveSettings() } }.buttonStyle(TimiVetPrimaryButtonStyle())
+            advancedConnectionSection
+        }
+        .timiVetCard()
+    }
+
+    /// The mockup's collapsible "Advanced connection settings" — gated to
+    /// `store.isAdmin` (see `phoneCallsCard`'s doc comment for the role
+    /// vocabulary). This gate is new: the fields existed before with no
+    /// admin check at all. A non-admin now sees a one-line explanation
+    /// instead of the Worker URL / tenant ID fields, rather than being able
+    /// to edit them and hit whatever happens when a non-admin's console
+    /// points itself at a different Worker.
+    ///
+    /// Both this section's "Save and reconnect" and the card above's "Save
+    /// alert settings" call the same `store.saveSettings()` — `AppSettings`
+    /// is persisted and reconnected as one unit, so there is no partial-save
+    /// path to add a second method for; the two buttons are two entry points
+    /// onto one action, matching how "Publish live status" and the capacity
+    /// sheet's "Publish status" both call `store.publish()`.
+    private var advancedConnectionSection: some View {
+        Group {
+            if store.isAdmin {
+                DisclosureGroup("Advanced connection settings") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Cloudflare Worker HTTPS URL").font(TimiVetFont.ui(13, weight: .semibold))
+                        TextField("https://your-clinic.example.workers.dev", text: $store.settings.apiBaseUrl).textFieldStyle(.roundedBorder)
+                        Text("Tenant ID (loopback demo header)").font(TimiVetFont.ui(13, weight: .semibold))
+                        TextField("tenant_hearth", text: $store.settings.tenantId).textFieldStyle(.roundedBorder)
+                        Text("Sign in above establishes the real Clerk session; this field only matters against a loopback dev Worker with no session.")
+                            .font(TimiVetFont.ui(10)).foregroundStyle(TimiVetColor.muted)
+                        Button("Save and reconnect") { Task { await store.saveSettings() } }.buttonStyle(TimiVetPrimaryButtonStyle())
+                    }
+                    .padding(.top, 8)
+                }
+                .padding(.top, 6)
+            } else {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("ADVANCED CONNECTION SETTINGS").timiVetEyebrow()
+                    Text("Only a workspace administrator can view or change the Worker connection. Ask whoever set up this clinic on Tími.")
+                        .font(TimiVetFont.ui(11)).foregroundStyle(TimiVetColor.muted)
+                }
+                .padding(.top, 6)
+            }
+        }
     }
 
     /// One radio-style row of the call-policy group. A custom row rather than
