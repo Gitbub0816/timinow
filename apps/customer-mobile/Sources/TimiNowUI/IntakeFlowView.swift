@@ -19,23 +19,36 @@ struct IntakeFlowView: View {
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    HStack { Button { store.route = .home } label: { Image(systemName: "xmark").frame(width: 42, height: 42).background(.white, in: Circle()) }; Spacer(); ProgressPills(current: step, total: 2); Spacer().frame(width: 42) }
-                    Eyebrow(text: step == 0 ? "1 OF 2 · OBSERVABLE CONCERN" : "2 OF 2 · CONTACT + CONSENT")
-                    Text(step == 0 ? "What is happening with \(store.draft.pet.name)?" : "Where should clinics reach you?").font(.system(size: 38, weight: .bold, design: .serif))
-                    if step == 0 { concernStep } else { contactStep }
-                    HStack(spacing: 12) {
-                        if step > 0 { Button("Back") { withAnimation { step = 0 } }.buttonStyle(TimiQuietButtonStyle()) }
-                        Button {
-                            if step == 0 { if store.concernValidation.isReady { withAnimation { step = 1 } } else { store.errorMessage = store.concernValidation.issues.first } }
-                            else { Task { await store.startSearch() } }
-                        } label: { HStack { if store.isWorking { ProgressView().tint(.white) }; Text(step == 0 ? "Continue" : "Ask nearby clinics"); Image(systemName: "arrow.right") } }
-                            .buttonStyle(TimiPrimaryButtonStyle()).disabled(store.isWorking || (step == 1 && (!store.draft.legalConsent || !store.draft.contactConsent)))
-                    }
-                }.padding(20).padding(.bottom, 30)
-            }.background(TimiColor.canvas)
+            ScrollViewReader { scrollProxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 20) {
+                        HStack { Button { store.route = .home } label: { Image(systemName: "xmark").frame(width: 42, height: 42).background(.white, in: Circle()) }; Spacer(); ProgressPills(current: step, total: 2); Spacer().frame(width: 42) }
+                        Eyebrow(text: step == 0 ? "1 OF 2 · OBSERVABLE CONCERN" : "2 OF 2 · CONTACT + CONSENT")
+                        Text(step == 0 ? "What is happening with \(store.draft.pet.name)?" : "Where should clinics reach you?").font(.system(size: 38, weight: .bold, design: .serif))
+                        if step == 0 { concernStep } else { contactStep }
+                        HStack(spacing: 12) {
+                            if step > 0 { Button("Back") { changeStep(to: 0, proxy: scrollProxy) }.buttonStyle(TimiQuietButtonStyle()) }
+                            Button {
+                                if step == 0 { if store.concernValidation.isReady { changeStep(to: 1, proxy: scrollProxy) } else { store.errorMessage = store.concernValidation.issues.first } }
+                                else { Task { await store.startSearch() } }
+                            } label: { HStack { if store.isWorking { ProgressView().tint(.white) }; Text(step == 0 ? "Continue" : "Ask nearby clinics"); Image(systemName: "arrow.right") } }
+                                .buttonStyle(TimiPrimaryButtonStyle()).disabled(store.isWorking || (step == 1 && (!store.draft.legalConsent || !store.draft.contactConsent)))
+                        }
+                    }.padding(20).padding(.bottom, 30).id("flowTop")
+                }.background(TimiColor.canvas)
+            }
         }
+    }
+
+    /// `concernStep` and `contactStep` are wildly different heights — the
+    /// symptom grid alone is taller than `contactStep`'s three text fields —
+    /// so animating `step` alone left the ScrollView's offset pointing past
+    /// the newly-short content: the coral button's own label swap animated
+    /// smoothly, then the whole page yanked down to where the clamped offset
+    /// now landed. Scrolling back to the top in the same animation block is
+    /// what keeps that snap from happening.
+    private func changeStep(to value: Int, proxy: ScrollViewProxy) {
+        withAnimation { step = value; proxy.scrollTo("flowTop", anchor: .top) }
     }
 
     var concernStep: some View {
