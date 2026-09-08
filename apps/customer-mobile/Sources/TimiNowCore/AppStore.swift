@@ -41,11 +41,12 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
     public var mapStyleURL = MapDefaults.styleURL
     public var navigationStyleURL = MapDefaults.styleURL
     /// The customer's share of the Tími service fee, in cents, disclosed
-    /// beside the deposit. 2500 is the compiled-in fallback; `/api/config`
+    /// beside the deposit. 1500 is the compiled-in fallback, matching
+    /// `ownerFeeCents` in src/pricing.js's seeded launch policy; `/api/config`
     /// overrides it the same way the map token arrives, so a fee change (or a
     /// clinic passing the whole fee through) does not strand shipped builds
     /// disclosing the wrong amount.
-    public var customerFeeCents = 2500
+    public var customerFeeCents = 1500
     public var navigationDestination: NavigationDestination?
     public var currentNavigationStep: NavigationStepModel?
     public var currentRouteSummary: RouteSummary?
@@ -850,7 +851,7 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
         if let token = config.map?.token, !token.isEmpty { mapToken = token }
         if let styleUrl = config.map?.styleUrl, !styleUrl.isEmpty { mapStyleURL = styleUrl }
         if let navStyleUrl = config.map?.navigationStyleUrl, !navStyleUrl.isEmpty { navigationStyleURL = navStyleUrl }
-        if let fee = config.fees?.customerFeeCents, fee > 0 { customerFeeCents = fee }
+        if let fee = config.fees?.ownerFeeCents, fee > 0 { customerFeeCents = fee }
         // The Worker's own terms version outranks the compiled one, so a
         // server-side legal bump does not 422 every care request from builds
         // already in the field.

@@ -55,7 +55,7 @@ struct DepositSection: View {
             Text("The deposit is credited to the clinic's invoice. Remaining veterinary charges are billed by the clinic; Tími does not submit insurance claims.")
                 .font(.caption).foregroundStyle(TimiColor.muted)
             // The fee disclosure the terms promise happens at checkout. The
-            // amount comes from /api/config (store.customerFeeCents, 2500
+            // amount comes from /api/config (store.customerFeeCents, 1500
             // compiled in), so a clinic passing the whole service fee through
             // is disclosed correctly without an app release.
             Text("Includes a \(TimiFormat.money(store.customerFeeCents)) Tími service fee, charged at the time of service.")
@@ -75,7 +75,18 @@ struct DepositSection: View {
             // there is no reason to.
             if !isPaid && depositCents > 0 && store.depositIntent == nil {
                 await store.prepareDeposit()
-                await prepareElements()
+                // `prepareDeposit` swallows its own failure into a silent
+                // report — the customer is standing there with a sick animal,
+                // not somewhere to hand a stack trace — so a still-nil intent
+                // here is the only place left to say anything at all. Without
+                // this, a Worker with no STRIPE_SECRET_KEY configured (a 503
+                // PAYMENTS_NOT_CONFIGURED before an intent ever exists) left
+                // this screen reading "Preparing a secure payment…" forever.
+                if store.depositIntent == nil {
+                    errorText = "Tími could not reach the payment service. Pay the deposit at the desk, or try again in a moment."
+                } else {
+                    await prepareElements()
+                }
             }
         }
     }
@@ -84,14 +95,28 @@ struct DepositSection: View {
     var collectionControls: some View {
         if store.depositBusy {
             Text("Preparing a secure payment…").font(.caption).foregroundStyle(TimiColor.muted)
+        } else if store.depositIntent == nil {
+            // prepareDeposit failed outright (network, or the Worker's own
+            // 503 when it has no STRIPE_SECRET_KEY configured) — errorText,
+            // set in .task, already says why. Nothing to render here: this
+            // used to fall through to elementsControls, which shows its own
+            // "Preparing a secure payment…" with no flowController ever
+            // coming, and no intent means there is nothing left to prepare.
+            EmptyView()
         } else if store.depositIntent?.mode == "demo" {
             // A build with no Stripe credentials. Saying so is the honest
             // thing: a card field here would be asking somebody for a card
             // number that goes nowhere.
             Text("This is a demonstration build. No card is collected and no money moves.")
                 .font(.caption).foregroundStyle(TimiColor.muted)
-        } else {
+        } else if store.depositIntent?.mode == "stripe" {
             elementsControls
+        } else {
+            // "none" (no deposit actually required after all) or "paid"
+            // (already settled, this device just has not refreshed) — either
+            // way there is nothing to collect, and showing the Stripe UI here
+            // would offer to pay for something that is not owed.
+            Text("No payment is needed right now.").font(.caption).foregroundStyle(TimiColor.muted)
         }
     }
 
@@ -165,8 +190,14 @@ struct DepositSection: View {
     }
 
     func prepareElements() async {
-        guard let intent = store.depositIntent, intent.mode == "stripe",
-              let secret = intent.clientSecret, let publishable = intent.publishableKey else { return }
+        guard let intent = store.depositIntent, intent.mode == "stripe" else { return }
+        guard let secret = intent.clientSecret, let publishable = intent.publishableKey else {
+            // mode == "stripe" is the Worker promising a real PaymentIntent
+            // exists; missing either field here is the Worker's contract
+            // broken, not a state elementsControls should sit on forever.
+            errorText = "Tími could not open a secure payment. Pay the deposit at the desk, or try again in a moment."
+            return
+        }
         // Set from the Worker's response rather than compiled in, so rotating
         // the key does not need an App Store release.
         STPAPIClient.shared.publishableKey = publishable

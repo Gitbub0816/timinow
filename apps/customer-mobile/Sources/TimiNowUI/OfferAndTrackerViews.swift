@@ -242,11 +242,21 @@ struct TrackerView: View {
         if intake?.status == "accepted" { Task { await store.updateIntake(status: "en_route") } }
     }
 
-    var actionButtons: some View {
-        VStack(spacing: 11) {
-            if intake?.status == "accepted" { Button { Task { await store.updateIntake(status: "en_route") } } label: { Label("We're leaving now", systemImage: "car.fill") }.buttonStyle(TimiPrimaryButtonStyle()) }
-            if ["en_route", "accepted"].contains(intake?.status ?? "") { Button { Task { await store.record("arrived") } } label: { Label("We arrived", systemImage: "mappin.circle.fill") }.buttonStyle(TimiQuietButtonStyle()) }
-            if ["arrived", "triaged"].contains(intake?.status ?? "") { Button { Task { await store.record("seen") } } label: { Label("My pet was seen", systemImage: "checkmark.seal.fill") }.buttonStyle(TimiPrimaryButtonStyle(color: TimiColor.blue)) }
+    /// One button for whatever comes next, not one per step. The timeline
+    /// above already shows every step; stacking a button per step next to it
+    /// repeated the same information and, at "accepted", showed both
+    /// "We're leaving now" and "We arrived" at once — offering to mark
+    /// arrival before the customer had even left.
+    @ViewBuilder var actionButtons: some View {
+        switch intake?.status {
+        case "accepted":
+            Button { Task { await store.updateIntake(status: "en_route") } } label: { Label("We're leaving now", systemImage: "car.fill") }.buttonStyle(TimiPrimaryButtonStyle())
+        case "en_route":
+            Button { Task { await store.record("arrived") } } label: { Label("We arrived", systemImage: "mappin.circle.fill") }.buttonStyle(TimiPrimaryButtonStyle())
+        case "arrived", "triaged":
+            Button { Task { await store.record("seen") } } label: { Label("My pet was seen", systemImage: "checkmark.seal.fill") }.buttonStyle(TimiPrimaryButtonStyle(color: TimiColor.blue))
+        default:
+            EmptyView()
         }
     }
 }

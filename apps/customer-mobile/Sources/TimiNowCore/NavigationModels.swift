@@ -278,8 +278,13 @@ public struct MapConfig: Codable, Hashable, Sendable {
 /// reason the Mapbox token flows this way. Every field is optional because a
 /// Worker deployed before the fee contract simply omits the key.
 public struct FeeConfig: Codable, Hashable, Sendable {
-    /// The customer's share, in cents, disclosed at checkout.
-    public var customerFeeCents: Int?
+    /// The customer's share, in cents, disclosed at checkout. Named
+    /// `ownerFeeCents` on the wire — see `publicConfig` in src/config.js —
+    /// which this was previously out of step with (`customerFeeCents`, a key
+    /// the Worker never actually sends), so this value silently never updated
+    /// from the compiled-in default below no matter what the live policy
+    /// charged.
+    public var ownerFeeCents: Int?
     /// The whole per-intake service fee, in cents; the remainder after the
     /// customer's share comes out of the clinic payout.
     public var totalServiceFeeCents: Int?
