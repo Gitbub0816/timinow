@@ -148,24 +148,69 @@ struct DisplayHeadline: View {
 }
 
 /// The route-change transition, defined once so every screen changes hands
-/// the same way: the incoming screen slides in a small step from trailing and
-/// fades, the outgoing one simply fades underneath it. Built on `.offset`
-/// rather than `.move` deliberately — offset is a render-time translation, so
-/// a NavigationStack mid-transition is never re-laid-out against a different
-/// safe area, which is what doubled the tracker headline into the status bar.
+/// the same way. The *container* only crossfades now — the motion lives on
+/// the screens' individual elements via `timiMorph` below, which slide off
+/// in their own directions while the next screen's elements stagger in. The
+/// removal fade is stretched past the elements' own exits so the outgoing
+/// screen stays mounted long enough for every one of them to finish.
 enum TimiScreenChange {
-    // The offset half is Apple-only, matching this module's rule that an
-    // unproven Skip surface stays behind the platform gate: Android keeps
-    // the crossfade, which is the half that fixes the double-render.
+    // Apple-only refinements stay behind the platform gate, matching this
+    // module's rule that an unproven Skip surface never ships blind: Android
+    // keeps the plain crossfade, which is the half that fixed the tracker's
+    // double-rendered headline.
     #if os(Android)
     static let transition: AnyTransition = .opacity
     #else
     static let transition: AnyTransition = .asymmetric(
-        insertion: AnyTransition.offset(x: 64).combined(with: .opacity),
-        removal: .opacity
+        insertion: AnyTransition.opacity.animation(.easeOut(duration: 0.2)),
+        removal: AnyTransition.opacity.animation(.easeIn(duration: 0.4))
     )
     #endif
     static let animation: Animation = .spring(response: 0.32, dampingFraction: 0.88)
+}
+
+/// Element-level screen choreography: give each major block of a screen an
+/// index, and on a route (or step) change the blocks leave in alternating
+/// directions while the next screen's blocks slide in one after another —
+/// the "morph" between screens, instead of two flat pages swapping.
+///
+/// Built on `.offset` rather than `.move` for the same reason as
+/// `TimiScreenChange`: offset is a render-time translation, so nothing is
+/// re-laid-out against a different safe area mid-flight — which is exactly
+/// the bug class that once doubled the tracker headline into the status bar.
+///
+/// The insertion delays are what make it read as choreography (headline
+/// first, cards following); the removal delays are kept tight because the
+/// outgoing screen only lives as long as `TimiScreenChange`'s removal fade.
+enum TimiMorph {
+    #if os(Android)
+    static func transition(_ index: Int) -> AnyTransition { .opacity }
+    #else
+    static func transition(_ index: Int) -> AnyTransition {
+        // Alternating horizontal directions, with a small vertical drift
+        // that varies by position — "various directions" without ever moving
+        // an element so far that it visibly clips mid-flight.
+        let dx: CGFloat = index % 2 == 0 ? -1 : 1
+        let insertionDrop: CGFloat = index == 0 ? -18 : 24
+        let removalDrop: CGFloat = index % 3 == 0 ? -26 : 30
+        return .asymmetric(
+            insertion: AnyTransition.offset(x: dx * 68, y: insertionDrop)
+                .combined(with: .opacity)
+                .animation(.spring(response: 0.42, dampingFraction: 0.86).delay(0.06 + Double(index) * 0.045)),
+            removal: AnyTransition.offset(x: -dx * 90, y: removalDrop)
+                .combined(with: .opacity)
+                .animation(.easeIn(duration: 0.22).delay(Double(index) * 0.018))
+        )
+    }
+    #endif
+}
+
+extension View {
+    /// Tag a screen's nth major block for the morph. Indices start at 0 from
+    /// the top of the screen; they set the stagger order and the direction.
+    func timiMorph(_ index: Int) -> some View {
+        transition(TimiMorph.transition(index))
+    }
 }
 
 /// Tími's own tab bar: a floating white capsule with the 2pt ink border and
@@ -175,6 +220,15 @@ enum TimiScreenChange {
 /// is UIKit, so the same bar renders through Skip on Android.
 struct TimiTabBar: View {
     @Binding var selection: Int
+    // The coral pill's shared identity across tabs — matchedGeometryEffect
+    // interpolates its frame from the old tab to the new one, which is what
+    // makes the highlight *slide* (growing and shrinking with each label's
+    // width on the way) instead of vanishing here and appearing there.
+    // Apple-only, like every unproven Skip surface: Android keeps the
+    // instant swap, which was the previous behavior everywhere.
+    #if !os(Android)
+    @Namespace var highlightNamespace
+    #endif
 
     static let items: [(Int, String, String)] = [
         (0, "cross.case.fill", "Care"),
@@ -216,11 +270,25 @@ struct TimiTabBar: View {
             .foregroundStyle(selected ? Color.white : TimiColor.ink.faded(0.55))
             .padding(.horizontal, 10)
             .frame(maxWidth: .infinity, minHeight: 46)
-            .background(Capsule().fill(selected ? TimiColor.coral : Color.clear))
-            .overlay(Capsule().stroke(selected ? TimiColor.ink : Color.clear, lineWidth: 2))
+            .background(highlight(selected))
         }
         .buttonStyle(.plain)
         .accessibilityLabel(label)
+    }
+
+    /// The coral pill (fill and ink stroke together, so the border travels
+    /// with it) behind whichever tab is selected.
+    @ViewBuilder private func highlight(_ selected: Bool) -> some View {
+        if selected {
+            #if os(Android)
+            Capsule().fill(TimiColor.coral)
+                .overlay(Capsule().stroke(TimiColor.ink, lineWidth: 2))
+            #else
+            Capsule().fill(TimiColor.coral)
+                .overlay(Capsule().stroke(TimiColor.ink, lineWidth: 2))
+                .matchedGeometryEffect(id: "timi-tab-highlight", in: highlightNamespace)
+            #endif
+        }
     }
 }
 

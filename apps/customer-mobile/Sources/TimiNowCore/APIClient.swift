@@ -195,9 +195,19 @@ public final class TimiGateway: @unchecked Sendable {
     /// finds) the order idempotently, so calling this again — including after
     /// PaymentSheet reports `.completed` — returns the same order rather than
     /// opening a second charge.
-    public func createBookingPayment(intakeId: String) async throws -> BookingPaymentOrder {
+    ///
+    /// `contributionCents` is the optional Paw It Forward gift folded into
+    /// the same charge. `nil` — every poll — leaves whatever gift is already
+    /// on the order untouched; a number (0 clears it) is a decision, and the
+    /// Worker re-prices the order to match. Synthesized Codable omits nil
+    /// optionals, so a poll's body is `{}` and the Worker treats it as none.
+    public func createBookingPayment(intakeId: String, contributionCents: Int? = nil) async throws -> BookingPaymentOrder {
         guard let baseURL else { throw TimiAPIError.invalidConfiguration(configuredAddress) }
-        return try await send(baseURL.appendingPathComponent("api/intakes/\(intakeId)/booking-payment"), method: "POST", body: EmptyPayload())
+        return try await send(
+            baseURL.appendingPathComponent("api/intakes/\(intakeId)/booking-payment"),
+            method: "POST",
+            body: BookingPaymentRequest(contributionCents: contributionCents)
+        )
     }
 
     // MARK: - Pets
@@ -639,10 +649,16 @@ public struct DepositIntent: Decodable, Sendable {
     }
 }
 
+/// The optional body of `POST /api/intakes/{id}/booking-payment`.
+struct BookingPaymentRequest: Encodable {
+    var contributionCents: Int?
+}
+
 /// One line of a booking payment order — src/booking-payment.js's
-/// `getPaymentOrder`. `purpose` is `OWNER_PLATFORM_FEE` or `CLINIC_DEPOSIT`
-/// for every order this endpoint can return (`CLINIC_PLATFORM_FEE` and
-/// `FUND_CONTRIBUTION` exist in the schema but never reach this call).
+/// `getPaymentOrder`. `purpose` is `OWNER_PLATFORM_FEE`, `CLINIC_DEPOSIT`,
+/// or `FUND_CONTRIBUTION` (the customer's optional Paw It Forward gift,
+/// folded into the same charge). `CLINIC_PLATFORM_FEE` exists in the schema
+/// but never reaches this call.
 public struct BookingPaymentAllocation: Decodable, Sendable {
     public var id: String
     public var purpose: String

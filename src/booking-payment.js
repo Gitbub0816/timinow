@@ -26,9 +26,10 @@
 
 import { hasDatabase } from "./db.js";
 import { activePricingPolicy, validateContributionAmount } from "./pricing.js";
-import { createPaymentIntent, idempotencyKey, stripeConfigured, StripeError } from "./stripe.js";
+import { cancelPaymentIntent, createPaymentIntent, idempotencyKey, stripeConfigured, StripeError } from "./stripe.js";
 import { activeGrantFor, recordSponsoredCompletion } from "./hardship/index.js";
 import { depositOutcomeForBooking, getBookingDepositSnapshot } from "./deposit-policy.js";
+import { postContribution } from "./fund.js";
 
 function newId(prefix) {
   return `${prefix}_${crypto.randomUUID().replaceAll("-", "")}`;
@@ -115,12 +116,34 @@ export async function createBookingPaymentOrder(env, {
     )
   ];
   for (const line of quote.lines) {
+    const allocationId = newId("payalloc");
+    let lineContributionId = null;
+    if (line.purpose === "FUND_CONTRIBUTION") {
+      // A gift folded into the booking charge still gets its own
+      // `contributions` row, in the same batch as the allocation it explains
+      // — that row is what `postContribution` posts to the restricted fund
+      // ledger once Stripe confirms, and without it the money would land in
+      // `payment_allocations` and never reach `fund_available`. Recognition
+      // is ANONYMOUS by construction: the booking flow never asks for a
+      // display name, and §5.4 says anonymous is the default, not a fallback.
+      lineContributionId = contributionId || newId("contrib");
+      if (!contributionId) {
+        statements.push(env.DB.prepare(`
+          INSERT INTO contributions (
+            id, contributor_user_id, contributor_token, amount_cents, currency, source,
+            payment_order_id, payment_allocation_id, status, recognition
+          ) VALUES (?, ?, ?, ?, ?, 'BOOKING', ?, ?, 'DRAFT', 'ANONYMOUS')
+        `).bind(
+          lineContributionId, payerUserId, newId("ctr"), line.amountCents, quote.currency,
+          orderId, allocationId
+        ));
+      }
+    }
     statements.push(env.DB.prepare(`
       INSERT INTO payment_allocations (id, payment_order_id, purpose, amount_cents, currency, contribution_id)
       VALUES (?, ?, ?, ?, ?, ?)
     `).bind(
-      newId("payalloc"), orderId, line.purpose, line.amountCents, quote.currency,
-      line.purpose === "FUND_CONTRIBUTION" ? contributionId : null
+      allocationId, orderId, line.purpose, line.amountCents, quote.currency, lineContributionId
     ));
   }
   await env.DB.batch(statements);
@@ -205,6 +228,13 @@ export async function chargeBookingOrder(env, paymentOrderId) {
     await env.DB.prepare(
       "UPDATE payment_orders SET status = 'REQUIRES_CONFIRMATION', stripe_payment_intent_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?"
     ).bind(intent.id, paymentOrderId).run();
+    // The gift's own row follows the charge it rides in, so reconciliation
+    // can find it from the PaymentIntent alone. Same value on a re-charge of
+    // the same order (same idempotency key, same intent), so the one-per-
+    // intent UNIQUE index never trips.
+    await env.DB.prepare(
+      "UPDATE contributions SET stripe_payment_intent_id = ?, status = 'REQUIRES_PAYMENT', updated_at = CURRENT_TIMESTAMP WHERE payment_order_id = ? AND status = 'DRAFT'"
+    ).bind(intent.id, paymentOrderId).run();
 
     return {
       ok: true,
@@ -236,13 +266,24 @@ export async function chargeBookingOrder(env, paymentOrderId) {
  * `depositCents` is read from the intake's own `depositAmountCents` —
  * already the deposit-policy engine's answer for this specific booking at
  * `selectCareOffer` time — rather than recomputed here.
+ *
+ * `contributionCents` is the customer's optional Paw It Forward gift, folded
+ * into the same single charge. `null` means "leave it alone" — every poll,
+ * including the re-poll after PaymentSheet reports success, passes null and
+ * reuses whatever order exists. A number is a decision: if an unpaid order
+ * exists with a *different* gift amount, that order (still nothing but a
+ * quote — DRAFT or an unconfirmed PaymentIntent) is cancelled and replaced,
+ * because a PaymentIntent's amount is fixed at creation and the customer
+ * just changed the total.
  */
-export async function ensureBookingPaymentOrder(env, { intake }) {
+export async function ensureBookingPaymentOrder(env, { intake, contributionCents = null }) {
   if (!hasDatabase(env)) return { ok: false, code: "DATABASE_REQUIRED", message: "D1 is required to take a payment." };
 
   // Any paid order settles the question, whichever row it is — with the
   // duplicate rows the pre-guard race left behind (see below), the paid one
-  // is not necessarily the one the oldest-wins rule would pick.
+  // is not necessarily the one the oldest-wins rule would pick. A gift
+  // change requested after payment already landed is ignored for the same
+  // reason: the charge exists, and the answer is what actually happened.
   const paid = await env.DB.prepare(
     "SELECT id FROM payment_orders WHERE intake_id = ? AND purpose = 'BOOKING' AND status = 'PAID' ORDER BY created_at ASC, id ASC LIMIT 1"
   ).bind(intake.id).first();
@@ -250,11 +291,27 @@ export async function ensureBookingPaymentOrder(env, { intake }) {
     return { ok: true, mode: "paid", totalCents: null, order: await getPaymentOrder(env, paid.id) };
   }
 
+  const requestedContribution = contributionCents == null ? null : Math.max(0, Math.trunc(Number(contributionCents) || 0));
+
   // Oldest wins, ties broken by id: every racer computes the same canonical
   // row no matter which of them inserted it.
-  const existing = await env.DB.prepare(
+  let existing = await env.DB.prepare(
     "SELECT id FROM payment_orders WHERE intake_id = ? AND purpose = 'BOOKING' AND status NOT IN ('FAILED', 'CANCELLED') ORDER BY created_at ASC, id ASC LIMIT 1"
   ).bind(intake.id).first();
+
+  if (existing && requestedContribution != null) {
+    const currentGift = await env.DB.prepare(
+      "SELECT COALESCE(SUM(amount_cents), 0) AS cents FROM payment_allocations WHERE payment_order_id = ? AND purpose = 'FUND_CONTRIBUTION'"
+    ).bind(existing.id).first();
+    if (Number(currentGift?.cents || 0) !== requestedContribution) {
+      const replaced = await retireUnpaidOrder(env, existing.id);
+      // Guarded cancel: zero rows changed means the order left
+      // DRAFT/REQUIRES_CONFIRMATION under us — almost certainly the webhook
+      // marking it PAID mid-tap — and the money that actually moved outranks
+      // the gift change. Keep the order as it is.
+      if (replaced) existing = null;
+    }
+  }
 
   let orderId;
   if (existing) {
@@ -279,7 +336,11 @@ export async function ensureBookingPaymentOrder(env, { intake }) {
     } else {
       depositCents = intake.policy?.depositRequired ? Math.trunc(Number(intake.depositAmountCents) || 0) : 0;
     }
-    const quote = await quoteBooking(env, { sponsored: Boolean(grant), depositCents });
+    const quote = await quoteBooking(env, {
+      sponsored: Boolean(grant),
+      depositCents,
+      contributionCents: requestedContribution || 0
+    });
     if (!quote.ok) return quote;
     const created = await createBookingPaymentOrder(env, {
       quote,
@@ -320,6 +381,40 @@ export async function ensureBookingPaymentOrder(env, { intake }) {
 }
 
 /**
+ * Retire an order the customer just re-priced (changed their Paw It Forward
+ * gift): cancel the row, fail its draft contribution, and best-effort cancel
+ * the Stripe PaymentIntent so a stale payment sheet still holding the old
+ * client secret cannot complete the old amount.
+ *
+ * Returns false — and changes nothing — if the order is no longer merely
+ * quoted (the status guard on the UPDATE misses), which is the race where
+ * payment succeeded in the same instant.
+ */
+async function retireUnpaidOrder(env, orderId) {
+  const result = await env.DB.prepare(
+    "UPDATE payment_orders SET status = 'CANCELLED', updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status IN ('DRAFT', 'REQUIRES_CONFIRMATION')"
+  ).bind(orderId).run();
+  if (!Number(result?.meta?.changes || 0)) return false;
+
+  await env.DB.prepare(
+    "UPDATE contributions SET status = 'FAILED', failure_code = 'REPLACED_BY_NEW_QUOTE', updated_at = CURRENT_TIMESTAMP WHERE payment_order_id = ? AND status IN ('DRAFT', 'REQUIRES_PAYMENT')"
+  ).bind(orderId).run();
+
+  const order = await env.DB.prepare("SELECT stripe_payment_intent_id FROM payment_orders WHERE id = ? LIMIT 1").bind(orderId).first();
+  if (order?.stripe_payment_intent_id && stripeConfigured(env)) {
+    try {
+      await cancelPaymentIntent(env, order.stripe_payment_intent_id, { reason: "abandoned" });
+    } catch (error) {
+      // Not fatal: an intent that refuses cancellation (already succeeded,
+      // already cancelled) resolves through the webhook like any other, and
+      // the order row is CANCELLED either way.
+      console.warn(JSON.stringify({ event: "booking_order_intent_cancel_failed", orderId, message: error?.message || String(error) }));
+    }
+  }
+  return true;
+}
+
+/**
  * Applies a Stripe payment_intent event to the `payment_orders` row it
  * belongs to. Deliberately touches nothing else — not `intake_requests`,
  * not either ledger — so this stays additive to the existing deposit
@@ -346,6 +441,22 @@ export async function markBookingPaymentOrderStatus(env, { paymentOrderId, statu
     .bind(status, paymentOrderId).run();
 
   if (status === "PAID") {
+    // A Paw It Forward gift riding in this charge is restricted fund money
+    // the moment Stripe confirms it: post it to the fund ledger now
+    // (`postContribution` is idempotent per contribution, so a redelivered
+    // webhook posts nothing twice). Failure to post is loud but does not
+    // fail the webhook — the order IS paid; the ledger entry is repairable,
+    // a false payment failure is not.
+    const contributions = await env.DB.prepare(
+      "SELECT id FROM contributions WHERE payment_order_id = ? AND status IN ('DRAFT', 'REQUIRES_PAYMENT', 'SUCCEEDED')"
+    ).bind(paymentOrderId).all();
+    for (const row of contributions.results) {
+      const posted = await postContribution(env, { contributionId: row.id, stripeEventId });
+      if (!posted.ok) {
+        console.warn(JSON.stringify({ event: "booking_contribution_post_failed", paymentOrderId, contributionId: row.id, reason: posted.code, stripeEventId }));
+      }
+    }
+
     let snapshot = {};
     try { snapshot = JSON.parse(order.confirmation_snapshot_json || "{}"); } catch { /* malformed snapshot, nothing to consume */ }
     if (snapshot.sponsoredGrantId) {

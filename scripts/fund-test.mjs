@@ -600,6 +600,64 @@ response = await getContributorHistory(
 assert(response.status === 200, "A signed-in contributor may read their own history");
 assert((await response.json()).contributions.length === 1, "…and sees exactly their own contributions");
 
+/* ------------------------------------------------ the booking-time gift --- */
+
+// The optional Paw It Forward gift folded into the customer's one combined
+// booking charge (src/booking-payment.js). The chips in the app re-price the
+// order server-side, so what these prove is the server contract: a gift is
+// an allocation plus a contributions row before any money, a changed gift
+// retires the quoted order rather than mutating a PaymentIntent's amount,
+// and a paid gift posts to the restricted fund exactly once.
+{
+  const { ensureBookingPaymentOrder, markBookingPaymentOrderStatus } = await import("../src/booking-payment.js");
+  // payment_orders.intake_id is a real foreign key, so the intake exists
+  // first — against the seeded Hearth & Paw clinic, like the e2e's own.
+  for (const id of ["intake_gift", "intake_gift_invalid"]) {
+    database.prepare(`
+      INSERT INTO intake_requests (
+        id, public_code, location_id, tenant_id, pet_name, species, owner_name, owner_phone,
+        concern_category, concern_summary, urgency, status, requested_at, request_expires_at, customer_user_id
+      ) VALUES (?, ?, 'loc_hearth', 'tenant_hearth', 'Biscuit', 'dog', 'Gift Tester', '+15105550100',
+        'vomiting_or_diarrhea', 'Vomited twice since 7 AM and will not drink.', 'same_day', 'accepted',
+        datetime('now'), datetime('now', '+1 hour'), 'user_gift')
+    `).run(id, `TIMI-${id.toUpperCase().slice(-4)}`);
+  }
+  const intake = { id: "intake_gift", customerUserId: "user_gift", tenantId: "tenant_hearth" };
+
+  // $15 fee + $5 gift, one order, split written down as allocations.
+  let result = await ensureBookingPaymentOrder(env, { intake, contributionCents: 500 });
+  assert(result.ok && result.order.totalCents === 2000, `A $5 gift joins the $15 fee in one order (${JSON.stringify(result)})`);
+  const giftLine = result.order.allocations.find((line) => line.purpose === "FUND_CONTRIBUTION");
+  assert(giftLine && giftLine.amountCents === 500, "The gift is its own allocation, at its own amount");
+  const firstOrderId = result.order.id;
+  const giftRow = database.prepare("SELECT source, status FROM contributions WHERE payment_order_id = ?").get(firstOrderId);
+  assert(giftRow && giftRow.source === "BOOKING", "A booking gift gets a contributions row the ledger can post from");
+
+  // A poll — no gift decision — reuses the order untouched.
+  result = await ensureBookingPaymentOrder(env, { intake });
+  assert(result.ok && result.order.id === firstOrderId && result.order.totalCents === 2000, "A poll never re-prices the order");
+
+  // Changing the gift retires the merely-quoted order and re-prices.
+  result = await ensureBookingPaymentOrder(env, { intake, contributionCents: 200 });
+  assert(result.ok && result.order.id !== firstOrderId && result.order.totalCents === 1700, "A changed gift is a new order at the new total");
+  assert(database.prepare("SELECT status FROM payment_orders WHERE id = ?").get(firstOrderId).status === "CANCELLED", "The old quote is cancelled, not left charging the old amount");
+  assert(database.prepare("SELECT status FROM contributions WHERE payment_order_id = ?").get(firstOrderId).status === "FAILED", "The old gift row fails with its order");
+
+  // Whole dollars only — the same rule as the standalone portal.
+  const invalid = await ensureBookingPaymentOrder(env, { intake: { ...intake, id: "intake_gift_invalid" }, contributionCents: 250 });
+  assert(!invalid.ok && invalid.code === "WHOLE_DOLLARS_ONLY", "A $2.50 gift is refused, not rounded");
+
+  // Paid: the gift posts to the restricted fund, and a redelivered webhook
+  // posts nothing further.
+  const beforeCents = (await fundSummary(env)).availableCents;
+  await markBookingPaymentOrderStatus(env, { paymentOrderId: result.order.id, status: "PAID", stripeEventId: "evt_booking_gift" });
+  assert((await fundSummary(env)).availableCents === beforeCents + 200, "A paid booking gift credits fund_available");
+  await markBookingPaymentOrderStatus(env, { paymentOrderId: result.order.id, status: "PAID", stripeEventId: "evt_booking_gift" });
+  assert((await fundSummary(env)).availableCents === beforeCents + 200, "A redelivered PAID posts the gift once");
+  assert(database.prepare("SELECT status FROM contributions WHERE payment_order_id = ?").get(result.order.id).status === "POSTED", "The gift row is POSTED once the money is real");
+  await assertLedgerSound("the booking-time gift");
+}
+
 /* ══════════════════════════════════════════════════ final proof ══ */
 
 await assertLedgerSound("the whole run");
@@ -668,4 +726,4 @@ const transactions = Number(database.prepare("SELECT COUNT(*) AS c FROM ledger_t
 
 
 database.close();
-console.log(`Paw It Forward fund tests passed: ${transactions} balanced journal transactions across whole-dollar contribution validation, contributions posting whole with the processor fee borne separately, duplicate webhooks posting once, approval moving no money, atomic $30 reservation, two concurrent reservations unable to overspend, release and expiry recognizing $0, verified completion recognizing $30 once with a non-cash $10 match, replayed completion recognizing nothing further, a founding clinic's sponsorship costing the fund $5 rather than $30, controlled reversal, delayed and thresholded public impact counting only consumed sponsorships, pause/cap/household controls, contributor-scoped history, a contribution payment call that credits nothing until Stripe confirms and never fakes a success, and a ledger that balanced after every one of them.`);
+console.log(`Paw It Forward fund tests passed: ${transactions} balanced journal transactions across whole-dollar contribution validation, contributions posting whole with the processor fee borne separately, duplicate webhooks posting once, approval moving no money, atomic $30 reservation, two concurrent reservations unable to overspend, release and expiry recognizing $0, verified completion recognizing $30 once with a non-cash $10 match, replayed completion recognizing nothing further, a founding clinic's sponsorship costing the fund $5 rather than $30, controlled reversal, delayed and thresholded public impact counting only consumed sponsorships, pause/cap/household controls, contributor-scoped history, a contribution payment call that credits nothing until Stripe confirms and never fakes a success, a booking-time gift that re-prices the one combined charge and posts to the fund exactly once, and a ledger that balanced after every one of them.`);

@@ -787,6 +787,32 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
         bookingPaymentBusy = false
     }
 
+    /// The Paw It Forward gift currently riding in the booking charge, in
+    /// cents — what the gift chips on the payment card highlight.
+    public var bookingContributionCents: Int {
+        bookingPayment?.order?.allocations
+            .filter { $0.purpose == "FUND_CONTRIBUTION" }
+            .reduce(0) { $0 + $1.amountCents } ?? 0
+    }
+
+    /// Set (or clear, with 0) the Paw It Forward gift on the booking charge.
+    ///
+    /// Unlike `prepareBookingPayment`'s polls this sends a decision: the
+    /// Worker cancels the merely-quoted order and re-prices it with the new
+    /// total, handing back a fresh PaymentIntent — which is why the payment
+    /// card rebuilds its Stripe controller whenever the client secret
+    /// changes. No-ops once the charge is settled (the gift chips are gone
+    /// from the screen by then anyway) and in whole-app demo mode, where
+    /// there is no order to re-price.
+    public func setBookingContribution(_ cents: Int) async {
+        guard let intake = currentIntake else { return }
+        if bookingPaymentBusy || bookingPaymentSettled || gateway.isDemo { return }
+        bookingPaymentBusy = true
+        do { bookingPayment = try await gateway.createBookingPayment(intakeId: intake.id, contributionCents: max(0, cents)) }
+        catch { report(error) }
+        bookingPaymentBusy = false
+    }
+
     // MARK: - Paw It Forward Fund (financial hardship)
 
     /// The account's current standing — an active grant, or the standard fee.

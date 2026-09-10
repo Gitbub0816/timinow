@@ -77,6 +77,20 @@ struct BookingPaymentSection: View {
                 await prepareElements()
             }
         }
+        // Changing the Paw It Forward gift re-prices the order: the Worker
+        // cancels the old PaymentIntent and mints one for the new total, so
+        // the secret this section's Stripe controller was built around is
+        // dead the moment this value moves. Rebuild against the new one.
+        .onChange(of: store.bookingPayment?.clientSecret) { _ in
+            guard store.bookingPayment?.mode == "stripe" else { return }
+            // Drop the stale controller before the rebuild, not after: a
+            // confirm button still wired to the old secret during the gap
+            // would offer the old total (the charge itself is safe — the
+            // Worker cancelled the old PaymentIntent — but the button would
+            // be a lie until it failed).
+            resetElements()
+            Task { await prepareElements() }
+        }
     }
 
     /// A sponsored booking with no clinic deposit owed totals zero, and zero
@@ -116,6 +130,10 @@ struct BookingPaymentSection: View {
             Text("This unlocks the clinic's address, phone number, and turn-by-turn directions.")
                 .font(.caption).foregroundStyle(TimiColor.muted)
 
+            if mode == "stripe" {
+                giftPicker
+            }
+
             collectionControls
 
             if !errorText.isEmpty {
@@ -128,8 +146,53 @@ struct BookingPaymentSection: View {
         switch purpose {
         case "OWNER_PLATFORM_FEE": return "Tími service fee"
         case "CLINIC_DEPOSIT": return "Clinic arrival deposit"
+        case "FUND_CONTRIBUTION": return "Paw It Forward gift"
         default: return purpose.capitalized
         }
+    }
+
+    /// The whole-dollar amounts offered as one-tap gifts, in cents. Zero is
+    /// the first chip on purpose — a gift must be exactly as easy to remove
+    /// as to add, or it isn't a gift.
+    static let giftChoices: [(Int, String)] = [(0, "No gift"), (200, "$2"), (500, "$5"), (1000, "$10")]
+
+    /// An optional Paw It Forward gift, folded into the same single charge.
+    /// The chips re-price the order server-side, so the total above and the
+    /// pay button's label always show the real amount about to be charged —
+    /// never a locally-added number the charge could disagree with.
+    var giftPicker: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Eyebrow(text: "PAW IT FORWARD", color: TimiColor.coral)
+            Text("Add a gift to help cover a visit for a pet whose family can't afford one right now.")
+                .font(.caption).foregroundStyle(TimiColor.muted)
+            HStack(spacing: 8) {
+                ForEach(Self.giftChoices, id: \.0) { choice in
+                    giftChip(cents: choice.0, label: choice.1)
+                }
+            }
+            Text("Gifts go to the Paw It Forward Fund. Not represented as tax deductible.")
+                .font(.system(size: 10)).foregroundStyle(TimiColor.muted)
+        }
+        .padding(.vertical, 4)
+    }
+
+    func giftChip(cents: Int, label: String) -> some View {
+        let selected = store.bookingContributionCents == cents
+        return Button {
+            guard !selected else { return }
+            Task { await store.setBookingContribution(cents) }
+        } label: {
+            Text(label)
+                .font(.system(size: 13, weight: .black))
+                .foregroundStyle(selected ? Color.white : TimiColor.ink)
+                .padding(.horizontal, 12)
+                .frame(minHeight: 38)
+                .background(Capsule().fill(selected ? TimiColor.coral : Color.white))
+                .overlay(Capsule().stroke(selected ? TimiColor.ink : TimiColor.ink.faded(0.2), lineWidth: CGFloat(selected ? 2 : 1)))
+        }
+        .buttonStyle(.plain)
+        .disabled(store.bookingPaymentBusy)
+        .accessibilityLabel(cents == 0 ? "No Paw It Forward gift" : "Add a \(label) Paw It Forward gift")
     }
 
     @ViewBuilder
@@ -199,6 +262,11 @@ struct BookingPaymentSection: View {
         }
     }
 
+    func resetElements() {
+        flowController = nil
+        paymentOptionLabel = ""
+    }
+
     func prepareElements() async {
         guard let intent = store.bookingPayment, intent.mode == "stripe" else { return }
         guard let secret = intent.clientSecret, let publishable = intent.publishableKey else {
@@ -259,6 +327,8 @@ struct BookingPaymentSection: View {
     }
 
     #else
+
+    func resetElements() { }
 
     /// The path taken by the default build (no `TIMI_STRIPE`), by the macOS
     /// host build that runs the unit tests, and by the Skip/Android build

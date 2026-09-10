@@ -23,9 +23,19 @@ struct IntakeFlowView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 20) {
                         HStack { Button { store.route = .home } label: { Image(systemName: "xmark").frame(width: 42, height: 42).background(.white, in: Circle()) }; Spacer(); ProgressPills(current: step, total: 2); Spacer().frame(width: 42) }
-                        Eyebrow(text: step == 0 ? "1 OF 2 · OBSERVABLE CONCERN" : "2 OF 2 · CONTACT + CONSENT")
-                        DisplayHeadline(text: step == 0 ? "What is happening with \(store.draft.pet.name)?" : "Where should clinics reach you?", size: 38)
-                        if step == 0 { concernStep } else { contactStep }
+                            .timiMorph(0)
+                        // `.id(step)` gives the eyebrow and headline a fresh
+                        // identity per step, so moving between steps morphs
+                        // them out and in — with their own text — instead of
+                        // hard-swapping the words in place. The route change
+                        // out of this screen morphs everything regardless.
+                        VStack(alignment: .leading, spacing: 20) {
+                            Eyebrow(text: step == 0 ? "1 OF 2 · OBSERVABLE CONCERN" : "2 OF 2 · CONTACT + CONSENT")
+                            DisplayHeadline(text: step == 0 ? "What is happening with \(store.draft.pet.name)?" : "Where should clinics reach you?", size: 38)
+                        }
+                        .id("intake-heading-\(step)")
+                        .timiMorph(1)
+                        if step == 0 { concernStep.timiMorph(2) } else { contactStep.timiMorph(2) }
                         HStack(spacing: 12) {
                             if step > 0 { Button("Back") { changeStep(to: 0, proxy: scrollProxy) }.buttonStyle(TimiQuietButtonStyle()) }
                             Button {
@@ -34,6 +44,7 @@ struct IntakeFlowView: View {
                             } label: { HStack { if store.isWorking { ProgressView().tint(.white) }; Text(step == 0 ? "Continue" : "Ask nearby clinics"); Image(systemName: "arrow.right") } }
                                 .buttonStyle(TimiPrimaryButtonStyle()).disabled(store.isWorking || (step == 1 && (!store.draft.legalConsent || !store.draft.contactConsent)))
                         }
+                        .timiMorph(3)
                     }.padding(20).padding(.bottom, 30).id("flowTop")
                         // A form column, not a wall: fold-open and landscape
                         // widths keep the fields a comfortable reading width.

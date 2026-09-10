@@ -40,8 +40,15 @@ struct OfferSearchView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 18) {
                         HStack { Button { confirmingCancel = true } label: { Image(systemName: "xmark").frame(width: 42, height: 42).background(.white, in: Circle()).overlay(Circle().stroke(TimiColor.ink.faded(0.25))) }.buttonStyle(.plain).accessibilityLabel("Cancel this search"); Spacer(); TimiWordmark(compact: true) }
+                            .timiMorph(0)
                         if offers.isEmpty { waitingView } else { offersView }
                     }.padding(20).padding(.bottom, 36)
+                        // Drives the waiting → first-offer swap below through
+                        // the same morph the route changes use; without an
+                        // ambient animation on this value the swap would be
+                        // an instant cut, since it lands from an async poll
+                        // with no withAnimation anywhere in reach.
+                        .animation(TimiScreenChange.animation, value: offers.isEmpty)
                         // A comfortable column on a fold-open or landscape
                         // width; the offer grid below still gets two columns
                         // inside it.
@@ -74,12 +81,12 @@ struct OfferSearchView: View {
 
     var waitingView: some View {
         VStack(spacing: 20) {
-            PulsingBeacon(symbol: "phone.arrow.up.right.fill")
-            Eyebrow(text: "LIVE SEARCH IN PROGRESS")
-            DisplayHeadline(text: "Asking nearby clinics now.", size: 40, alignment: .center)
-            Text("You can choose as soon as an offer arrives. Tími stops after five responses or when the collection window closes.").font(.title3).foregroundStyle(TimiColor.muted).multilineTextAlignment(.center)
-            HStack { MetricChip(title: "Contacted", value: "\(store.currentSearch?.progress?.contacted ?? 0)"); MetricChip(title: "Awaiting", value: "\(store.currentSearch?.progress?.awaiting ?? 0)", color: TimiColor.goldSoft) }
-            SafetyBanner(compact: true, store: store)
+            PulsingBeacon(symbol: "phone.arrow.up.right.fill").timiMorph(1)
+            Eyebrow(text: "LIVE SEARCH IN PROGRESS").timiMorph(2)
+            DisplayHeadline(text: "Asking nearby clinics now.", size: 40, alignment: .center).timiMorph(3)
+            Text("You can choose as soon as an offer arrives. Tími stops after five responses or when the collection window closes.").font(.title3).foregroundStyle(TimiColor.muted).multilineTextAlignment(.center).timiMorph(4)
+            HStack { MetricChip(title: "Contacted", value: "\(store.currentSearch?.progress?.contacted ?? 0)"); MetricChip(title: "Awaiting", value: "\(store.currentSearch?.progress?.awaiting ?? 0)", color: TimiColor.goldSoft) }.timiMorph(5)
+            SafetyBanner(compact: true, store: store).timiMorph(6)
         }.padding(.top, 18)
     }
 
@@ -95,9 +102,9 @@ struct OfferSearchView: View {
 
     var offersView: some View {
         VStack(alignment: .leading, spacing: 17) {
-            Eyebrow(text: "\(offers.count) OF \(store.currentSearch?.maxOffers ?? 5) OFFERS", color: TimiColor.blue)
-            DisplayHeadline(text: headline, size: 40)
-            Text("Compare the clinics below. Nothing is confirmed until you choose.").foregroundStyle(TimiColor.muted)
+            Eyebrow(text: "\(offers.count) OF \(store.currentSearch?.maxOffers ?? 5) OFFERS", color: TimiColor.blue).timiMorph(1)
+            DisplayHeadline(text: headline, size: 40).timiMorph(2)
+            Text("Compare the clinics below. Nothing is confirmed until you choose.").foregroundStyle(TimiColor.muted).timiMorph(3)
             // Offers appear the moment a clinic says yes, so the first one is
             // choosable while the rest are still being asked. Without saying
             // so, one offer on screen looks like the final answer — and
@@ -129,10 +136,10 @@ struct OfferSearchView: View {
                 userLatitude: store.currentLatitude,
                 userLongitude: store.currentLongitude,
                 styleURL: store.mapStyleURL
-            ).frame(height: 220).clipShape(RoundedRectangle(cornerRadius: 20)).overlay(RoundedRectangle(cornerRadius: 20).stroke(TimiColor.ink, lineWidth: 2))
+            ).frame(height: 220).clipShape(RoundedRectangle(cornerRadius: 20)).overlay(RoundedRectangle(cornerRadius: 20).stroke(TimiColor.ink, lineWidth: 2)).timiMorph(4)
             // The app's own chips, not the system's grey segmented picker —
             // the last visibly stock control on this screen.
-            TimiSegmentChips(options: Self.sortOptions, selection: $sort)
+            TimiSegmentChips(options: Self.sortOptions, selection: $sort).timiMorph(5)
             // Adaptive columns: one on a phone, two the moment the width
             // allows (landscape, or a fold-open screen), so a wide display
             // compares offers side by side instead of stretching each card.
@@ -143,7 +150,8 @@ struct OfferSearchView: View {
                         .onAppear { withAnimation(.spring(response: 0.4, dampingFraction: 0.84).delay(Double(index) * 0.06)) { _ = appeared.insert(offer.id) } }
                 }
             }
-            Text("Availability and waits are reported by clinics and may change. Emergency hospitals independently triage every arriving patient.").font(.caption).foregroundStyle(TimiColor.muted).padding(.top, 6)
+            .timiMorph(6)
+            Text("Availability and waits are reported by clinics and may change. Emergency hospitals independently triage every arriving patient.").font(.caption).foregroundStyle(TimiColor.muted).padding(.top, 6).timiMorph(7)
         }
     }
 }
@@ -283,8 +291,9 @@ struct TrackerView: View {
     @ViewBuilder func trackerContent(isWide: Bool) -> some View {
         VStack(alignment: .leading, spacing: 20) {
             HStack { TimiWordmark(compact: true); Spacer(); Text(intake?.publicCode ?? "CONFIRMED").font(.caption).fontWeight(.black).foregroundStyle(TimiColor.blue) }
-            Eyebrow(text: "CLINIC SELECTED", color: TimiColor.blue)
-            DisplayHeadline(text: "\(intake?.pet?.name ?? store.selectedPet.name) has a place to go.", size: 41)
+                .timiMorph(0)
+            Eyebrow(text: "CLINIC SELECTED", color: TimiColor.blue).timiMorph(1)
+            DisplayHeadline(text: "\(intake?.pet?.name ?? store.selectedPet.name) has a place to go.", size: 41).timiMorph(2)
             // Clinic details — the map, the address/phone/Navigate
             // card, and the arrival-status buttons — all reveal or
             // act on the clinic's exact location, which now waits
@@ -306,19 +315,25 @@ struct TrackerView: View {
                             actionButtons
                         }.frame(maxWidth: .infinity)
                     }
+                    .timiMorph(3)
                 } else {
-                    timeline
-                    clinicMap(height: 220)
-                    clinicCard
-                    actionButtons
+                    timeline.timiMorph(3)
+                    clinicMap(height: 220).timiMorph(4)
+                    clinicCard.timiMorph(5)
+                    actionButtons.timiMorph(6)
                 }
             } else {
-                timeline
-                BookingPaymentSection(store: store)
+                timeline.timiMorph(3)
+                BookingPaymentSection(store: store).timiMorph(4)
             }
-            SafetyBanner(compact: true)
-            Button("Finish and return home") { confirmingFinish = true }.buttonStyle(TimiQuietButtonStyle())
+            SafetyBanner(compact: true).timiMorph(7)
+            Button("Finish and return home") { confirmingFinish = true }.buttonStyle(TimiQuietButtonStyle()).timiMorph(8)
         }
+        // The moment the combined charge settles, the payment card morphs
+        // out and the clinic details morph in — same choreography as a route
+        // change. The settlement lands from an async poll, so without an
+        // ambient animation on this value the reveal would be a hard cut.
+        .animation(TimiScreenChange.animation, value: store.bookingPaymentSettled)
     }
 
     @ViewBuilder func clinicMap(height: CGFloat) -> some View {

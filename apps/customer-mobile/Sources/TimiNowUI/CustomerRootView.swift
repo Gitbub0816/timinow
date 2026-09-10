@@ -131,8 +131,13 @@ struct HomeView: View {
     @Bindable var store: AppStore
     var body: some View {
         ScrollView {
+            // The `timiMorph` indices choreograph route changes: leaving for
+            // the intake flow, these blocks scatter off in alternating
+            // directions top-to-bottom, and coming home they slide back in
+            // the same order. See TimiMorph in Components.swift.
             VStack(alignment: .leading, spacing: 22) {
                 HStack { TimiWordmark(compact: true); Spacer(); Button { store.selectedTab = 1 } label: { Image(systemName: store.hasPet ? store.selectedPet.species.icon : "plus").font(.title3).foregroundStyle(.white).frame(width: 44, height: 44).background(TimiColor.blue, in: Circle()).overlay(Circle().stroke(TimiColor.ink, lineWidth: 2)) } }
+                    .timiMorph(0)
                 VStack(alignment: .leading, spacing: 8) {
                     Eyebrow(text: store.isDemoMode ? "INTERACTIVE DEMO" : "LIVE NETWORK", color: TimiColor.blue)
                     // No pet yet is a real state, not something to paper over
@@ -143,18 +148,19 @@ struct HomeView: View {
                         : "Add your pet once and Tími keeps them with your account. It takes about twenty seconds.")
                         .font(.title3).foregroundStyle(TimiColor.muted)
                 }
+                .timiMorph(1)
                 if store.hasPet {
-                    CareLaunchPanel(petName: store.selectedPet.name).timiCard(TimiColor.paper)
+                    CareLaunchPanel(petName: store.selectedPet.name).timiCard(TimiColor.paper).timiMorph(2)
                     // No local withAnimation: the route container in
                     // CustomerRootView animates every route change the same
                     // way, and a second animation here fought it.
-                    Button { store.beginCare() } label: { Label("Find care for \(store.selectedPet.name)", systemImage: "arrow.right") }.buttonStyle(TimiPrimaryButtonStyle())
+                    Button { store.beginCare() } label: { Label("Find care for \(store.selectedPet.name)", systemImage: "arrow.right") }.buttonStyle(TimiPrimaryButtonStyle()).timiMorph(3)
                 } else {
-                    Button { store.selectedTab = 1 } label: { Label("Add your pet", systemImage: "plus") }.buttonStyle(TimiPrimaryButtonStyle())
+                    Button { store.selectedTab = 1 } label: { Label("Add your pet", systemImage: "plus") }.buttonStyle(TimiPrimaryButtonStyle()).timiMorph(2)
                 }
-                HStack(spacing: 12) { MetricChip(title: "One intake", value: "Up to 30 clinics"); MetricChip(title: "Your choice", value: "Up to 5 offers", color: TimiColor.goldSoft) }
-                SafetyBanner(compact: true, store: store)
-                VStack(alignment: .leading, spacing: 12) { Eyebrow(text: "HOW TÍMI WORKS"); processRow(1, "Describe what you observe", "Rules prevent vague requests before anything is shared."); processRow(2, "Clinics answer with live capacity", "Each response includes timing, wait, deposit, and offer hold."); processRow(3, "Choose the best fit", "Only your selected clinic is confirmed; every other offer is released.") }.timiCard(TimiColor.paper)
+                HStack(spacing: 12) { MetricChip(title: "One intake", value: "Up to 30 clinics"); MetricChip(title: "Your choice", value: "Up to 5 offers", color: TimiColor.goldSoft) }.timiMorph(4)
+                SafetyBanner(compact: true, store: store).timiMorph(5)
+                VStack(alignment: .leading, spacing: 12) { Eyebrow(text: "HOW TÍMI WORKS"); processRow(1, "Describe what you observe", "Rules prevent vague requests before anything is shared."); processRow(2, "Clinics answer with live capacity", "Each response includes timing, wait, deposit, and offer hold."); processRow(3, "Choose the best fit", "Only your selected clinic is confirmed; every other offer is released.") }.timiCard(TimiColor.paper).timiMorph(6)
             // Enough clearance for the tab bar, which floats over the scroll
             // view rather than shortening it — the last card was rendering
             // behind it. Capped and centered so a fold-open or landscape

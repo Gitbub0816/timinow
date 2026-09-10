@@ -1723,8 +1723,17 @@ async function handleBookingPayment(request, env, actor, intakeId) {
   if (signInRequired(env) && intake.customerUserId !== actor?.userId) return apiError(403, "INTAKE_ACCESS_DENIED", "This intake belongs to another account.");
   if (!new Set(["accepted", "en_route"]).has(intake.status)) return apiError(409, "INTAKE_NOT_ACCEPTED", "The clinic must accept the intake before this can be charged.");
 
+  // The body is optional — most calls are polls with none. When present,
+  // `contributionCents` is the customer's Paw It Forward gift decision:
+  // a number (0 clears it) re-prices the order; absent leaves it alone.
+  const body = await request.json().catch(() => ({}));
+  const contributionCents = body && body.contributionCents != null ? Number(body.contributionCents) : null;
+  if (contributionCents != null && (!Number.isFinite(contributionCents) || contributionCents < 0)) {
+    return apiError(422, "CONTRIBUTION_INVALID", "The Paw It Forward gift amount must be zero or a positive number of cents.");
+  }
+
   try {
-    const result = await ensureBookingPaymentOrder(env, { intake });
+    const result = await ensureBookingPaymentOrder(env, { intake, contributionCents });
     if (!result.ok) return apiError(result.code === "DATABASE_REQUIRED" ? 503 : 422, result.code, result.message);
     // Half-configured Stripe fails loudly, and server-side. With
     // STRIPE_SECRET_KEY set but STRIPE_PUBLISHABLE_KEY empty, this used to
