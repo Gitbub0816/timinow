@@ -319,6 +319,19 @@ enum TimiTabBarMetrics {
     static let scrollClearance: CGFloat = 112
 }
 
+/// Sends resignFirstResponder app-wide, so the keyboard starts leaving NOW
+/// rather than whenever focus happens to move. The intake flow calls this
+/// before its step morph: with the keyboard still up, the morph and the
+/// keyboard's own dismissal animation ran at once and cancelled each other
+/// out visually.
+enum TimiKeyboard {
+    static func dismiss() {
+        #if !SKIP && canImport(UIKit)
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+        #endif
+    }
+}
+
 extension View {
     /// Bottom clearance for a tab screen's scroll content.
     ///

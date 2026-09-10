@@ -40,7 +40,13 @@ struct IntakeFlowView: View {
                             if step > 0 { Button("Back") { changeStep(to: 0, proxy: scrollProxy) }.buttonStyle(TimiQuietButtonStyle()) }
                             Button {
                                 if step == 0 { if store.concernValidation.isReady { changeStep(to: 1, proxy: scrollProxy) } else { store.errorMessage = store.concernValidation.issues.first } }
-                                else { Task { await store.startSearch() } }
+                                else {
+                                    // Same rule as changeStep: the search
+                                    // screen's fly-in should not share the
+                                    // stage with a departing keyboard.
+                                    TimiKeyboard.dismiss()
+                                    Task { await store.startSearch() }
+                                }
                             } label: { HStack { if store.isWorking { ProgressView().tint(.white) }; Text(step == 0 ? "Continue" : "Ask nearby clinics"); Image(systemName: "arrow.right") } }
                                 .buttonStyle(TimiPrimaryButtonStyle()).disabled(store.isWorking || (step == 1 && (!store.draft.legalConsent || !store.draft.contactConsent)))
                         }
@@ -62,10 +68,22 @@ struct IntakeFlowView: View {
     /// smoothly, then the whole page yanked down to where the clamped offset
     /// now landed. Scrolling back to the top in the same animation block is
     /// what keeps that snap from happening.
+    ///
+    /// The keyboard leaves first, then the morph runs. With a text field
+    /// focused (the concern editor, the contact fields), changing steps
+    /// while the keyboard was still up ran the element fly-out and the
+    /// keyboard's own dismissal at the same time — two large animations
+    /// fighting over the same screen height, which read as no choreography
+    /// at all. The short beat lets the keyboard get most of the way out
+    /// before the elements move; with no keyboard up it is imperceptible.
     private func changeStep(to value: Int, proxy: ScrollViewProxy) {
-        // The same snappy register as route changes — the default ease here
-        // read as sluggish next to them.
-        withAnimation(.spring(response: 0.32, dampingFraction: 0.88)) { step = value; proxy.scrollTo("flowTop", anchor: .top) }
+        TimiKeyboard.dismiss()
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 140_000_000)
+            // The same snappy register as route changes — the default ease
+            // here read as sluggish next to them.
+            withAnimation(.spring(response: 0.32, dampingFraction: 0.88)) { step = value; proxy.scrollTo("flowTop", anchor: .top) }
+        }
     }
 
     var concernStep: some View {

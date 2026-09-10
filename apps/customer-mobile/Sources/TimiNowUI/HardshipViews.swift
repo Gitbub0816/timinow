@@ -344,6 +344,19 @@ struct HardshipIdentitySection: View {
             Text("Tími verifies you are a real, unique person through Didit, a third-party identity service, before an assistance decision is made.")
                 .font(.caption).foregroundStyle(TimiColor.muted)
             verifyControls
+            // The refusal, at the point of the tap. A deployment without
+            // Didit credentials answers the session request with a plain
+            // refusal; before this card that answer landed in the shared
+            // error line near the submit button, far enough from the Verify
+            // button that pressing it read as "nothing happened".
+            if !verified, let error = store.hardshipError {
+                Label(error, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption).fontWeight(.semibold)
+                    .foregroundStyle(TimiColor.coral)
+                    .padding(10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(TimiColor.coralSoft, in: RoundedRectangle(cornerRadius: 12))
+            }
         }
         .timiCard(TimiColor.paper)
         #if os(iOS) && !SKIP

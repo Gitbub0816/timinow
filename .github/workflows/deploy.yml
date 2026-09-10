@@ -61,14 +61,18 @@ jobs:
         if: ${{ inputs.migrate }}
         run: npm run db:migrate:remote
 
+      # --var GIT_SHA stamps the deployed commit into each Worker's
+      # /api/health `build` field, so which code is live is a fact you can
+      # curl rather than infer from run timestamps.
       - name: Deploy
         run: |
+          STAMP="--var GIT_SHA:${GITHUB_SHA}"
           case "${{ inputs.target }}" in
-            all)      npm run deploy:all ;;
-            customer) npm run deploy ;;
-            vet)      npm run deploy:vet ;;
-            admin)    npm run deploy:admin ;;
-            voice)    npm run deploy:voice ;;
+            all)      npm run deploy -- $STAMP && npm run deploy:vet -- $STAMP && npm run deploy:admin -- $STAMP && npm run deploy:voice -- $STAMP ;;
+            customer) npm run deploy -- $STAMP ;;
+            vet)      npm run deploy:vet -- $STAMP ;;
+            admin)    npm run deploy:admin -- $STAMP ;;
+            voice)    npm run deploy:voice -- $STAMP ;;
           esac
 
       - name: Health

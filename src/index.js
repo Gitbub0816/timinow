@@ -2043,7 +2043,10 @@ async function handleApi(request, env, ctx) {
   const path = url.pathname;
   const method = request.method.toUpperCase();
 
-  if (method === "GET" && path === "/api/health") return json({ ok: true, service: "timinow", version: "1.1.0-multi-offer", database: hasDatabase(env) });
+  // `build` is the git SHA the deploy workflow stamps in (--var GIT_SHA),
+  // so "which code is actually live?" is one curl instead of an argument —
+  // a question that has now cost real debugging time more than once.
+  if (method === "GET" && path === "/api/health") return json({ ok: true, service: "timinow", version: "1.1.0-multi-offer", build: env.GIT_SHA || null, database: hasDatabase(env) });
   if (method === "GET" && path === "/api/config") return handleConfig(env);
   if (method === "GET" && path === "/api/locations") return handleLocationSearch(url, env);
   // Public: the trust module on the customer site renders before sign-in, and
