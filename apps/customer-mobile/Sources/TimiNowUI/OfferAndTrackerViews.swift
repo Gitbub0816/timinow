@@ -54,7 +54,7 @@ struct OfferSearchView: View {
                         // inside it.
                         .frame(maxWidth: 780)
                         .frame(maxWidth: .infinity)
-                }.background(TimiColor.canvas)
+                }.timiScrollFits().background(TimiColor.canvas)
             }
             if confirmingCancel {
                 TimiConfirmCard(
@@ -221,7 +221,7 @@ struct TrackerView: View {
                             .padding(20).padding(.bottom, 34)
                             .frame(maxWidth: 980)
                             .frame(maxWidth: .infinity)
-                    }.background(TimiColor.canvas)
+                    }.timiScrollFits().background(TimiColor.canvas)
                 }
                 if confirmingFinish {
                     TimiConfirmCard(

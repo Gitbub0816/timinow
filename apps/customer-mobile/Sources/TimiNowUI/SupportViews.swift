@@ -91,10 +91,11 @@ struct PetsView: View {
             // so a fold-open width does not stretch every card wall-to-wall.
             // No .navigationTitle: the serif headline above is this screen's
             // title, and the system large-title bar doubled it in grey.
-            }.padding(20).padding(.bottom, TimiTabBarMetrics.scrollClearance)
+            }.padding(20).timiTabScrollClearance()
                 .frame(maxWidth: 720)
                 .frame(maxWidth: .infinity)
         }
+        .timiScrollFits()
         .background(TimiColor.canvas)
         .sheet(isPresented: $showEditor) {
             PetEditor(store: store, isPresented: $showEditor, editing: editing, note: $note)
@@ -293,7 +294,7 @@ struct PetEditor: View {
 struct ActivityView: View {
     @Bindable var store: AppStore
     var body: some View {
-        ScrollView { VStack(alignment: .leading, spacing: 18) { Eyebrow(text: "CARE HISTORY"); DisplayHeadline(text: "Recent activity", size: 40); if store.history.isEmpty { VStack(spacing: 14) { Image(systemName: "clock.badge.questionmark").font(.system(size: 45)).foregroundStyle(TimiColor.blue); Text("No completed searches yet").font(.title3).fontWeight(.black); Text("Selected clinics and arrival progress will appear here.").font(.caption).foregroundStyle(TimiColor.muted) }.frame(maxWidth: .infinity).padding(.vertical, 50).timiCard(Color.white) } else { ForEach(store.history) { item in HStack(spacing: 13) { Image(systemName: "checkmark.seal.fill").font(.title2).foregroundStyle(TimiColor.blue); VStack(alignment: .leading) { Text("\(item.petName) · \(item.clinicName)").fontWeight(.bold); Text(item.status.replacingOccurrences(of: "_", with: " ").capitalized).font(.caption).foregroundStyle(TimiColor.muted) }; Spacer() }.timiCard(Color.white) } } }.padding(20).padding(.bottom, TimiTabBarMetrics.scrollClearance).frame(maxWidth: 720).frame(maxWidth: .infinity) }.background(TimiColor.canvas)
+        ScrollView { VStack(alignment: .leading, spacing: 18) { Eyebrow(text: "CARE HISTORY"); DisplayHeadline(text: "Recent activity", size: 40); if store.history.isEmpty { VStack(spacing: 14) { Image(systemName: "clock.badge.questionmark").font(.system(size: 45)).foregroundStyle(TimiColor.blue); Text("No completed searches yet").font(.title3).fontWeight(.black); Text("Selected clinics and arrival progress will appear here.").font(.caption).foregroundStyle(TimiColor.muted) }.frame(maxWidth: .infinity).padding(.vertical, 50).timiCard(Color.white) } else { ForEach(store.history) { item in HStack(spacing: 13) { Image(systemName: "checkmark.seal.fill").font(.title2).foregroundStyle(TimiColor.blue); VStack(alignment: .leading) { Text("\(item.petName) · \(item.clinicName)").fontWeight(.bold); Text(item.status.replacingOccurrences(of: "_", with: " ").capitalized).font(.caption).foregroundStyle(TimiColor.muted) }; Spacer() }.timiCard(Color.white) } } }.padding(20).timiTabScrollClearance().frame(maxWidth: 720).frame(maxWidth: .infinity) }.timiScrollFits().background(TimiColor.canvas)
     }
 }
 
@@ -342,10 +343,11 @@ struct SettingsView: View {
                 if store.developerModeEnabled { developer }
             }
             .padding(20)
-            .padding(.bottom, TimiTabBarMetrics.scrollClearance)
+            .timiTabScrollClearance()
             .frame(maxWidth: 720)
             .frame(maxWidth: .infinity)
         }
+        .timiScrollFits()
         .background(TimiColor.canvas)
     }
 

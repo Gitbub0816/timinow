@@ -50,6 +50,7 @@ struct HardshipEntryView: View {
             .frame(maxWidth: 720)
             .frame(maxWidth: .infinity)
         }
+        .timiScrollFits()
         .background(TimiColor.canvas)
         .navigationTitle("Paw It Forward Fund")
         .task { if store.hardshipEligibility == nil { await store.loadHardshipEligibility() } }

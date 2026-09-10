@@ -30,6 +30,8 @@
     <Color x:Key="CoralSoftColor">#FFF0ED</Color>
     <Color x:Key="GoldColor">#F7C84B</Color>
     <Color x:Key="GoldSoftColor">#FFF0B9</Color>
+    <Color x:Key="NavyColor">#101B3D</Color>
+    <Color x:Key="GreenColor">#12845D</Color>
     <Color x:Key="CanvasColor">#F3F5FA</Color>
     <Color x:Key="MutedColor">#6F7483</Color>
     <Color x:Key="PaperColor">#FFFFFF</Color>
@@ -44,6 +46,8 @@
     <SolidColorBrush x:Key="CoralSoft" Color="{StaticResource CoralSoftColor}"/>
     <SolidColorBrush x:Key="Gold" Color="{StaticResource GoldColor}"/>
     <SolidColorBrush x:Key="GoldSoft" Color="{StaticResource GoldSoftColor}"/>
+    <SolidColorBrush x:Key="Navy" Color="{StaticResource NavyColor}"/>
+    <SolidColorBrush x:Key="Green" Color="{StaticResource GreenColor}"/>
     <SolidColorBrush x:Key="Canvas" Color="{StaticResource CanvasColor}"/>
     <SolidColorBrush x:Key="Muted" Color="{StaticResource MutedColor}"/>
     <SolidColorBrush x:Key="Paper" Color="{StaticResource PaperColor}"/>

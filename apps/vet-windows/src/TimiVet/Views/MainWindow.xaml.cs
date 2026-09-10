@@ -35,6 +35,19 @@ public partial class MainWindow : Window
         SettingsExpander.BringIntoView();
     }
 
+    /// <summary>The left rail's "Overflow tools" nav item — same expand-and-scroll treatment as settings.
+    /// The section used to be findable only by scrolling to a collapsed expander at the page's end.</summary>
+    private void NavOverflow_Click(object sender, RoutedEventArgs e)
+    {
+        OverflowToolsExpander.IsExpanded = true;
+        OverflowToolsExpander.BringIntoView();
+    }
+
+    /// <summary>Either floating-console checkbox: apply to the live pill immediately — the Mac panel's
+    /// withObservationTracking equivalent, wired as a click instead of waiting for the next ShowMini.</summary>
+    private void MiniTopmost_Click(object sender, RoutedEventArgs e)
+        => ((App)System.Windows.Application.Current).ApplyMiniTopmost();
+
     private void OnClosing(object? sender, CancelEventArgs e)
     {
         if (((App)System.Windows.Application.Current).IsExiting) return;

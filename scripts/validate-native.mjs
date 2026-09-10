@@ -74,7 +74,12 @@ const expectations = [
   [tracker, "sorted.prefix(5)", "five-offer comparison"],
   [onboarding, "completeOnboarding", "guided onboarding completion"],
   [mini, 'Topmost="True"', "always-on-top floating queue"],
-  [mini, 'ResizeMode="CanResizeWithGrip"', "resizable floating queue"],
+  // Content-sized on purpose, replacing the old CanResizeWithGrip contract:
+  // the pill is a tight capsule when idle and a decision card when a request
+  // waits, and a window whose size the content decides has nothing for a
+  // drag-grip to do — same shape as the Mac FloatingPanel.fit(to:).
+  [mini, 'SizeToContent="WidthAndHeight"', "content-sized floating pill"],
+  [mini, 'ResizeMode="NoResize"', "content-sized floating pill (no grip)"],
   [alerts, "NotifyIcon", "Windows tray alerts"],
   [clinicApi, "api/clinic/dashboard", "clinic dashboard integration"],
   [clinicApi, "search-targets", "clinic offer integration"]

@@ -61,6 +61,9 @@ public partial class App : System.Windows.Application
         {
             _alerts.NewRequest(request);
             if (_settings.AutoShowMiniOnNewRequest) ShowMini();
+            // A new patient is the moment the pill must be visible, so it is
+            // also the moment to win back a stolen z-order.
+            _mini?.ReassertTopmostIfWanted();
         };
         // "Nothing happens when a request comes in" is impossible to diagnose by waiting for a real
         // patient, so the Test button in Settings plays the same sound the same way.
@@ -155,9 +158,19 @@ public partial class App : System.Windows.Application
     public void ShowMini()
     {
         if (_mini is null) return;
-        if (_mini.WindowState == WindowState.Minimized) _mini.WindowState = WindowState.Normal;
         _mini.Topmost = _viewModel?.Settings.MiniWindowTopmost ?? true;
-        _mini.Show(); _mini.Activate();
+        // No Activate(): the pill is a WS_EX_NOACTIVATE surface on purpose —
+        // showing it must not pull focus off whatever is being typed.
+        _mini.Show();
+        _mini.ReassertTopmostIfWanted();
+    }
+
+    /// <summary>Applies the Settings checkboxes to the live pill immediately — the Mac panel's withObservationTracking, spelled as a call.</summary>
+    public void ApplyMiniTopmost()
+    {
+        if (_mini is null) return;
+        _mini.Topmost = _viewModel?.Settings.MiniWindowTopmost ?? true;
+        _mini.ReassertTopmostIfWanted();
     }
 
     public void ShowPeople()

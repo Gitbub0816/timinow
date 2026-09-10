@@ -23,6 +23,25 @@ public sealed class NullToInverseVisibilityConverter : IValueConverter
     public object ConvertBack(object? value, Type targetType, object parameter, CultureInfo culture) => throw new NotSupportedException();
 }
 
+/// <summary>The floating pill's pending badge: shown only when the count is nonzero.</summary>
+public sealed class CountToVisibilityConverter : IValueConverter
+{
+    public object Convert(object? value, Type targetType, object parameter, CultureInfo culture)
+        => value is int count && count > 0 ? Visibility.Visible : Visibility.Collapsed;
+    public object ConvertBack(object? value, Type targetType, object parameter, CultureInfo culture) => throw new NotSupportedException();
+}
+
+/// <summary>
+/// "same_day" → "SAME DAY" for the pill's urgency badge — the emergency case
+/// is handled by a trigger in the XAML, which also recolours the badge.
+/// </summary>
+public sealed class UrgencyLabelConverter : IValueConverter
+{
+    public object Convert(object? value, Type targetType, object parameter, CultureInfo culture)
+        => (value as string ?? "").Replace('_', ' ').ToUpperInvariant();
+    public object ConvertBack(object? value, Type targetType, object parameter, CultureInfo culture) => throw new NotSupportedException();
+}
+
 /// <summary>
 /// Shows the accept/decline pair only on a request that is still waiting for an answer.
 ///

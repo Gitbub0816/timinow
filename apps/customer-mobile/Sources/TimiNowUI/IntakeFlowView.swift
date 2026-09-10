@@ -50,7 +50,7 @@ struct IntakeFlowView: View {
                         // widths keep the fields a comfortable reading width.
                         .frame(maxWidth: 720)
                         .frame(maxWidth: .infinity)
-                }.background(TimiColor.canvas)
+                }.timiScrollFits().background(TimiColor.canvas)
             }
         }
     }

@@ -60,6 +60,17 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         Settings = settings;
         _api = api;
         _auth = auth;
+        // The floating pill renders whichever request leads the queue (and a
+        // "+N more waiting" line), so the derived properties below have to
+        // move whenever the collection does — WPF bindings cannot see
+        // FirstOrDefault() change on their own.
+        PendingRequests.CollectionChanged += (_, _) =>
+        {
+            Raise(nameof(LeadRequest));
+            Raise(nameof(HasLeadRequest));
+            Raise(nameof(HasMoreWaiting));
+            Raise(nameof(MoreWaitingLabel));
+        };
         RefreshCommand = new AsyncCommand(() => RefreshAsync(false), () => !IsBusy);
         ReconnectCommand = new AsyncCommand(ReconnectNowAsync, () => !IsBusy);
         PublishCommand = new AsyncCommand(PublishAsync, () => !IsBusy);
@@ -86,6 +97,14 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         SignOutCommand = new AsyncCommand(SignOutAsync, () => !IsBusy);
         OpenPeopleCommand = new RelayCommand(() => OpenPeopleRequested?.Invoke(this, EventArgs.Empty));
         TestAlertCommand = new RelayCommand(() => TestAlertRequested?.Invoke(this, EventArgs.Empty));
+        // Deliberately NOT IsAdmin-gated, unlike SaveSettingsCommand: alert
+        // sound, floating-console and start-with-Windows choices are
+        // per-workstation preferences, and before this existed a non-admin's
+        // choices (and the Run-key write) only persisted if the app exited
+        // cleanly — while the settings page claimed they applied as changed.
+        SaveAlertSettingsCommand = new RelayCommand(SaveAlertSettings);
+        CopyWidgetSecretCommand = new RelayCommand(CopyWidgetSecret);
+        ResetWorkspaceCommand = new RelayCommand(ResetWorkspace);
 
         // A clinic PC that finishes booting before its Wi-Fi associates, a switch rebooted overnight, a
         // laptop carried between rooms: the network coming back is a fact the OS already knows, and
@@ -125,6 +144,16 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public ToastCenter Toasts { get; } = new(System.Windows.Application.Current?.Dispatcher ?? System.Windows.Threading.Dispatcher.CurrentDispatcher);
     public ObservableCollection<ClinicRequest> Requests { get; } = [];
     public ObservableCollection<ClinicRequest> PendingRequests { get; } = [];
+
+    /// <summary>
+    /// Who is actually on the way — the rows behind the ACTIVE ARRIVALS
+    /// count, same filter as the Mac console's activeArrivalsList. Computed
+    /// per read and re-raised after every refresh, since status moves on
+    /// rows in place where a CollectionChanged never fires.
+    /// </summary>
+    public IReadOnlyList<ClinicRequest> ActiveArrivalRequests =>
+        Requests.Where(r => r.Status is "accepted" or "en_route" or "arrived" or "triaged").ToList();
+    public bool HasActiveArrivalRequests => ActiveArrivalRequests.Count > 0;
     public IReadOnlyList<string> AvailabilityStatuses { get; } = ["available", "limited", "confirm_first", "critical_only", "diverting", "closed"];
 
     private ClinicPayouts _payouts = new();
@@ -201,19 +230,86 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public AsyncCommand SignOutCommand { get; }
     public RelayCommand OpenPeopleCommand { get; }
     public RelayCommand TestAlertCommand { get; }
+    public RelayCommand SaveAlertSettingsCommand { get; }
+    public RelayCommand CopyWidgetSecretCommand { get; }
+    public RelayCommand ResetWorkspaceCommand { get; }
+
+    private void SaveAlertSettings()
+    {
+        try
+        {
+            _settingsStore.Save(Settings);
+            (System.Windows.Application.Current as App)?.ApplyMiniTopmost();
+            Succeed("Alert and floating-console settings saved.");
+        }
+        catch (Exception ex) { Fail(ex.Message); }
+    }
+
+    private void CopyWidgetSecret()
+    {
+        if (string.IsNullOrWhiteSpace(NewWidgetSecret)) return;
+        try { System.Windows.Clipboard.SetText(NewWidgetSecret); Succeed("Widget token copied."); }
+        catch (Exception ex) { Fail(ex.Message); }
+    }
+
+    /// <summary>Back out of a half-shaped offer — the Mac workspace's Reset button.</summary>
+    private void ResetWorkspace()
+    {
+        ResponseType = SelectedRequest?.IsEmergency == true ? "emergency_intake" : "available_now";
+        ClinicNote = "";
+        AvailableAt = null;
+        AvailableTimeText = "";
+    }
 
     public ClinicRequest? SelectedRequest
     {
         get => _selectedRequest;
-        set { if (Set(ref _selectedRequest, value)) { if (value?.IsEmergency == true) ResponseType = "emergency_intake"; OfferCommand.RaiseCanExecuteChanged(); DeclineCommand.RaiseCanExecuteChanged(); } }
+        // Reset, not merely upgrade: the old `if IsEmergency` here let a
+        // custom or emergency response type picked for one patient ride
+        // silently onto the next one selected — the Mac console guards this
+        // in ConsoleView's .onChange(of: selectedRequest?.id) and now this
+        // does the same.
+        set { if (Set(ref _selectedRequest, value)) { if (value is not null) ResponseType = value.IsEmergency ? "emergency_intake" : "available_now"; OfferCommand.RaiseCanExecuteChanged(); DeclineCommand.RaiseCanExecuteChanged(); } }
     }
     public bool IsBusy { get => _isBusy; private set { if (Set(ref _isBusy, value)) RaiseCommands(); } }
-    public string StatusMessage { get => _statusMessage; private set => Set(ref _statusMessage, value); }
+    public string StatusMessage { get => _statusMessage; private set { if (Set(ref _statusMessage, value)) Raise(nameof(PillStatus)); } }
+
+    // ---- Floating pill ----------------------------------------------------
+    //
+    // The same two states as the macOS console's MiniConsoleView: idle, the
+    // pill is a tight capsule; a request waiting, it grows into a decision
+    // card for whichever request leads the queue.
+
+    /// <summary>The request the floating pill's decision card shows.</summary>
+    public ClinicRequest? LeadRequest => PendingRequests.Count > 0 ? PendingRequests[0] : null;
+    public bool HasLeadRequest => PendingRequests.Count > 0;
+    public bool HasMoreWaiting => PendingRequests.Count > 1;
+    public string MoreWaitingLabel => $"+{Math.Max(0, PendingRequests.Count - 1)} more waiting";
+
+    /// <summary>
+    /// The pill's status dot, same semantics as the Mac pill: coral for a
+    /// connection issue (the one state the pill must not hide), gold for
+    /// demo, green for live.
+    /// </summary>
+    public string PillStatus =>
+        StatusMessage.StartsWith("Connection issue", StringComparison.Ordinal) ? "issue"
+        : ConnectionState == ConsoleConnectionState.Demo ? "demo"
+        : "live";
     public string ClinicName { get => _clinicName; private set => Set(ref _clinicName, value); }
     public string ClinicAddress { get => _clinicAddress; private set => Set(ref _clinicAddress, value); }
     public string TenantName { get => _tenantName; private set => Set(ref _tenantName, value); }
-    public string UserRole { get => _userRole; private set => Set(ref _userRole, value); }
+    public string UserRole { get => _userRole; private set { if (Set(ref _userRole, value)) Raise(nameof(RoleLabel)); } }
     public bool IsAdmin => UserRole.EndsWith(":admin", StringComparison.OrdinalIgnoreCase) || UserRole.Equals("admin", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// The rail's role tag in words — "org:admin" is Clerk's spelling, not a
+    /// label to show a receptionist. Mirrors the Mac console's mapping.
+    /// </summary>
+    public string RoleLabel =>
+        IsAdmin ? "ADMINISTRATOR"
+        : string.IsNullOrWhiteSpace(UserRole) ? ""
+        : UserRole.EndsWith(":member", StringComparison.OrdinalIgnoreCase) || UserRole.Equals("member", StringComparison.OrdinalIgnoreCase) ? "TEAM MEMBER"
+        : UserRole.Replace("org:", "").Replace('_', ' ').ToUpperInvariant();
     public int Pending { get => _pending; private set => Set(ref _pending, value); }
     public int ActiveArrivals { get => _activeArrivals; private set => Set(ref _activeArrivals, value); }
     public int CompletedToday { get => _completedToday; private set => Set(ref _completedToday, value); }
@@ -233,8 +329,24 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public ConsoleConnectionState ConnectionState
     {
         get => _connectionState;
-        private set { if (Set(ref _connectionState, value)) { Raise(nameof(ConnectionMode)); Raise(nameof(IsConnectionHealthy)); } }
+        private set { if (Set(ref _connectionState, value)) { Raise(nameof(ConnectionMode)); Raise(nameof(ConnectionModeLabel)); Raise(nameof(IsConnectionHealthy)); Raise(nameof(PillStatus)); } }
     }
+
+    /// <summary>
+    /// The rail chip's wording, in the Mac console's register: "Live
+    /// connection", not "LIVE CLOUDFLARE CONNECTION" — the infrastructure
+    /// vendor is not something a front desk needs shouted at it. The fuller
+    /// <see cref="ConnectionMode"/> headline stays on the CURRENT MODE panel.
+    /// </summary>
+    public string ConnectionModeLabel => ConnectionState switch
+    {
+        ConsoleConnectionState.Live => "Live connection",
+        ConsoleConnectionState.Demo => "Interactive demo",
+        ConsoleConnectionState.Reconnecting => "Reconnecting…",
+        ConsoleConnectionState.Offline => "Offline — queue is stale",
+        ConsoleConnectionState.SignInRequired => "Sign-in required",
+        _ => "Connecting…"
+    };
 
     /// <summary>The headline shown in the left rail's CURRENT MODE panel.</summary>
     public string ConnectionMode => ConnectionState switch
@@ -256,12 +368,31 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private int _stableWaitMin = 15, _stableWaitMax = 35, _capacityCount = 3, _ttlMinutes = 30;
     private bool _acceptsCritical = true;
     private string _publicNote = "Accepting stable urgent-care arrivals.";
-    public string AvailabilityStatus { get => _availabilityStatus; set => Set(ref _availabilityStatus, value); }
-    public int StableWaitMin { get => _stableWaitMin; set => Set(ref _stableWaitMin, value); }
-    public int StableWaitMax { get => _stableWaitMax; set => Set(ref _stableWaitMax, value); }
-    public int CapacityCount { get => _capacityCount; set => Set(ref _capacityCount, value); }
+    public string AvailabilityStatus { get => _availabilityStatus; set { if (Set(ref _availabilityStatus, value)) Raise(nameof(IntakeStatusHeadline)); } }
+    public int StableWaitMin { get => _stableWaitMin; set { if (Set(ref _stableWaitMin, value)) Raise(nameof(IntakeCapacitySubtitle)); } }
+    public int StableWaitMax { get => _stableWaitMax; set { if (Set(ref _stableWaitMax, value)) Raise(nameof(IntakeCapacitySubtitle)); } }
+    public int CapacityCount { get => _capacityCount; set { if (Set(ref _capacityCount, value)) Raise(nameof(IntakeCapacitySubtitle)); } }
     public int TtlMinutes { get => _ttlMinutes; set => Set(ref _ttlMinutes, value); }
-    public bool AcceptsCritical { get => _acceptsCritical; set => Set(ref _acceptsCritical, value); }
+    public bool AcceptsCritical { get => _acceptsCritical; set { if (Set(ref _acceptsCritical, value)) Raise(nameof(IntakeCapacitySubtitle)); } }
+
+    /// <summary>
+    /// What the publish state means, in the words the Mac console's live
+    /// summary bar uses — the combo box's raw "confirm_first" is a value,
+    /// not a sentence anyone at a front desk should have to decode.
+    /// </summary>
+    public string IntakeStatusHeadline => AvailabilityStatus switch
+    {
+        "available" => "Accepting urgent-care arrivals",
+        "limited" => "Limited availability",
+        "confirm_first" => "Confirm before arrival",
+        "critical_only" => "Critical patients only",
+        "diverting" => "Diverting new arrivals",
+        "closed" => "Temporarily closed",
+        _ => AvailabilityStatus.Replace('_', ' ')
+    };
+
+    public string IntakeCapacitySubtitle =>
+        $"{CapacityCount} spot{(CapacityCount == 1 ? "" : "s")} · {StableWaitMin}–{StableWaitMax} min wait · {(AcceptsCritical ? "critical patients accepted" : "stable patients only")}";
     public string PublicNote { get => _publicNote; set => Set(ref _publicNote, value); }
 
     private string _responseType = "available_now", _clinicNote = "", _availableTimeText = DateTime.Now.AddMinutes(30).ToString("h:mm tt");
@@ -685,6 +816,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         {
             var dashboard = await _api.GetDashboardAsync(_lifetime.Token);
             Pending = dashboard.Metrics.Pending; ActiveArrivals = dashboard.Metrics.ActiveArrivals; CompletedToday = dashboard.Metrics.CompletedToday; DeclinedToday = dashboard.Metrics.DeclinedToday;
+            Raise(nameof(ActiveArrivalRequests)); Raise(nameof(HasActiveArrivalRequests));
             ApplyAvailability(dashboard.Location.Availability);
             // Once only, same reasoning as CallPreferencesLoaded below: a poll landing mid-edit must
             // never clobber what an operator is typing into the facility-settings form.
@@ -831,6 +963,12 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private async Task AnswerAsync(ClinicRequest request, bool decline)
     {
         SelectedRequest = request;
+        // The one-press paths answer with the workspace's immediate-accept
+        // default — the same rule the Mac pill applies verbatim: emergencies
+        // go in as emergency intake, everything else as the standard
+        // "available now" offer. Without this, a custom response type left
+        // over in the workspace would silently ride along on a pill answer.
+        if (!decline) ResponseType = request.IsEmergency ? "emergency_intake" : "available_now";
         await RespondAsync(request, decline);
     }
 
@@ -838,11 +976,25 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     {
         if (request is null) return;
         if (!decline && OfferWaitMin > OfferWaitMax) { Fail("Offer minimum wait cannot exceed maximum wait."); return; }
+        // A time that cannot be read is an error to show, never a midnight to
+        // send: the old silent TryParse fallback could offer an owner an
+        // arrival time the operator did not type.
+        var parsedTime = TimeSpan.Zero;
+        var hasTime = false;
+        if (!string.IsNullOrWhiteSpace(AvailableTimeText))
+        {
+            hasTime = TimeSpan.TryParse(AvailableTimeText, out parsedTime);
+            if (!hasTime && !decline && ResponseType == "available_at")
+            {
+                Fail($"Could not read the time \"{AvailableTimeText}\" — use 24-hour HH:MM, like 14:30.");
+                return;
+            }
+        }
         IsBusy = true;
         try
         {
             var availableDateTime = AvailableAt ?? DateTime.Today;
-            if (TimeSpan.TryParse(AvailableTimeText, out var time)) availableDateTime = availableDateTime.Date.Add(time);
+            if (hasTime) availableDateTime = availableDateTime.Date.Add(parsedTime);
             await _api.RespondAsync(request, new ClinicDecision { Decision = decline ? "decline" : "offer", ResponseType = ResponseType, AvailableAt = ResponseType == "available_at" ? new DateTimeOffset(availableDateTime) : null, ArrivalWindowMinutes = ArrivalWindowMinutes, HoldMinutes = HoldMinutes, WaitMin = OfferWaitMin, WaitMax = OfferWaitMax, Note = ClinicNote }, _lifetime.Token);
             // The beacon carries the shape of the decision and nothing that names the clinic, the pet,
             // or the request — /api/analytics is cookieless by contract.

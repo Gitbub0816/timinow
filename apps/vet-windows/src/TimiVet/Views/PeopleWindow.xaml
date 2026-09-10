@@ -77,15 +77,63 @@
                                         <TextBlock Text="{Binding Name}" FontWeight="SemiBold"/>
                                         <TextBlock Text="{Binding Email}" FontSize="11" Foreground="{StaticResource Muted}"/>
                                     </StackPanel>
+                                    <!--
+                                        Your own row keeps its role picker and Remove hidden ("You" shown
+                                        instead) — an administrator must not be able to demote or remove
+                                        themselves out of the workspace with nobody left to undo it. Same
+                                        guard as the Mac console's PeopleView member.isSelf.
+                                    -->
                                     <ComboBox Grid.Column="2" ItemsSource="{Binding DataContext.RoleOptions, RelativeSource={RelativeSource AncestorType=Window}}"
-                                              SelectedItem="{Binding Role}" IsEnabled="{Binding DataContext.IsAdmin, RelativeSource={RelativeSource AncestorType=Window}}" Margin="0,0,8,0"/>
+                                              SelectedItem="{Binding Role}" Margin="0,0,8,0">
+                                        <ComboBox.Style>
+                                            <Style TargetType="ComboBox">
+                                                <Setter Property="IsEnabled" Value="{Binding DataContext.IsAdmin, RelativeSource={RelativeSource AncestorType=Window}}"/>
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding IsSelf}" Value="True">
+                                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </ComboBox.Style>
+                                    </ComboBox>
+                                    <TextBlock Grid.Column="2" Text="You (signed in)" FontSize="11" FontWeight="Bold"
+                                               VerticalAlignment="Center" Foreground="{StaticResource Muted}"
+                                               Visibility="{Binding IsSelf, Converter={StaticResource B2V}}"/>
                                     <TextBlock Grid.Column="3" Text="{Binding JoinedLabel}" FontSize="10" VerticalAlignment="Center" Foreground="{StaticResource Muted}"/>
                                     <Button Grid.Column="4" Content="Save role" Margin="8,0" Style="{StaticResource QuietButton}"
-                                            Command="{Binding DataContext.ChangeRoleCommand, RelativeSource={RelativeSource AncestorType=Window}}" CommandParameter="{Binding}"
-                                            Visibility="{Binding DataContext.IsAdmin, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource B2V}}"/>
+                                            Command="{Binding DataContext.ChangeRoleCommand, RelativeSource={RelativeSource AncestorType=Window}}" CommandParameter="{Binding}">
+                                        <Button.Style>
+                                            <Style TargetType="Button" BasedOn="{StaticResource QuietButton}">
+                                                <Setter Property="Visibility" Value="Collapsed"/>
+                                                <Style.Triggers>
+                                                    <MultiDataTrigger>
+                                                        <MultiDataTrigger.Conditions>
+                                                            <Condition Binding="{Binding DataContext.IsAdmin, RelativeSource={RelativeSource AncestorType=Window}}" Value="True"/>
+                                                            <Condition Binding="{Binding IsSelf}" Value="False"/>
+                                                        </MultiDataTrigger.Conditions>
+                                                        <Setter Property="Visibility" Value="Visible"/>
+                                                    </MultiDataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </Button.Style>
+                                    </Button>
                                     <Button Grid.Column="5" Content="Remove" Style="{StaticResource QuietButton}"
-                                            Command="{Binding DataContext.RemoveMemberCommand, RelativeSource={RelativeSource AncestorType=Window}}" CommandParameter="{Binding}"
-                                            Visibility="{Binding DataContext.IsAdmin, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource B2V}}"/>
+                                            Command="{Binding DataContext.RemoveMemberCommand, RelativeSource={RelativeSource AncestorType=Window}}" CommandParameter="{Binding}">
+                                        <Button.Style>
+                                            <Style TargetType="Button" BasedOn="{StaticResource QuietButton}">
+                                                <Setter Property="Visibility" Value="Collapsed"/>
+                                                <Style.Triggers>
+                                                    <MultiDataTrigger>
+                                                        <MultiDataTrigger.Conditions>
+                                                            <Condition Binding="{Binding DataContext.IsAdmin, RelativeSource={RelativeSource AncestorType=Window}}" Value="True"/>
+                                                            <Condition Binding="{Binding IsSelf}" Value="False"/>
+                                                        </MultiDataTrigger.Conditions>
+                                                        <Setter Property="Visibility" Value="Visible"/>
+                                                    </MultiDataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </Button.Style>
+                                    </Button>
                                 </Grid>
                             </Border>
                         </DataTemplate>

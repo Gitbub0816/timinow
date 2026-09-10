@@ -312,9 +312,40 @@ struct TimiTabBar: View {
 }
 
 /// Clearance the tab screens' scroll content needs so the last card ends
-/// above the floating bar rather than behind it.
+/// above the floating bar rather than behind it. Android-only now: on Apple
+/// platforms the bar sits in the safe area (`safeAreaInset` in
+/// CustomerRootView), which insets every scroll view automatically.
 enum TimiTabBarMetrics {
     static let scrollClearance: CGFloat = 112
+}
+
+extension View {
+    /// Bottom clearance for a tab screen's scroll content.
+    ///
+    /// The fixed 112pt pad this replaces was why every tab screen scrolled
+    /// by about a tab bar's height even when its content fit the display:
+    /// the pad itself was the overflow. With the bar in the safe area, the
+    /// scroll view is already inset by exactly the bar's height, so all the
+    /// content needs is ordinary breathing room. Android keeps the fixed
+    /// clearance until Skip proves `safeAreaInset`.
+    func timiTabScrollClearance() -> some View {
+        #if os(Android)
+        padding(.bottom, TimiTabBarMetrics.scrollClearance)
+        #else
+        padding(.bottom, 8)
+        #endif
+    }
+
+    /// A screen whose content fits its height should not scroll at all —
+    /// not rubber-band, not drift a tenth of a screen. Content taller than
+    /// the display scrolls exactly as before.
+    func timiScrollFits() -> some View {
+        #if os(Android)
+        self
+        #else
+        scrollBounceBehavior(.basedOnSize)
+        #endif
+    }
 }
 
 /// The app's switch: an ink-bordered track that fills coral when on, with a

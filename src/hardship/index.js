@@ -951,6 +951,18 @@ export async function handleHardship(request, env, actor, path, method, options 
 
   if (action === "identity-session") {
     if (method !== "POST") return apiError(405, "METHOD_NOT_ALLOWED", "Use POST to start identity verification.");
+    // A deployment with no Didit credentials would answer with the stub
+    // provider, whose session URL is deliberately unreachable
+    // (identity.stub.invalid) — which clients loaded as an eternal blank
+    // page. Refusing here, with words, protects every client version at
+    // once; the stub keeps working where it belongs (injected provider
+    // sets in tests, and whole-app demo mode).
+    if (!options.providerSet && env.DEMO_MODE !== "true") {
+      const liveSet = defaultProviders(env);
+      if (liveSet.identity?.id === "stub-identity") {
+        return apiError(503, "IDENTITY_NOT_CONFIGURED", "Identity verification isn't switched on for this deployment yet, so an application can't be completed right now. Please check back soon.");
+      }
+    }
     // EMBEDDED unless the client explicitly asks for the hosted fallback.
     const mode = cleanString(body?.mode, 16).toUpperCase() === "HOSTED" ? "HOSTED" : "EMBEDDED";
     try {

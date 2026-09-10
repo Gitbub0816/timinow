@@ -109,17 +109,33 @@ public struct CustomerRootView: View {
     /// pushed screens and scroll positions; the inactive ones are invisible,
     /// untouchable, and hidden from accessibility.
     var homeTabs: some View {
+        // The bar lives in the bottom safe area on Apple platforms, so every
+        // tab's scroll view is inset by exactly its height: content taller
+        // than the screen clears it automatically, and content that fits no
+        // longer needs — or gets — an artificial 112pt pad to scroll into.
+        // Android keeps the overlay + fixed clearance until Skip proves
+        // safeAreaInset.
+        #if os(Android)
         ZStack(alignment: .bottom) {
-            ZStack {
-                homeTab(0) { NavigationStack { HomeView(store: store) } }
-                homeTab(1) { NavigationStack { PetsView(store: store) } }
-                homeTab(2) { NavigationStack { ActivityView(store: store) } }
-                homeTab(3) { NavigationStack { SettingsView(store: store) } }
-            }
-            .animation(.easeInOut(duration: 0.18), value: store.selectedTab)
+            tabStack
             TimiTabBar(selection: $store.selectedTab)
         }
         .background(TimiColor.canvas.ignoresSafeArea())
+        #else
+        tabStack
+            .safeAreaInset(edge: .bottom) { TimiTabBar(selection: $store.selectedTab) }
+            .background(TimiColor.canvas.ignoresSafeArea())
+        #endif
+    }
+
+    var tabStack: some View {
+        ZStack {
+            homeTab(0) { NavigationStack { HomeView(store: store) } }
+            homeTab(1) { NavigationStack { PetsView(store: store) } }
+            homeTab(2) { NavigationStack { ActivityView(store: store) } }
+            homeTab(3) { NavigationStack { SettingsView(store: store) } }
+        }
+        .animation(.easeInOut(duration: 0.18), value: store.selectedTab)
     }
 
     func homeTab(_ index: Int, @ViewBuilder content: () -> some View) -> some View {
@@ -171,10 +187,10 @@ struct HomeView: View {
             // behind it. Capped and centered so a fold-open or landscape
             // width reads as a comfortable column, not a wall of full-width
             // cards.
-            }.padding(20).padding(.bottom, TimiTabBarMetrics.scrollClearance)
+            }.padding(20).timiTabScrollClearance()
                 .frame(maxWidth: 720)
                 .frame(maxWidth: .infinity)
-        }.background(TimiColor.canvas)
+        }.timiScrollFits().background(TimiColor.canvas)
     }
 
     func processRow(_ number: Int, _ title: String, _ detail: String) -> some View {

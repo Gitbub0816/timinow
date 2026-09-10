@@ -26,6 +26,7 @@
         <local:StringEmptyToVisibilityConverter x:Key="TextVisibility"/>
         <local:ConnectionHealthToBrushConverter x:Key="ConnectionBrush"/>
         <local:InitialsConverter x:Key="Initials"/>
+        <local:UrgencyLabelConverter x:Key="UrgencyLabel"/>
     </Window.Resources>
 
     <Grid>
@@ -81,9 +82,9 @@
                             <TextBlock Text="{Binding ClinicAddress}" TextWrapping="Wrap"
                                        Foreground="{StaticResource RailMutedText}" FontSize="11" Margin="0,5,0,0"
                                        Visibility="{Binding ClinicAddress, Converter={StaticResource TextVisibility}}"/>
-                            <TextBlock Text="{Binding UserRole}" TextWrapping="Wrap"
+                            <TextBlock Text="{Binding RoleLabel}" TextWrapping="Wrap"
                                        Foreground="{StaticResource RailTag}" FontSize="10" FontWeight="Bold" Margin="0,6,0,0"
-                                       Visibility="{Binding UserRole, Converter={StaticResource TextVisibility}}"/>
+                                       Visibility="{Binding RoleLabel, Converter={StaticResource TextVisibility}}"/>
                         </StackPanel>
 
                         <!--
@@ -95,7 +96,7 @@
                             <StackPanel Orientation="Horizontal">
                                 <Ellipse Width="9" Height="9" VerticalAlignment="Center"
                                          Fill="{Binding IsConnectionHealthy, Converter={StaticResource ConnectionBrush}}"/>
-                                <TextBlock Text="{Binding ConnectionMode}" Foreground="#DFE7FF" FontSize="12"
+                                <TextBlock Text="{Binding ConnectionModeLabel}" Foreground="#DFE7FF" FontSize="12"
                                            FontWeight="Bold" Margin="9,0,0,0" TextTrimming="CharacterEllipsis"/>
                             </StackPanel>
                         </Border>
@@ -133,6 +134,8 @@
                             </Button>
                             <Button Content="Clinic settings" Style="{StaticResource SidebarNavButton}"
                                     Margin="0,4,0,0" Click="NavSettings_Click"/>
+                            <Button Content="Overflow tools" Style="{StaticResource SidebarNavButton}"
+                                    Margin="0,4,0,0" Click="NavOverflow_Click"/>
                             <Button Content="Manage people" Style="{StaticResource SidebarNavButton}"
                                     Margin="0,4,0,0" Command="{Binding OpenPeopleCommand}"/>
                         </StackPanel>
@@ -215,7 +218,10 @@
                         <Border Grid.Column="0" Style="{StaticResource Card}" Background="{StaticResource PublicCapacityBackground}">
                             <StackPanel>
                                 <TextBlock Text="PUBLIC CAPACITY" Style="{StaticResource Eyebrow}"/>
-                                <TextBlock Text="What pet owners see right now" Style="{StaticResource SectionHeading}" Margin="0,5,0,14"/>
+                                <TextBlock Text="What pet owners see right now" Style="{StaticResource SectionHeading}" Margin="0,5,0,4"/>
+                                <!-- The Mac console's live-summary line: the publish state in words, not a combo-box value. -->
+                                <TextBlock Text="{Binding IntakeStatusHeadline}" FontSize="15" FontWeight="Bold" Foreground="{StaticResource Ink}"/>
+                                <TextBlock Text="{Binding IntakeCapacitySubtitle}" FontSize="12" Foreground="{StaticResource Muted}" Margin="0,2,0,14"/>
                                 <Grid>
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="*" MinWidth="150"/>
@@ -263,36 +269,73 @@
                             between each — the mockup's live-summary metric strip, rather than four separate
                             cards stacked 2x2. Same four bindings as before; only the container changed.
                         -->
-                        <Border Grid.Column="2" Style="{StaticResource Card}" Padding="0">
-                            <Grid>
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition/>
-                                    <ColumnDefinition/>
-                                    <ColumnDefinition/>
-                                    <ColumnDefinition/>
-                                </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="2">
+                            <Border Style="{StaticResource Card}" Padding="0">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition/>
+                                        <ColumnDefinition/>
+                                        <ColumnDefinition/>
+                                        <ColumnDefinition/>
+                                    </Grid.ColumnDefinitions>
 
-                                <StackPanel Grid.Column="0" Margin="18,16">
-                                    <TextBlock Text="WAITING" Style="{StaticResource Eyebrow}"/>
-                                    <TextBlock Text="{Binding Pending}" Style="{StaticResource MetricValue}" Foreground="{StaticResource Coral}"/>
-                                </StackPanel>
-                                <Border Grid.Column="1" Width="1" Background="{StaticResource CardBorder}" HorizontalAlignment="Left"/>
-                                <StackPanel Grid.Column="1" Margin="18,16">
+                                    <StackPanel Grid.Column="0" Margin="18,16">
+                                        <TextBlock Text="WAITING" Style="{StaticResource Eyebrow}"/>
+                                        <TextBlock Text="{Binding Pending}" Style="{StaticResource MetricValue}" Foreground="{StaticResource Coral}"/>
+                                    </StackPanel>
+                                    <Border Grid.Column="1" Width="1" Background="{StaticResource CardBorder}" HorizontalAlignment="Left"/>
+                                    <StackPanel Grid.Column="1" Margin="18,16">
+                                        <TextBlock Text="ACTIVE ARRIVALS" Style="{StaticResource Eyebrow}"/>
+                                        <TextBlock Text="{Binding ActiveArrivals}" Style="{StaticResource MetricValue}"/>
+                                    </StackPanel>
+                                    <Border Grid.Column="2" Width="1" Background="{StaticResource CardBorder}" HorizontalAlignment="Left"/>
+                                    <StackPanel Grid.Column="2" Margin="18,16">
+                                        <TextBlock Text="COMPLETED TODAY" Style="{StaticResource Eyebrow}"/>
+                                        <TextBlock Text="{Binding CompletedToday}" Style="{StaticResource MetricValue}"/>
+                                    </StackPanel>
+                                    <Border Grid.Column="3" Width="1" Background="{StaticResource CardBorder}" HorizontalAlignment="Left"/>
+                                    <StackPanel Grid.Column="3" Margin="18,16">
+                                        <TextBlock Text="DECLINED TODAY" Style="{StaticResource Eyebrow}"/>
+                                        <TextBlock Text="{Binding DeclinedToday}" Style="{StaticResource MetricValue}"/>
+                                    </StackPanel>
+                                </Grid>
+                            </Border>
+
+                            <!-- The rows behind that ACTIVE ARRIVALS number — the Mac console's activeArrivalsCard. -->
+                            <Border Style="{StaticResource Card}" Margin="0,14,0,0">
+                                <StackPanel>
                                     <TextBlock Text="ACTIVE ARRIVALS" Style="{StaticResource Eyebrow}"/>
-                                    <TextBlock Text="{Binding ActiveArrivals}" Style="{StaticResource MetricValue}"/>
+                                    <TextBlock Text="No active arrivals right now." FontSize="12" Foreground="{StaticResource Muted}" Margin="0,8,0,0"
+                                               Visibility="{Binding HasActiveArrivalRequests, Converter={StaticResource InverseB2V}}"/>
+                                    <ItemsControl ItemsSource="{Binding ActiveArrivalRequests}" Margin="0,4,0,0">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <Grid Margin="0,6">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="44"/>
+                                                        <ColumnDefinition Width="*" MinWidth="120"/>
+                                                        <ColumnDefinition Width="Auto"/>
+                                                    </Grid.ColumnDefinitions>
+                                                    <Border Grid.Column="0" Width="36" Height="36" Background="{StaticResource Green}" CornerRadius="11">
+                                                        <TextBlock Text="{Binding Pet.Name, Mode=OneWay, Converter={StaticResource Initials}}"
+                                                                   Foreground="White" FontWeight="Bold" FontSize="12"
+                                                                   VerticalAlignment="Center" HorizontalAlignment="Center"/>
+                                                    </Border>
+                                                    <StackPanel Grid.Column="1" Margin="10,0" VerticalAlignment="Center">
+                                                        <TextBlock Text="{Binding PetLine}" FontSize="13" FontWeight="Bold" TextTrimming="CharacterEllipsis"/>
+                                                        <TextBlock Text="{Binding TravelLabel}" FontSize="11" Foreground="{StaticResource Muted}"/>
+                                                    </StackPanel>
+                                                    <Border Grid.Column="2" Background="#E9F7F1" CornerRadius="11" Padding="9,5" VerticalAlignment="Center">
+                                                        <TextBlock Text="{Binding Status, Converter={StaticResource UrgencyLabel}}"
+                                                                   FontSize="10" FontWeight="Bold" Foreground="{StaticResource Green}"/>
+                                                    </Border>
+                                                </Grid>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
                                 </StackPanel>
-                                <Border Grid.Column="2" Width="1" Background="{StaticResource CardBorder}" HorizontalAlignment="Left"/>
-                                <StackPanel Grid.Column="2" Margin="18,16">
-                                    <TextBlock Text="COMPLETED TODAY" Style="{StaticResource Eyebrow}"/>
-                                    <TextBlock Text="{Binding CompletedToday}" Style="{StaticResource MetricValue}"/>
-                                </StackPanel>
-                                <Border Grid.Column="3" Width="1" Background="{StaticResource CardBorder}" HorizontalAlignment="Left"/>
-                                <StackPanel Grid.Column="3" Margin="18,16">
-                                    <TextBlock Text="DECLINED TODAY" Style="{StaticResource Eyebrow}"/>
-                                    <TextBlock Text="{Binding DeclinedToday}" Style="{StaticResource MetricValue}"/>
-                                </StackPanel>
-                            </Grid>
-                        </Border>
+                            </Border>
+                        </StackPanel>
                     </Grid>
 
                     <!-- ========== Review queue + decision workspace ========== -->
@@ -323,6 +366,13 @@
                                 <TextBlock DockPanel.Dock="Top" Margin="18,0,18,8" Style="{StaticResource Hint}"
                                            Text="Answer here for the ordinary case. Open the workspace on the right to shape an offer — a later time, a different arrival window, a note."/>
 
+                                <!-- The Mac console's empty-queue state: an empty list that says so, not a blank pane. -->
+                                <StackPanel DockPanel.Dock="Top" Margin="18,26"
+                                            Visibility="{Binding HasLeadRequest, Converter={StaticResource InverseB2V}}">
+                                    <TextBlock Text="Queue is clear" FontSize="16" FontWeight="Bold" Foreground="{StaticResource Ink}"/>
+                                    <TextBlock Text="New requests appear here the moment a pet owner nearby asks — and on the floating pill, wherever it is."
+                                               FontSize="12" Foreground="{StaticResource Muted}" TextWrapping="Wrap" Margin="0,4,0,0"/>
+                                </StackPanel>
                                 <ListBox MinHeight="300" MaxHeight="540"
                                          ItemsSource="{Binding PendingRequests}" SelectedItem="{Binding SelectedRequest}">
                                     <ListBox.ItemTemplate>
@@ -418,7 +468,7 @@
                                         </StackPanel>
                                     </Border>
 
-                                    <UniformGrid Columns="3" Margin="0,16,0,16">
+                                    <UniformGrid Columns="4" Margin="0,16,0,16">
                                         <StackPanel>
                                             <TextBlock Text="OWNER" FontSize="9" FontWeight="Bold" Foreground="{StaticResource Muted}"/>
                                             <TextBlock Text="{Binding SelectedRequest.Owner.Name}" FontWeight="SemiBold" TextWrapping="Wrap"/>
@@ -430,6 +480,10 @@
                                         <StackPanel>
                                             <TextBlock Text="TRAVEL" FontSize="9" FontWeight="Bold" Foreground="{StaticResource Muted}"/>
                                             <TextBlock Text="{Binding SelectedRequest.TravelLabel}" FontWeight="SemiBold" TextWrapping="Wrap"/>
+                                        </StackPanel>
+                                        <StackPanel>
+                                            <TextBlock Text="SEARCH EXPIRES" FontSize="9" FontWeight="Bold" Foreground="{StaticResource Muted}"/>
+                                            <TextBlock Text="{Binding SelectedRequest.ExpiresLabel}" FontWeight="SemiBold" TextWrapping="Wrap"/>
                                         </StackPanel>
                                     </UniformGrid>
 
@@ -516,12 +570,16 @@
 
                                     <Grid Margin="0,18,0,0">
                                         <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
                                             <ColumnDefinition/>
                                             <ColumnDefinition Width="12"/>
                                             <ColumnDefinition/>
                                         </Grid.ColumnDefinitions>
-                                        <Button Grid.Column="0" Content="Decline request" Command="{Binding DeclineCommand}" Style="{StaticResource QuietButton}"/>
-                                        <Button Grid.Column="2" Content="{Binding OfferActionLabel}" Command="{Binding OfferCommand}" Style="{StaticResource CoralButton}"/>
+                                        <!-- Back out of a half-shaped offer — the Mac workspace's Reset. -->
+                                        <Button Grid.Column="0" Content="Reset" Command="{Binding ResetWorkspaceCommand}"
+                                                Style="{StaticResource QuietButton}" MinWidth="64" Margin="0,0,10,0"/>
+                                        <Button Grid.Column="1" Content="Decline request" Command="{Binding DeclineCommand}" Style="{StaticResource QuietButton}"/>
+                                        <Button Grid.Column="3" Content="{Binding OfferActionLabel}" Command="{Binding OfferCommand}" Style="{StaticResource CoralButton}"/>
                                     </Grid>
                                 </StackPanel>
                             </StackPanel>
@@ -733,9 +791,27 @@
                                     </Grid>
                                     <TextBlock Style="{StaticResource Hint}"
                                                Text="The alert plays real audio through this app's own output, not the Windows event beep — that follows the separate System sounds channel and is silent under the &quot;No Sounds&quot; scheme most managed machines ship with. Press Test to hear it now."/>
-                                    <CheckBox Content="Floating console stays on top" IsChecked="{Binding Settings.MiniWindowTopmost}" Margin="0,10,0,4"/>
+                                    <CheckBox Content="Floating console stays on top" IsChecked="{Binding Settings.MiniWindowTopmost}" Margin="0,10,0,4"
+                                              Click="MiniTopmost_Click"/>
+                                    <!--
+                                        The Mac console's "Stay above full-screen apps" (NSPanel screen-saver
+                                        level). Win32 has no z-band above Topmost, so here it means the pill
+                                        re-asserts itself whenever another topmost window steals the order.
+                                    -->
+                                    <CheckBox Content="Stay above everything (re-assert when another window takes over)"
+                                              IsChecked="{Binding Settings.StayAboveEverything}" Margin="0,0,0,4"
+                                              Click="MiniTopmost_Click"/>
                                     <CheckBox Content="Open the floating console automatically on a new request" IsChecked="{Binding Settings.AutoShowMiniOnNewRequest}"/>
                                     <CheckBox Content="Start Tími Vet with Windows" IsChecked="{Binding Settings.StartWithWindows}"/>
+                                    <!--
+                                        Persists for ANY signed-in user — deliberately not the admin-gated
+                                        connection save. Before this button, a non-admin's alert and
+                                        floating-console choices (and the start-with-Windows Run key) only
+                                        reached disk if the app exited cleanly.
+                                    -->
+                                    <Button Content="Save alert settings" Command="{Binding SaveAlertSettingsCommand}"
+                                            Style="{StaticResource QuietButton}" HorizontalAlignment="Left"
+                                            MinHeight="30" Padding="14,4" FontSize="12" Margin="0,10,0,0"/>
                                     <!--
                                         The mockup's "Preview floating console" button. Same destination as
                                         "Open floating console" in the left rail — this one exists so the two
@@ -926,8 +1002,12 @@
                                         <TextBlock Text="Paste this on your site:" Margin="0,0,0,5"/>
                                         <TextBox Text="{Binding NewWidgetEmbedSnippet, Mode=OneWay}" IsReadOnly="True" FontFamily="Consolas" FontSize="11"
                                                  TextWrapping="Wrap" AcceptsReturn="True" Height="60"/>
-                                        <Button Content="I've saved it" Command="{Binding DismissNewWidgetSecretCommand}"
-                                                Style="{StaticResource QuietButton}" Margin="0,10,0,0" HorizontalAlignment="Left"/>
+                                        <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
+                                            <Button Content="Copy token" Command="{Binding CopyWidgetSecretCommand}"
+                                                    Style="{StaticResource QuietButton}" HorizontalAlignment="Left"/>
+                                            <Button Content="I've saved it" Command="{Binding DismissNewWidgetSecretCommand}"
+                                                    Style="{StaticResource QuietButton}" Margin="8,0,0,0" HorizontalAlignment="Left"/>
+                                        </StackPanel>
                                     </StackPanel>
                                 </Border>
 
@@ -946,11 +1026,42 @@
                                                         <TextBlock Text="{Binding Prefix}" FontFamily="Consolas" Foreground="{StaticResource Muted}" FontSize="11"/>
                                                         <TextBlock Text="{Binding SitesLabel}" Foreground="{StaticResource Muted}" FontSize="11"/>
                                                         <TextBlock Text="{Binding LastUsedLabel}" Foreground="{StaticResource Muted}" FontSize="11"/>
+                                                        <TextBlock Text="Revoked" Foreground="{StaticResource CoralDark}" FontSize="11" FontWeight="Bold">
+                                                            <TextBlock.Style>
+                                                                <Style TargetType="TextBlock">
+                                                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                                                    <Style.Triggers>
+                                                                        <DataTrigger Binding="{Binding Status}" Value="revoked">
+                                                                            <Setter Property="Visibility" Value="Visible"/>
+                                                                        </DataTrigger>
+                                                                    </Style.Triggers>
+                                                                </Style>
+                                                            </TextBlock.Style>
+                                                        </TextBlock>
                                                     </StackPanel>
+                                                    <!--
+                                                        Revoke offered only where it can succeed: on an admin's
+                                                        screen, for a token that is still active — a revoke button
+                                                        on an already-revoked row is an action that can only fail.
+                                                    -->
                                                     <Button Grid.Column="1" Content="Revoke" Style="{StaticResource QuietButton}"
                                                             Command="{Binding DataContext.RevokeWidgetTokenCommand, RelativeSource={RelativeSource AncestorType=Window}}"
-                                                            CommandParameter="{Binding}"
-                                                            Visibility="{Binding DataContext.IsAdmin, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource B2V}}"/>
+                                                            CommandParameter="{Binding}">
+                                                        <Button.Style>
+                                                            <Style TargetType="Button" BasedOn="{StaticResource QuietButton}">
+                                                                <Setter Property="Visibility" Value="Collapsed"/>
+                                                                <Style.Triggers>
+                                                                    <MultiDataTrigger>
+                                                                        <MultiDataTrigger.Conditions>
+                                                                            <Condition Binding="{Binding DataContext.IsAdmin, RelativeSource={RelativeSource AncestorType=Window}}" Value="True"/>
+                                                                            <Condition Binding="{Binding Status}" Value="active"/>
+                                                                        </MultiDataTrigger.Conditions>
+                                                                        <Setter Property="Visibility" Value="Visible"/>
+                                                                    </MultiDataTrigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </Button.Style>
+                                                    </Button>
                                                 </Grid>
                                             </Border>
                                         </DataTemplate>

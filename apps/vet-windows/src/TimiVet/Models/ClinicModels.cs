@@ -167,7 +167,21 @@ public sealed class ClinicRequest : INotifyPropertyChanged
     private DateTimeOffset? _requestedAt;
     public DateTimeOffset? RequestedAt { get => _requestedAt; set => Set(ref _requestedAt, value); }
     private DateTimeOffset? _requestExpiresAt;
-    public DateTimeOffset? RequestExpiresAt { get => _requestExpiresAt; set => Set(ref _requestExpiresAt, value); }
+    public DateTimeOffset? RequestExpiresAt { get => _requestExpiresAt; set { if (Set(ref _requestExpiresAt, value)) Raise(nameof(ExpiresLabel)); } }
+
+    /// <summary>
+    /// How long the search window has left — the Mac workspace's "SEARCH
+    /// EXPIRES" readout. The field was parsed and then shown nowhere.
+    /// </summary>
+    [JsonIgnore] public string ExpiresLabel
+    {
+        get
+        {
+            if (RequestExpiresAt is not { } expires) return "—";
+            var minutes = (int)Math.Ceiling((expires - DateTimeOffset.Now).TotalMinutes);
+            return minutes <= 0 ? "Expired" : $"{minutes} min";
+        }
+    }
     private DateTimeOffset? _updatedAt;
     public DateTimeOffset? UpdatedAt { get => _updatedAt; set => Set(ref _updatedAt, value); }
     private bool _searchTarget;
@@ -312,6 +326,13 @@ public sealed class AppSettings
     public bool AlertsEnabled { get; set; } = true;
     public bool PlaySound { get; set; } = true;
     public bool MiniWindowTopmost { get; set; } = true;
+    /// <summary>
+    /// The Mac console's "Stay above full-screen apps" (NSPanel .screenSaver
+    /// level). Win32 has no z-band above Topmost, so on Windows this means
+    /// "re-assert topmost whenever something steals it" — see
+    /// MiniWindow.ReassertTopmostIfWanted.
+    /// </summary>
+    public bool StayAboveEverything { get; set; }
     public bool StartWithWindows { get; set; }
 
     // Floating console geometry, remembered across launches instead of hardcoded startup coordinates.
@@ -392,6 +413,13 @@ public sealed class TenantMember
     public string? Name { get; set; }
     public string Role { get; set; } = "org:member";
     public DateTimeOffset? JoinedAt { get; set; }
+    /// <summary>
+    /// This row is the signed-in operator. The Worker sends it (the Mac
+    /// console has read it all along); the people window uses it to keep an
+    /// administrator from demoting or removing themselves out of the
+    /// workspace with nobody left to undo it.
+    /// </summary>
+    public bool IsSelf { get; set; }
 
     [JsonIgnore] public bool IsAdmin => Role.EndsWith(":admin", StringComparison.OrdinalIgnoreCase) || Role.Equals("admin", StringComparison.OrdinalIgnoreCase);
     [JsonIgnore] public string JoinedLabel => JoinedAt is null ? "" : JoinedAt.Value.LocalDateTime.ToString("MMM d, yyyy");
