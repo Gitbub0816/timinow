@@ -159,7 +159,13 @@ public final class TimiGateway: @unchecked Sendable {
     public func refreshIntake(_ id: String) async throws -> CareIntake {
         guard let baseURL else { throw TimiAPIError.invalidConfiguration(configuredAddress) }
         let envelope: IntakeEnvelope = try await send(baseURL.appendingPathComponent("api/intakes/\(id)"))
-        return envelope.intake
+        // The Worker sends the clinic alongside the intake (same envelope as
+        // select-offer). Attach it here so every caller that replaces
+        // `currentIntake` with this result keeps the clinic's name, address
+        // and coordinates — dropping them is what used to kill Navigate.
+        var intake = envelope.intake
+        if intake.location == nil { intake.location = envelope.location }
+        return intake
     }
 
     public func updateIntake(_ id: String, status: String) async throws -> CareIntake {

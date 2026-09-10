@@ -2188,7 +2188,15 @@ async function handleAuthenticatedApi(request, env, ctx, actor, url, path, metho
       const intake = await getIntake(env, intakeId);
       if (!intake) return apiError(404, "INTAKE_NOT_FOUND", "The intake request was not found.");
       if (signInRequired(env) && intake.customerUserId !== actor?.userId) return apiError(403, "INTAKE_ACCESS_DENIED", "This intake belongs to another account.");
-      return json({ intake });
+      // The clinic location travels with the intake, exactly as the
+      // select-offer response sends it. Without this, an app relaunch that
+      // restores a booked visit from just this GET had an intake with no
+      // clinic name, address, or coordinates — a tracker with a dead
+      // Navigate button and "Address unavailable" where the clinic goes.
+      // This intake is the customer's own confirmed booking, so the reveal
+      // already happened at selection; nothing masked leaks here.
+      const bookedLocation = await getLocation(env, intake.locationId);
+      return json({ intake, location: bookedLocation ? enrichLocation(bookedLocation) : null });
     }
     if (method === "POST" && action === "status") return updateCustomerIntakeStatus(request, env, actor, intakeId);
     if (method === "POST" && action === "payment") return handlePayment(request, env, actor, intakeId);

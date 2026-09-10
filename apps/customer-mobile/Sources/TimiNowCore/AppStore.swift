@@ -266,6 +266,9 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
         #endif
         persistPets()
         persistHistory()
+        // The signed-out account's active flow must not greet the next
+        // sign-in on this phone.
+        persistCareFlow()
     }
 
     // MARK: - Push notifications
@@ -306,6 +309,7 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
                 route = .searching
             }
             selectedTab = 0
+            persistCareFlow()
             trackEvent("push_opened", path: "push", meta: ["searchId": searchId])
         } catch {
             report(error)
@@ -567,6 +571,7 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
             locations = try await gateway.locations(latitude: draft.latitude, longitude: draft.longitude, species: draft.pet.species, care: care)
             currentSearch = try await gateway.startSearch(draft, locationIds: locations.prefix(30).map(\.id))
             route = .searching
+            persistCareFlow()
             // Species and urgency are coarse product facts; the pet's name,
             // the owner and the location deliberately stay out of the meta.
             trackEvent("search_started", path: "intake", meta: ["species": draft.pet.species.rawValue, "urgency": draft.urgency.rawValue])
@@ -618,7 +623,7 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
 
     public func refreshSearch() async {
         guard let search = currentSearch, !gateway.isDemo, ["collecting", "offers_ready"].contains(search.status) else { return }
-        do { currentSearch = try await gateway.refreshSearch(search.id) }
+        do { currentSearch = try await gateway.refreshSearch(search.id); persistCareFlow() }
         catch { report(error) }
     }
 
@@ -631,6 +636,7 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
             currentIntake = result.intake
             currentIntake?.location = result.location ?? offer.location
             route = .tracker
+            persistCareFlow()
             showCelebration = true
             history.insert(CareHistoryItem(id: result.intake.id, petName: result.intake.pet?.name ?? selectedPet.name, clinicName: (result.location ?? offer.location)?.name ?? "Veterinary clinic", status: result.intake.status, dateISO: result.intake.decisionAt ?? ""), at: 0)
             persistHistory()
@@ -643,9 +649,20 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
         guard var intake = currentIntake else { return }
         if gateway.isDemo { intake.status = status; currentIntake = intake }
         else {
-            do { currentIntake = try await gateway.updateIntake(intake.id, status: status) }
+            do {
+                var fresh = try await gateway.updateIntake(intake.id, status: status)
+                // The status endpoint's intake carries no clinic object;
+                // replacing wholesale used to erase the location the tracker
+                // was attached at selection — after "We're leaving now" the
+                // map went blank and Navigate silently disabled.
+                if fresh.location == nil { fresh.location = intake.location }
+                currentIntake = fresh
+            }
             catch { report(error) }
         }
+        // A status change may have just ended the visit (seen, no-show), and
+        // the persisted flow must end with it.
+        persistCareFlow()
     }
 
     // MARK: - Automatic arrival tracking
@@ -707,7 +724,12 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
         // confirmation on-device, which makes it the client-side "payment
         // succeeded" moment — the webhook remains the authority on the money.
         trackEvent("deposit_paid", path: "tracker")
-        do { currentIntake = try await gateway.refreshIntake(intake.id) }
+        do {
+            var fresh = try await gateway.refreshIntake(intake.id)
+            if fresh.location == nil { fresh.location = intake.location }
+            currentIntake = fresh
+            persistCareFlow()
+        }
         catch { report(error) }
     }
 
@@ -895,14 +917,145 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
 
     public func record(_ milestone: String) async {
         guard var intake = currentIntake else { return }
-        do { try await gateway.recordObservation(intake: intake, milestone: milestone); intake.status = milestone; currentIntake = intake }
+        do { try await gateway.recordObservation(intake: intake, milestone: milestone); intake.status = milestone; currentIntake = intake; persistCareFlow() }
         catch { report(error) }
     }
 
     public func resetCareFlow() {
         currentSearch = nil; currentIntake = nil; route = .home; selectedTab = 0
         navigationDestination = nil; currentNavigationStep = nil; currentRouteSummary = nil
+        // Explicitly finishing or cancelling is the one thing that forgets an
+        // active flow — a relaunch must not resurrect what somebody just left.
+        persistCareFlow()
     }
+
+    // MARK: - Care-flow persistence (an active search or booking survives relaunch)
+
+    /// The statuses under which a search is still worth reopening to.
+    static let activeSearchStatuses = ["collecting", "offers_ready"]
+    /// The statuses under which a booked visit is still in progress.
+    static let activeIntakeStatuses = ["accepted", "en_route", "arrived", "triaged"]
+
+    /// Writes the active care flow's identifiers wherever they change, so a
+    /// killed app can reopen to the same tracker or search. Only ids and the
+    /// route are stored — the Worker remains the source of truth and is
+    /// re-asked on restore. A flow in a terminal state (cancelled, expired,
+    /// completed, seen, no-show, declined) erases itself here, which is also
+    /// how `resetCareFlow` clears it. Demo mode persists nothing: its ids
+    /// mean nothing to any Worker a later launch might talk to.
+    func persistCareFlow() {
+        #if !os(Android)
+        guard !gateway.isDemo else {
+            defaults.removeObject(forKey: "timi.careflow.searchId")
+            defaults.removeObject(forKey: "timi.careflow.intakeId")
+            defaults.removeObject(forKey: "timi.careflow.route")
+            return
+        }
+        if let intake = currentIntake, Self.activeIntakeStatuses.contains(intake.status) {
+            defaults.set(intake.id, forKey: "timi.careflow.intakeId")
+        } else {
+            defaults.removeObject(forKey: "timi.careflow.intakeId")
+        }
+        if let search = currentSearch, Self.activeSearchStatuses.contains(search.status) {
+            defaults.set(search.id, forKey: "timi.careflow.searchId")
+        } else {
+            defaults.removeObject(forKey: "timi.careflow.searchId")
+        }
+        defaults.set(route.rawValue, forKey: "timi.careflow.route")
+        #endif
+    }
+
+    /// Cold-launch restore: if the last session left an active booking or
+    /// search behind, re-fetch it and reopen on that screen. Runs once from
+    /// the root view's launch task, after waiting for auth restore to settle
+    /// (the re-fetches ride on its token).
+    ///
+    /// The intake outranks the search — a booked visit is the later stage —
+    /// and a definitive answer that the flow is over (a 4xx from the Worker,
+    /// or a terminal status) clears the persistence. A transport failure
+    /// deliberately does not: an active booking must not be forgotten
+    /// because the first launch after it happened was in a tunnel. The app
+    /// simply stays home and the next launch asks again.
+    public func restoreCareFlowIfNeeded() async {
+        #if !os(Android)
+        guard !gateway.isDemo else { return }
+        let storedIntakeId = defaults.string(forKey: "timi.careflow.intakeId") ?? ""
+        let storedSearchId = defaults.string(forKey: "timi.careflow.searchId") ?? ""
+        guard !storedIntakeId.isEmpty || !storedSearchId.isEmpty else { return }
+        // Something this session already put on screen outranks a stored id.
+        guard route == .home, currentIntake == nil, currentSearch == nil else { return }
+        // The same settle-wait the splash screen uses: restore is
+        // network-bound, so the wait is capped rather than open-ended.
+        var waited = 0.0
+        while !auth.hasAttemptedRestore && waited < 10 {
+            try? await Task.sleep(for: .milliseconds(100))
+            waited += 0.1
+        }
+        try? await auth.ensureFreshToken()
+        if !storedIntakeId.isEmpty {
+            switch await fetchPersistedIntake(storedIntakeId) {
+            case .active(let intake):
+                // Re-checked after the await: a push tap can navigate while
+                // this fetch is in flight, and what it opened wins.
+                guard route == .home, currentIntake == nil else { return }
+                currentIntake = intake
+                route = .tracker
+                persistCareFlow()
+                return
+            case .over:
+                break // Fall through: the paired search is almost surely over too, but let it answer for itself.
+            case .unreachable:
+                return // Keep the stored ids for the next launch.
+            }
+        }
+        if !storedSearchId.isEmpty {
+            switch await fetchPersistedSearch(storedSearchId) {
+            case .activeSearch(let search):
+                guard route == .home, currentSearch == nil else { return }
+                currentSearch = search
+                route = .searching
+                persistCareFlow()
+                return
+            case .searchOver:
+                break
+            case .searchUnreachable:
+                return
+            }
+        }
+        // Everything stored has definitively ended.
+        defaults.removeObject(forKey: "timi.careflow.searchId")
+        defaults.removeObject(forKey: "timi.careflow.intakeId")
+        defaults.removeObject(forKey: "timi.careflow.route")
+        #endif
+    }
+
+    #if !os(Android)
+    private enum PersistedIntakeOutcome { case active(CareIntake), over, unreachable }
+    private enum PersistedSearchOutcome { case activeSearch(CareSearch), searchOver, searchUnreachable }
+
+    private func fetchPersistedIntake(_ id: String) async -> PersistedIntakeOutcome {
+        do {
+            let intake = try await gateway.refreshIntake(id)
+            return Self.activeIntakeStatuses.contains(intake.status) ? .active(intake) : .over
+        } catch {
+            // A 4xx is the Worker saying this record is gone or not ours —
+            // definitive, so the persistence should not outlive it. Anything
+            // else (transport, 5xx, bad response) is a launch-time hiccup.
+            if case TimiAPIError.server(let status, _, _, _) = error, (400..<500).contains(status) { return .over }
+            return .unreachable
+        }
+    }
+
+    private func fetchPersistedSearch(_ id: String) async -> PersistedSearchOutcome {
+        do {
+            let search = try await gateway.refreshSearch(id)
+            return Self.activeSearchStatuses.contains(search.status) ? .activeSearch(search) : .searchOver
+        } catch {
+            if case TimiAPIError.server(let status, _, _, _) = error, (400..<500).contains(status) { return .searchOver }
+            return .searchUnreachable
+        }
+    }
+    #endif
 
     /// Refreshes the Mapbox token, style URLs, fee disclosure, and legal
     /// version from `GET /api/config`. Falls back silently to the compiled-in

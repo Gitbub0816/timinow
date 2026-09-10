@@ -56,21 +56,74 @@ public struct CustomerRootView: View {
         // rather than only when the Settings toggle happens to be flipped
         // again this launch. See PlatformPermissions.reregisterIfAlreadyAuthorized.
         .task { _ = await PlatformPermissions.reregisterIfAlreadyAuthorized() }
+        // An active search or booked visit survives the app being killed:
+        // once auth has settled, the persisted care flow (if any) is
+        // re-fetched from the Worker and the app reopens on the tracker or
+        // the search screen instead of home. See AppStore.restoreCareFlowIfNeeded.
+        .task { await store.restoreCareFlowIfNeeded() }
     }
 
-    @ViewBuilder var appContent: some View {
-        switch store.route {
-        case .intake: IntakeFlowView(store: store).transition(.move(edge: .trailing))
-        case .searching: OfferSearchView(store: store).transition(.opacity)
-        case .tracker: TrackerView(store: store).transition(.move(edge: .trailing))
-        case .home:
-            TabView(selection: $store.selectedTab) {
-                NavigationStack { HomeView(store: store) }.tabItem { Label("Care", systemImage: "cross.case.fill") }.tag(0)
-                NavigationStack { PetsView(store: store) }.tabItem { Label("Pets", systemImage: "pawprint.fill") }.tag(1)
-                NavigationStack { ActivityView(store: store) }.tabItem { Label("Activity", systemImage: "clock.arrow.circlepath") }.tag(2)
-                NavigationStack { SettingsView(store: store) }.tabItem { Label("Settings", systemImage: "gearshape.fill") }.tag(3)
-            }.tint(TimiColor.blue)
+    /// One container owns every route change. Each screen sits on its own
+    /// opaque canvas with a fixed z-order (deeper flow stages above home), so
+    /// while a transition is in flight the two mounted screens layer
+    /// deterministically instead of drawing through each other — which is how
+    /// the tracker's headline used to render twice, one of them up at the
+    /// status bar. The `.animation(value:)` on the container is what actually
+    /// drives the transitions: `store.route` changes from async store methods
+    /// with no `withAnimation` in reach, and before this container those
+    /// changes animated only when some caller happened to wrap them.
+    var appContent: some View {
+        ZStack {
+            switch store.route {
+            case .home:
+                homeTabs
+                    .zIndex(0)
+            case .intake:
+                IntakeFlowView(store: store)
+                    .background(TimiColor.canvas.ignoresSafeArea())
+                    .transition(TimiScreenChange.transition)
+                    .zIndex(1)
+            case .searching:
+                OfferSearchView(store: store)
+                    .background(TimiColor.canvas.ignoresSafeArea())
+                    .transition(TimiScreenChange.transition)
+                    .zIndex(2)
+            case .tracker:
+                TrackerView(store: store)
+                    .background(TimiColor.canvas.ignoresSafeArea())
+                    .transition(TimiScreenChange.transition)
+                    .zIndex(3)
+            }
         }
+        .animation(TimiScreenChange.animation, value: store.route)
+    }
+
+    /// The home screen's four tabs behind Tími's own bar (Components.swift's
+    /// `TimiTabBar`) instead of the system `TabView`. All four stay mounted —
+    /// exactly what `TabView` did — so switching tabs keeps each stack's
+    /// pushed screens and scroll positions; the inactive ones are invisible,
+    /// untouchable, and hidden from accessibility.
+    var homeTabs: some View {
+        ZStack(alignment: .bottom) {
+            ZStack {
+                homeTab(0) { NavigationStack { HomeView(store: store) } }
+                homeTab(1) { NavigationStack { PetsView(store: store) } }
+                homeTab(2) { NavigationStack { ActivityView(store: store) } }
+                homeTab(3) { NavigationStack { SettingsView(store: store) } }
+            }
+            .animation(.easeInOut(duration: 0.18), value: store.selectedTab)
+            TimiTabBar(selection: $store.selectedTab)
+        }
+        .background(TimiColor.canvas.ignoresSafeArea())
+    }
+
+    func homeTab(_ index: Int, @ViewBuilder content: () -> some View) -> some View {
+        let active = store.selectedTab == index
+        return content()
+            .opacity(Double(active ? 1 : 0))
+            .allowsHitTesting(active)
+            .accessibilityHidden(!active)
+            .zIndex(active ? 1 : 0)
     }
 }
 
@@ -84,8 +137,7 @@ struct HomeView: View {
                     Eyebrow(text: store.isDemoMode ? "INTERACTIVE DEMO" : "LIVE NETWORK", color: TimiColor.blue)
                     // No pet yet is a real state, not something to paper over
                     // with a sample animal's name.
-                    Text(store.hasPet ? "Who can see\n\(store.selectedPet.name) now?" : "Who are we\nfinding care for?")
-                        .font(.system(size: 45, weight: .bold, design: .serif)).foregroundStyle(TimiColor.ink)
+                    DisplayHeadline(text: store.hasPet ? "Who can see\n\(store.selectedPet.name) now?" : "Who are we\nfinding care for?", size: 45)
                     Text(store.hasPet
                         ? "Tell us what's happening once. Compare current responses before you leave home."
                         : "Add your pet once and Tími keeps them with your account. It takes about twenty seconds.")
@@ -93,7 +145,10 @@ struct HomeView: View {
                 }
                 if store.hasPet {
                     CareLaunchPanel(petName: store.selectedPet.name).timiCard(TimiColor.paper)
-                    Button { withAnimation(.spring(response: 0.42)) { store.beginCare() } } label: { Label("Find care for \(store.selectedPet.name)", systemImage: "arrow.right") }.buttonStyle(TimiPrimaryButtonStyle())
+                    // No local withAnimation: the route container in
+                    // CustomerRootView animates every route change the same
+                    // way, and a second animation here fought it.
+                    Button { store.beginCare() } label: { Label("Find care for \(store.selectedPet.name)", systemImage: "arrow.right") }.buttonStyle(TimiPrimaryButtonStyle())
                 } else {
                     Button { store.selectedTab = 1 } label: { Label("Add your pet", systemImage: "plus") }.buttonStyle(TimiPrimaryButtonStyle())
                 }
@@ -102,8 +157,12 @@ struct HomeView: View {
                 VStack(alignment: .leading, spacing: 12) { Eyebrow(text: "HOW TÍMI WORKS"); processRow(1, "Describe what you observe", "Rules prevent vague requests before anything is shared."); processRow(2, "Clinics answer with live capacity", "Each response includes timing, wait, deposit, and offer hold."); processRow(3, "Choose the best fit", "Only your selected clinic is confirmed; every other offer is released.") }.timiCard(TimiColor.paper)
             // Enough clearance for the tab bar, which floats over the scroll
             // view rather than shortening it — the last card was rendering
-            // behind it.
-            }.padding(20).padding(.bottom, 80)
+            // behind it. Capped and centered so a fold-open or landscape
+            // width reads as a comfortable column, not a wall of full-width
+            // cards.
+            }.padding(20).padding(.bottom, TimiTabBarMetrics.scrollClearance)
+                .frame(maxWidth: 720)
+                .frame(maxWidth: .infinity)
         }.background(TimiColor.canvas)
     }
 

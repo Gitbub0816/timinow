@@ -12,6 +12,15 @@ struct OfferSearchView: View {
     @State var sort = "recommended"
     @State var appeared: Set<String> = []
     @State var lastOfferCount = 0
+    /// The leave-confirmation card is up. Cancelling a live search releases
+    /// every clinic currently holding a spot, so one stray tap on the ✕
+    /// must not be able to do it alone.
+    @State var confirmingCancel = false
+
+    static let sortOptions: [(String, String)] = [
+        ("recommended", "Recommended"), ("distance", "Closest"),
+        ("wait", "Shortest wait"), ("cost", "Lowest deposit")
+    ]
 
     var offers: [CareOffer] {
         let active = (store.currentSearch?.offers ?? []).filter { $0.status == "active" }
@@ -26,14 +35,32 @@ struct OfferSearchView: View {
     }
 
     var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    HStack { Button { store.resetCareFlow() } label: { Image(systemName: "xmark").frame(width: 42, height: 42).background(.white, in: Circle()) }; Spacer(); TimiWordmark(compact: true) }
-                    if offers.isEmpty { waitingView } else { offersView }
-                }.padding(20).padding(.bottom, 36)
-            }.background(TimiColor.canvas)
+        ZStack {
+            NavigationStack {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 18) {
+                        HStack { Button { confirmingCancel = true } label: { Image(systemName: "xmark").frame(width: 42, height: 42).background(.white, in: Circle()).overlay(Circle().stroke(TimiColor.ink.faded(0.25))) }.buttonStyle(.plain).accessibilityLabel("Cancel this search"); Spacer(); TimiWordmark(compact: true) }
+                        if offers.isEmpty { waitingView } else { offersView }
+                    }.padding(20).padding(.bottom, 36)
+                        // A comfortable column on a fold-open or landscape
+                        // width; the offer grid below still gets two columns
+                        // inside it.
+                        .frame(maxWidth: 780)
+                        .frame(maxWidth: .infinity)
+                }.background(TimiColor.canvas)
+            }
+            if confirmingCancel {
+                TimiConfirmCard(
+                    title: "Cancel this search?",
+                    message: "Cancelling releases every clinic currently answering for \(store.draft.pet.name) and lets any held offers go. To find care after that, you would start a new request.",
+                    stayLabel: "Keep searching",
+                    leaveLabel: "Cancel the search",
+                    onStay: { confirmingCancel = false },
+                    onLeave: { confirmingCancel = false; store.resetCareFlow() }
+                ).zIndex(5).transition(.opacity)
+            }
         }
+        .animation(.easeInOut(duration: 0.16), value: confirmingCancel)
         .task {
             while store.route == .searching && ["collecting", "offers_ready"].contains(store.currentSearch?.status ?? "") {
                 await store.refreshSearch(); try? await Task.sleep(for: .seconds(3))
@@ -49,7 +76,7 @@ struct OfferSearchView: View {
         VStack(spacing: 20) {
             PulsingBeacon(symbol: "phone.arrow.up.right.fill")
             Eyebrow(text: "LIVE SEARCH IN PROGRESS")
-            Text("Asking nearby clinics now.").font(.system(size: 40, weight: .bold, design: .serif)).multilineTextAlignment(.center)
+            DisplayHeadline(text: "Asking nearby clinics now.", size: 40, alignment: .center)
             Text("You can choose as soon as an offer arrives. Tími stops after five responses or when the collection window closes.").font(.title3).foregroundStyle(TimiColor.muted).multilineTextAlignment(.center)
             HStack { MetricChip(title: "Contacted", value: "\(store.currentSearch?.progress?.contacted ?? 0)"); MetricChip(title: "Awaiting", value: "\(store.currentSearch?.progress?.awaiting ?? 0)", color: TimiColor.goldSoft) }
             SafetyBanner(compact: true, store: store)
@@ -69,7 +96,7 @@ struct OfferSearchView: View {
     var offersView: some View {
         VStack(alignment: .leading, spacing: 17) {
             Eyebrow(text: "\(offers.count) OF \(store.currentSearch?.maxOffers ?? 5) OFFERS", color: TimiColor.blue)
-            Text(headline).font(.system(size: 40, weight: .bold, design: .serif))
+            DisplayHeadline(text: headline, size: 40)
             Text("Compare the clinics below. Nothing is confirmed until you choose.").foregroundStyle(TimiColor.muted)
             // Offers appear the moment a clinic says yes, so the first one is
             // choosable while the rest are still being asked. Without saying
@@ -103,11 +130,18 @@ struct OfferSearchView: View {
                 userLongitude: store.currentLongitude,
                 styleURL: store.mapStyleURL
             ).frame(height: 220).clipShape(RoundedRectangle(cornerRadius: 20)).overlay(RoundedRectangle(cornerRadius: 20).stroke(TimiColor.ink, lineWidth: 2))
-            Picker("Sort offers", selection: $sort) { Text("Recommended").tag("recommended"); Text("Closest").tag("distance"); Text("Shortest wait").tag("wait"); Text("Lowest deposit").tag("cost") }.pickerStyle(.segmented)
-            ForEach(Array(offers.enumerated()), id: \.element.id) { index, offer in
-                OfferCard(offer: offer, rank: index + 1, isWorking: store.isWorking) { Task { await store.selectOffer(offer) } }
-                    .offset(y: CGFloat(appeared.contains(offer.id) ? 0 : 22)).opacity(Double(appeared.contains(offer.id) ? 1 : 0))
-                    .onAppear { withAnimation(.spring(response: 0.48, dampingFraction: 0.82).delay(Double(index) * 0.08)) { _ = appeared.insert(offer.id) } }
+            // The app's own chips, not the system's grey segmented picker —
+            // the last visibly stock control on this screen.
+            TimiSegmentChips(options: Self.sortOptions, selection: $sort)
+            // Adaptive columns: one on a phone, two the moment the width
+            // allows (landscape, or a fold-open screen), so a wide display
+            // compares offers side by side instead of stretching each card.
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 330), spacing: 14, alignment: .top)], spacing: 14) {
+                ForEach(Array(offers.enumerated()), id: \.element.id) { index, offer in
+                    OfferCard(offer: offer, rank: index + 1, isWorking: store.isWorking) { Task { await store.selectOffer(offer) } }
+                        .offset(y: CGFloat(appeared.contains(offer.id) ? 0 : 22)).opacity(Double(appeared.contains(offer.id) ? 1 : 0))
+                        .onAppear { withAnimation(.spring(response: 0.4, dampingFraction: 0.84).delay(Double(index) * 0.06)) { _ = appeared.insert(offer.id) } }
+                }
             }
             Text("Availability and waits are reported by clinics and may change. Emergency hospitals independently triage every arriving patient.").font(.caption).foregroundStyle(TimiColor.muted).padding(.top, 6)
         }
@@ -155,6 +189,9 @@ struct TrackerView: View {
     @Bindable var store: AppStore
     @State var showNavigation = false
     @State var routePreview: [GeoPoint] = []
+    /// The leave-confirmation card is up. "Finish and return home" used to
+    /// fire on the first tap, and one stray thumb lost the tracking screen.
+    @State var confirmingFinish = false
     var intake: CareIntake? { store.currentIntake }
     var clinic: ClinicLocation? { intake?.location }
 
@@ -164,42 +201,32 @@ struct TrackerView: View {
     }
 
     var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    HStack { TimiWordmark(compact: true); Spacer(); Text(intake?.publicCode ?? "CONFIRMED").font(.caption).fontWeight(.black).foregroundStyle(TimiColor.blue) }
-                    Eyebrow(text: "CLINIC SELECTED", color: TimiColor.blue)
-                    Text("\(intake?.pet?.name ?? store.selectedPet.name) has a place to go.").font(.system(size: 41, weight: .bold, design: .serif))
-                    timeline
-                    // Clinic details — the map, the address/phone/Navigate
-                    // card, and the arrival-status buttons — all reveal or
-                    // act on the clinic's exact location, which now waits
-                    // for the combined booking payment (Tími's own fee, plus
-                    // any clinic-required arrival deposit) to settle. The old
-                    // standalone `DepositSection` is not shown here anymore:
-                    // `BookingPaymentSection` already collects any clinic
-                    // deposit as part of the one combined charge, so showing
-                    // both would double-prompt for money.
-                    if store.bookingPaymentSettled {
-                        if let clinic {
-                            ClinicMapView(
-                                clinics: [clinic],
-                                selectedClinicId: clinic.id,
-                                userLatitude: store.currentLatitude,
-                                userLongitude: store.currentLongitude,
-                                styleURL: store.mapStyleURL,
-                                routeCoordinates: routePreview
-                            ).frame(height: 220).clipShape(RoundedRectangle(cornerRadius: 20)).overlay(RoundedRectangle(cornerRadius: 20).stroke(TimiColor.ink, lineWidth: 2))
-                        }
-                        clinicCard
-                        actionButtons
-                    } else {
-                        BookingPaymentSection(store: store)
-                    }
-                    SafetyBanner(compact: true)
-                    Button("Finish and return home") { store.resetCareFlow() }.buttonStyle(TimiQuietButtonStyle())
-                }.padding(20).padding(.bottom, 34)
-            }.background(TimiColor.canvas)
+        // The width probe drives the fold-open / landscape layout below.
+        // GeometryReader rather than a size-class environment read because
+        // this module also compiles for Android through Skip, where measured
+        // width is the one signal guaranteed to exist.
+        GeometryReader { proxy in
+            ZStack {
+                NavigationStack {
+                    ScrollView {
+                        trackerContent(isWide: proxy.size.width >= 660)
+                            .padding(20).padding(.bottom, 34)
+                            .frame(maxWidth: 980)
+                            .frame(maxWidth: .infinity)
+                    }.background(TimiColor.canvas)
+                }
+                if confirmingFinish {
+                    TimiConfirmCard(
+                        title: "Leave the tracker?",
+                        message: "\(intake?.pet?.name ?? store.selectedPet.name)'s visit stays booked — the clinic is still expecting you. Finishing only closes this screen; the visit is kept under Activity, and closing the app instead brings you straight back here.",
+                        stayLabel: "Keep tracking",
+                        leaveLabel: "Finish",
+                        onStay: { confirmingFinish = false },
+                        onLeave: { confirmingFinish = false; store.resetCareFlow() }
+                    ).zIndex(5).transition(.opacity)
+                }
+            }
+            .animation(.easeInOut(duration: 0.16), value: confirmingFinish)
         }
         .task {
             guard let destination = navigationDestination else { return }
@@ -248,6 +275,63 @@ struct TrackerView: View {
             if let destination = navigationDestination { NavigationScreen(store: store, destination: destination, onFinish: { showNavigation = false }) }
         }
         #endif
+    }
+
+    /// The screen's content, in one column on a phone and two beside each
+    /// other — map and timeline left, clinic card and actions right — when
+    /// the width allows (landscape, or a fold-open screen).
+    @ViewBuilder func trackerContent(isWide: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 20) {
+            HStack { TimiWordmark(compact: true); Spacer(); Text(intake?.publicCode ?? "CONFIRMED").font(.caption).fontWeight(.black).foregroundStyle(TimiColor.blue) }
+            Eyebrow(text: "CLINIC SELECTED", color: TimiColor.blue)
+            DisplayHeadline(text: "\(intake?.pet?.name ?? store.selectedPet.name) has a place to go.", size: 41)
+            // Clinic details — the map, the address/phone/Navigate
+            // card, and the arrival-status buttons — all reveal or
+            // act on the clinic's exact location, which now waits
+            // for the combined booking payment (Tími's own fee, plus
+            // any clinic-required arrival deposit) to settle. The old
+            // standalone `DepositSection` is not shown here anymore:
+            // `BookingPaymentSection` already collects any clinic
+            // deposit as part of the one combined charge, so showing
+            // both would double-prompt for money.
+            if store.bookingPaymentSettled {
+                if isWide {
+                    HStack(alignment: .top, spacing: 18) {
+                        VStack(alignment: .leading, spacing: 20) {
+                            clinicMap(height: 300)
+                            timeline
+                        }.frame(maxWidth: .infinity)
+                        VStack(alignment: .leading, spacing: 20) {
+                            clinicCard
+                            actionButtons
+                        }.frame(maxWidth: .infinity)
+                    }
+                } else {
+                    timeline
+                    clinicMap(height: 220)
+                    clinicCard
+                    actionButtons
+                }
+            } else {
+                timeline
+                BookingPaymentSection(store: store)
+            }
+            SafetyBanner(compact: true)
+            Button("Finish and return home") { confirmingFinish = true }.buttonStyle(TimiQuietButtonStyle())
+        }
+    }
+
+    @ViewBuilder func clinicMap(height: CGFloat) -> some View {
+        if let clinic {
+            ClinicMapView(
+                clinics: [clinic],
+                selectedClinicId: clinic.id,
+                userLatitude: store.currentLatitude,
+                userLongitude: store.currentLongitude,
+                styleURL: store.mapStyleURL,
+                routeCoordinates: routePreview
+            ).frame(height: height).clipShape(RoundedRectangle(cornerRadius: 20)).overlay(RoundedRectangle(cornerRadius: 20).stroke(TimiColor.ink, lineWidth: 2))
+        }
     }
 
     var clinicCard: some View {

@@ -24,7 +24,7 @@ struct IntakeFlowView: View {
                     VStack(alignment: .leading, spacing: 20) {
                         HStack { Button { store.route = .home } label: { Image(systemName: "xmark").frame(width: 42, height: 42).background(.white, in: Circle()) }; Spacer(); ProgressPills(current: step, total: 2); Spacer().frame(width: 42) }
                         Eyebrow(text: step == 0 ? "1 OF 2 · OBSERVABLE CONCERN" : "2 OF 2 · CONTACT + CONSENT")
-                        Text(step == 0 ? "What is happening with \(store.draft.pet.name)?" : "Where should clinics reach you?").font(.system(size: 38, weight: .bold, design: .serif))
+                        DisplayHeadline(text: step == 0 ? "What is happening with \(store.draft.pet.name)?" : "Where should clinics reach you?", size: 38)
                         if step == 0 { concernStep } else { contactStep }
                         HStack(spacing: 12) {
                             if step > 0 { Button("Back") { changeStep(to: 0, proxy: scrollProxy) }.buttonStyle(TimiQuietButtonStyle()) }
@@ -35,6 +35,10 @@ struct IntakeFlowView: View {
                                 .buttonStyle(TimiPrimaryButtonStyle()).disabled(store.isWorking || (step == 1 && (!store.draft.legalConsent || !store.draft.contactConsent)))
                         }
                     }.padding(20).padding(.bottom, 30).id("flowTop")
+                        // A form column, not a wall: fold-open and landscape
+                        // widths keep the fields a comfortable reading width.
+                        .frame(maxWidth: 720)
+                        .frame(maxWidth: .infinity)
                 }.background(TimiColor.canvas)
             }
         }
@@ -48,7 +52,9 @@ struct IntakeFlowView: View {
     /// now landed. Scrolling back to the top in the same animation block is
     /// what keeps that snap from happening.
     private func changeStep(to value: Int, proxy: ScrollViewProxy) {
-        withAnimation { step = value; proxy.scrollTo("flowTop", anchor: .top) }
+        // The same snappy register as route changes — the default ease here
+        // read as sluggish next to them.
+        withAnimation(.spring(response: 0.32, dampingFraction: 0.88)) { step = value; proxy.scrollTo("flowTop", anchor: .top) }
     }
 
     var concernStep: some View {
@@ -139,5 +145,15 @@ struct IntakeFlowView: View {
         guard !recorded.isEmpty else { return base }
         return base + " That includes the \(recorded.joined(separator: " and ")) recorded on \(store.draft.pet.name)'s profile, which are unverified and shared exactly as you wrote them. Edit them under Pets."
     }
-    func acknowledgement(_ binding: Binding<Bool>, _ text: String) -> some View { Toggle(isOn: binding) { Text(text).font(.caption).fontWeight(.semibold) }.toggleStyle(.switch).tint(TimiColor.blue) }
+    /// The Tími switch (Components.swift) instead of the system toggle: the
+    /// two consent rows were the last stock-grey controls in the intake flow.
+    func acknowledgement(_ binding: Binding<Bool>, _ text: String) -> some View {
+        HStack(alignment: .center, spacing: 12) {
+            Text(text).font(.caption).fontWeight(.semibold).multilineTextAlignment(.leading)
+            Spacer(minLength: 8)
+            TimiToggle(isOn: binding)
+        }
+        .contentShape(Rectangle())
+        .onTapGesture { withAnimation(.spring(response: 0.28, dampingFraction: 0.8)) { binding.wrappedValue.toggle() } }
+    }
 }
