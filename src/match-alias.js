@@ -586,6 +586,12 @@ export function maskedMatchCard(location, alias, {
   travelMinutes = null,
   ratingSnapshot = null,
   ratingsEnabled = false,
+  // The offer's own frozen, election-derived deposit (care_offers row).
+  // Passed in rather than read from location.policy: the clinic-settings
+  // table's deposit fields are display-only leftovers that the charge never
+  // collects, and quoting them here is how a $50 deposit appears on a card
+  // and then never gets asked for.
+  depositAmountCents = null,
   now = Date.now()
 } = {}) {
   const kind = location?.kind || "general";
@@ -620,7 +626,7 @@ export function maskedMatchCard(location, alias, {
       capabilities: location?.capabilities || [],
       open24Hours: location?.open24Hours ?? null,
       acceptsWalkIns: location?.acceptsWalkIns ?? null,
-      depositAmountCents: location?.policy?.depositAmountCents ?? null,
+      depositAmountCents: depositAmountCents > 0 ? depositAmountCents : null,
       baseExamFeeCents: location?.baseExamFeeCents ?? null
     },
     /** Google Maps content, or null when the module is off or stale. */

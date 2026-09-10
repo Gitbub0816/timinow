@@ -340,7 +340,10 @@ function normalizeOfferRow(row, location, search, { revealLocation = true, alias
       : maskedMatchCard(enrichedLocation, alias, {
           matchToken: row.id,
           travelMinutes: row.travel_minutes ?? null,
-          ratingsEnabled
+          ratingsEnabled,
+          // The offer's own frozen, election-derived amount — never the
+          // clinic-settings table, which is not what the charge collects.
+          depositAmountCents: row.deposit_amount_cents ?? null
         })
   };
 }

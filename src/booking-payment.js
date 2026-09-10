@@ -28,6 +28,7 @@ import { hasDatabase } from "./db.js";
 import { activePricingPolicy, validateContributionAmount } from "./pricing.js";
 import { createPaymentIntent, idempotencyKey, stripeConfigured, StripeError } from "./stripe.js";
 import { activeGrantFor, recordSponsoredCompletion } from "./hardship/index.js";
+import { depositOutcomeForBooking, getBookingDepositSnapshot } from "./deposit-policy.js";
 
 function newId(prefix) {
   return `${prefix}_${crypto.randomUUID().replaceAll("-", "")}`;
@@ -259,11 +260,25 @@ export async function ensureBookingPaymentOrder(env, { intake }) {
   if (existing) {
     orderId = existing.id;
   } else {
-    // A grant only ever waives the $15 owner fee — never the clinic's own
-    // deposit, which is the clinic's money, not Tími's, and is owed
-    // regardless of the customer's hardship standing.
+    // A grant waives the $15 owner fee. The clinic's own deposit is the
+    // clinic's money — Tími never waives it on its own; only the clinic's
+    // recorded election can (WAIVE_FOR_PAW_IT_FORWARD / the guarantee),
+    // which is exactly what depositOutcomeForBooking answers below.
     const grant = await activeGrantFor(env, intake.customerUserId);
-    const depositCents = intake.policy?.depositRequired ? Math.trunc(Number(intake.depositAmountCents) || 0) : 0;
+    // The deposit charged is the one the booking was quoted under: the §25
+    // snapshot frozen at selection, re-evaluated with the customer's actual
+    // sponsorship standing. Legacy intakes from before snapshots fall back
+    // to their own offer-derived policy values.
+    const bookingSnapshot = await getBookingDepositSnapshot(env, intake.id);
+    let depositCents;
+    if (bookingSnapshot) {
+      const outcome = Boolean(grant) === bookingSnapshot.sponsored
+        ? bookingSnapshot.outcome
+        : depositOutcomeForBooking(bookingSnapshot.policy, { sponsored: Boolean(grant) });
+      depositCents = Math.max(0, Math.trunc(Number(outcome?.customerOwesDepositCents) || 0));
+    } else {
+      depositCents = intake.policy?.depositRequired ? Math.trunc(Number(intake.depositAmountCents) || 0) : 0;
+    }
     const quote = await quoteBooking(env, { sponsored: Boolean(grant), depositCents });
     if (!quote.ok) return quote;
     const created = await createBookingPaymentOrder(env, {

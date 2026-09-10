@@ -32,6 +32,7 @@ import {
 } from "./payments.js";
 import { stripeConfigured, StripeError, verifyWebhookSignature } from "./stripe.js";
 import { ensureBookingPaymentOrder } from "./booking-payment.js";
+import { currentDepositPolicy, depositOutcomeForBooking, snapshotDepositPolicyForBooking } from "./deposit-policy.js";
 import { findEmergencyVeterinaryPlaces, phoneKey } from "./mapbox-places.js";
 import { recordAnalyticsEvents } from "./analytics.js";
 import { listPets, savePet, removePet, syncPets, validatePet } from "./pets.js";
@@ -946,7 +947,23 @@ export async function applyCareSearchDecision(env, {
   const offerExpiresAt = isoAfter(numberInRange(holdMinutes, 1, 30, defaultHoldMinutes));
   const availableAt = new Date(availableAtMs).toISOString();
   const arrivalBy = new Date(availableAtMs + arrivalMinutes * 60_000).toISOString();
-  const policy = location.policy || { depositRequired: false, depositAmountCents: 0 };
+  // Single source of truth for the deposit: the ClearKey-admin deposit
+  // election (deposit-policy.js), stored in D1. The clinic-settings table's
+  // old deposit fields used to feed the number the offer card DISPLAYED
+  // while the charge asked the election — Hayward showed a $50 deposit that
+  // was never collected. Display and charge must read the same row, so the
+  // election is derived once here and frozen onto the offer's snapshot; a
+  // clinic with no election on file quotes no deposit anywhere.
+  const clinicPolicy = location.policy || {};
+  const depositOutcome = depositOutcomeForBooking(await currentDepositPolicy(env, tenantId), { sponsored: false });
+  const electedDepositCents = Math.trunc(Number(depositOutcome.customerOwesDepositCents) || 0);
+  const policy = {
+    ...clinicPolicy,
+    depositRequired: electedDepositCents > 0,
+    depositAmountCents: electedDepositCents,
+    depositElection: depositOutcome.election,
+    depositLine: depositOutcome.copy?.line || null
+  };
   const note = cleanString(requestedNote, 500) || null;
 
   const results = await env.DB.batch([
@@ -961,7 +978,7 @@ export async function applyCareSearchDecision(env, {
             < (SELECT max_offers FROM care_searches WHERE id = ?)
     `).bind(
       offerId, search.id, target.id, location.id, tenantId, responseType, availableAt, arrivalBy,
-      waitMin, waitMax, note, JSON.stringify(policy), policy.depositAmountCents || 0,
+      waitMin, waitMax, note, JSON.stringify(policy), electedDepositCents,
       location.baseExamFeeCents, now, offerExpiresAt, actorUserId, search.id, now, search.id
     ),
     env.DB.prepare(`
@@ -1200,6 +1217,16 @@ async function selectCareOffer(request, env, actor, searchId) {
     type: "offer_selected", searchId: search.id, targetId: offer.targetId, offerId: offer.id, intakeId,
     tenantId: offer.tenantId, locationId: offer.locationId, marketId: search.marketId, actorType: "customer"
   });
+  // §25: freeze the deposit election this booking was quoted under, so the
+  // charge (ensureBookingPaymentOrder) collects what the customer was shown
+  // even if an admin edits the election a minute later. Non-fatal — a
+  // booking without a snapshot charges from the intake's own offer-derived
+  // policy values instead.
+  try {
+    await snapshotDepositPolicyForBooking(env, { intakeId, tenantId: offer.tenantId, sponsored: false, actorId: actor?.userId || null });
+  } catch (error) {
+    console.warn(JSON.stringify({ event: "deposit_snapshot_failed", intakeId, message: error.message }));
+  }
   const intake = await getIntake(env, intakeId);
   return json({ intake, location: enrichLocation(offer.location), search: await getCareSearch(env, search.id) }, { status: 201 });
 }
