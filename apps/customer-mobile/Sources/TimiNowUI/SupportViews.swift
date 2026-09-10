@@ -22,7 +22,7 @@ struct PetsView: View {
                 HStack {
                     VStack(alignment: .leading) {
                         Eyebrow(text: "CARE COMPANIONS")
-                        Text("Your pets").font(.system(size: 40, weight: .bold, design: .serif))
+                        DisplayHeadline(text: "Your pets", size: 40)
                     }
                     Spacer()
                     Button {
@@ -87,10 +87,15 @@ struct PetsView: View {
                 }
                 Text("Pet profiles speed operational intake. Medical records are never sent unless you explicitly include them in a future supported flow.")
                     .font(.caption).foregroundStyle(TimiColor.muted)
-            }.padding(20)
+            // Clearance for the floating Tími tab bar, and a capped column
+            // so a fold-open width does not stretch every card wall-to-wall.
+            // No .navigationTitle: the serif headline above is this screen's
+            // title, and the system large-title bar doubled it in grey.
+            }.padding(20).padding(.bottom, TimiTabBarMetrics.scrollClearance)
+                .frame(maxWidth: 720)
+                .frame(maxWidth: .infinity)
         }
         .background(TimiColor.canvas)
-        .navigationTitle("Pets")
         .sheet(isPresented: $showEditor) {
             PetEditor(store: store, isPresented: $showEditor, editing: editing, note: $note)
         }
@@ -144,8 +149,7 @@ struct PetEditor: View {
                         Spacer()
                     }
                     Eyebrow(text: editing == nil ? "NEW CARE COMPANION" : "EDIT PROFILE")
-                    Text(editing == nil ? "Who are we\nlooking after?" : "Edit \(editing?.name ?? "this pet")")
-                        .font(.system(size: 38, weight: .bold, design: .serif)).foregroundStyle(TimiColor.ink)
+                    DisplayHeadline(text: editing == nil ? "Who are we\nlooking after?" : "Edit \(editing?.name ?? "this pet")", size: 38)
 
                     field("Name") {
                         TextField("Otis", text: $name).textContentType(.name).timiField()
@@ -221,6 +225,8 @@ struct PetEditor: View {
                     Spacer(minLength: 20)
                 }
                 .padding(22)
+                .frame(maxWidth: 640)
+                .frame(maxWidth: .infinity)
             }
         }
         // A sheet's @State survives between presentations, so without this the
@@ -287,7 +293,7 @@ struct PetEditor: View {
 struct ActivityView: View {
     @Bindable var store: AppStore
     var body: some View {
-        ScrollView { VStack(alignment: .leading, spacing: 18) { Eyebrow(text: "CARE HISTORY"); Text("Recent activity").font(.system(size: 40, weight: .bold, design: .serif)); if store.history.isEmpty { VStack(spacing: 14) { Image(systemName: "clock.badge.questionmark").font(.system(size: 45)).foregroundStyle(TimiColor.blue); Text("No completed searches yet").font(.title3).fontWeight(.black); Text("Selected clinics and arrival progress will appear here.").font(.caption).foregroundStyle(TimiColor.muted) }.frame(maxWidth: .infinity).padding(.vertical, 50).timiCard(Color.white) } else { ForEach(store.history) { item in HStack(spacing: 13) { Image(systemName: "checkmark.seal.fill").font(.title2).foregroundStyle(TimiColor.blue); VStack(alignment: .leading) { Text("\(item.petName) · \(item.clinicName)").fontWeight(.bold); Text(item.status.replacingOccurrences(of: "_", with: " ").capitalized).font(.caption).foregroundStyle(TimiColor.muted) }; Spacer() }.timiCard(Color.white) } } }.padding(20) }.background(TimiColor.canvas).navigationTitle("Activity")
+        ScrollView { VStack(alignment: .leading, spacing: 18) { Eyebrow(text: "CARE HISTORY"); DisplayHeadline(text: "Recent activity", size: 40); if store.history.isEmpty { VStack(spacing: 14) { Image(systemName: "clock.badge.questionmark").font(.system(size: 45)).foregroundStyle(TimiColor.blue); Text("No completed searches yet").font(.title3).fontWeight(.black); Text("Selected clinics and arrival progress will appear here.").font(.caption).foregroundStyle(TimiColor.muted) }.frame(maxWidth: .infinity).padding(.vertical, 50).timiCard(Color.white) } else { ForEach(store.history) { item in HStack(spacing: 13) { Image(systemName: "checkmark.seal.fill").font(.title2).foregroundStyle(TimiColor.blue); VStack(alignment: .leading) { Text("\(item.petName) · \(item.clinicName)").fontWeight(.bold); Text(item.status.replacingOccurrences(of: "_", with: " ").capitalized).font(.caption).foregroundStyle(TimiColor.muted) }; Spacer() }.timiCard(Color.white) } } }.padding(20).padding(.bottom, TimiTabBarMetrics.scrollClearance).frame(maxWidth: 720).frame(maxWidth: .infinity) }.background(TimiColor.canvas)
     }
 }
 
@@ -315,7 +321,7 @@ struct SettingsView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 Eyebrow(text: "YOUR ACCOUNT")
-                Text("Settings").font(.system(size: 40, weight: .bold, design: .serif))
+                DisplayHeadline(text: "Settings", size: 40)
 
                 details
                 if store.auth.isSignedIn { account }
@@ -336,10 +342,11 @@ struct SettingsView: View {
                 if store.developerModeEnabled { developer }
             }
             .padding(20)
-            .padding(.bottom, 30)
+            .padding(.bottom, TimiTabBarMetrics.scrollClearance)
+            .frame(maxWidth: 720)
+            .frame(maxWidth: .infinity)
         }
         .background(TimiColor.canvas)
-        .navigationTitle("Settings")
     }
 
     // MARK: - Cards
@@ -540,15 +547,10 @@ struct SettingsView: View {
         }
     }
 
+    /// The Tími switch (Components.swift) in place of the system toggle —
+    /// the last stock-grey control this screen still showed.
     func toggle(_ title: String, _ subtitle: String?, _ value: Binding<Bool>) -> some View {
-        HStack(alignment: .center, spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(.headline)
-                if let subtitle { Text(subtitle).font(.caption).foregroundStyle(TimiColor.muted) }
-            }
-            Spacer()
-            Toggle("", isOn: value).labelsHidden().tint(TimiColor.blue)
-        }
+        TimiToggleRow(title: title, subtitle: subtitle, isOn: value)
     }
 
     /// The species-picker idiom from the pet sheet, reused. A wheel picker is
@@ -621,7 +623,7 @@ struct SettingsView: View {
 struct LegalView: View {
     var body: some View {
         ScrollView { VStack(alignment: .leading, spacing: 22) {
-            Eyebrow(text: "EFFECTIVE AUGUST 24, 2026"); Text("Legal and safety").font(.system(size: 40, weight: .bold, design: .serif))
+            Eyebrow(text: "EFFECTIVE AUGUST 24, 2026"); DisplayHeadline(text: "Legal and safety", size: 40)
             legalSection("Tími is not veterinary care", "Tími provides technology for locating participating veterinary facilities, displaying reported intake capacity, sharing structured operational intake, and comparing availability offers. Tími does not diagnose, prescribe, recommend treatment, create a veterinarian-client-patient relationship, guarantee care, or replace clinical triage.")
             legalSection("No promise of care or priority", "A listing, reported status, offer, estimated wait, or arrival window is not a guaranteed appointment or examination time. Capacity can change. The independent clinic decides whether and when to examine or treat an animal, and critical patients may be seen first.")
             legalSection("Information sharing", "Your structured intake — including any medications or allergies you chose to record — may be shared with up to 30 matching participating clinics, including clinics you do not select, so they can evaluate current capacity. Tími displays up to five active offers. Only the clinic you choose is confirmed. Service providers may process data for hosting, authentication, communications, security, analytics, and payments.")

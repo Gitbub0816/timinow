@@ -66,7 +66,22 @@
     <key>NSLocationAlwaysAndWhenInUseUsageDescription</key><string>Tími can track your drive to the clinic in the background so your arrival status updates automatically, without you needing to open the app.</string>
     <key>NSUserNotificationsUsageDescription</key><string>Tími can notify you when a clinic sends an availability offer or updates your arrival.</string>
     <key>UILaunchScreen</key><dict><key>UIColorName</key><string>LaunchBackground</string></dict>
-    <key>UISupportedInterfaceOrientations</key><array><string>UIInterfaceOrientationPortrait</string></array>
+    <!--
+      All four orientations, deliberately: the app was portrait-locked, and a
+      dual/foldable-screen iPhone renders every pose — left- and right-handed
+      folds, landscape, and the unfolded wide modes — through orientation and
+      size-class changes that a portrait-only declaration fights. Every main
+      screen is width-adaptive now (capped columns, adaptive offer grid, the
+      tracker's two-column wide layout), so rotation is a real layout, not a
+      stretched one.
+    -->
+    <key>UISupportedInterfaceOrientations</key>
+    <array>
+        <string>UIInterfaceOrientationPortrait</string>
+        <string>UIInterfaceOrientationPortraitUpsideDown</string>
+        <string>UIInterfaceOrientationLandscapeLeft</string>
+        <string>UIInterfaceOrientationLandscapeRight</string>
+    </array>
     <!--
       CarPlay scene registration. Requires the
       com.apple.developer.carplay-driving-navigation entitlement

@@ -36,7 +36,7 @@ struct HardshipEntryView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 Eyebrow(text: "PAW IT FORWARD FUND")
-                Text("Financial\nassistance").font(.system(size: 40, weight: .bold, design: .serif)).foregroundStyle(TimiColor.ink)
+                DisplayHeadline(text: "Financial\nassistance", size: 40)
                 Text("If money is the only reason you would skip care right now, the Paw It Forward Fund may cover Tími's service fee. It takes a quick identity check and one supporting document.")
                     .font(.title3).foregroundStyle(TimiColor.muted)
                 content
@@ -47,6 +47,8 @@ struct HardshipEntryView: View {
                     .font(.caption).foregroundStyle(TimiColor.muted)
             }
             .padding(20).padding(.bottom, 40)
+            .frame(maxWidth: 720)
+            .frame(maxWidth: .infinity)
         }
         .background(TimiColor.canvas)
         .navigationTitle("Paw It Forward Fund")
@@ -99,10 +101,12 @@ struct HardshipApplicationView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 Eyebrow(text: "PAW IT FORWARD FUND")
-                Text("Apply for\nassistance").font(.system(size: 38, weight: .bold, design: .serif)).foregroundStyle(TimiColor.ink)
+                DisplayHeadline(text: "Apply for\nassistance", size: 38)
                 content
             }
             .padding(20).padding(.bottom, 40)
+            .frame(maxWidth: 720)
+            .frame(maxWidth: .infinity)
         }
         .background(TimiColor.canvas)
         .navigationTitle("Application")
@@ -129,11 +133,12 @@ struct HardshipApplicationView: View {
                 .font(.callout).foregroundStyle(TimiColor.muted)
             VStack(alignment: .leading, spacing: 8) {
                 Text("People in your household").font(.headline)
-                Stepper("\(householdSize) \(householdSize == 1 ? "person" : "people")", value: $householdSize, in: 1...12)
+                // The Tími stepper and switch (Components.swift) in place of
+                // the system Stepper and Toggle — the two stock-grey controls
+                // this form still showed.
+                TimiStepper(value: $householdSize, lowerBound: 1, upperBound: 12, label: "\(householdSize) \(householdSize == 1 ? "person" : "people")")
             }
-            Toggle(isOn: $attested) {
-                Text("I attest that this household size is accurate.").font(.callout)
-            }.tint(TimiColor.blue)
+            TimiToggleRow(title: "I attest that this household size is accurate.", subtitle: nil, isOn: $attested)
             if let error = store.hardshipError { Text(error).font(.caption).foregroundStyle(TimiColor.coral) }
             Button {
                 Task { await store.startHardshipApplication(householdSize: householdSize, householdAttested: attested) }

@@ -129,6 +129,265 @@ struct Eyebrow: View {
     var body: some View { Text(text.uppercased()).font(.system(size: 11, weight: .black)).tracking(1.6).foregroundStyle(color) }
 }
 
+/// The serif display headline every screen opens with, sized for the room it
+/// actually has. The sizes used to be hard-coded (38–45pt) with no way down,
+/// which clipped on narrow widths and wastes half a fold-open screen's
+/// height; wrapping is still the first resort, scaling the last.
+struct DisplayHeadline: View {
+    var text: String
+    var size: CGFloat = 40
+    var alignment: TextAlignment = .leading
+    var body: some View {
+        Text(text)
+            .font(.system(size: size, weight: .bold, design: .serif))
+            .foregroundStyle(TimiColor.ink)
+            .multilineTextAlignment(alignment)
+            .lineLimit(4)
+            .minimumScaleFactor(0.65)
+    }
+}
+
+/// The route-change transition, defined once so every screen changes hands
+/// the same way: the incoming screen slides in a small step from trailing and
+/// fades, the outgoing one simply fades underneath it. Built on `.offset`
+/// rather than `.move` deliberately — offset is a render-time translation, so
+/// a NavigationStack mid-transition is never re-laid-out against a different
+/// safe area, which is what doubled the tracker headline into the status bar.
+enum TimiScreenChange {
+    // The offset half is Apple-only, matching this module's rule that an
+    // unproven Skip surface stays behind the platform gate: Android keeps
+    // the crossfade, which is the half that fixes the double-render.
+    #if os(Android)
+    static let transition: AnyTransition = .opacity
+    #else
+    static let transition: AnyTransition = .asymmetric(
+        insertion: AnyTransition.offset(x: 64).combined(with: .opacity),
+        removal: .opacity
+    )
+    #endif
+    static let animation: Animation = .spring(response: 0.32, dampingFraction: 0.88)
+}
+
+/// Tími's own tab bar: a floating white capsule with the 2pt ink border and
+/// hard offset shadow every card in the app carries, in place of the system
+/// bar's translucent grey. The active tab is a coral pill with its label;
+/// inactive tabs are quiet ink glyphs. Pure shapes and stacks — nothing here
+/// is UIKit, so the same bar renders through Skip on Android.
+struct TimiTabBar: View {
+    @Binding var selection: Int
+
+    static let items: [(Int, String, String)] = [
+        (0, "cross.case.fill", "Care"),
+        (1, "pawprint.fill", "Pets"),
+        (2, "clock.arrow.circlepath", "Activity"),
+        (3, "gearshape.fill", "Settings")
+    ]
+
+    var body: some View {
+        HStack(spacing: 4) {
+            ForEach(Self.items, id: \.0) { item in
+                tab(item.0, icon: item.1, label: item.2)
+            }
+        }
+        .padding(6)
+        .background(
+            Capsule().fill(Color.white)
+                .overlay(Capsule().stroke(TimiColor.ink, lineWidth: 2))
+                .shadow(color: TimiColor.ink.faded(0.9), radius: 0, x: 4, y: 5)
+        )
+        .animation(.spring(response: 0.32, dampingFraction: 0.74), value: selection)
+        // One hand's reach on a phone, and never a room-wide plank on a
+        // fold-open or landscape width: the bar caps itself and floats
+        // centered, inside the safe area rather than painted over it.
+        .frame(maxWidth: 440)
+        .padding(.horizontal, 20)
+        .padding(.bottom, 8)
+    }
+
+    private func tab(_ index: Int, icon: String, label: String) -> some View {
+        let selected = selection == index
+        return Button { selection = index } label: {
+            HStack(spacing: 6) {
+                Image(systemName: icon).font(.system(size: 16, weight: .bold))
+                if selected {
+                    Text(label).font(.system(size: 12, weight: .black)).lineLimit(1).minimumScaleFactor(0.8)
+                }
+            }
+            .foregroundStyle(selected ? Color.white : TimiColor.ink.faded(0.55))
+            .padding(.horizontal, 10)
+            .frame(maxWidth: .infinity, minHeight: 46)
+            .background(Capsule().fill(selected ? TimiColor.coral : Color.clear))
+            .overlay(Capsule().stroke(selected ? TimiColor.ink : Color.clear, lineWidth: 2))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
+    }
+}
+
+/// Clearance the tab screens' scroll content needs so the last card ends
+/// above the floating bar rather than behind it.
+enum TimiTabBarMetrics {
+    static let scrollClearance: CGFloat = 112
+}
+
+/// The app's switch: an ink-bordered track that fills coral when on, with a
+/// hard-bordered white thumb — in place of the system toggle's grey pill,
+/// which was the last piece of stock chrome on the settings and consent rows.
+///
+/// A Button rather than a `ToggleStyle` conformance on purpose: the built-in
+/// toggle styles bridge through Skip, but a custom `makeBody` is an unproven
+/// surface on the Android side of this module, and a switch is small enough
+/// to just draw.
+struct TimiToggle: View {
+    @Binding var isOn: Bool
+
+    var body: some View {
+        Button {
+            withAnimation(.spring(response: 0.28, dampingFraction: 0.8)) { isOn.toggle() }
+        } label: {
+            ZStack(alignment: isOn ? .trailing : .leading) {
+                Capsule().fill(isOn ? TimiColor.coral : TimiColor.canvas)
+                    .overlay(Capsule().stroke(TimiColor.ink, lineWidth: 2))
+                Circle().fill(Color.white)
+                    .overlay(Circle().stroke(TimiColor.ink, lineWidth: 2))
+                    .padding(4)
+            }
+            .frame(width: 58, height: 34)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(isOn ? "On" : "Off")
+    }
+}
+
+/// A labelled row with a TimiToggle on the trailing edge — the shape every
+/// settings and consent row shares. The whole row is the hit target.
+struct TimiToggleRow: View {
+    var title: String
+    var subtitle: String?
+    @Binding var isOn: Bool
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.headline).foregroundStyle(TimiColor.ink).multilineTextAlignment(.leading)
+                if let subtitle { Text(subtitle).font(.caption).foregroundStyle(TimiColor.muted).multilineTextAlignment(.leading) }
+            }
+            Spacer(minLength: 8)
+            TimiToggle(isOn: $isOn)
+        }
+        .contentShape(Rectangle())
+        .onTapGesture { withAnimation(.spring(response: 0.28, dampingFraction: 0.8)) { isOn.toggle() } }
+    }
+}
+
+/// Segmented choice in the app's own hand — capsule chips instead of the
+/// system's grey segmented picker. Scrolls sideways rather than squeezing
+/// when the labels outgrow a narrow screen.
+struct TimiSegmentChips: View {
+    /// (value, title) pairs, matching the tuple-list idiom the intake
+    /// symptom grid already uses.
+    var options: [(String, String)]
+    @Binding var selection: String
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(options, id: \.0) { option in
+                    chip(option.0, title: option.1)
+                }
+            }
+            .padding(.vertical, 2)
+        }
+    }
+
+    private func chip(_ value: String, title: String) -> some View {
+        let selected = selection == value
+        return Button {
+            withAnimation(.spring(response: 0.28, dampingFraction: 0.8)) { selection = value }
+        } label: {
+            Text(title)
+                .font(.system(size: 13, weight: .black))
+                .foregroundStyle(selected ? Color.white : TimiColor.ink)
+                .padding(.horizontal, 14)
+                .frame(minHeight: 40)
+                .background(Capsule().fill(selected ? TimiColor.blue : Color.white))
+                .overlay(Capsule().stroke(selected ? TimiColor.ink : TimiColor.ink.faded(0.2), lineWidth: CGFloat(selected ? 2 : 1)))
+        }.buttonStyle(.plain)
+    }
+}
+
+/// The app's stepper: round ink-bordered minus/plus plates around a serif
+/// count, replacing the system `Stepper`'s grey capsule.
+struct TimiStepper: View {
+    @Binding var value: Int
+    var lowerBound = 1
+    var upperBound = 12
+    var label: String
+
+    var body: some View {
+        HStack(spacing: 14) {
+            stepButton("minus", enabled: value > lowerBound) { value = max(lowerBound, value - 1) }
+            Text(label)
+                .font(.system(size: 20, weight: .bold, design: .serif))
+                .foregroundStyle(TimiColor.ink)
+                .frame(maxWidth: .infinity)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+            stepButton("plus", enabled: value < upperBound) { value = min(upperBound, value + 1) }
+        }
+        .padding(8)
+        .background(Color.white, in: RoundedRectangle(cornerRadius: 16))
+        .overlay(RoundedRectangle(cornerRadius: 16).stroke(TimiColor.ink, lineWidth: 2))
+    }
+
+    private func stepButton(_ symbol: String, enabled: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 15, weight: .black))
+                .foregroundStyle(enabled ? Color.white : TimiColor.muted)
+                .frame(width: 40, height: 40)
+                .background(enabled ? TimiColor.blue : TimiColor.canvas, in: Circle())
+                .overlay(Circle().stroke(TimiColor.ink.faded(enabled ? 1 : 0.3), lineWidth: 2))
+        }
+        .buttonStyle(.plain)
+        .disabled(!enabled)
+    }
+}
+
+/// A Tími-styled "are you sure" card over a dimmed screen — used before
+/// leaving the tracker and before abandoning an active search, where one
+/// stray tap used to throw the screen away instantly. Deliberately not the
+/// system confirmationDialog: this is the one moment the app most needs to
+/// sound like itself. The dim itself answers "stay", so a tap anywhere
+/// outside the card is the safe choice.
+struct TimiConfirmCard: View {
+    var title: String
+    var message: String
+    var stayLabel: String
+    var leaveLabel: String
+    var onStay: () -> Void
+    var onLeave: () -> Void
+
+    var body: some View {
+        ZStack {
+            TimiColor.ink.faded(0.44).ignoresSafeArea()
+                .onTapGesture { onStay() }
+            VStack(alignment: .leading, spacing: 12) {
+                Text(title)
+                    .font(.system(size: 27, weight: .bold, design: .serif))
+                    .foregroundStyle(TimiColor.ink)
+                    .minimumScaleFactor(0.8)
+                Text(message).font(.callout).foregroundStyle(TimiColor.muted)
+                Button(stayLabel) { onStay() }.buttonStyle(TimiPrimaryButtonStyle()).padding(.top, 6)
+                Button(leaveLabel) { onLeave() }.buttonStyle(TimiQuietButtonStyle())
+            }
+            .frame(maxWidth: 360)
+            .timiCard(Color.white)
+            .padding(24)
+        }
+    }
+}
+
 struct PulsingBeacon: View {
     @State var pulse = false
     var symbol = "pawprint.fill"
