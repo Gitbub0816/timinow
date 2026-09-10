@@ -355,21 +355,50 @@ public struct ConsoleView: View {
         .background(TimiVetColor.navy)
     }
 
-    /// The mockup's `.status-chip` — a dot plus a word, translated from a
-    /// literal "we polled the Worker 4 seconds ago" reading into the same
-    /// two states the rest of the console already tracks: `connectionMode`.
+    /// The mockup's `.status-chip` — a dot plus a word, now driven by the
+    /// full connection state machine ported from the Windows console rather
+    /// than a two-state string: green live, gold demo, coral the moment the
+    /// queue on screen might be stale. The panel below the chip carries the
+    /// detail and, when unhealthy, a "Reconnect now" action — the operator
+    /// saying "the network is back" should never wait out a backoff.
     private var statusChip: some View {
-        HStack(spacing: 8) {
-            Circle()
-                .fill(store.connectionMode.contains("DEMO") ? TimiVetColor.gold : TimiVetColor.green)
-                .frame(width: 9, height: 9)
-            Text(store.connectionMode.contains("DEMO") ? "Interactive demo" : "Live connection")
-                .font(TimiVetFont.ui(12, weight: .bold))
-                .foregroundStyle(Color.white.opacity(0.92))
-            Spacer(minLength: 0)
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 8) {
+                Circle()
+                    .fill(chipColor)
+                    .frame(width: 9, height: 9)
+                Text(store.connectionModeLabel)
+                    .font(TimiVetFont.ui(12, weight: .bold))
+                    .foregroundStyle(Color.white.opacity(0.92))
+                Spacer(minLength: 0)
+            }
+            if !store.isConnectionHealthy {
+                Text(store.connectionDetail)
+                    .font(TimiVetFont.ui(10))
+                    .foregroundStyle(TimiVetColor.railMutedText)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, 8)
+                Button("Reconnect now") { Task { await store.reconnectNow() } }
+                    .buttonStyle(.plain)
+                    .font(TimiVetFont.ui(12, weight: .bold))
+                    .foregroundStyle(Color.white)
+                    .padding(.horizontal, 12).padding(.vertical, 7)
+                    .frame(maxWidth: .infinity)
+                    .background(TimiVetColor.blue, in: RoundedRectangle(cornerRadius: 9))
+                    .padding(.top, 10)
+                    .disabled(store.isBusy)
+            }
         }
         .padding(.horizontal, 12).padding(.vertical, 10)
         .background(TimiVetColor.railDeepInk, in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    private var chipColor: Color {
+        switch store.connectionState {
+        case .live: return TimiVetColor.green
+        case .demo, .connecting: return TimiVetColor.gold
+        case .reconnecting, .offline, .signInRequired: return TimiVetColor.coral
+        }
     }
 
     private func navCountBadge(_ count: Int) -> some View {
@@ -427,7 +456,7 @@ public struct ConsoleView: View {
                 // the eye toward a live connection versus a stalled one.
                 HStack(spacing: 7) {
                     Circle()
-                        .fill(store.statusMessage.hasPrefix("Connection issue") ? TimiVetColor.coral : TimiVetColor.green)
+                        .fill(store.isConnectionHealthy ? TimiVetColor.green : TimiVetColor.coral)
                         .frame(width: 7, height: 7)
                     Text(store.statusMessage).font(TimiVetFont.ui(11)).foregroundStyle(TimiVetColor.muted)
                 }

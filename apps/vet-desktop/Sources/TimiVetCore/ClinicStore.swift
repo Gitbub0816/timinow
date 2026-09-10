@@ -1,5 +1,16 @@
 import Foundation
 import Observation
+#if canImport(Network)
+import Network
+#endif
+
+/// The connection lifecycle, ported from the Windows console's
+/// `ConsoleConnectionState`: a console that silently stops updating is worse
+/// than one that is plainly down — the queue looks empty because it is
+/// stale, and nobody can tell the difference from across the room.
+public enum ConsoleConnectionState: String, Sendable {
+    case connecting, live, demo, reconnecting, offline, signInRequired
+}
 
 // Swift port of apps/vet-windows/src/TimiVet/ViewModels/MainViewModel.cs.
 // `@MainActor @Observable` plays the same role Skip's SwiftUI bridge expects
@@ -51,7 +62,85 @@ import Observation
     public var clinicAddress = ""
     public var tenantName = ""
     public var userRole = ""
-    public var connectionMode = "LIVE CLOUDFLARE CONNECTION"
+    public var connectionMode = "CONNECTING"
+
+    // MARK: - Connection state machine (ported from the Windows console)
+
+    public var connectionState: ConsoleConnectionState = .connecting
+    /// The full sentence for the CURRENT MODE panel: what happened, when the
+    /// last good update was, and when the next attempt is.
+    public var connectionDetail = "Reaching the Tími Worker…"
+    /// Demo counts as healthy; it is working as asked.
+    public var isConnectionHealthy: Bool { connectionState == .live || connectionState == .demo }
+
+    /// The rail chip's wording — matches the Windows `ConnectionModeLabel`.
+    public var connectionModeLabel: String {
+        switch connectionState {
+        case .live: return "Live connection"
+        case .demo: return "Interactive demo"
+        case .reconnecting: return "Reconnecting…"
+        case .offline: return "Offline — queue is stale"
+        case .signInRequired: return "Sign-in required"
+        case .connecting: return "Connecting…"
+        }
+    }
+
+    private var consecutiveFailures = 0
+    private var lastSuccessfulRefresh: Date?
+    /// Widening backoff once the Worker stops answering: hammering an
+    /// unreachable Worker every six seconds does not bring it back any
+    /// sooner and does fill a clinic's connection with retries.
+    private static let backoffSeconds = [5, 10, 20, 40, 60]
+
+    public var nextDelaySeconds: Int {
+        consecutiveFailures == 0
+            ? clampedPollSeconds
+            : Self.backoffSeconds[min(consecutiveFailures - 1, Self.backoffSeconds.count - 1)]
+    }
+
+    private func markConnected() {
+        consecutiveFailures = 0
+        lastSuccessfulRefresh = Date()
+        connectionState = api.isDemo ? .demo : .live
+        connectionMode = api.isDemo ? "INTERACTIVE DEMO" : "LIVE CLOUDFLARE CONNECTION"
+        connectionDetail = "Updated \(Self.timeFormatter.string(from: Date())) · next check in \(nextDelaySeconds) sec"
+        statusMessage = connectionDetail
+    }
+
+    /// Being refused is not the same as not being answered, and the two need
+    /// different words: a 401 that survived the token retry means this
+    /// credential is finished and somebody has to sign in, while a timeout
+    /// means wait. Guessing wrong in either direction is expensive — one
+    /// strands a clinic on a stale queue, the other throws away a working
+    /// session over a dropped packet.
+    private func markDisconnected(reason: String, authenticationFailure: Bool) {
+        consecutiveFailures += 1
+        if authenticationFailure {
+            connectionState = .signInRequired
+            connectionMode = "SIGN-IN REQUIRED"
+            connectionDetail = "Tími would not accept this session — \(reason) Sign out and back in to continue."
+        } else {
+            connectionState = consecutiveFailures >= 3 ? .offline : .reconnecting
+            connectionMode = connectionState == .offline ? "OFFLINE — QUEUE IS STALE" : "RECONNECTING"
+            let since = lastSuccessfulRefresh.map { " Last update \(Self.timeFormatter.string(from: $0))." } ?? ""
+            connectionDetail = "\(reason) Trying again in \(nextDelaySeconds) sec (attempt \(consecutiveFailures)).\(since)"
+        }
+        statusMessage = "Connection issue · \(reason)"
+    }
+
+    /// Cuts the current wait short so the next attempt happens now — used by
+    /// the network monitor when connectivity returns, and by Reconnect now.
+    private func wakePoll() {
+        sleepTask?.cancel()
+    }
+
+    /// The rail's "Reconnect now" button: the operator saying "the network is
+    /// back, try again" should never have to wait out a sixty-second backoff.
+    public func reconnectNow() async {
+        consecutiveFailures = 0
+        wakePoll()
+        await refresh(initial: true)
+    }
     public var pending = 0
     public var activeArrivals = 0
     public var completedToday = 0
@@ -113,6 +202,16 @@ import Observation
     private var knownPending: Set<String> = []
     private var initialized = false
     private var pollTask: Task<Void, Never>?
+    /// The poll loop's current sleep, cancellable so `wakePoll()` can cut a
+    /// backoff short — the Swift spelling of the Windows `_sleepCancellation`.
+    private var sleepTask: Task<Void, Never>?
+    #if canImport(Network)
+    /// The network coming back is a fact the OS already knows, and waiting
+    /// out a sixty-second backoff after it does is a minute of a queue
+    /// nobody is watching — same reasoning as the Windows client's
+    /// NetworkChange handlers.
+    private var pathMonitor: NWPathMonitor?
+    #endif
 
     public init(settingsStore: SettingsStore, settings: AppSettings, api: ClinicAPIClient) {
         self.settingsStore = settingsStore
@@ -138,11 +237,26 @@ import Observation
         await refresh(initial: true)
         pollTask?.cancel()
         pollTask = Task { [weak self] in await self?.pollLoop() }
+        #if canImport(Network)
+        let monitor = NWPathMonitor()
+        monitor.pathUpdateHandler = { [weak self] path in
+            guard path.status == .satisfied else { return }
+            Task { @MainActor [weak self] in self?.wakePoll() }
+        }
+        monitor.start(queue: DispatchQueue(label: "timi.vet.network-monitor"))
+        pathMonitor = monitor
+        #endif
     }
 
     public func stop() {
         pollTask?.cancel()
         pollTask = nil
+        sleepTask?.cancel()
+        sleepTask = nil
+        #if canImport(Network)
+        pathMonitor?.cancel()
+        pathMonitor = nil
+        #endif
     }
 
     public var clampedPollSeconds: Int { min(60, max(3, settings.pollSeconds)) }
@@ -153,7 +267,6 @@ import Observation
         defer { isBusy = false }
         do {
             let dashboard = try await api.getDashboard()
-            connectionMode = api.isDemo ? "INTERACTIVE DEMO" : "LIVE CLOUDFLARE CONNECTION"
             pending = dashboard.metrics.pending
             activeArrivals = dashboard.metrics.activeArrivals
             completedToday = dashboard.metrics.completedToday
@@ -183,18 +296,28 @@ import Observation
             // From the pending list, which is what the queue shows.
             selectedRequest = pendingRequests.first(where: { $0.id == selectedId }) ?? pendingRequests.first
             initialized = true
-            statusMessage = "Updated \(Self.timeFormatter.string(from: Date())) · next check in \(clampedPollSeconds) sec"
+            markConnected()
+        } catch ClinicAPIError.signInRequired {
+            markDisconnected(reason: ClinicAPIError.signInRequired.message, authenticationFailure: true)
         } catch let error as ClinicAPIError {
-            statusMessage = "Connection issue · \(error.message)"
+            markDisconnected(reason: error.message, authenticationFailure: false)
+        } catch is CancellationError {
+            // Shutting down; not a connection verdict.
         } catch {
-            statusMessage = "Connection issue · \(error.localizedDescription)"
+            markDisconnected(reason: error.localizedDescription, authenticationFailure: false)
         }
     }
 
     private func pollLoop() async {
         while !Task.isCancelled {
-            do { try await Task.sleep(for: .seconds(clampedPollSeconds)) }
-            catch { break }
+            // A cancellable child rather than a bare Task.sleep, so
+            // `wakePoll()` (network back, Reconnect now) cuts a widening
+            // backoff short instead of waiting it out.
+            let delay = nextDelaySeconds
+            let sleep = Task { try? await Task.sleep(for: .seconds(delay)) }
+            sleepTask = sleep
+            await sleep.value
+            sleepTask = nil
             if Task.isCancelled { break }
             await refresh(initial: false)
         }
@@ -405,7 +528,9 @@ import Observation
         defer { isBusy = false }
         settingsStore.save(settings)
         api.updateSettings(settings)
-        connectionMode = api.isDemo ? "INTERACTIVE DEMO" : "LIVE CLOUDFLARE CONNECTION"
+        // A changed Worker address deserves a fresh verdict, not a backoff
+        // inherited from the old one.
+        consecutiveFailures = 0
         succeed("Settings saved.")
         await refresh(initial: true)
     }

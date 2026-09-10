@@ -89,12 +89,13 @@ public struct MiniConsoleView: View {
         .overlay(Capsule().stroke(Color.white.opacity(0.15), lineWidth: 1))
     }
 
-    /// Same semantics as the main console's connection dot
-    /// (`ConsoleView.connectionDot`): green live, gold demo — plus coral for
-    /// "Connection issue", which is the one state the pill must not hide.
+    /// Same semantics as the main console's connection chip, now off the
+    /// real state machine: green live, gold demo — plus coral for any state
+    /// where the queue might be stale, which is the one thing the pill must
+    /// not hide.
     private var statusColor: Color {
-        if store.statusMessage.hasPrefix("Connection issue") { return TimiVetColor.coral }
-        return store.connectionMode.contains("DEMO") ? TimiVetColor.gold : TimiVetColor.green
+        if !store.isConnectionHealthy { return TimiVetColor.coral }
+        return store.connectionState == .demo ? TimiVetColor.gold : TimiVetColor.green
     }
 
     /// Minimize/hide, demoted to hover-only: always-visible window chrome on

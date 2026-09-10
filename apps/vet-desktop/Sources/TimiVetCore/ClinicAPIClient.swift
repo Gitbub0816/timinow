@@ -277,6 +277,13 @@ public final class ClinicAPIClient: @unchecked Sendable {
             let (retryData, retryResponse) = try await session.data(for: request)
             guard let retryHTTP = retryResponse as? HTTPURLResponse else { throw ClinicAPIError.invalidResponse }
             guard (200..<300).contains(retryHTTP.statusCode) else {
+                // A 401 that survived the forced token refresh is not a
+                // connection problem: this credential is finished, and the
+                // connection state machine needs to say "sign in again"
+                // rather than backing off and retrying forever — the same
+                // distinction the Windows client draws with
+                // ClinicApiException.IsAuthenticationFailure.
+                if retryHTTP.statusCode == 401 { throw ClinicAPIError.signInRequired }
                 throw ClinicAPIError.server(Self.extractMessage(retryData, status: retryHTTP.statusCode))
             }
             return retryData
