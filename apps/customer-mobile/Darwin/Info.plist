@@ -55,6 +55,16 @@
         <string>audio</string>
         <string>location</string>
     </array>
+    <!--
+      For Didit's hosted identity verification (the Paw It Forward Fund
+      application), which runs a camera document-and-liveness check inside
+      the in-app web sheet. Without these keys iOS terminates the app the
+      moment the page requests capture — and before the web sheet granted
+      capture at all, the page failed its init silently and sat as a blank
+      white sheet, which is exactly how it presented.
+    -->
+    <key>NSCameraUsageDescription</key><string>Tími uses the camera only during identity verification for the Paw It Forward Fund, to photograph your ID document and confirm liveness. Images go to Didit, the verification provider — never to clinics.</string>
+    <key>NSMicrophoneUsageDescription</key><string>The identity verification step may briefly use the microphone as part of its liveness check. Nothing is recorded by Tími.</string>
     <key>NSLocationWhenInUseUsageDescription</key><string>Tími uses your location to find participating veterinary clinics near you and estimate travel distance.</string>
     <!--
       Upgrades the tracker screen's arrival automation from "ask iOS for one

@@ -43,8 +43,21 @@ struct HardshipWebView: UIViewRepresentable {
     @Binding var loadError: String
 
     func makeUIView(context: Context) -> WKWebView {
-        let view = WKWebView()
+        // Not a bare WKWebView() — that was the whole bug. Didit's hosted
+        // verification is a camera-first single-page app: it asks for
+        // getUserMedia and an inline camera preview during init, and a
+        // default-configured web view on iPhone refuses both
+        // (allowsInlineMediaPlayback is off, media playback wants a user
+        // gesture, and there is no delegate to grant capture), so the page's
+        // startup fails and it renders as an eternal blank white sheet.
+        let configuration = WKWebViewConfiguration()
+        configuration.allowsInlineMediaPlayback = true
+        configuration.mediaTypesRequiringUserActionForPlayback = []
+        let view = WKWebView(frame: .zero, configuration: configuration)
         view.navigationDelegate = context.coordinator
+        // uiDelegate is what receives the camera/microphone capture request;
+        // without it WebKit denies capture silently.
+        view.uiDelegate = context.coordinator
         view.load(URLRequest(url: url))
         return view
     }
@@ -57,7 +70,7 @@ struct HardshipWebView: UIViewRepresentable {
     // page that could not load (DNS failure, dead link, no network) just
     // cleared the spinner over an empty white WKWebView — a screen with no
     // exit that looks broken because it is.
-    final class Coordinator: NSObject, WKNavigationDelegate {
+    final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
         @Binding var isLoading: Bool
         @Binding var loadError: String
         init(isLoading: Binding<Bool>, loadError: Binding<String>) {
@@ -72,6 +85,21 @@ struct HardshipWebView: UIViewRepresentable {
         func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
             isLoading = false
             loadError = error.localizedDescription
+        }
+
+        /// The identity page's camera (and, for liveness prompts, microphone)
+        /// request. `.grant` here answers WebKit; iOS still shows its own
+        /// system camera prompt the first time, worded by
+        /// NSCameraUsageDescription — this is permission to *ask*, not a
+        /// bypass. Only granted for the page this sheet was opened on.
+        func webView(
+            _ webView: WKWebView,
+            requestMediaCapturePermissionFor origin: WKSecurityOrigin,
+            initiatedByFrame frame: WKFrameInfo,
+            type: WKMediaCaptureType,
+            decisionHandler: @escaping (WKPermissionDecision) -> Void
+        ) {
+            decisionHandler(.grant)
         }
     }
 }
