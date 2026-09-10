@@ -60,8 +60,9 @@ The Clerk bearer token is **never** written to `settings.json` — unlike the Wi
 
 - `level` is `.floating` normally, or `.screenSaver` when "stay above everything" is on in Settings — `.screenSaver` also floats above full-screen apps and other Spaces, `.floating` does not.
 - `collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]` lets it follow you across Spaces instead of being left behind.
-- Position and size are restored from `AppSettings.miniWindow*` and saved back on every move/resize (`NSWindowDelegate.windowDidMove`/`windowDidResize`) — the WPF version hardcodes `Left="80" Top="80"` on every launch; this fixes that.
-- The mini console's own "Always on top" toggle calls back into the panel to update `level` live.
+- Position is restored from `AppSettings.miniWindowLeft/Top` and saved back on every move (`NSWindowDelegate.windowDidMove`) — the WPF version hardcodes `Left="80" Top="80"` on every launch; this fixes that. Size is not restored (or user-resizable) any more: the panel is content-sized — `MiniConsoleView` reports its measured size and `FloatingPanel.fit(to:)` animates the frame to match, holding the top-right corner fixed so the idle pill grows down/left into the decision card and collapses back the same way.
+- The pill itself carries no window-level control. "Keep above other windows" / "Stay above full-screen apps" live in Clinic settings, and the panel observes them via `withObservationTracking`, applying the new `level` to the live window immediately.
+- Idle, the pill is a tight capsule (Tími mark, connection dot, pending count; minimize/hide on hover). When a request is pending it expands into a card with the pet, urgency, concern and travel context — and answers in place: "Available now"/"Decline" call the same `ClinicStore.answer` path the workspace uses, with "Open decision workspace" kept for custom offers and emergency intake. Multiple pending show as "+N more waiting", advancing to the next after each decision.
 
 ## Menu bar and notifications
 
@@ -93,5 +94,4 @@ Everything below needs a Mac (and, where noted, Xcode or the Clerk dashboard) to
 
 ## Known limitations / follow-ups
 
-- Toggling "Floating console stays above everything" from the main console's settings section does not live-update an already-open floating panel's window level — only the mini console's own "Always on top" toggle does that immediately. Reopening the floating console picks up the new setting.
 - `TimiVetApp.swift`'s `.commands` menu (Open Floating Console / Manage People… / Sign Out) duplicates a few actions already reachable from `AlertCenter`'s menu-bar item; this was a judgment call reconciling two overlapping spec bullets (`AlertCenter` owning a detailed `NSStatusItem`, and `TimiVetApp` separately calling for "MenuBarExtra for the status item") in favor of one real menu-bar icon instead of two.
