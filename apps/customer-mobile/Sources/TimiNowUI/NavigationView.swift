@@ -264,12 +264,56 @@ final class NavigationHostController: UIViewController {
 
     private func presentFallback() {
         TimiBreadcrumb.clear()
-        // Route request failed (offline, misconfigured token, etc.) — hand
-        // off to the plain maps.apple.com link rather than a blank screen.
-        if let url = AppleMapsFallback.directionsURL(to: destination) {
-            UIApplication.shared.open(url)
-        }
-        onEnd()
+        // Route request failed (offline, misconfigured token, etc.) — used to
+        // open maps.apple.com and call onEnd() in the same beat, which
+        // switched away to the Maps app and dismissed this screen at once:
+        // from the tap that started it, that read as Navigate doing nothing
+        // (a flash of white, then straight back to the tracker) or as the
+        // app unexpectedly leaving itself. Presenting Tími's own card instead
+        // means the customer sees why, and chooses to open Maps themselves.
+        let fallback = UIHostingController(rootView: NavigationFallbackCard(
+            destination: destination,
+            onOpenMaps: { [weak self] in
+                guard let self, let url = AppleMapsFallback.directionsURL(to: self.destination) else { return }
+                UIApplication.shared.open(url)
+            },
+            onArrival: onArrival,
+            onEnd: onEnd
+        ))
+        addChild(fallback)
+        fallback.view.frame = view.bounds
+        fallback.view.backgroundColor = .clear
+        fallback.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        view.addSubview(fallback.view)
+        fallback.didMove(toParent: self)
+    }
+}
+
+/// What `NavigationHostController.presentFallback()` shows in place of the
+/// in-app map when Mapbox has no token or a route could not be calculated.
+/// Deliberately a separate type from the non-Mapbox build's own
+/// `TurnByTurnNavigationView` (below, in the `#else` branch of this file) —
+/// the two are mutually exclusive compile targets, so there is no single
+/// shared type to reuse between them.
+private struct NavigationFallbackCard: View {
+    let destination: NavigationDestination
+    let onOpenMaps: () -> Void
+    let onArrival: () -> Void
+    let onEnd: () -> Void
+
+    var body: some View {
+        VStack {
+            Spacer()
+            VStack(spacing: 18) {
+                Eyebrow(text: "COULDN'T START IN-APP NAVIGATION")
+                Text("Open Maps instead to get directions.").font(.title3).fontWeight(.bold).multilineTextAlignment(.center)
+                Text("\(destination.name)\n\(destination.address)").font(.callout).foregroundStyle(TimiColor.muted).multilineTextAlignment(.center)
+                Button { onOpenMaps() } label: { Label("Open in Maps", systemImage: "map.fill") }.buttonStyle(TimiPrimaryButtonStyle(color: TimiColor.blue))
+                Button("I'm here") { onArrival() }.buttonStyle(TimiPrimaryButtonStyle())
+                Button("End navigation") { onEnd() }.buttonStyle(TimiQuietButtonStyle())
+            }.padding(24).timiCard(Color.white).padding(20)
+            Spacer()
+        }.background(TimiColor.canvas.ignoresSafeArea())
     }
 }
 

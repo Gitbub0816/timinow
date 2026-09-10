@@ -112,7 +112,24 @@ import UserNotifications
             guard await request() else { return false }
         }
         if manager.authorizationStatus == .authorizedAlways { return true }
-        return await withCheckedContinuation { value in alwaysContinuation = value; manager.requestAlwaysAuthorization() }
+        // iOS does not reliably show the "upgrade to Always" system prompt
+        // right after a fresh When-In-Use grant — Apple's own guidance is to
+        // ask only once the app has actually used location for a while, and
+        // when it declines to prompt, `locationManagerDidChangeAuthorization`
+        // never fires at all. Without a deadline this continuation hung
+        // forever on exactly that (common, silent) case, which meant
+        // `beginArrivalAutomation()` never returned and geofencing never
+        // armed — status stayed manual with nothing on screen to explain why.
+        return await withCheckedContinuation { value in
+            alwaysContinuation = value
+            manager.requestAlwaysAuthorization()
+            Task {
+                try? await Task.sleep(nanoseconds: 4_000_000_000)
+                guard let pending = self.alwaysContinuation else { return }
+                self.alwaysContinuation = nil
+                pending.resume(returning: self.manager.authorizationStatus == .authorizedAlways)
+            }
+        }
     }
 
     /// Two 150m geofences: one around where the customer is now (fires on
