@@ -24,13 +24,23 @@ that's left is real credentials:
 | Key | Type | Worker | What it is |
 |---|---|---|---|
 | `DIDIT_API_KEY` | SECRET | customer (`wrangler.jsonc`) | Your Didit API key. Without it, hardship applications fall back to a stub that never approves — safe, never silently permissive. |
-| `DIDIT_WORKFLOW_ID` | VAR | customer | The verification workflow you configure in the Didit console (which checks run — document, liveness, duplicate — is a property of the workflow). |
-| `DIDIT_BASE_URL` | VAR | customer | Only override if Didit moves you to a different environment/sandbox. Defaults to `https://verification.didit.me`. |
+| `DIDIT_WORKFLOW_ID` | SECRET or committed VAR | customer | The verification workflow you configure in the Didit console (which checks run — document, liveness, duplicate — is a property of the workflow). |
+| `DIDIT_BASE_URL` | SECRET or committed VAR | customer | Only override if Didit moves you to a different environment/sandbox. Defaults to `https://verification.didit.me`. |
 
 ```bash
 npx wrangler secret put DIDIT_API_KEY --config wrangler.jsonc
+npx wrangler secret put DIDIT_WORKFLOW_ID --config wrangler.jsonc
 ```
-Then set `DIDIT_WORKFLOW_ID` (and `DIDIT_BASE_URL` if needed) in `wrangler.jsonc`'s `vars` block.
+
+**Why the workflow id is a secret too, even though it isn't sensitive:**
+`wrangler deploy` replaces the Worker's plain-text vars with exactly what
+`wrangler.jsonc` declares, every deploy. A value added as a plain-text
+"Environment Variable" in the Cloudflare dashboard is therefore silently
+deleted by the next deploy — which is precisely what kept un-configuring
+Didit here. Dashboard values survive deploys only as encrypted secrets
+(the dashboard's "Encrypt" option, or `wrangler secret put`). The
+alternative is committing the value into `wrangler.jsonc`'s `vars` block,
+which is fine for the workflow id since it is not a credential.
 
 **What got fixed alongside this:** the embedded identity widget had a mount
 point in the DOM but nothing ever loaded Didit's SDK into it, and the
