@@ -239,16 +239,21 @@ export async function chargeBookingOrder(env, paymentOrderId) {
 export async function ensureBookingPaymentOrder(env, { intake }) {
   if (!hasDatabase(env)) return { ok: false, code: "DATABASE_REQUIRED", message: "D1 is required to take a payment." };
 
-  const existing = await env.DB.prepare(
-    "SELECT id, status FROM payment_orders WHERE intake_id = ? AND purpose = 'BOOKING' AND status NOT IN ('FAILED', 'CANCELLED') ORDER BY created_at DESC LIMIT 1"
+  // Any paid order settles the question, whichever row it is — with the
+  // duplicate rows the pre-guard race left behind (see below), the paid one
+  // is not necessarily the one the oldest-wins rule would pick.
+  const paid = await env.DB.prepare(
+    "SELECT id FROM payment_orders WHERE intake_id = ? AND purpose = 'BOOKING' AND status = 'PAID' ORDER BY created_at ASC, id ASC LIMIT 1"
   ).bind(intake.id).first();
-
-  // Already settled — the webhook already marked this order PAID, so there
-  // is no reason to ask Stripe about a PaymentIntent that has already
-  // succeeded every time this screen re-polls.
-  if (existing?.status === "PAID") {
-    return { ok: true, mode: "paid", totalCents: null, order: await getPaymentOrder(env, existing.id) };
+  if (paid) {
+    return { ok: true, mode: "paid", totalCents: null, order: await getPaymentOrder(env, paid.id) };
   }
+
+  // Oldest wins, ties broken by id: every racer computes the same canonical
+  // row no matter which of them inserted it.
+  const existing = await env.DB.prepare(
+    "SELECT id FROM payment_orders WHERE intake_id = ? AND purpose = 'BOOKING' AND status NOT IN ('FAILED', 'CANCELLED') ORDER BY created_at ASC, id ASC LIMIT 1"
+  ).bind(intake.id).first();
 
   let orderId;
   if (existing) {
@@ -274,6 +279,24 @@ export async function ensureBookingPaymentOrder(env, { intake }) {
     });
     if (!created.ok) return created;
     orderId = created.paymentOrderId;
+
+    // The SELECT above and this INSERT are not atomic, and the race is not
+    // hypothetical: before the client grew its own in-flight guard, the
+    // tracker screen and the payment card both asked on first render, both
+    // found nothing, and both inserted — two live PaymentIntents for one
+    // intake, visible in the Stripe dashboard. Converge instead of trusting
+    // the read: re-select the canonical (oldest) row, and if ours lost the
+    // race, cancel ours — still DRAFT, nothing charged against it — and
+    // charge the winner. Both racers pick the same winner, so exactly one
+    // order ever reaches Stripe.
+    const canonical = await env.DB.prepare(
+      "SELECT id FROM payment_orders WHERE intake_id = ? AND purpose = 'BOOKING' AND status NOT IN ('FAILED', 'CANCELLED') ORDER BY created_at ASC, id ASC LIMIT 1"
+    ).bind(intake.id).first();
+    if (canonical && canonical.id !== orderId) {
+      await env.DB.prepare("UPDATE payment_orders SET status = 'CANCELLED', updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'DRAFT'")
+        .bind(orderId).run();
+      orderId = canonical.id;
+    }
   }
 
   const charge = await chargeBookingOrder(env, orderId);

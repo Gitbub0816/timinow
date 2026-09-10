@@ -50,10 +50,11 @@
     // clinic keeps whichever minted it, recorded on its stripe_accounts row.
     "STRIPE_ACCOUNTS_API": "v1",
     // Two accounts, both Caleb's: the original outlook sign-in, plus the
-    // Clerk session that showed "signed in, but not a platform operator" on
-    // 2026-09-08 (user id from that screen; no email was on that account yet,
-    // so it's also allowlisted by clearkey.solutions email once one is set).
-    "PLATFORM_ADMIN_USER_IDS": "user_3IG0kg4AZ6gdhiKgcZKwSPPoJP6,user_3lI9Fe95tylgmNw0F48CxarHr0a",
+    // phone-only account (no email on file). The second id was originally
+    // transcribed from a screenshot with lowercase-L where these are
+    // capital-I — one character off is a lockout — and is now the exact
+    // string Caleb copy-pasted from the console's own lockout screen.
+    "PLATFORM_ADMIN_USER_IDS": "user_3IG0kg4AZ6gdhiKgcZKwSPPoJP6,user_3II9Fe95tyIgmNw0F48CxarHr0a",
     "PLATFORM_ADMIN_EMAILS": "Caleb.owen2019@outlook.com,caleb@clearkey.solutions"
   },
   "d1_databases": [

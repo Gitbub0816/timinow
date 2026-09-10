@@ -31,7 +31,7 @@
     "AUTHORIZED_PARTIES": "https://providers.timinow.pet,https://app.timinow.pet,https://timinow.pet,https://www.admin.timinow.pet,https://www.timinow.pet,https://admin.timinow.pet",
     "MAPBOX_STYLE_URL": "mapbox://styles/calebowen2019/cmt3nci25004d01sya8qxcb4u",
     "MAPBOX_NAVIGATION_STYLE_URL": "",
-    "STRIPE_PUBLISHABLE_KEY": "",
+    "STRIPE_PUBLISHABLE_KEY": "pk_live_51U7RUdEN6wxZxNpBFCgiVC4pH7iW9QcdGLC0jcoDxNBhBp5z1r5ZvVfozolK0F6ZLEYfLR5KPl7RuxobMV2bTfO800GLtXIL7k",
     "VOICE_DRAIN_TOKEN": "d82e070830e6d63266e55c609c5236f6d196345e13bd657d",
     // The origin notifyFirstOfferBySms (src/index.js) builds the customer's
     // "close the page, here's your link" SMS around — no trailing slash.

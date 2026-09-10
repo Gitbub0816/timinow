@@ -747,6 +747,14 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
     /// `prepareDeposit`'s own demo branch.
     public func prepareBookingPayment() async {
         guard let intake = currentIntake else { return }
+        // TrackerView's .onAppear and BookingPaymentSection's .task both ask
+        // for this on first appearance, each guarded on `bookingPayment ==
+        // nil` — a guard both pass before either response lands. The two
+        // near-simultaneous requests each minted a payment order (two live
+        // PaymentIntents for one intake, visible in the Stripe dashboard).
+        // Both callers run on the main actor, so checking the busy flag
+        // before the first await is what actually collapses them into one.
+        if bookingPaymentBusy { return }
         if gateway.isDemo {
             bookingPayment = BookingPaymentOrder(mode: "demo", totalCents: 0)
             return
