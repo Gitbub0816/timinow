@@ -865,12 +865,24 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
 
     /// Opens a HOSTED Didit session and hands back the URL to load in a web
     /// sheet. Nil on failure — the caller has nothing to present.
+    ///
+    /// A deployment with no Didit credentials answers with the *stub*
+    /// provider, whose session URL is deliberately unreachable
+    /// (`identity.stub.invalid` — see src/hardship/providers.js). Loading
+    /// that in a web sheet produced the worst possible failure: a white page
+    /// that never finishes. Refused here instead, with words.
     public func startHardshipIdentityVerification() async -> URL? {
         guard let id = hardshipApplication?.id else { return nil }
         hardshipError = nil
         do {
             let session = try await gateway.startHardshipIdentitySession(applicationId: id)
-            return session.launchURL
+            guard let url = session.launchURL,
+                  session.provider != "stub-identity",
+                  url.host?.hasSuffix(".invalid") != true else {
+                hardshipError = "Identity verification isn't switched on for this deployment yet, so an application can't be completed right now. Please check back soon."
+                return nil
+            }
+            return url
         } catch { setHardshipError(error); return nil }
     }
 

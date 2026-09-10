@@ -35,6 +35,8 @@ struct BookingPaymentSection: View {
     // scripts/validate-native.mjs fails the build over it. See
     // DepositSection's own `errorText` for the same note.
     @State var errorText: String = ""
+    @State var customGiftText: String = ""
+    @State var showCustomGiftField = false
 
     #if canImport(StripePaymentSheet) && !SKIP && os(iOS)
     @State var flowController: PaymentSheet.FlowController?
@@ -91,6 +93,15 @@ struct BookingPaymentSection: View {
             resetElements()
             Task { await prepareElements() }
         }
+        // "I need help paying" can end in an approval while this card is
+        // still on screen underneath the pushed application flow. Re-asking
+        // the Worker is all it takes: the poll notices the active grant,
+        // retires the fee-charging quote, and re-prices — usually to
+        // nothing owed, which settles the card away entirely.
+        .onChange(of: store.hardshipView?.status) { status in
+            guard status == "APPROVED" else { return }
+            Task { await store.prepareBookingPayment() }
+        }
     }
 
     /// A sponsored booking with no clinic deposit owed totals zero, and zero
@@ -136,6 +147,19 @@ struct BookingPaymentSection: View {
 
             collectionControls
 
+            // Deliberately quiet, deliberately here: somebody who cannot
+            // afford this charge is standing on this exact screen, not in
+            // Settings. It pushes the same Paw It Forward Fund application
+            // Settings offers; an approval mid-flow reaches this card
+            // through the `.onChange` below.
+            NavigationLink { HardshipEntryView(store: store) } label: {
+                Text("I need help paying")
+                    .font(.caption).fontWeight(.bold)
+                    .foregroundStyle(TimiColor.blue)
+                    .underline()
+            }
+            .buttonStyle(.plain)
+
             if !errorText.isEmpty {
                 Text(errorText).font(.caption).foregroundStyle(TimiColor.coral)
             }
@@ -156,6 +180,12 @@ struct BookingPaymentSection: View {
     /// as to add, or it isn't a gift.
     static let giftChoices: [(Int, String)] = [(0, "No gift"), (200, "$2"), (500, "$5"), (1000, "$10")]
 
+    /// A gift entered through the custom field rather than a preset chip.
+    var customGiftSelected: Bool {
+        let cents = store.bookingContributionCents
+        return cents > 0 && !Self.giftChoices.contains(where: { $0.0 == cents })
+    }
+
     /// An optional Paw It Forward gift, folded into the same single charge.
     /// The chips re-price the order server-side, so the total above and the
     /// pay button's label always show the real amount about to be charged —
@@ -169,11 +199,57 @@ struct BookingPaymentSection: View {
                 ForEach(Self.giftChoices, id: \.0) { choice in
                     giftChip(cents: choice.0, label: choice.1)
                 }
+                customGiftChip
+            }
+            if showCustomGiftField {
+                customGiftEntry
             }
             Text("Gifts go to the Paw It Forward Fund. Not represented as tax deductible.")
                 .font(.system(size: 10)).foregroundStyle(TimiColor.muted)
         }
         .padding(.vertical, 4)
+    }
+
+    /// Shows the chosen custom amount once one is set, so "Other" doesn't
+    /// read as unselected while a $25 gift is actually on the order.
+    var customGiftChip: some View {
+        let selected = customGiftSelected
+        return Button {
+            showCustomGiftField.toggle()
+        } label: {
+            Text(selected ? TimiFormat.money(store.bookingContributionCents) : "Other")
+                .font(.system(size: 13, weight: .black))
+                .foregroundStyle(selected ? Color.white : TimiColor.ink)
+                .padding(.horizontal, 12)
+                .frame(minHeight: 38)
+                .background(Capsule().fill(selected ? TimiColor.coral : Color.white))
+                .overlay(Capsule().stroke(selected ? TimiColor.ink : TimiColor.ink.faded(0.2), lineWidth: CGFloat(selected ? 2 : 1)))
+        }
+        .buttonStyle(.plain)
+        .disabled(store.bookingPaymentBusy)
+        .accessibilityLabel("Choose your own gift amount")
+    }
+
+    /// Whole dollars only — the Worker refuses anything else, so the field
+    /// doesn't pretend cents are an option.
+    var customGiftEntry: some View {
+        HStack(spacing: 8) {
+            Text("$").font(.system(size: 17, weight: .black)).foregroundStyle(TimiColor.ink)
+            TextField("Amount", text: $customGiftText)
+                .timiKeyboard(.number)
+                .timiField()
+            Button("Add") {
+                guard let dollars = Int(customGiftText.trimmingCharacters(in: .whitespaces)), dollars > 0 else {
+                    errorText = "Enter a whole-dollar amount, like 25."
+                    return
+                }
+                errorText = ""
+                showCustomGiftField = false
+                Task { await store.setBookingContribution(dollars * 100) }
+            }
+            .buttonStyle(TimiPrimaryButtonStyle(color: TimiColor.coral))
+            .disabled(store.bookingPaymentBusy)
+        }
     }
 
     func giftChip(cents: Int, label: String) -> some View {

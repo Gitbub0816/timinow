@@ -40,6 +40,7 @@ import WebKit
 struct HardshipWebView: UIViewRepresentable {
     var url: URL
     @Binding var isLoading: Bool
+    @Binding var loadError: String
 
     func makeUIView(context: Context) -> WKWebView {
         let view = WKWebView()
@@ -50,14 +51,28 @@ struct HardshipWebView: UIViewRepresentable {
 
     func updateUIView(_ uiView: WKWebView, context: Context) { }
 
-    func makeCoordinator() -> Coordinator { Coordinator(isLoading: $isLoading) }
+    func makeCoordinator() -> Coordinator { Coordinator(isLoading: $isLoading, loadError: $loadError) }
 
+    // A failed navigation says so in words. Before `loadError` existed, a
+    // page that could not load (DNS failure, dead link, no network) just
+    // cleared the spinner over an empty white WKWebView — a screen with no
+    // exit that looks broken because it is.
     final class Coordinator: NSObject, WKNavigationDelegate {
         @Binding var isLoading: Bool
-        init(isLoading: Binding<Bool>) { self._isLoading = isLoading }
+        @Binding var loadError: String
+        init(isLoading: Binding<Bool>, loadError: Binding<String>) {
+            self._isLoading = isLoading
+            self._loadError = loadError
+        }
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { isLoading = false }
-        func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) { isLoading = false }
-        func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) { isLoading = false }
+        func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+            isLoading = false
+            loadError = error.localizedDescription
+        }
+        func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+            isLoading = false
+            loadError = error.localizedDescription
+        }
     }
 }
 
@@ -80,11 +95,12 @@ struct TimiWebSheet: View {
     // scripts/validate-native.mjs fails the build over it. This file is
     // iOS-only, but the house rule is followed everywhere in this module.
     @State var isLoading = true
+    @State var loadError = ""
 
     var body: some View {
         NavigationStack {
             ZStack {
-                HardshipWebView(url: url, isLoading: $isLoading)
+                HardshipWebView(url: url, isLoading: $isLoading, loadError: $loadError)
                 if isLoading {
                     VStack(spacing: 12) {
                         ProgressView().tint(TimiColor.blue)
@@ -92,6 +108,18 @@ struct TimiWebSheet: View {
                     }
                     .padding(20)
                     .background(Color.white, in: RoundedRectangle(cornerRadius: 16))
+                }
+                if !loadError.isEmpty {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Label("This page couldn't load", systemImage: "exclamationmark.triangle.fill")
+                            .font(.headline).foregroundStyle(TimiColor.coral)
+                        Text(loadError).font(.caption).foregroundStyle(TimiColor.muted)
+                        Button("Close") { onDismiss() }.buttonStyle(TimiPrimaryButtonStyle())
+                    }
+                    .padding(20)
+                    .frame(maxWidth: 360)
+                    .timiCard(Color.white)
+                    .padding(24)
                 }
             }
             .navigationTitle(title)

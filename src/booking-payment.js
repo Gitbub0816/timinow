@@ -293,22 +293,45 @@ export async function ensureBookingPaymentOrder(env, { intake, contributionCents
 
   const requestedContribution = contributionCents == null ? null : Math.max(0, Math.trunc(Number(contributionCents) || 0));
 
+  // A grant waives the $15 owner fee. The clinic's own deposit is the
+  // clinic's money — Tími never waives it on its own; only the clinic's
+  // recorded election can (WAIVE_FOR_PAW_IT_FORWARD / the guarantee),
+  // which is exactly what depositOutcomeForBooking answers below. Looked up
+  // before the reuse decision, not just at creation: an approval that lands
+  // *after* the order was quoted (the "I need help paying" flow runs from
+  // the payment screen itself) has to reach an order that still charges the
+  // fee, or the approval changed nothing the customer can see.
+  const grant = await activeGrantFor(env, intake.customerUserId);
+  let carriedGift = requestedContribution;
+
   // Oldest wins, ties broken by id: every racer computes the same canonical
   // row no matter which of them inserted it.
   let existing = await env.DB.prepare(
     "SELECT id FROM payment_orders WHERE intake_id = ? AND purpose = 'BOOKING' AND status NOT IN ('FAILED', 'CANCELLED') ORDER BY created_at ASC, id ASC LIMIT 1"
   ).bind(intake.id).first();
 
-  if (existing && requestedContribution != null) {
-    const currentGift = await env.DB.prepare(
-      "SELECT COALESCE(SUM(amount_cents), 0) AS cents FROM payment_allocations WHERE payment_order_id = ? AND purpose = 'FUND_CONTRIBUTION'"
-    ).bind(existing.id).first();
-    if (Number(currentGift?.cents || 0) !== requestedContribution) {
+  if (existing) {
+    const sums = await env.DB.prepare(`
+      SELECT
+        COALESCE(SUM(CASE WHEN purpose = 'FUND_CONTRIBUTION' THEN amount_cents ELSE 0 END), 0) AS gift_cents,
+        COALESCE(SUM(CASE WHEN purpose = 'OWNER_PLATFORM_FEE' THEN amount_cents ELSE 0 END), 0) AS fee_cents
+      FROM payment_allocations WHERE payment_order_id = ?
+    `).bind(existing.id).first();
+    const giftCents = Number(sums?.gift_cents || 0);
+
+    let stale = requestedContribution != null && giftCents !== requestedContribution;
+    if (!stale && grant && Number(sums?.fee_cents || 0) > 0) {
+      // Sponsorship arrived after this quote: the order still charges the
+      // fee the grant waives. Re-price, carrying the gift already chosen.
+      stale = true;
+      if (carriedGift == null) carriedGift = giftCents;
+    }
+    if (stale) {
       const replaced = await retireUnpaidOrder(env, existing.id);
       // Guarded cancel: zero rows changed means the order left
       // DRAFT/REQUIRES_CONFIRMATION under us — almost certainly the webhook
       // marking it PAID mid-tap — and the money that actually moved outranks
-      // the gift change. Keep the order as it is.
+      // the re-price. Keep the order as it is.
       if (replaced) existing = null;
     }
   }
@@ -317,11 +340,6 @@ export async function ensureBookingPaymentOrder(env, { intake, contributionCents
   if (existing) {
     orderId = existing.id;
   } else {
-    // A grant waives the $15 owner fee. The clinic's own deposit is the
-    // clinic's money — Tími never waives it on its own; only the clinic's
-    // recorded election can (WAIVE_FOR_PAW_IT_FORWARD / the guarantee),
-    // which is exactly what depositOutcomeForBooking answers below.
-    const grant = await activeGrantFor(env, intake.customerUserId);
     // The deposit charged is the one the booking was quoted under: the §25
     // snapshot frozen at selection, re-evaluated with the customer's actual
     // sponsorship standing. Legacy intakes from before snapshots fall back
@@ -339,7 +357,9 @@ export async function ensureBookingPaymentOrder(env, { intake, contributionCents
     const quote = await quoteBooking(env, {
       sponsored: Boolean(grant),
       depositCents,
-      contributionCents: requestedContribution || 0
+      // `carriedGift` rather than the raw request: a sponsorship re-price
+      // keeps the gift the customer had already chosen on the retired order.
+      contributionCents: carriedGift || 0
     });
     if (!quote.ok) return quote;
     const created = await createBookingPaymentOrder(env, {

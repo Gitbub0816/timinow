@@ -148,11 +148,16 @@ struct DisplayHeadline: View {
 }
 
 /// The route-change transition, defined once so every screen changes hands
-/// the same way. The *container* only crossfades now — the motion lives on
-/// the screens' individual elements via `timiMorph` below, which slide off
-/// in their own directions while the next screen's elements stagger in. The
-/// removal fade is stretched past the elements' own exits so the outgoing
-/// screen stays mounted long enough for every one of them to finish.
+/// the same way. The *container* only fades now — and on a deliberate delay,
+/// which is what makes the element choreography actually visible. The first
+/// version of `timiMorph` failed for two reasons this shape fixes: the
+/// incoming screen's opaque canvas appeared instantly *above* the outgoing
+/// one, hiding its exit entirely on forward navigation; and each element
+/// carried a fast fade, so it vanished before it had visibly moved. So:
+/// the outgoing screen stays fully opaque while its elements fly off
+/// (`TimiMorph.exitDuration`), the incoming screen holds back until that
+/// flight has mostly played, and only then does it appear and send its own
+/// elements in.
 enum TimiScreenChange {
     // Apple-only refinements stay behind the platform gate, matching this
     // module's rule that an unproven Skip surface never ships blind: Android
@@ -162,44 +167,53 @@ enum TimiScreenChange {
     static let transition: AnyTransition = .opacity
     #else
     static let transition: AnyTransition = .asymmetric(
-        insertion: AnyTransition.opacity.animation(.easeOut(duration: 0.2)),
-        removal: AnyTransition.opacity.animation(.easeIn(duration: 0.4))
+        // Held invisible while the outgoing elements are mid-flight, then a
+        // quick reveal just before this screen's own elements fly in.
+        insertion: AnyTransition.opacity.animation(.easeOut(duration: 0.16).delay(TimiMorph.exitDuration - 0.08)),
+        // Opaque for the whole exit flight, then gone. The delay is the
+        // entire trick: fading during the flight is what made the first
+        // version read as a plain crossfade.
+        removal: AnyTransition.opacity.animation(.easeIn(duration: 0.2).delay(TimiMorph.exitDuration + 0.15))
     )
     #endif
     static let animation: Animation = .spring(response: 0.32, dampingFraction: 0.88)
 }
 
 /// Element-level screen choreography: give each major block of a screen an
-/// index, and on a route (or step) change the blocks leave in alternating
-/// directions while the next screen's blocks slide in one after another —
-/// the "morph" between screens, instead of two flat pages swapping.
+/// index, and on a route (or step) change the old blocks fly fully off the
+/// screen in alternating directions — no fade, a real exit — and then the
+/// new screen's blocks fly in from off-screen one after another.
 ///
 /// Built on `.offset` rather than `.move` for the same reason as
 /// `TimiScreenChange`: offset is a render-time translation, so nothing is
 /// re-laid-out against a different safe area mid-flight — which is exactly
 /// the bug class that once doubled the tracker headline into the status bar.
-///
-/// The insertion delays are what make it read as choreography (headline
-/// first, cards following); the removal delays are kept tight because the
-/// outgoing screen only lives as long as `TimiScreenChange`'s removal fade.
+/// Deliberately no `.opacity` in either direction: an element that fades
+/// while it moves 80 points reads as a dissolve; one that stays solid while
+/// it crosses 820 points reads as flight, which is the ask.
 enum TimiMorph {
     #if os(Android)
     static func transition(_ index: Int) -> AnyTransition { .opacity }
+    static let exitDuration = 0.0
     #else
+    /// How long the outgoing elements' flight lasts. The container fade and
+    /// the incoming elements' delays are all timed off this one number.
+    static let exitDuration = 0.30
+
+    /// 820pt clears the widest layout this app produces (980pt capped
+    /// columns, measured from center), so every element genuinely leaves
+    /// the screen rather than stopping near the edge.
     static func transition(_ index: Int) -> AnyTransition {
-        // Alternating horizontal directions, with a small vertical drift
-        // that varies by position — "various directions" without ever moving
-        // an element so far that it visibly clips mid-flight.
         let dx: CGFloat = index % 2 == 0 ? -1 : 1
-        let insertionDrop: CGFloat = index == 0 ? -18 : 24
-        let removalDrop: CGFloat = index % 3 == 0 ? -26 : 30
+        let drift: CGFloat = index % 3 == 0 ? -36 : 42
         return .asymmetric(
-            insertion: AnyTransition.offset(x: dx * 68, y: insertionDrop)
-                .combined(with: .opacity)
-                .animation(.spring(response: 0.42, dampingFraction: 0.86).delay(0.06 + Double(index) * 0.045)),
-            removal: AnyTransition.offset(x: -dx * 90, y: removalDrop)
-                .combined(with: .opacity)
-                .animation(.easeIn(duration: 0.22).delay(Double(index) * 0.018))
+            // Waits out the exit flight, then flies in from the opposite
+            // side the outgoing element left toward, one block after
+            // another top to bottom.
+            insertion: AnyTransition.offset(x: dx * 820, y: drift)
+                .animation(.spring(response: 0.5, dampingFraction: 0.88).delay(exitDuration + 0.02 + Double(index) * 0.05)),
+            removal: AnyTransition.offset(x: -dx * 820, y: -drift)
+                .animation(.easeIn(duration: exitDuration).delay(Double(index) * 0.025))
         )
     }
     #endif
@@ -260,16 +274,21 @@ struct TimiTabBar: View {
 
     private func tab(_ index: Int, icon: String, label: String) -> some View {
         let selected = selection == index
+        // Unselected tabs are fixed-width icons; only the selected one
+        // expands. Giving all four equal flexible widths — the previous
+        // layout — left the active pill ~85pt on a phone, which truncated
+        // "Activity" and "Settings" to "Activ…" / "Setti…".
         return Button { selection = index } label: {
             HStack(spacing: 6) {
                 Image(systemName: icon).font(.system(size: 16, weight: .bold))
                 if selected {
-                    Text(label).font(.system(size: 12, weight: .black)).lineLimit(1).minimumScaleFactor(0.8)
+                    Text(label).font(.system(size: 12, weight: .black)).lineLimit(1).minimumScaleFactor(0.75)
                 }
             }
             .foregroundStyle(selected ? Color.white : TimiColor.ink.faded(0.55))
-            .padding(.horizontal, 10)
-            .frame(maxWidth: .infinity, minHeight: 46)
+            .padding(.horizontal, CGFloat(selected ? 14 : 0))
+            .frame(minWidth: 54, minHeight: 46)
+            .frame(maxWidth: selected ? .infinity : CGFloat(54))
             .background(highlight(selected))
         }
         .buttonStyle(.plain)

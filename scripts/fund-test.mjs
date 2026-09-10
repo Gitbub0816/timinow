@@ -656,6 +656,30 @@ assert((await response.json()).contributions.length === 1, "…and sees exactly 
   assert((await fundSummary(env)).availableCents === beforeCents + 200, "A redelivered PAID posts the gift once");
   assert(database.prepare("SELECT status FROM contributions WHERE payment_order_id = ?").get(result.order.id).status === "POSTED", "The gift row is POSTED once the money is real");
   await assertLedgerSound("the booking-time gift");
+
+  // A grant approved *after* the order was quoted re-prices it on the next
+  // poll — the "I need help paying" flow runs from the payment screen, so
+  // an approval that could not reach the standing quote would change
+  // nothing the applicant can see. The gift they had chosen is carried.
+  const sponsoredIntake = { id: "intake_gift_invalid", customerUserId: "user_gift2", tenantId: "tenant_hearth" };
+  let sponsored = await ensureBookingPaymentOrder(env, { intake: sponsoredIntake, contributionCents: 300 });
+  assert(sponsored.ok && sponsored.order.totalCents === 1800, "Before approval: fee plus gift");
+  const preGrantOrderId = sponsored.order.id;
+  database.prepare("INSERT INTO eligibility_applications (id, applicant_user_id) VALUES ('app_gift2', 'user_gift2')").run();
+  database.prepare(`
+    INSERT INTO eligibility_decisions (id, application_id, decision, pathway, policy_id, policy_version, engine_version, decided_at)
+    VALUES ('dec_gift2', 'app_gift2', 'APPROVED', 'BENEFIT_LETTER', 'policy_test', 1, 'test', datetime('now'))
+  `).run();
+  database.prepare(`
+    INSERT INTO eligibility_grants (id, decision_id, application_id, user_id, expires_at)
+    VALUES ('grant_gift2', 'dec_gift2', 'app_gift2', 'user_gift2', datetime('now', '+30 days'))
+  `).run();
+  sponsored = await ensureBookingPaymentOrder(env, { intake: sponsoredIntake });
+  assert(sponsored.ok && sponsored.order.id !== preGrantOrderId, "Approval retires the fee-charging quote");
+  assert(sponsored.order.totalCents === 300, `The re-priced order is the carried gift alone (${sponsored.order.totalCents})`);
+  assert(!sponsored.order.allocations.some((line) => line.purpose === "OWNER_PLATFORM_FEE"), "No fee line survives an active grant");
+  assert(sponsored.order.allocations.some((line) => line.purpose === "FUND_CONTRIBUTION" && line.amountCents === 300), "The chosen gift rides across the re-price");
+  await assertLedgerSound("the sponsorship re-price");
 }
 
 /* ══════════════════════════════════════════════════ final proof ══ */

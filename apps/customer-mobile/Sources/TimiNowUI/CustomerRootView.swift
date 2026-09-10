@@ -76,7 +76,12 @@ public struct CustomerRootView: View {
         ZStack {
             switch store.route {
             case .home:
+                // The same delayed-fade container transition as the flow
+                // screens: without it, home's default instant crossfade let
+                // its canvas cover the outgoing tracker's exit flight on the
+                // way back.
                 homeTabs
+                    .transition(TimiScreenChange.transition)
                     .zIndex(0)
             case .intake:
                 IntakeFlowView(store: store)
