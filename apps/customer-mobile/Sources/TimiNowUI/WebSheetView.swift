@@ -5,11 +5,16 @@ import SkipFuseUI
 import SwiftUI
 #endif
 
-// A plain WKWebView, for Didit's hosted identity-verification page.
+// A general-purpose in-app web sheet.
 //
-// There is no native Didit SDK — only a JS widget meant for a website, per
-// src/hardship/providers.js — so "in-app" here means a web sheet loading the
-// session URL the Worker hands back, not an embedded native control.
+// NOT for Didit. It was built to host Didit's identity-verification page and
+// that is exactly what it must never be used for again: Didit's hosted page
+// detects in-app web views and refuses to run in them by policy (its bundle
+// ships an "Unsupported / Open in browser" gate), which rendered here as an
+// eternal blank white sheet across weeks of server-side "fixes". Identity
+// verification opens in the system browser now — see HardshipIdentitySection.
+// The sheet is kept, camera-capable, for any future page that genuinely
+// permits embedding.
 //
 // Guarded exactly like the Mapbox and Stripe imports in ClinicMapView and
 // DepositView, and for the same reason: WKWebView is UIKit-backed, so the

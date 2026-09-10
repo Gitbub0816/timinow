@@ -322,12 +322,11 @@ struct HardshipEvidenceSection: View {
 struct HardshipIdentitySection: View {
     @Bindable var store: AppStore
     @State var checking = false
+    @State var sessionURL: URL?
 
     #if os(iOS) && !SKIP
-    @State var showVerifySheet = false
-    @State var verifyURL: URL?
-    #else
-    @State var androidVerifyURL: URL?
+    @Environment(\.openURL) var openURLAction
+    @Environment(\.scenePhase) var scenePhase
     #endif
 
     var verified: Bool { store.hardshipApplication?.identityVerified == true }
@@ -360,55 +359,59 @@ struct HardshipIdentitySection: View {
         }
         .timiCard(TimiColor.paper)
         #if os(iOS) && !SKIP
-        .sheet(isPresented: $showVerifySheet) {
-            if let verifyURL {
-                TimiWebSheet(url: verifyURL, title: "Verify your identity") {
-                    showVerifySheet = false
-                    Task { checking = true; await store.refreshHardshipIdentityStatus(); checking = false }
-                }
-            }
+        // Coming back from Safari is the natural "I'm done" signal, so the
+        // status check runs itself the moment the app is foregrounded with a
+        // verification session outstanding — the manual button stays as the
+        // explicit fallback.
+        .onChange(of: scenePhase) { phase in
+            guard phase == .active, sessionURL != nil, !verified, !checking else { return }
+            Task { checking = true; await store.refreshHardshipIdentityStatus(); checking = false }
         }
         #endif
     }
 
+    /// One flow on every platform now: fetch the Didit session, open it in
+    /// the person's real browser, and confirm with the Worker when they come
+    /// back. The iOS web-sheet branch this replaces loaded the session into
+    /// a WKWebView — and Didit's hosted page detects in-app web views and
+    /// refuses to run in them by policy (its bundle ships the "Unsupported /
+    /// Open in browser" gate), which rendered as an eternal blank white
+    /// sheet no web-view configuration could fix. The browser is where Didit
+    /// wants to run, where the camera reliably works, and this flow's one
+    /// real gate — asking the Worker what Didit decided — is unchanged.
     @ViewBuilder var verifyControls: some View {
         if checking {
             HStack(spacing: 8) { ProgressView(); Text("Checking verification…").font(.caption).foregroundStyle(TimiColor.muted) }
         } else if verified {
             Text("No further action needed here.").font(.caption).foregroundStyle(TimiColor.muted)
-        } else {
-            #if os(iOS) && !SKIP
-            Button {
-                Task { verifyURL = await store.startHardshipIdentityVerification(); showVerifySheet = verifyURL != nil }
-            } label: {
-                Label("Verify your identity", systemImage: "checkmark.shield.fill")
-            }.buttonStyle(TimiPrimaryButtonStyle(color: TimiColor.blue))
-            #else
-            androidVerifyControls
-            #endif
-        }
-    }
-
-    #if !(os(iOS) && !SKIP)
-    @ViewBuilder var androidVerifyControls: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Button {
-                Task { androidVerifyURL = await store.startHardshipIdentityVerification() }
-            } label: {
-                Label("Verify your identity", systemImage: "checkmark.shield.fill")
-            }.buttonStyle(TimiPrimaryButtonStyle(color: TimiColor.blue))
-            if let url = androidVerifyURL {
+        } else if let url = sessionURL {
+            VStack(alignment: .leading, spacing: 8) {
                 Link(destination: url) { Label("Open verification in browser", systemImage: "safari.fill") }
-                    .buttonStyle(TimiQuietButtonStyle())
+                    .buttonStyle(TimiPrimaryButtonStyle(color: TimiColor.blue))
                 Button {
                     Task { checking = true; await store.refreshHardshipIdentityStatus(); checking = false }
                 } label: {
                     Text("I finished — check status")
                 }.buttonStyle(TimiQuietButtonStyle())
+                Text("The identity check runs in your browser — Didit does not allow in-app windows. Finish there, then come back; Tími confirms the result directly with Didit, never from a button press.")
+                    .font(.caption).foregroundStyle(TimiColor.muted)
             }
+        } else {
+            Button {
+                Task {
+                    let url = await store.startHardshipIdentityVerification()
+                    sessionURL = url
+                    #if os(iOS) && !SKIP
+                    // Straight to Safari on the same tap — the Link above is
+                    // the way back in if the person dismisses it.
+                    if let url { openURLAction(url) }
+                    #endif
+                }
+            } label: {
+                Label("Verify your identity", systemImage: "checkmark.shield.fill")
+            }.buttonStyle(TimiPrimaryButtonStyle(color: TimiColor.blue))
         }
     }
-    #endif
 }
 
 // MARK: - Decision screens
