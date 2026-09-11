@@ -86,7 +86,10 @@ const state = {
    * embed snippets can be generated complete. */
   studio: {
     packages: [], tokens: [], loaded: false,
-    config: { design: "card", variant: "cream", size: "standard", elements: [] },
+    config: {
+      design: "card", variant: "cream", size: "standard", elements: [],
+      options: { accent: "blue", corners: "rounded", frame: "ink", shadow: "hard", scale: "standard", align: "left", heading: "", showFreshness: true }
+    },
     name: "", previewState: "accepting", selectedPackageId: null, newSecret: null, snippetFramework: "html"
   },
   miniWin: null,
@@ -2181,6 +2184,17 @@ var STUDIO_ELEMENTS = [
   { key: "coverage", label: "Coverage line", hint: "\"Serving the … area\" — driven by your market on the Tími map." }
 ];
 var STUDIO_STATES = ["accepting", "diverting", "full", "unavailable"];
+/** The fine-tuning layer — same vocabularies as the embed script and the
+ * Worker. Every knob is a chip row; heading is the one free-text field. */
+var STUDIO_OPTION_ROWS = [
+  { key: "accent", label: "Accent color", values: ["blue", "coral", "gold", "green"] },
+  { key: "corners", label: "Corners", values: ["sharp", "rounded", "pill"] },
+  { key: "frame", label: "Frame", values: ["hairline", "ink", "bold"] },
+  { key: "shadow", label: "Shadow", values: ["hard", "none"] },
+  { key: "scale", label: "Text size", values: ["cozy", "standard", "roomy"] },
+  { key: "align", label: "Alignment", values: ["left", "center"] }
+];
+var STUDIO_ACCENT_SWATCH = { blue: "#2357D9", coral: "#F25F4C", gold: "#F7C84B", green: "#12845D" };
 
 /** The real embed renderer, loaded once from the customer Worker. */
 function loadEmbedRenderer() {
@@ -2284,6 +2298,20 @@ function renderStudio() {
             ${["compact", "standard", "full"].map((size) => `
               <button type="button" class="studio-swatch ${s.config.size === size ? "is-active" : ""}" data-studio-size="${size}">${size}</button>`).join("")}
           </div>
+          ${STUDIO_OPTION_ROWS.map((row) => `
+            <p class="studio-label" style="margin-top:1rem">${escapeHtml(row.label)}</p>
+            <div class="studio-swatches">
+              ${row.values.map((value) => `
+                <button type="button" class="studio-swatch ${s.config.options[row.key] === value ? "is-active" : ""}" data-studio-option="${row.key}" data-studio-option-value="${value}">
+                  ${row.key === "accent" ? `<i style="background:${STUDIO_ACCENT_SWATCH[value]}"></i>` : ""}${value}
+                </button>`).join("")}
+            </div>`).join("")}
+          <p class="studio-label" style="margin-top:1rem">Heading</p>
+          <label class="field"><input type="text" data-studio-heading value="${escapeHtml(s.config.options.heading || "")}" placeholder="Live intake status (default)" maxlength="40"></label>
+          <label class="studio-element" style="margin-top:.4rem">
+            <input type="checkbox" data-studio-freshness ${s.config.options.showFreshness ? "checked" : ""}>
+            <span><strong>Show the "Updated … ago" line</strong></span>
+          </label>
           <p class="studio-label" style="margin-top:1rem">Tími elements</p>
           ${STUDIO_ELEMENTS.map((element) => `
             <label class="studio-element">
@@ -2372,6 +2400,23 @@ function renderStudio() {
     s.config.elements = box.checked ? [...new Set([...s.config.elements, key])] : s.config.elements.filter((element) => element !== key);
     rerender();
   }));
+  $$("[data-studio-option]", mount).forEach((button) => button.addEventListener("click", () => {
+    s.config.options[button.dataset.studioOption] = button.dataset.studioOptionValue;
+    rerender();
+  }));
+  // Re-rendering on every keystroke would drop focus; the heading updates
+  // the preview only (cheap), and the full re-render happens on blur.
+  $("[data-studio-heading]", mount)?.addEventListener("input", (event) => {
+    s.config.options.heading = event.target.value.slice(0, 40);
+    loadEmbedRenderer().then((renderer) => {
+      const preview = $("[data-studio-preview]", mount);
+      if (preview) renderer.render(preview, studioPreviewData(s.previewState), s.config);
+    }).catch(() => {});
+  });
+  $("[data-studio-freshness]", mount)?.addEventListener("change", (event) => {
+    s.config.options.showFreshness = event.target.checked;
+    rerender();
+  });
   $("[data-studio-name]", mount)?.addEventListener("input", (event) => { s.name = event.target.value; });
   $$("[data-copy]", mount).forEach((button) => button.addEventListener("click", () => copyToClipboard(button.dataset.copy, button.dataset.copyLabel || "Text")));
 
@@ -2382,7 +2427,10 @@ function renderStudio() {
   $$("[data-studio-load]", mount).forEach((button) => button.addEventListener("click", () => {
     const pkg = s.packages.find((candidate) => candidate.id === button.dataset.studioLoad);
     if (!pkg) return;
-    s.config = { design: pkg.design, variant: pkg.variant, size: pkg.size, elements: [...pkg.elements] };
+    s.config = {
+      design: pkg.design, variant: pkg.variant, size: pkg.size, elements: [...pkg.elements],
+      options: { ...s.config.options, ...(pkg.options || {}) }
+    };
     s.name = pkg.name;
     s.selectedPackageId = pkg.id;
     rerender();

@@ -24,9 +24,12 @@ Three ids ride in the snippet:
   provider portal's **Widget Studio**: one of ten layouts (badge, card,
   banner, poster, ticker, stat tile, window sign, paws, ledger, after
   hours), one of five color variants (cream, ink, blue, coral, forest), a
-  width, and optional Tími elements — a coverage line ("Serving the East
+  width, optional Tími elements — a coverage line ("Serving the East
   Bay area", driven by the platform's market map), a gold *Give to Paw It
-  Forward* button, and a *Reserve a spot* CTA. A package id is
+  Forward* button, and a *Reserve a spot* CTA — plus a fine-tuning layer:
+  accent color (blue/coral/gold/green), corner shape, frame weight, hard
+  offset shadow, text scale, alignment, a custom heading line, and a
+  freshness-line toggle. A package id is
   configuration, not a secret — it is fine to keep in page source. A
   revoked or foreign package id degrades to the default card design; the
   clinic's live status keeps rendering.

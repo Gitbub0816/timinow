@@ -256,6 +256,42 @@ public final class VoicePreviewer: NSObject, AVSpeechSynthesizerDelegate {
     }
 
     public func preview(text: String, preferences: NavigationPreferences) {
+        // The preview must sound like the drive will. For the Tími natural
+        // profile that means the voice gateway's audio, not AVSpeech doing an
+        // impression of it; the device path below stays the fallback when
+        // the fetch fails (offline, unconfigured gateway).
+        if preferences.voiceProfile == .timiNatural {
+            previewNatural(text: text, preferences: preferences)
+            return
+        }
+        previewOnDevice(text: text, preferences: preferences)
+    }
+
+    private var naturalPlayer: AVAudioPlayer?
+
+    private func previewNatural(text: String, preferences: NavigationPreferences) {
+        var components = URLComponents(string: "\(TimiEnvironment.voiceGatewayURL)/api/nav-tts")
+        components?.queryItems = [URLQueryItem(name: "text", value: text), URLQueryItem(name: "tone", value: "calm")]
+        guard let url = components?.url else {
+            previewOnDevice(text: text, preferences: preferences)
+            return
+        }
+        Task { [weak self] in
+            var request = URLRequest(url: url)
+            request.timeoutInterval = 8
+            if let (data, response) = try? await URLSession.shared.data(for: request),
+               (response as? HTTPURLResponse)?.statusCode == 200,
+               let player = try? AVAudioPlayer(data: data) {
+                TimiAudioSession.activateForSpeech()
+                self?.naturalPlayer = player
+                player.play()
+            } else {
+                self?.previewOnDevice(text: text, preferences: preferences)
+            }
+        }
+    }
+
+    private func previewOnDevice(text: String, preferences: NavigationPreferences) {
         TimiAudioSession.activateForSpeech()
         let utterance = AVSpeechUtterance(string: text)
         if let identifier = preferences.preferredVoiceIdentifier, let voice = AVSpeechSynthesisVoice(identifier: identifier) {
@@ -305,6 +341,144 @@ public final class VoicePreviewer: NSObject, AVSpeechSynthesizerDelegate {
 import MapboxDirections
 import Combine
 
+/// The Tími natural voice for turn-by-turn: audio synthesized by the voice
+/// gateway's `/api/nav-tts` (the same Gemini voice the clinic phone calls
+/// speak), prefetched ahead of each maneuver and played from memory.
+///
+/// Designed around `MultiplexedSpeechSynthesizer`'s fallback contract: this
+/// synthesizer NEVER blocks a maneuver on the network. `speak` plays only
+/// audio that is already cached; a cache miss publishes `EncounteredError`,
+/// which is Multiplexed's cue to hand the line to the next synthesizer in
+/// the chain (the on-device voice) — and the miss also starts the fetch, so
+/// the next occurrence of that line is natural. Turn instructions repeat
+/// heavily and `prepareIncomingSpokenInstructions` prefetches the next few,
+/// so in practice the device voice is only heard offline or in the first
+/// seconds of a drive.
+@MainActor
+final class TimiNaturalSpeechSynthesizer: NSObject, SpeechSynthesizing, AVAudioPlayerDelegate {
+    private let _voiceInstructions = PassthroughSubject<VoiceInstructionEvent, Never>()
+    public var voiceInstructions: AnyPublisher<VoiceInstructionEvent, Never> { _voiceInstructions.eraseToAnyPublisher() }
+    public var muted = false {
+        didSet { if muted { stopSpeaking() } }
+    }
+    public var volume: VolumeMode = .system {
+        didSet { applyVolume() }
+    }
+    public var isSpeaking: Bool { player?.isPlaying ?? false }
+    public var locale: Locale? = Locale.autoupdatingCurrent
+    public var managesAudioSession = true
+    /// Which register the gateway is asked to speak in; updated per trip via
+    /// `TimiSpeechSynthesizer.beginTrip`.
+    var tone: NavigationTone = .calm
+
+    private let endpoint: URL
+    /// Small LRU of synthesized lines. Keys carry the tone: "turn left" read
+    /// calmly and read urgently are different audio.
+    private var audioCache: [String: Data] = [:]
+    private var cacheOrder: [String] = []
+    private var inFlight: Set<String> = []
+    private var player: AVAudioPlayer?
+    private var currentInstruction: SpokenInstruction?
+
+    init(endpoint: URL) {
+        self.endpoint = endpoint
+        super.init()
+    }
+
+    private func cacheKey(_ text: String) -> String { "\(tone.rawValue)|\(text)" }
+
+    private func requestURL(for text: String) -> URL? {
+        var components = URLComponents(url: endpoint, resolvingAgainstBaseURL: false)
+        components?.queryItems = [
+            URLQueryItem(name: "text", value: text),
+            URLQueryItem(name: "tone", value: tone.rawValue)
+        ]
+        return components?.url
+    }
+
+    /// Kicks off a download unless the line is cached or already being
+    /// fetched. The 260-character cap mirrors the endpoint's own.
+    private func prefetch(_ text: String) {
+        let key = cacheKey(text)
+        guard !text.isEmpty, text.count <= 260, audioCache[key] == nil, !inFlight.contains(key),
+              let url = requestURL(for: text) else { return }
+        inFlight.insert(key)
+        Task { [weak self] in
+            defer { self?.inFlight.remove(key) }
+            var request = URLRequest(url: url)
+            request.timeoutInterval = 8
+            guard let (data, response) = try? await URLSession.shared.data(for: request),
+                  (response as? HTTPURLResponse)?.statusCode == 200, !data.isEmpty else { return }
+            guard let self else { return }
+            self.audioCache[key] = data
+            self.cacheOrder.append(key)
+            // ~24 lines of WAV is a few megabytes; older lines re-fetch.
+            while self.cacheOrder.count > 24 {
+                self.audioCache.removeValue(forKey: self.cacheOrder.removeFirst())
+            }
+        }
+    }
+
+    public func prepareIncomingSpokenInstructions(_ instructions: [SpokenInstruction], locale: Locale?) {
+        for instruction in instructions.prefix(4) { prefetch(instruction.text) }
+    }
+
+    public func speak(_ instruction: SpokenInstruction, during legProgress: RouteLegProgress, locale: Locale?) {
+        guard !muted else { return }
+        currentInstruction = instruction
+        guard let data = audioCache[cacheKey(instruction.text)] else {
+            // Not cached: this line goes to the fallback voice NOW (a
+            // maneuver cannot wait on a network round trip), and the fetch
+            // starts so the next time this line comes up it is natural.
+            prefetch(instruction.text)
+            _voiceInstructions.send(VoiceInstructionEvents.EncounteredError(
+                error: .noData(instruction: instruction, options: SpeechOptions(text: instruction.text, locale: locale ?? .current))
+            ))
+            return
+        }
+        do {
+            if managesAudioSession { TimiAudioSession.activateForSpeech() }
+            player?.stop()
+            let newPlayer = try AVAudioPlayer(data: data)
+            newPlayer.delegate = self
+            player = newPlayer
+            applyVolume()
+            _voiceInstructions.send(VoiceInstructionEvents.WillSpeak(instruction: instruction))
+            newPlayer.play()
+        } catch {
+            _voiceInstructions.send(VoiceInstructionEvents.EncounteredError(
+                error: .noData(instruction: instruction, options: SpeechOptions(text: instruction.text, locale: locale ?? .current))
+            ))
+        }
+    }
+
+    private func applyVolume() {
+        if case .override(let level) = volume { player?.volume = level }
+    }
+
+    public func stopSpeaking() {
+        player?.stop()
+        finishPlayback()
+    }
+
+    public func interruptSpeaking() { stopSpeaking() }
+
+    private func finishPlayback() {
+        if managesAudioSession { TimiAudioSession.release() }
+        if let instruction = currentInstruction {
+            _voiceInstructions.send(VoiceInstructionEvents.DidSpeak(instruction: instruction))
+        }
+        currentInstruction = nil
+        player = nil
+    }
+
+    // AVAudioPlayerDelegate is not MainActor-isolated; hop back before
+    // touching state or publishing events.
+    public nonisolated func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
+        Task { @MainActor [weak self] in self?.finishPlayback() }
+    }
+}
+
 /// Wraps Mapbox's standard "cloud voice primary, on-device fallback"
 /// arrangement and rewrites every instruction through
 /// `TimiInstructionRewriter` before it is ever spoken. Both `text` (read by
@@ -313,6 +487,9 @@ import Combine
 @MainActor
 public final class TimiSpeechSynthesizer: SpeechSynthesizing {
     private let inner: MultiplexedSpeechSynthesizer
+    /// Held so `beginTrip` can retune the register the gateway speaks in;
+    /// nil for the profiles that never touch it.
+    private let naturalSynthesizer: TimiNaturalSpeechSynthesizer?
     // Per-trip, and therefore variable. These were constants, which meant a new
     // synthesizer — and so a new MapboxNavigationProvider — for every drive.
     // See TimiNavigationStack: one provider is all the SDK supports.
@@ -337,6 +514,7 @@ public final class TimiSpeechSynthesizer: SpeechSynthesizing {
         self.petName = petName
         self.clinicKind = clinicKind
         self.tone = tone
+        naturalSynthesizer?.tone = tone
         announcedApproach = false
     }
 
@@ -380,12 +558,28 @@ public final class TimiSpeechSynthesizer: SpeechSynthesizing {
         self.petName = petName
         self.clinicKind = clinicKind
         self.tone = tone
-        if preferences.voiceProfile == .mapboxCloud && !mapToken.isEmpty {
+        switch preferences.voiceProfile {
+        case .timiNatural:
+            // The default: Tími's own natural voice from the voice gateway,
+            // with the device voice picking up any line the cache misses —
+            // see TimiNaturalSpeechSynthesizer for the no-blocking contract.
+            if let endpoint = URL(string: "\(TimiEnvironment.voiceGatewayURL)/api/nav-tts") {
+                let natural = TimiNaturalSpeechSynthesizer(endpoint: endpoint)
+                natural.tone = tone
+                self.naturalSynthesizer = natural
+                self.inner = MultiplexedSpeechSynthesizer(speechSynthesizers: [natural, SystemSpeechSynthesizer()])
+            } else {
+                self.naturalSynthesizer = nil
+                self.inner = MultiplexedSpeechSynthesizer(speechSynthesizers: [SystemSpeechSynthesizer()])
+            }
+        case .mapboxCloud where !mapToken.isEmpty:
+            self.naturalSynthesizer = nil
             self.inner = MultiplexedSpeechSynthesizer(
                 mapboxSpeechApiConfiguration: ApiConfiguration(accessToken: mapToken),
                 skuTokenProvider: { nil }
             )
-        } else {
+        default:
+            self.naturalSynthesizer = nil
             self.inner = MultiplexedSpeechSynthesizer(speechSynthesizers: [SystemSpeechSynthesizer()])
         }
     }

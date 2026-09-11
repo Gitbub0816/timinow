@@ -129,13 +129,49 @@ export const WIDGET_VARIANTS = ["cream", "ink", "blue", "coral", "forest"];
 export const WIDGET_SIZES = ["compact", "standard", "full"];
 export const WIDGET_ELEMENTS = ["coverage", "donate", "reserve"];
 
+/** The fine-tuning layer (migration 0029): every knob is a closed vocabulary
+ * except `heading`, which is free text — length-capped here and rendered
+ * with textContent (never markup) by the embed script. */
+export const WIDGET_OPTION_VOCAB = {
+  accent: ["blue", "coral", "gold", "green"],
+  corners: ["sharp", "rounded", "pill"],
+  frame: ["hairline", "ink", "bold"],
+  shadow: ["none", "hard"],
+  scale: ["cozy", "standard", "roomy"],
+  align: ["left", "center"]
+};
+export const WIDGET_OPTION_DEFAULTS = {
+  accent: "blue", corners: "rounded", frame: "ink", shadow: "hard", scale: "standard", align: "left",
+  heading: "", showFreshness: true
+};
+
+function normalizePackageOptions(raw) {
+  const source = raw && typeof raw === "object" ? raw : {};
+  const options = {};
+  for (const [key, allowed] of Object.entries(WIDGET_OPTION_VOCAB)) {
+    options[key] = allowed.includes(source[key]) ? source[key] : WIDGET_OPTION_DEFAULTS[key];
+  }
+  options.heading = cleanString(source.heading, 40);
+  options.showFreshness = source.showFreshness === undefined ? true : Boolean(source.showFreshness);
+  return options;
+}
+
 function normalizePackageConfig(body) {
   const design = WIDGET_DESIGNS.includes(body?.design) ? body.design : "card";
   const variant = WIDGET_VARIANTS.includes(body?.variant) ? body.variant : "cream";
   const size = WIDGET_SIZES.includes(body?.size) ? body.size : "standard";
   const raw = Array.isArray(body?.elements) ? body.elements : [];
   const elements = WIDGET_ELEMENTS.filter((element) => raw.includes(element));
-  return { design, variant, size, elements };
+  return { design, variant, size, elements, options: normalizePackageOptions(body?.options) };
+}
+
+function parseJsonObject(value) {
+  try {
+    const parsed = JSON.parse(value || "{}");
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
 }
 
 function rowToPackageSummary(row) {
@@ -146,6 +182,7 @@ function rowToPackageSummary(row) {
     variant: row.variant,
     size: row.size,
     elements: parseJsonArray(row.elements_json),
+    options: normalizePackageOptions(parseJsonObject(row.options_json)),
     status: row.status,
     createdAt: row.created_at,
     updatedAt: row.updated_at
@@ -245,10 +282,10 @@ export async function handleCreateWidgetPackage(request, env, actor, tenantId) {
   const id = newId("pkg");
   const now = new Date().toISOString();
   await env.DB.prepare(`
-    INSERT INTO widget_packages (id, tenant_id, name, design, variant, size, elements_json, status, created_by, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?)
-  `).bind(id, tenantId, name, config.design, config.variant, config.size, JSON.stringify(config.elements), actor.userId || null, now, now).run();
-  await recordWidgetAudit(env, tenantId, null, "package_created", { packageId: id, ...config });
+    INSERT INTO widget_packages (id, tenant_id, name, design, variant, size, elements_json, options_json, status, created_by, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?)
+  `).bind(id, tenantId, name, config.design, config.variant, config.size, JSON.stringify(config.elements), JSON.stringify(config.options), actor.userId || null, now, now).run();
+  await recordWidgetAudit(env, tenantId, null, "package_created", { packageId: id, design: config.design, variant: config.variant });
   return json({ package: { id, name, ...config, status: "active", createdAt: now, updatedAt: now } }, { status: 201 });
 }
 
@@ -262,15 +299,16 @@ export async function handleUpdateWidgetPackage(request, env, actor, tenantId, p
     design: body?.design ?? existing.design,
     variant: body?.variant ?? existing.variant,
     size: body?.size ?? existing.size,
-    elements: body?.elements ?? parseJsonArray(existing.elements_json)
+    elements: body?.elements ?? parseJsonArray(existing.elements_json),
+    options: body?.options ?? parseJsonObject(existing.options_json)
   });
   const name = body?.name !== undefined ? (cleanString(body.name, 80) || existing.name) : existing.name;
   const now = new Date().toISOString();
   await env.DB.prepare(`
-    UPDATE widget_packages SET name = ?, design = ?, variant = ?, size = ?, elements_json = ?, updated_at = ?
+    UPDATE widget_packages SET name = ?, design = ?, variant = ?, size = ?, elements_json = ?, options_json = ?, updated_at = ?
     WHERE id = ? AND tenant_id = ?
-  `).bind(name, config.design, config.variant, config.size, JSON.stringify(config.elements), now, packageId, tenantId).run();
-  await recordWidgetAudit(env, tenantId, null, "package_updated", { packageId, ...config });
+  `).bind(name, config.design, config.variant, config.size, JSON.stringify(config.elements), JSON.stringify(config.options), now, packageId, tenantId).run();
+  await recordWidgetAudit(env, tenantId, null, "package_updated", { packageId, design: config.design, variant: config.variant });
   return json({ package: { id: packageId, name, ...config, status: "active", createdAt: existing.created_at, updatedAt: now } });
 }
 
@@ -445,7 +483,8 @@ export async function handlePublicWidgetStatus(request, env, rawToken) {
         design: packageRow.design,
         variant: packageRow.variant,
         size: packageRow.size,
-        elements: parseJsonArray(packageRow.elements_json)
+        elements: parseJsonArray(packageRow.elements_json),
+        options: normalizePackageOptions(parseJsonObject(packageRow.options_json))
       };
     }
   }

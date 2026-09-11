@@ -78,6 +78,93 @@ async function cachedSpeech(request, env, text) {
   return response;
 }
 
+/* ------------------------------------------------- navigation TTS ------- */
+/*
+ * `GET /api/nav-tts?text=…&tone=calm|urgent|emergency` — natural speech for
+ * the iOS app's turn-by-turn guidance (TimiNaturalSpeechSynthesizer in
+ * VoiceController.swift). Same Gemini pipeline the phone calls use, so the
+ * app and the calls share one voice.
+ *
+ * Public and unauthenticated by design: guidance runs for guests, in a car,
+ * where an auth handshake is one more thing to fail. Abuse is bounded
+ * instead: text capped at 260 characters, an in-memory per-isolate rate
+ * limit, and the edge cache absorbing every repeat — turn instructions are
+ * highly repetitive ("Turn left onto Foothill Boulevard" is the same bytes
+ * for every driver), so most requests never reach Gemini at all.
+ */
+const NAV_TTS_MAX_CHARS = 260;
+const NAV_TTS_WINDOW_MS = 60_000;
+const NAV_TTS_MAX_PER_WINDOW = 40;
+const navTtsBuckets = new Map();
+
+function navTtsRateLimited(key) {
+  if (navTtsBuckets.size > 5000) navTtsBuckets.clear();
+  const now = Date.now();
+  const bucket = navTtsBuckets.get(key);
+  if (!bucket || now - bucket.windowStart >= NAV_TTS_WINDOW_MS) {
+    navTtsBuckets.set(key, { windowStart: now, count: 1 });
+    return false;
+  }
+  bucket.count += 1;
+  return bucket.count > NAV_TTS_MAX_PER_WINDOW;
+}
+
+const NAV_TTS_TONE_STYLE = {
+  calm: "Speak as a calm, warm navigation guide giving one driving instruction: relaxed, natural pacing, reassuring, never rushed.",
+  urgent: "Speak as a focused navigation guide giving one driving instruction: clear and steady, a touch brisker than casual conversation.",
+  emergency: "Speak as a composed navigation guide on an urgent drive: crisp, quick and clear, but never panicked."
+};
+
+const NAV_TTS_CORS = {
+  "access-control-allow-origin": "*",
+  "access-control-allow-methods": "GET, OPTIONS",
+  "access-control-max-age": "86400"
+};
+
+async function handleNavTts(request, env) {
+  const url = new URL(request.url);
+  const text = String(url.searchParams.get("text") || "").trim();
+  const tone = NAV_TTS_TONE_STYLE[url.searchParams.get("tone")] ? url.searchParams.get("tone") : "calm";
+  if (!text || text.length > NAV_TTS_MAX_CHARS) {
+    return apiError(422, "TEXT_INVALID", `Provide text up to ${NAV_TTS_MAX_CHARS} characters.`);
+  }
+  if (!geminiConfigured(env)) {
+    return apiError(503, "TTS_NOT_CONFIGURED", "Natural speech is not configured on this deployment.");
+  }
+  if (navTtsRateLimited(request.headers.get("cf-connecting-ip") || "unknown")) {
+    return apiError(429, "RATE_LIMITED", "Too many requests. Try again shortly.");
+  }
+
+  // Cache key: the normalized URL (text + tone). One driver's "Turn left
+  // onto Foothill Boulevard" is every driver's.
+  const cache = caches.default;
+  const cacheKey = new Request(`${url.origin}/api/nav-tts?tone=${tone}&text=${encodeURIComponent(text)}`);
+  const hit = await cache.match(cacheKey);
+  if (hit) {
+    const cached = new Response(hit.body, hit);
+    for (const [header, value] of Object.entries(NAV_TTS_CORS)) cached.headers.set(header, value);
+    return cached;
+  }
+
+  try {
+    const { wav } = await synthesizeSpeech(env, { text, style: NAV_TTS_TONE_STYLE[tone] });
+    const response = new Response(wav, {
+      headers: {
+        "content-type": "audio/wav",
+        "content-length": String(wav.length),
+        "cache-control": "public, max-age=604800",
+        ...NAV_TTS_CORS,
+        ...SECURITY_HEADERS
+      }
+    });
+    await cache.put(cacheKey, response.clone());
+    return response;
+  } catch (error) {
+    console.warn(JSON.stringify({ event: "nav_tts_failed", message: error.message }));
+    return apiError(502, "TTS_FAILED", "Speech synthesis failed.");
+  }
+}
+
 /** Twilio voice names are letters, digits, dots and dashes. Constrained at the
  * door rather than escaped downstream: this value becomes a TwiML attribute,
  * and a name Twilio does not recognise fails the call at answer time. */
@@ -775,6 +862,13 @@ async function handleApi(request, env) {
     });
   }
   if (method === "GET" && path === "/api/config") return json(publicConfig(env));
+
+  // Natural speech for the iOS app's turn-by-turn guidance. OPTIONS is the
+  // browser-style preflight some HTTP stacks send even for GETs.
+  if (method === "OPTIONS" && path === "/api/nav-tts") {
+    return new Response(null, { status: 204, headers: { ...NAV_TTS_CORS, ...SECURITY_HEADERS } });
+  }
+  if (method === "GET" && path === "/api/nav-tts") return handleNavTts(request, env);
 
   /**
    * Internal drain, invoked by the customer Worker the moment a care search

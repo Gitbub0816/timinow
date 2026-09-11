@@ -108,7 +108,14 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
             defaults.string(forKey: "timi.owner.phone") ?? "",
             defaults.string(forKey: "timi.owner.email") ?? ""
         )
-        let storedNavigationPreferences = Self.decode(NavigationPreferences.self, from: defaults.data(forKey: "timi.navigation.preferences")) ?? .default
+        // Key bumped to .v2 when the Tími natural voice became the default:
+        // preferences persisted under the old key pinned whatever voice
+        // profile was default (or chosen) back then, which is exactly how a
+        // phone kept speaking the robotic voice through two rounds of voice
+        // upgrades. Old prefs are deliberately not migrated — the couple of
+        // route toggles cost one tap to re-set; a stale voice pin costs every
+        // drive.
+        let storedNavigationPreferences = Self.decode(NavigationPreferences.self, from: defaults.data(forKey: "timi.navigation.preferences.v2")) ?? .default
         // Mid-onboarding progress, so being killed between screens is not
         // starting over. Absent reads as -1 — the names screen — because
         // integer(forKey:) answering 0 for "nothing stored" would otherwise
@@ -1193,7 +1200,7 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
     }
     private func persistNavigationPreferences() {
         #if !os(Android)
-        defaults.set(try? JSONEncoder().encode(navigationPreferences), forKey: "timi.navigation.preferences")
+        defaults.set(try? JSONEncoder().encode(navigationPreferences), forKey: "timi.navigation.preferences.v2")
         #endif
     }
     private func persistAnalyticsChoice() {

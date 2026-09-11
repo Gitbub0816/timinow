@@ -81,9 +81,25 @@ async function serveWidgetScript(env) {
   }
 }
 
-/** pkg-demo-{design}-{variant}[-rich] → the package object the customer
- * Worker would return for a real Studio package. */
+const ACCENTS = ["blue", "coral", "gold", "green"];
+const FRAMES = ["hairline", "ink", "bold"];
+
+/** Demo package ids mirror what the customer Worker returns for a real
+ * Studio package. Two formats:
+ *   pkg-demo.{design}.{variant}.{accent}.{frame}.{rich|pure}   (the gallery)
+ *   pkg-demo-{design}-{variant}[-rich]                         (legacy)
+ */
 function demoPackage(packageId) {
+  const dotted = /^pkg-demo\.([a-z]+)\.([a-z]+)\.([a-z]+)\.([a-z]+)\.(rich|pure)$/.exec(packageId || "");
+  if (dotted && DESIGNS.includes(dotted[1]) && VARIANTS.includes(dotted[2]) && ACCENTS.includes(dotted[3]) && FRAMES.includes(dotted[4])) {
+    return {
+      design: dotted[1],
+      variant: dotted[2],
+      size: "standard",
+      elements: dotted[5] === "rich" ? ["coverage", "donate", "reserve"] : [],
+      options: { accent: dotted[3], frame: dotted[4] }
+    };
+  }
   const match = /^pkg-demo-([a-z]+)-([a-z]+)(-rich)?$/.exec(packageId || "");
   if (!match || !DESIGNS.includes(match[1]) || !VARIANTS.includes(match[2])) return null;
   return {
@@ -171,10 +187,12 @@ function pick(url, key, allowed, fallback) {
 function galleryPage(env, url) {
   const state = pick(url, "state", STATES, "accepting");
   const variant = pick(url, "variant", VARIANTS, "cream");
+  const accent = pick(url, "accent", ACCENTS, "blue");
+  const frame = pick(url, "frame", FRAMES, "ink");
   const rich = url.searchParams.get("elements") === "rich";
   const origin = customerOrigin(env);
   const qs = (overrides) => {
-    const params = new URLSearchParams({ state, variant, ...(rich ? { elements: "rich" } : {}) });
+    const params = new URLSearchParams({ state, variant, accent, frame, ...(rich ? { elements: "rich" } : {}) });
     for (const [key, value] of Object.entries(overrides)) {
       if (value === null) params.delete(key); else params.set(key, value);
     }
@@ -188,12 +206,12 @@ function galleryPage(env, url) {
         <h3>${escapeHtml(DESIGN_LABEL[design])}</h3>
         <p class="hint">${escapeHtml(DESIGN_HINT[design])}</p>
         <div class="mount" id="mount-${design}"></div>
-        <code>design: ${design} · variant: ${variant}${rich ? " · elements: coverage, donate, reserve" : ""}</code>
+        <code>design: ${design} · variant: ${variant} · accent: ${accent} · frame: ${frame}${rich ? " · elements: coverage, donate, reserve" : ""}</code>
       </div>`;
   }).join("");
 
   const mounts = DESIGNS.map((design) => {
-    const packageId = `pkg-demo-${design}-${variant}${rich ? "-rich" : ""}`;
+    const packageId = `pkg-demo.${design}.${variant}.${accent}.${frame}.${rich ? "rich" : "pure"}`;
     return `<script src="/widget.js" data-timi-widget="demo-${state}" data-timi-package="${packageId}" data-timi-mount="#mount-${design}"></script>`;
   }).join("\n  ");
 
@@ -218,6 +236,8 @@ function galleryPage(env, url) {
     <div class="toolbar">
       <div class="row"><span class="k">State</span>${STATES.map((candidate) => `<a class="chip ${candidate === state ? "is-on" : ""}" href="${qs({ state: candidate })}">${candidate}</a>`).join("")}</div>
       <div class="row"><span class="k">Variant</span>${VARIANTS.map((candidate) => `<a class="chip ${candidate === variant ? "is-on" : ""}" href="${qs({ variant: candidate })}"><i style="background:${VARIANT_SWATCH[candidate]}"></i>${candidate}</a>`).join("")}</div>
+      <div class="row"><span class="k">Accent</span>${ACCENTS.map((candidate) => `<a class="chip ${candidate === accent ? "is-on" : ""}" href="${qs({ accent: candidate })}"><i style="background:${{ blue: "#2357D9", coral: "#F25F4C", gold: "#F7C84B", green: "#12845D" }[candidate]}"></i>${candidate}</a>`).join("")}</div>
+      <div class="row"><span class="k">Frame</span>${FRAMES.map((candidate) => `<a class="chip ${candidate === frame ? "is-on" : ""}" href="${qs({ frame: candidate })}">${candidate}</a>`).join("")}</div>
       <div class="row"><span class="k">Elements</span>
         <a class="chip ${rich ? "" : "is-on"}" href="${qs({ elements: null })}">Pure status</a>
         <a class="chip ${rich ? "is-on" : ""}" href="${qs({ elements: "rich" })}">+ coverage, donate, reserve</a>

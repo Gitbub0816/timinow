@@ -107,13 +107,27 @@ const junk = await makePackage({ name: "Junk", design: "marquee", variant: "neon
 const junkPkg = (await junk.json()).package;
 assert(junkPkg.design === "card" && junkPkg.variant === "cream" && junkPkg.size === "standard",
   "unknown vocabulary degrades to defaults instead of failing");
+assert(junkPkg.options.accent === "blue" && junkPkg.options.frame === "ink" && junkPkg.options.shadow === "hard",
+  "a package saved without options gets the brand defaults");
+
+// The fine-tuning layer (migration 0029) round-trips, and junk inside it
+// degrades knob by knob.
+const tuned = await makePackage({
+  name: "Tuned", design: "poster", variant: "ink",
+  options: { accent: "gold", corners: "pill", frame: "bold", shadow: "none", scale: "roomy", align: "center", heading: "Today at Hearthside", showFreshness: false, sparkles: "yes", corners2: "octagon" }
+});
+const tunedPkg = (await tuned.json()).package;
+assert(tunedPkg.options.accent === "gold" && tunedPkg.options.corners === "pill" && tunedPkg.options.frame === "bold", "option vocabulary round-trips");
+assert(tunedPkg.options.shadow === "none" && tunedPkg.options.scale === "roomy" && tunedPkg.options.align === "center", "…all six knobs");
+assert(tunedPkg.options.heading === "Today at Hearthside" && tunedPkg.options.showFreshness === false, "heading and freshness toggle survive");
+assert(tunedPkg.options.sparkles === undefined, "unknown option keys are dropped");
 
 const updated = await handleUpdateWidgetPackage(
   new Request("https://x/", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ variant: "forest" }) }),
   env, admin, "tenant_w", pkg.id
 );
 assert((await updated.json()).package.variant === "forest", "PATCH updates only what it names");
-assert((await (await handleListWidgetPackages(env, "tenant_w")).json()).packages.length === 2, "both packages list");
+assert((await (await handleListWidgetPackages(env, "tenant_w")).json()).packages.length === 3, "all three packages list");
 
 /* -------------------------------------------------------- public status --- */
 
@@ -143,10 +157,47 @@ const foreignPkg = (await foreignCreate.json()).package;
 const foreign = await (await handlePublicWidgetStatus(statusRequest(`?package=${foreignPkg.id}`), env, secret)).json();
 assert(foreign.package === null && foreign.status === "accepting", "a foreign package is ignored, status still answers");
 
+const tunedResolved = await (await handlePublicWidgetStatus(statusRequest(`?package=${tunedPkg.id}`), env, secret)).json();
+assert(tunedResolved.package?.options?.accent === "gold" && tunedResolved.package?.options?.heading === "Today at Hearthside",
+  "the status endpoint carries the package's options to the embed");
+
 await handleRevokeWidgetPackage(env, admin, "tenant_w", pkg.id);
 const revoked = await (await handlePublicWidgetStatus(statusRequest(`?package=${pkg.id}`), env, secret)).json();
 assert(revoked.package === null, "a revoked package no longer styles the embed");
 assert(revoked.status === "accepting", "…but the clinic's status keeps rendering");
+
+/* -------------------------------------------------- tenant isolation --- */
+/* Two clinics, two tokens, opposite statuses, different markets: each
+   token must answer with ITS clinic's data — this is the wiring that makes
+   "each specific tenant gets the correct data to their widget" a tested
+   fact rather than an intention. */
+
+database.prepare(`
+  INSERT INTO locations (id, tenant_id, name, slug, kind, address_line1, city, region, postal_code, phone, latitude, longitude, active)
+  VALUES ('loc_other', 'tenant_other', 'Other Clinic', 'other-clinic', 'urgent', '9 Other Road', 'Denver', 'CO', '80202', '+13035550100', 39.74, -104.99, 1)
+`).run();
+database.prepare(`
+  INSERT INTO availability_reports (id, location_id, intake_status, accepts_critical, source, confidence, reported_at, expires_at)
+  VALUES ('ar_other', 'loc_other', 'diverting', 1, 'hospital', 'high', ?, ?)
+`).run(new Date(now - 2 * 60_000).toISOString(), new Date(now + 2 * 3_600_000).toISOString());
+database.prepare(`
+  INSERT INTO markets (id, name, slug, center_latitude, center_longitude, radius_km) VALUES ('market_den', 'Denver Metro', 'denver-metro', 39.74, -104.99, 40)
+`).run();
+database.prepare("UPDATE locations SET market_id = 'market_den' WHERE id = 'loc_other'").run();
+
+const otherTokenResponse = await handleCreateWidgetToken(
+  new Request("https://timinow.pet/api/clinic/widget-tokens", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ label: "Other" }) }),
+  env, admin, "tenant_other"
+);
+const otherSecret = (await otherTokenResponse.json()).token.secret;
+
+const mine = await (await handlePublicWidgetStatus(statusRequest(`?client=tenant_w`), env, secret)).json();
+const theirs = await (await handlePublicWidgetStatus(
+  new Request(`https://timinow.pet/api/widget/${encodeURIComponent(otherSecret)}/status?client=tenant_other`), env, otherSecret
+)).json();
+assert(mine.status === "accepting" && mine.coverage === "East Bay", "tenant_w's token reads tenant_w's clinic");
+assert(theirs.status === "diverting" && theirs.coverage === "Denver Metro", "tenant_other's token reads tenant_other's clinic");
+assert(mine.link !== theirs.link, "attribution links are per-token, never shared");
 
 /* ------------------------------------------------------ embed contract --- */
 
@@ -167,4 +218,4 @@ assert(/Powered by\s*"?\)?/.test(embed) && embed.includes("timi-w-powered"), "th
 assert(!/innerHTML\s*=/.test(embed), "the embed script never assigns innerHTML");
 assert(!/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u.test(embed), "no emoji anywhere in the embed script");
 
-console.log("Widget tests passed: admin-only token + package management, vocabulary degradation, tenant-scoped package resolution, client-id mismatch handling, revoked/foreign package fallback, the coverage field from the market map, the whitelisted status payload, and the embed script's own contract (all designs/variants/elements present, credit rendered, no innerHTML, no emoji).");
+console.log("Widget tests passed: admin-only token + package management, vocabulary degradation, the options layer round-trip (accent/corners/frame/shadow/scale/align/heading/freshness), tenant-scoped package resolution, client-id mismatch handling, revoked/foreign package fallback, the coverage field from the market map, two-tenant isolation (each token reads only its own clinic's status, market, and attribution link), the whitelisted status payload, and the embed script's own contract (all designs/variants/elements present, credit rendered, no innerHTML, no emoji).");

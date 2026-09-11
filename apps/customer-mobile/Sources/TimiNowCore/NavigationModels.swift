@@ -93,6 +93,13 @@ public enum NavigationTone: String, Codable, CaseIterable, Sendable {
 }
 
 public enum VoiceProfile: String, Codable, CaseIterable, Sendable {
+    /// Gemini speech streamed from Tími's own voice gateway — the same
+    /// natural voice that makes the clinic phone calls — with the device
+    /// voice as the offline fallback. The default: both the Mapbox cloud
+    /// voice (Polly's standard tier) and an undownloaded device voice read
+    /// as flatly synthetic, which is what "the navigation voices are
+    /// abhorrent" turned out to mean.
+    case timiNatural = "timi_natural"
     case mapboxCloud = "mapbox_cloud"
     case systemDefault = "system_default"
     case systemEnhanced = "system_enhanced"
@@ -100,7 +107,8 @@ public enum VoiceProfile: String, Codable, CaseIterable, Sendable {
 
     public var title: String {
         switch self {
-        case .mapboxCloud: return "Tími cloud voice"
+        case .timiNatural: return "Tími natural voice"
+        case .mapboxCloud: return "Streamed (Mapbox)"
         case .systemDefault: return "Device voice"
         case .systemEnhanced: return "Device voice (enhanced)"
         case .personalVoice: return "My Personal Voice"
@@ -128,7 +136,7 @@ public struct NavigationPreferences: Codable, Hashable, Sendable {
 
     public init(
         voiceEnabled: Bool = true,
-        voiceProfile: VoiceProfile = .mapboxCloud,
+        voiceProfile: VoiceProfile = .timiNatural,
         distanceUnits: DistanceUnits = .imperial,
         avoidTolls: Bool = false,
         avoidHighways: Bool = false,
@@ -350,6 +358,12 @@ public enum TimiEnvironment {
     /// typed a URL into it. Settings still overrides this; it is only the
     /// starting point.
     public static let defaultAPIBaseURL = "https://timinow.pet"
+
+    /// The voice gateway — where `/api/nav-tts` serves natural navigation
+    /// speech (the same Gemini voice that makes the clinic phone calls).
+    /// Separate from the API base URL because the Gemini key lives on the
+    /// voice Worker, not the customer Worker.
+    public static let voiceGatewayURL = "https://voice.timinow.pet"
 }
 
 /// An emergency map result as a navigation destination.
