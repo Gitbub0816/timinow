@@ -42,6 +42,7 @@ DEVICE=""
 INSTALL=true
 CARPLAY=false
 export NO_STRIPE="${NO_STRIPE:-}"
+export NO_DIDIT="${NO_DIDIT:-}"
 while [ $# -gt 0 ]; do
   case "$1" in
     --team)       TEAM="${2:-}"; shift 2 ;;
@@ -49,6 +50,7 @@ while [ $# -gt 0 ]; do
     --build-only) INSTALL=false; shift ;;
     --carplay)    CARPLAY=true; shift ;;
     --no-stripe)  NO_STRIPE=1; shift ;;
+    --no-didit)   NO_DIDIT=1; shift ;;
     *)            die "unknown option: $1" ;;
   esac
 done
@@ -164,6 +166,9 @@ select_mapbox
 
 bold "4b. Card payment"
 select_stripe
+
+bold "4c. Identity verification"
+select_didit
 
 bold "5. Xcode project"
 ( cd "$APP_DIR/Darwin" && xcodegen generate >/dev/null )

@@ -10,6 +10,14 @@ import PhotosUI
 import UniformTypeIdentifiers
 import UIKit
 #endif
+// Didit's native verification SDK — present only when the manifest was
+// resolved with TIMI_DIDIT=1 (see Package.swift). Same convention as
+// StripePaymentSheet and Mapbox: the import exists behind the gate, and
+// every use below carries the same gate, so CI's macOS `swift test` and
+// the Skip/Android transpile never see it.
+#if canImport(DiditSDK) && !SKIP && os(iOS)
+import DiditSDK
+#endif
 
 /// The "Paw It Forward Fund" financial-hardship flow, in Tími's own hand.
 ///
@@ -358,11 +366,28 @@ struct HardshipIdentitySection: View {
             }
         }
         .timiCard(TimiColor.paper)
+        #if canImport(DiditSDK) && !SKIP && os(iOS)
+        // The native SDK's completion pipeline. The SDK's own result is a
+        // status hint, never the verdict: on completion this re-asks the
+        // Worker, which asks Didit — the same single gate every other path
+        // in this flow ends at.
+        .diditVerification { result in
+            switch result {
+            case .completed:
+                Task { checking = true; await store.refreshHardshipIdentityStatus(); checking = false }
+            case .cancelled:
+                break
+            case .failed(let error, _):
+                store.hardshipError = error.localizedDescription
+            }
+        }
+        #endif
         #if os(iOS) && !SKIP
         // Coming back from Safari is the natural "I'm done" signal, so the
         // status check runs itself the moment the app is foregrounded with a
-        // verification session outstanding — the manual button stays as the
-        // explicit fallback.
+        // browser verification session outstanding — the manual button stays
+        // as the explicit fallback. (The native SDK path never sets
+        // `sessionURL`, so this stays inert there.)
         .onChange(of: scenePhase) { phase in
             guard phase == .active, sessionURL != nil, !verified, !checking else { return }
             Task { checking = true; await store.refreshHardshipIdentityStatus(); checking = false }
@@ -370,15 +395,17 @@ struct HardshipIdentitySection: View {
         #endif
     }
 
-    /// One flow on every platform now: fetch the Didit session, open it in
-    /// the person's real browser, and confirm with the Worker when they come
-    /// back. The iOS web-sheet branch this replaces loaded the session into
-    /// a WKWebView — and Didit's hosted page detects in-app web views and
-    /// refuses to run in them by policy (its bundle ships the "Unsupported /
-    /// Open in browser" gate), which rendered as an eternal blank white
-    /// sheet no web-view configuration could fix. The browser is where Didit
-    /// wants to run, where the camera reliably works, and this flow's one
-    /// real gate — asking the Worker what Didit decided — is unchanged.
+    /// Didit's NATIVE SDK where this build carries it (TIMI_DIDIT=1 —
+    /// the default for device builds): one tap opens Didit's own native
+    /// verification screens, in-app, with SDK-tuned capture. That is the
+    /// vendor's recommended integration and the only in-app one possible:
+    /// Didit's hosted web page detects in-app web views and refuses to run
+    /// in them by policy (its bundle ships the "Unsupported / Open in
+    /// browser" gate), which is what rendered as the eternal blank white
+    /// sheet in the WKWebView this flow used to open. Builds without the
+    /// SDK (CI, Android until its own Didit SDK is wired the same way) fall
+    /// back to the system browser + check-status flow. Every path ends at
+    /// the same single gate: the Worker asking Didit what it decided.
     @ViewBuilder var verifyControls: some View {
         if checking {
             HStack(spacing: 8) { ProgressView(); Text("Checking verification…").font(.caption).foregroundStyle(TimiColor.muted) }
@@ -399,12 +426,18 @@ struct HardshipIdentitySection: View {
         } else {
             Button {
                 Task {
-                    let url = await store.startHardshipIdentityVerification()
-                    sessionURL = url
+                    guard let session = await store.startHardshipIdentityVerification() else { return }
+                    #if canImport(DiditSDK) && !SKIP && os(iOS)
+                    if let token = session.sessionToken, !token.isEmpty {
+                        DiditSdk.shared.startVerification(token: token)
+                        return
+                    }
+                    #endif
+                    sessionURL = session.launchURL
                     #if os(iOS) && !SKIP
                     // Straight to Safari on the same tap — the Link above is
                     // the way back in if the person dismisses it.
-                    if let url { openURLAction(url) }
+                    if let url = session.launchURL { openURLAction(url) }
                     #endif
                 }
             } label: {

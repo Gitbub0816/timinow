@@ -130,11 +130,15 @@ public struct HardshipIdentitySession: Codable, Hashable, Sendable {
     public var sessionId: String?
     public var provider: String?
     public var mode: String?
+    /// The short-lived token Didit's native SDKs consume
+    /// (`DiditSdk.shared.startVerification(token:)`). Never logged and never
+    /// persisted — anyone holding it can run this verification session.
+    public var sessionToken: String?
     public var sessionUrl: String?
     public var hostedUrl: String?
 
-    public init(sessionId: String? = nil, provider: String? = nil, mode: String? = nil, sessionUrl: String? = nil, hostedUrl: String? = nil) {
-        self.sessionId = sessionId; self.provider = provider; self.mode = mode; self.sessionUrl = sessionUrl; self.hostedUrl = hostedUrl
+    public init(sessionId: String? = nil, provider: String? = nil, mode: String? = nil, sessionToken: String? = nil, sessionUrl: String? = nil, hostedUrl: String? = nil) {
+        self.sessionId = sessionId; self.provider = provider; self.mode = mode; self.sessionToken = sessionToken; self.sessionUrl = sessionUrl; self.hostedUrl = hostedUrl
     }
 
     /// `sessionUrl` first, `hostedUrl` as the fallback — never the reverse,

@@ -189,3 +189,12 @@ select_stripe() {
   export TIMI_STRIPE=1
   echo "  building with in-app card payment (StripePaymentSheet)"
 }
+
+select_didit() {
+  if [ "${NO_DIDIT:-}" = "1" ]; then
+    dim "  --no-didit: identity verification will open in Safari instead of in-app"
+    return
+  fi
+  export TIMI_DIDIT=1
+  echo "  building with in-app identity verification (Didit native SDK)"
+}

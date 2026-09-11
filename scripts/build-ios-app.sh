@@ -37,11 +37,13 @@ trap 'stop_heartbeat' EXIT INT TERM
 DEVICE=""
 RUN=true
 export NO_STRIPE="${NO_STRIPE:-}"
+export NO_DIDIT="${NO_DIDIT:-}"
 while [ $# -gt 0 ]; do
   case "$1" in
     --device)     DEVICE="${2:-}"; shift 2 ;;
     --build-only) RUN=false; shift ;;
     --no-stripe)  NO_STRIPE=1; shift ;;
+    --no-didit)   NO_DIDIT=1; shift ;;
     *)            die "unknown option: $1" ;;
   esac
 done
@@ -57,6 +59,9 @@ select_mapbox
 
 bold "1b. Card payment"
 select_stripe
+
+bold "1c. Identity verification"
+select_didit
 
 bold "2. Simulator"
 if [ -z "$DEVICE" ]; then

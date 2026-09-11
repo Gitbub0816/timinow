@@ -863,15 +863,16 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
         } catch { setHardshipError(error) }
     }
 
-    /// Opens a HOSTED Didit session and hands back the URL to load in a web
-    /// sheet. Nil on failure — the caller has nothing to present.
+    /// Opens a HOSTED Didit session and hands back the whole session — the
+    /// native Didit SDK consumes its `sessionToken`, the browser fallback
+    /// its `launchURL`. Nil on failure — the caller has nothing to present.
     ///
     /// A deployment with no Didit credentials answers with the *stub*
     /// provider, whose session URL is deliberately unreachable
     /// (`identity.stub.invalid` — see src/hardship/providers.js). Loading
-    /// that in a web sheet produced the worst possible failure: a white page
+    /// that in a web view produced the worst possible failure: a white page
     /// that never finishes. Refused here instead, with words.
-    public func startHardshipIdentityVerification() async -> URL? {
+    public func startHardshipIdentityVerification() async -> HardshipIdentitySession? {
         guard let id = hardshipApplication?.id else { return nil }
         hardshipError = nil
         do {
@@ -882,7 +883,7 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
                 hardshipError = "Identity verification isn't switched on for this deployment yet, so an application can't be completed right now. Please check back soon."
                 return nil
             }
-            return url
+            return session
         } catch { setHardshipError(error); return nil }
     }
 

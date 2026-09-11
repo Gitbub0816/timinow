@@ -81,6 +81,18 @@ if enableMapbox {
     ])
 }
 
+// Didit's identity-verification SDK, gated the same way and for the same
+// two reasons as Stripe (Apple-only binary xcframework: the macOS host
+// `swift test` cannot link it, and skipstone cannot transpile it) plus one
+// of its own: it is the ONLY way to run Didit inside the app. Didit's
+// hosted web page detects in-app web views and refuses to run in them by
+// policy, so the non-SDK fallback is the system browser, never a web view.
+// The AutoDetection variant is used deliberately: it keeps the ML document/
+// selfie auto-capture but strips NFC and OpenSSL, so no NFC entitlement
+// enters the provisioning profile — a personal-team device build keeps
+// signing exactly as it does today.
+let enableDidit = ProcessInfo.processInfo.environment["TIMI_DIDIT"] == "1"
+
 if enableStripe {
     // stripe-ios-spm is Stripe's Swift-Package-Manager mirror; the main
     // stripe-ios repository is not consumable as a package.
@@ -92,6 +104,18 @@ if enableStripe {
     // UIKit, which does not exist on macOS.
     timiNowUIDependencies.append(
         .product(name: "StripePaymentSheet", package: "stripe-ios-spm", condition: .when(platforms: [.iOS]))
+    )
+}
+
+if enableDidit {
+    packageDependencies.append(
+        .package(url: "https://github.com/didit-protocol/sdk-ios", from: "4.7.6")
+    )
+    // Every variant of the SDK is imported as `import DiditSDK` in source;
+    // only the product name picks which xcframework ships. iOS-conditioned
+    // like the others: the binary target has no macOS slice.
+    timiNowUIDependencies.append(
+        .product(name: "DiditSDKAutoDetection", package: "sdk-ios", condition: .when(platforms: [.iOS]))
     )
 }
 

@@ -148,6 +148,7 @@ export function stubIdentityProvider({ sessions = {}, supportedModes = ["EMBEDDE
         provider: "stub-identity",
         mode,
         sessionId,
+        sessionToken: sessionId,
         sessionUrl,
         hostedUrl: mode === "HOSTED" ? sessionUrl : null,
         expiresAt: plusMinutes(nowIso, STUB_SESSION_TTL_MINUTES),
@@ -360,10 +361,20 @@ export function diditIdentityProvider(env) {
         throw new ProviderError("EMBEDDED_SESSION_UNAVAILABLE", "The identity provider did not return a verification URL.", { retryable: true });
       }
 
+      // What Didit's native mobile SDKs consume: their startVerification
+      // takes the short-lived session token, not the URL. Didit returns it
+      // as its own field; the hosted URL's last path segment carries the
+      // same value (verify.didit.me/{locale}/session/{token}), which is the
+      // documented shape the web SDK itself relies on — used here only as
+      // the fallback when the field is absent.
+      const sessionToken = payload.session_token
+        || (typeof sessionUrl === "string" ? sessionUrl.split("/").filter(Boolean).pop() : null);
+
       return {
         provider: "didit",
         mode,
         sessionId,
+        sessionToken,
         sessionUrl,
         // Kept for any caller still reading the HOSTED-only field name.
         hostedUrl: mode === "HOSTED" ? sessionUrl : null,
