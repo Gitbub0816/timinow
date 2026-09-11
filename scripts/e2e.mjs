@@ -352,7 +352,14 @@ for (const offer of result.body.search.offers) {
   // The clinic id is the other way to resolve the business, and it used to
   // travel on the card. It must not.
   assert(offer.locationId === undefined && offer.tenantId === undefined, `A masked offer must not carry the clinic or tenant id: ${JSON.stringify(offer).slice(0, 400)}`);
-  assert(!/\b(Bayview|Hearth|Juniper|Cedar|Solano)\b/.test(serialized), `A masked offer leaked a seeded clinic name: ${serialized}`);
+  // Scanned with the alias stripped: the alias library is the spec's own
+  // nature-word list (§5.1–§5.2), and "Juniper" is both entry 16 of that
+  // list and a seeded clinic's first word — so scanning the full card made
+  // this assertion fail whenever the RNG happened to deal that alias, which
+  // it did often enough to kill real deploys at the Validate step. A
+  // seeded-clinic word anywhere OUTSIDE the alias is still a leak.
+  const aliasFreeSerialized = JSON.stringify({ ...card, alias: undefined });
+  assert(!/\b(Bayview|Hearth|Juniper|Cedar|Solano)\b/.test(aliasFreeSerialized), `A masked offer leaked a seeded clinic name: ${serialized}`);
 
   assert(card.alias?.displayName, `A masked offer must carry a temporary match alias: ${serialized}`);
   // The disclosure must be on the card itself, not hidden behind a tooltip.
