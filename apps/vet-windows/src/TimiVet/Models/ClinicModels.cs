@@ -167,7 +167,10 @@ public sealed class ClinicRequest : INotifyPropertyChanged
     private DateTimeOffset? _requestedAt;
     public DateTimeOffset? RequestedAt { get => _requestedAt; set => Set(ref _requestedAt, value); }
     private DateTimeOffset? _requestExpiresAt;
-    public DateTimeOffset? RequestExpiresAt { get => _requestExpiresAt; set { if (Set(ref _requestExpiresAt, value)) Raise(nameof(ExpiresLabel)); } }
+    // ClinicRequest's own Set is void (unlike ObservableObject's bool one),
+    // so the dependent raise is unconditional — an extra Raise on an
+    // unchanged value is a no-op re-read, not a re-layout.
+    public DateTimeOffset? RequestExpiresAt { get => _requestExpiresAt; set { Set(ref _requestExpiresAt, value); Raise(nameof(ExpiresLabel)); } }
 
     /// <summary>
     /// How long the search window has left — the Mac workspace's "SEARCH
