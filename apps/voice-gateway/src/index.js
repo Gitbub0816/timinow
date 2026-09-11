@@ -757,11 +757,21 @@ async function handleApi(request, env) {
   const method = request.method.toUpperCase();
 
   if (method === "GET" && path === "/api/health") {
+    // The voice fields make the live speech path a curl-visible fact:
+    // geminiTtsConfigured=false means every call is speaking the Twilio
+    // <Say> fallback (sayVoice) because GEMINI_API_KEY is not set on this
+    // Worker, whatever the Gemini voice/model vars say.
+    const gemini = geminiConfigured(env);
     return json({
       ok: true,
       service: "timinow-voice",
       database: hasDatabase(env),
-      twilioConfigured: Boolean(env.TWILIO_ACCOUNT_SID && env.TWILIO_AUTH_TOKEN && env.TWILIO_FROM_NUMBER)
+      twilioConfigured: Boolean(env.TWILIO_ACCOUNT_SID && env.TWILIO_AUTH_TOKEN && env.TWILIO_FROM_NUMBER),
+      geminiTtsConfigured: gemini,
+      speechPath: gemini ? "gemini-tts" : "twilio-say",
+      geminiVoice: gemini ? geminiVoice(env) : null,
+      geminiModel: gemini ? geminiModel(env) : null,
+      sayVoice: sayVoice(env)
     });
   }
   if (method === "GET" && path === "/api/config") return json(publicConfig(env));

@@ -298,17 +298,15 @@ struct ActivityView: View {
     }
 }
 
-/// Settings, in Tími's own hand.
+/// Settings, as a hub.
 ///
-/// This was a `Form`: grouped grey sections, hairline separators, system
-/// small-caps headers. The pet sheet next door was rewritten off exactly that
-/// look and this was left behind, which made it the one screen in the app that
-/// looked like every other app on the phone — reached from a tab bar whose
-/// other three screens are ink borders, serif headlines and coral.
-///
-/// Every binding below is the one the `Form` had. What changed is the
-/// chrome: cards instead of sections, chips instead of wheel pickers, and
-/// labels above fields rather than beside them.
+/// The first Tími-styled rewrite of this screen kept the old `Form`'s shape —
+/// every control inline, one endless scroll — and just re-skinned it, which
+/// left a wall of same-weight chips where a settings screen should be. This
+/// version is the app's own take on how a settings tab is supposed to work:
+/// who you are at the top, then a handful of clearly-named doors, each opening
+/// onto one screen that does one thing. Every binding from the wall version
+/// survives; it just lives behind the door it belongs to.
 struct SettingsView: View {
     @Bindable var store: AppStore
     @State var versionTaps = 0
@@ -324,11 +322,49 @@ struct SettingsView: View {
                 Eyebrow(text: "YOUR ACCOUNT")
                 DisplayHeadline(text: "Settings", size: 40)
 
-                details
-                if store.auth.isSignedIn { account }
-                permissions
-                navigation
-                legal
+                profile
+
+                settingsCard("PREFERENCES") {
+                    NavigationLink { AlertsSettingsView(store: store) } label: {
+                        settingsNavRow(icon: "bell.badge.fill", tint: TimiColor.blue, soft: TimiColor.blueSoft,
+                                       title: "Notifications & location",
+                                       subtitle: "Offer alerts and drive-time ranking")
+                    }.buttonStyle(.plain)
+                    Divider()
+                    NavigationLink { NavigationSettingsView(store: store) } label: {
+                        settingsNavRow(icon: "car.fill", tint: TimiColor.ink, soft: TimiColor.goldSoft,
+                                       title: "Navigation & voice",
+                                       subtitle: "Spoken directions, voices, route choices")
+                    }.buttonStyle(.plain)
+                }
+
+                settingsCard("CARE") {
+                    NavigationLink { HardshipEntryView(store: store) } label: {
+                        settingsNavRow(icon: "heart.fill", tint: TimiColor.coral, soft: TimiColor.coralSoft,
+                                       title: "Paw It Forward Fund",
+                                       subtitle: "Help paying for care — or give it forward")
+                    }.buttonStyle(.plain)
+                }
+
+                settingsCard("PRIVACY & SUPPORT") {
+                    NavigationLink { PrivacySettingsView(store: store) } label: {
+                        settingsNavRow(icon: "lock.fill", tint: TimiColor.ink, soft: TimiColor.canvas,
+                                       title: "Privacy & your data",
+                                       subtitle: "Usage statistics, export, deletion")
+                    }.buttonStyle(.plain)
+                    Divider()
+                    NavigationLink { LegalView() } label: {
+                        settingsNavRow(icon: "doc.text.fill", tint: TimiColor.blue, soft: TimiColor.blueSoft,
+                                       title: "Terms & veterinary safety",
+                                       subtitle: "What Tími is, and is not")
+                    }.buttonStyle(.plain)
+                    Divider()
+                    Link(destination: URL(string: "mailto:billing@clearkey.solutions")!) {
+                        settingsNavRow(icon: "envelope.fill", tint: TimiColor.ink, soft: TimiColor.goldSoft,
+                                       title: "Billing support",
+                                       subtitle: "billing@clearkey.solutions")
+                    }.buttonStyle(.plain)
+                }
 
                 // Tapping the version seven times brings the developer card
                 // back — the same idiom Apple's own apps use, and the only
@@ -351,69 +387,159 @@ struct SettingsView: View {
         .background(TimiColor.canvas)
     }
 
-    // MARK: - Cards
-
-    /// What a pet owner actually needs from this screen: who the clinic calls.
-    /// Typed once here or once on the intake form, then remembered — not
-    /// re-entered on every care request.
-    var details: some View {
-        card("YOUR DETAILS") {
-            field("Name") { TextField("Your name", text: $store.ownerName).textContentType(.name).timiField() }
-            field("Mobile number") { TextField("(555) 123-4567", text: $store.ownerPhone).textContentType(.telephoneNumber).timiKeyboard(.phone).timiField() }
-            field("Email") { TextField("Optional", text: $store.ownerEmail).textContentType(.emailAddress).timiKeyboard(.email).autocorrectionDisabled().timiField() }
-            Text("Used to fill in your next care request, and given to the clinic you choose so they can reach you.")
-                .font(.caption).foregroundStyle(TimiColor.muted)
-        }
-    }
-
-    var account: some View {
-        card("ACCOUNT") {
-            // Naming the account is the whole point of having one. Not saying
-            // which one is signed in is why "we have sign-ins and it doesn't
-            // save anything" was a reasonable reading.
-            VStack(alignment: .leading, spacing: 3) {
-                Text("Signed in as").font(.caption).foregroundStyle(TimiColor.muted)
-                Text(signedInAs).font(.title3).fontWeight(.black)
-            }
-            // Shown only when it is not working, and shown without seven taps.
-            //
-            // "It does not stay signed in" has cost several rounds of guessing
-            // between three indistinguishable causes: a Keychain that refuses
-            // the write, a Clerk instance that returned no client token to
-            // store, and a Worker that could not be reached at launch. The
-            // device knows which. There is nothing a customer can do about any
-            // of them, so this is worded as a fault report rather than an
-            // instruction — but a fault nobody can see is one nobody fixes.
-            if store.auth.credentialDiagnostics != "stored and readable" {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("This device may not stay signed in").font(.caption).fontWeight(.bold).foregroundStyle(TimiColor.coral)
-                    Text(store.auth.credentialDiagnostics).font(.caption).foregroundStyle(TimiColor.muted)
+    /// Who this account is, at the top where every settings screen keeps it:
+    /// initials in an ink circle, the name, and how (or whether) they are
+    /// signed in. The card is a door — details are edited on their own screen.
+    var profile: some View {
+        NavigationLink { AccountSettingsView(store: store) } label: {
+            HStack(spacing: 14) {
+                Text(profileInitials)
+                    .font(.system(size: 22, weight: .black, design: .serif))
+                    .foregroundStyle(TimiColor.paper)
+                    .frame(width: 56, height: 56)
+                    .background(TimiColor.ink, in: Circle())
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(store.ownerName.isEmpty ? "Add your details" : store.ownerName)
+                        .font(.title3).fontWeight(.black)
+                        .foregroundStyle(TimiColor.ink)
+                    Text(profileSubtitle).font(.caption).foregroundStyle(TimiColor.muted)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(11)
-                .background(TimiColor.coralSoft, in: RoundedRectangle(cornerRadius: 12))
+                Spacer()
+                Image(systemName: "chevron.right").font(.caption.weight(.bold)).foregroundStyle(TimiColor.muted)
             }
-            Button("Sign out") { Task { await store.auth.signOut() } }
-                .buttonStyle(TimiQuietButtonStyle())
-        }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .timiCard(Color.white)
+        }.buttonStyle(.plain)
     }
 
-    var signedInAs: String {
-        if !store.ownerEmail.isEmpty { return store.ownerEmail }
-        if !store.ownerPhone.isEmpty { return store.ownerPhone }
-        return store.ownerName.isEmpty ? "This device" : store.ownerName
+    var profileInitials: String {
+        let words = store.ownerName.split(separator: " ").prefix(2)
+        let initials = words.compactMap { $0.first }.map { String($0) }.joined()
+        return initials.isEmpty ? "T" : initials.uppercased()
     }
 
-    /// The onboarding flow no longer primes OS permissions — it asks about
-    /// the pet, not the phone — so flipping these on is now what actually
-    /// requests them. The toggle settles to what the system granted, so a
-    /// refusal reads as the switch declining rather than lying on.
-    var permissions: some View {
-        card("PERMISSIONS") {
-            toggle("Offer notifications", "Tell me when a clinic answers.", $store.notificationsEnabled)
+    var profileSubtitle: String {
+        if store.auth.isSignedIn { return "Signed in as \(signedInAs(store))" }
+        return "Details are saved on this device"
+    }
+
+    /// The Worker address, the mode, the onboarding replay: all of it is ours,
+    /// none of it is a pet owner's, and a settings screen that opens with
+    /// "https://your-worker.workers.dev" tells them they are holding something
+    /// unfinished.
+    var developer: some View {
+        settingsCard("DEVELOPER") {
+            settingsField("Worker address") { TextField("https://your-worker.workers.dev", text: $store.apiBaseURLText).autocorrectionDisabled().timiField() }
+            Button("Save API address") { store.saveAPIBaseURL() }.buttonStyle(TimiQuietButtonStyle())
             Divider()
-            toggle("Use precise location", "Rank clinics by how far you actually have to drive.", $store.locationEnabled)
+            settingsLabelled("Mode", store.isDemoMode ? "Interactive demo" : "Live Worker")
+            settingsLabelled("Talking to", store.resolvedAPIAddress)
+            Divider()
+            // Whether this device can stay signed in, answered now rather than
+            // by relaunching and seeing. Three things have to be true and each
+            // used to fail silently: the Keychain has to accept the write, the
+            // credential has to be worth writing, and it has to read back.
+            settingsLabelled("Sign-in storage", store.auth.credentialDiagnostics)
+            settingsLabelled("Last crash", TimiBreadcrumb.lastCrash ?? "none recorded")
+            settingsLabelled("Last launch", store.auth.lastRestoreOutcome)
+            Divider()
+            Button("Replay guided onboarding") { store.resetOnboarding() }.buttonStyle(TimiQuietButtonStyle())
+            Button("Hide developer settings") { store.developerModeEnabled = false; versionTaps = 0 }.buttonStyle(TimiQuietButtonStyle())
         }
+    }
+}
+
+/// Name, phone, email — and the signed-in account behind them.
+struct AccountSettingsView: View {
+    @Bindable var store: AppStore
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                Eyebrow(text: "YOUR ACCOUNT")
+                DisplayHeadline(text: "Your details", size: 34)
+
+                settingsCard("CONTACT") {
+                    settingsField("Name") { TextField("Your name", text: $store.ownerName).textContentType(.name).timiField() }
+                    settingsField("Mobile number") { TextField("(555) 123-4567", text: $store.ownerPhone).textContentType(.telephoneNumber).timiKeyboard(.phone).timiField() }
+                    settingsField("Email") { TextField("Optional", text: $store.ownerEmail).textContentType(.emailAddress).timiKeyboard(.email).autocorrectionDisabled().timiField() }
+                    Text("Used to fill in your next care request, and given to the clinic you choose so they can reach you.")
+                        .font(.caption).foregroundStyle(TimiColor.muted)
+                }
+
+                if store.auth.isSignedIn {
+                    settingsCard("ACCOUNT") {
+                        // Naming the account is the whole point of having one. Not saying
+                        // which one is signed in is why "we have sign-ins and it doesn't
+                        // save anything" was a reasonable reading.
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("Signed in as").font(.caption).foregroundStyle(TimiColor.muted)
+                            Text(signedInAs(store)).font(.title3).fontWeight(.black)
+                        }
+                        // Shown only when it is not working, and shown without seven taps.
+                        //
+                        // "It does not stay signed in" has cost several rounds of guessing
+                        // between three indistinguishable causes: a Keychain that refuses
+                        // the write, a Clerk instance that returned no client token to
+                        // store, and a Worker that could not be reached at launch. The
+                        // device knows which. There is nothing a customer can do about any
+                        // of them, so this is worded as a fault report rather than an
+                        // instruction — but a fault nobody can see is one nobody fixes.
+                        if store.auth.credentialDiagnostics != "stored and readable" {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("This device may not stay signed in").font(.caption).fontWeight(.bold).foregroundStyle(TimiColor.coral)
+                                Text(store.auth.credentialDiagnostics).font(.caption).foregroundStyle(TimiColor.muted)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(11)
+                            .background(TimiColor.coralSoft, in: RoundedRectangle(cornerRadius: 12))
+                        }
+                        Button("Sign out") { Task { await store.auth.signOut() } }
+                            .buttonStyle(TimiQuietButtonStyle())
+                    }
+                }
+            }
+            .padding(20)
+            .frame(maxWidth: 720)
+            .frame(maxWidth: .infinity)
+        }
+        .timiScrollFits()
+        .background(TimiColor.canvas)
+    }
+}
+
+/// The two OS permissions, on their own screen with room to say what each is
+/// for. The onboarding flow no longer primes these — it asks about the pet,
+/// not the phone — so flipping them on is what actually requests them. The
+/// toggle settles to what the system granted, so a refusal reads as the
+/// switch declining rather than lying on.
+struct AlertsSettingsView: View {
+    @Bindable var store: AppStore
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                Eyebrow(text: "PREFERENCES")
+                DisplayHeadline(text: "Notifications & location", size: 34)
+
+                settingsCard("NOTIFICATIONS") {
+                    TimiToggleRow(title: "Offer notifications", subtitle: "Tell me the moment a clinic answers.", isOn: $store.notificationsEnabled)
+                    Text("Only about your care requests — never marketing.")
+                        .font(.caption).foregroundStyle(TimiColor.muted)
+                }
+
+                settingsCard("LOCATION") {
+                    TimiToggleRow(title: "Use precise location", subtitle: "Rank clinics by how far you actually have to drive.", isOn: $store.locationEnabled)
+                    Text("Read when you search and when you navigate. Your location is not stored on Tími's servers.")
+                        .font(.caption).foregroundStyle(TimiColor.muted)
+                }
+            }
+            .padding(20)
+            .frame(maxWidth: 720)
+            .frame(maxWidth: .infinity)
+        }
+        .timiScrollFits()
+        .background(TimiColor.canvas)
         .onChange(of: store.notificationsEnabled) { enabled in
             guard enabled else { return }
             Task { store.notificationsEnabled = await PlatformPermissions.requestNotifications() }
@@ -428,131 +554,81 @@ struct SettingsView: View {
             }
         }
     }
+}
 
-    var navigation: some View {
-        card("NAVIGATION") {
-            toggle("Spoken turn-by-turn", "Directions read aloud on the way.", $store.navigationPreferences.voiceEnabled)
+/// Everything about the drive: the voice that reads directions and the roads
+/// the route may use.
+struct NavigationSettingsView: View {
+    @Bindable var store: AppStore
 
-            voiceChips
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                Eyebrow(text: "PREFERENCES")
+                DisplayHeadline(text: "Navigation & voice", size: 34)
 
-            #if os(iOS) && !SKIP
-            let deviceVoices = VoicePreviewer.availableVoices()
-            if !deviceVoices.isEmpty {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Device voice").font(.headline)
-                    // The unset default is the best installed voice, not the
-                    // system's compact one — see VoicePreviewer.bestVoice.
-                    chipRow(title: "Best available", selected: store.navigationPreferences.preferredVoiceIdentifier == nil) {
-                        store.navigationPreferences.preferredVoiceIdentifier = nil
-                    }
-                    ForEach(deviceVoices, id: \.identifier) { voice in
-                        chipRow(title: VoicePreviewer.label(for: voice), selected: store.navigationPreferences.preferredVoiceIdentifier == voice.identifier) {
-                            store.navigationPreferences.preferredVoiceIdentifier = voice.identifier
+                settingsCard("SPOKEN DIRECTIONS") {
+                    TimiToggleRow(title: "Spoken turn-by-turn", subtitle: "Directions read aloud on the way.", isOn: $store.navigationPreferences.voiceEnabled)
+
+                    voiceChips
+
+                    #if os(iOS) && !SKIP
+                    let deviceVoices = VoicePreviewer.availableVoices()
+                    if !deviceVoices.isEmpty {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Device voice").font(.headline)
+                            // The unset default is the best installed voice, not the
+                            // system's compact one — see VoicePreviewer.bestVoice.
+                            settingsChipRow(title: "Best available", selected: store.navigationPreferences.preferredVoiceIdentifier == nil) {
+                                store.navigationPreferences.preferredVoiceIdentifier = nil
+                            }
+                            ForEach(deviceVoices, id: \.identifier) { voice in
+                                settingsChipRow(title: VoicePreviewer.label(for: voice), selected: store.navigationPreferences.preferredVoiceIdentifier == voice.identifier) {
+                                    store.navigationPreferences.preferredVoiceIdentifier = voice.identifier
+                                }
+                            }
                         }
                     }
+                    #endif
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Speech rate").font(.headline)
+                        Slider(value: $store.navigationPreferences.speechRate, in: 0...1).tint(TimiColor.blue)
+                    }
+
+                    #if os(iOS) && !SKIP
+                    Button("Preview voice") {
+                        VoicePreviewer.shared.preview(
+                            // Previewed in the calm register: this is a settings
+                            // screen, not a drive, and it is the register whose
+                            // wording anyone customising the voice will care about.
+                            text: TimiInstructionRewriter.announcement(
+                                "arrival",
+                                tone: .calm,
+                                clinicName: "Hearth and Paw",
+                                petName: store.selectedPet.name
+                            ) ?? "You've arrived.",
+                            preferences: store.navigationPreferences
+                        )
+                    }.buttonStyle(TimiQuietButtonStyle())
+                    #endif
+                }
+
+                settingsCard("THE ROUTE") {
+                    unitChips
+                    Divider()
+                    TimiToggleRow(title: "Avoid tolls", subtitle: nil, isOn: $store.navigationPreferences.avoidTolls)
+                    TimiToggleRow(title: "Avoid highways", subtitle: nil, isOn: $store.navigationPreferences.avoidHighways)
+                    TimiToggleRow(title: "Avoid ferries", subtitle: nil, isOn: $store.navigationPreferences.avoidFerries)
+                    TimiToggleRow(title: "Announce arrival at clinic", subtitle: nil, isOn: $store.navigationPreferences.announceArrivalAtClinic)
                 }
             }
-            #endif
-
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Speech rate").font(.headline)
-                Slider(value: $store.navigationPreferences.speechRate, in: 0...1).tint(TimiColor.blue)
-            }
-
-            unitChips
-
-            Divider()
-            toggle("Avoid tolls", nil, $store.navigationPreferences.avoidTolls)
-            toggle("Avoid highways", nil, $store.navigationPreferences.avoidHighways)
-            toggle("Avoid ferries", nil, $store.navigationPreferences.avoidFerries)
-            toggle("Announce arrival at clinic", nil, $store.navigationPreferences.announceArrivalAtClinic)
-
-            #if os(iOS) && !SKIP
-            Button("Preview voice") {
-                VoicePreviewer.shared.preview(
-                    // Previewed in the calm register: this is a settings
-                    // screen, not a drive, and it is the register whose
-                    // wording anyone customising the voice will care about.
-                    text: TimiInstructionRewriter.announcement(
-                        "arrival",
-                        tone: .calm,
-                        clinicName: "Hearth and Paw",
-                        petName: store.selectedPet.name
-                    ) ?? "You've arrived.",
-                    preferences: store.navigationPreferences
-                )
-            }.buttonStyle(TimiQuietButtonStyle())
-            #endif
+            .padding(20)
+            .frame(maxWidth: 720)
+            .frame(maxWidth: .infinity)
         }
-    }
-
-    var legal: some View {
-        card("LEGAL AND SUPPORT") {
-            NavigationLink { HardshipEntryView(store: store) } label: {
-                row("Paw It Forward Fund — financial assistance", "chevron.right")
-            }.buttonStyle(.plain)
-            Divider()
-            NavigationLink { LegalView() } label: {
-                row("Terms, privacy, and veterinary safety", "chevron.right")
-            }.buttonStyle(.plain)
-            Divider()
-            Link(destination: URL(string: "mailto:privacy@clearkey.solutions")!) {
-                row("Privacy requests", "envelope")
-            }.buttonStyle(.plain)
-            Divider()
-            Link(destination: URL(string: "mailto:billing@clearkey.solutions")!) {
-                row("Billing support", "envelope")
-            }.buttonStyle(.plain)
-        }
-    }
-
-    /// The Worker address, the mode, the onboarding replay: all of it is ours,
-    /// none of it is a pet owner's, and a settings screen that opens with
-    /// "https://your-worker.workers.dev" tells them they are holding something
-    /// unfinished.
-    var developer: some View {
-        card("DEVELOPER") {
-            field("Worker address") { TextField("https://your-worker.workers.dev", text: $store.apiBaseURLText).autocorrectionDisabled().timiField() }
-            Button("Save API address") { store.saveAPIBaseURL() }.buttonStyle(TimiQuietButtonStyle())
-            Divider()
-            labelled("Mode", store.isDemoMode ? "Interactive demo" : "Live Worker")
-            labelled("Talking to", store.resolvedAPIAddress)
-            Divider()
-            // Whether this device can stay signed in, answered now rather than
-            // by relaunching and seeing. Three things have to be true and each
-            // used to fail silently: the Keychain has to accept the write, the
-            // credential has to be worth writing, and it has to read back.
-            labelled("Sign-in storage", store.auth.credentialDiagnostics)
-            labelled("Last crash", TimiBreadcrumb.lastCrash ?? "none recorded")
-            labelled("Last launch", store.auth.lastRestoreOutcome)
-            Divider()
-            Button("Replay guided onboarding") { store.resetOnboarding() }.buttonStyle(TimiQuietButtonStyle())
-            Button("Hide developer settings") { store.developerModeEnabled = false; versionTaps = 0 }.buttonStyle(TimiQuietButtonStyle())
-        }
-    }
-
-    // MARK: - Pieces
-
-    func card(_ title: String, @ViewBuilder content: () -> some View) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Eyebrow(text: title)
-            content()
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .timiCard(Color.white)
-    }
-
-    func field(_ title: String, @ViewBuilder content: () -> some View) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(title).font(.headline)
-            content()
-        }
-    }
-
-    /// The Tími switch (Components.swift) in place of the system toggle —
-    /// the last stock-grey control this screen still showed.
-    func toggle(_ title: String, _ subtitle: String?, _ value: Binding<Bool>) -> some View {
-        TimiToggleRow(title: title, subtitle: subtitle, isOn: value)
+        .timiScrollFits()
+        .background(TimiColor.canvas)
     }
 
     /// The species-picker idiom from the pet sheet, reused. A wheel picker is
@@ -567,7 +643,7 @@ struct SettingsView: View {
             Text("Voice").font(.headline)
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 120))], spacing: 10) {
                 ForEach(VoiceProfile.allCases, id: \.self) { option in
-                    chipRow(title: option.title, selected: store.navigationPreferences.voiceProfile == option) {
+                    settingsChipRow(title: option.title, selected: store.navigationPreferences.voiceProfile == option) {
                         store.navigationPreferences.voiceProfile = option
                     }
                 }
@@ -580,45 +656,127 @@ struct SettingsView: View {
             Text("Distance units").font(.headline)
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 120))], spacing: 10) {
                 ForEach(DistanceUnits.allCases, id: \.self) { option in
-                    chipRow(title: option.title, selected: store.navigationPreferences.distanceUnits == option) {
+                    settingsChipRow(title: option.title, selected: store.navigationPreferences.distanceUnits == option) {
                         store.navigationPreferences.distanceUnits = option
                     }
                 }
             }
         }
     }
+}
 
-    func chipRow(title: String, selected: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack(spacing: 7) {
-                Image(systemName: selected ? "largecircle.fill.circle" : "circle")
-                    .foregroundStyle(selected ? TimiColor.blue : TimiColor.ink.faded(0.3))
-                Text(title).font(.caption).fontWeight(.bold).multilineTextAlignment(.leading)
-                Spacer(minLength: 0)
+/// The choices Tími can actually honor about data, in one place — and the
+/// requests that go to a person, pre-addressed.
+struct PrivacySettingsView: View {
+    @Bindable var store: AppStore
+
+    /// The switch is worded as sharing, so ON means "measure" — the stored
+    /// flag is the opt-OUT, hence the inversion.
+    var shareUsage: Binding<Bool> {
+        Binding(get: { !store.analyticsOptOut }, set: { store.analyticsOptOut = !$0 })
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                Eyebrow(text: "PRIVACY")
+                DisplayHeadline(text: "Your data", size: 34)
+
+                settingsCard("MEASUREMENT") {
+                    TimiToggleRow(title: "Share anonymous usage statistics", subtitle: "Helps us see which screens work and which confuse.", isOn: shareUsage)
+                    Text("Cookieless by design: an event name, the screen it happened on, coarse device and country information, and a daily-rotating anonymous hash. No advertising identifiers, nothing sold or shared for advertising, and the hash cannot follow you across days.")
+                        .font(.caption).foregroundStyle(TimiColor.muted)
+                }
+
+                settingsCard("YOUR REQUESTS") {
+                    Link(destination: URL(string: "mailto:privacy@clearkey.solutions?subject=Data%20export%20request")!) {
+                        settingsNavRow(icon: "square.and.arrow.down.fill", tint: TimiColor.blue, soft: TimiColor.blueSoft,
+                                       title: "Request a copy of my data",
+                                       subtitle: "Everything Tími holds about you, by email")
+                    }.buttonStyle(.plain)
+                    Divider()
+                    Link(destination: URL(string: "mailto:privacy@clearkey.solutions?subject=Account%20deletion%20request")!) {
+                        settingsNavRow(icon: "trash.fill", tint: TimiColor.coral, soft: TimiColor.coralSoft,
+                                       title: "Delete my account and data",
+                                       subtitle: "Removes your account, pets, and history")
+                    }.buttonStyle(.plain)
+                    Text("Requests go to privacy@clearkey.solutions and are answered by a person, as California law requires.")
+                        .font(.caption).foregroundStyle(TimiColor.muted)
+                }
             }
-            .padding(11)
-            .frame(minHeight: 48)
-            .background(selected ? TimiColor.blueSoft : .white, in: RoundedRectangle(cornerRadius: 14))
-            .overlay(RoundedRectangle(cornerRadius: 14).stroke(selected ? TimiColor.blue : TimiColor.ink.faded(0.14), lineWidth: CGFloat(selected ? 2 : 1)))
-        }.buttonStyle(.plain)
-    }
-
-    func row(_ title: String, _ icon: String) -> some View {
-        HStack {
-            Text(title).font(.headline).multilineTextAlignment(.leading)
-            Spacer()
-            Image(systemName: icon).font(.caption).foregroundStyle(TimiColor.muted)
+            .padding(20)
+            .frame(maxWidth: 720)
+            .frame(maxWidth: .infinity)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .contentShape(Rectangle())
+        .timiScrollFits()
+        .background(TimiColor.canvas)
     }
+}
 
-    func labelled(_ title: String, _ value: String) -> some View {
-        HStack(alignment: .firstTextBaseline) {
-            Text(title).font(.headline)
-            Spacer()
-            Text(value).font(.caption).foregroundStyle(TimiColor.muted).multilineTextAlignment(.trailing)
+// MARK: - Settings pieces, shared by the hub and its screens
+
+func signedInAs(_ store: AppStore) -> String {
+    if !store.ownerEmail.isEmpty { return store.ownerEmail }
+    if !store.ownerPhone.isEmpty { return store.ownerPhone }
+    return store.ownerName.isEmpty ? "This device" : store.ownerName
+}
+
+func settingsCard(_ title: String, @ViewBuilder content: () -> some View) -> some View {
+    VStack(alignment: .leading, spacing: 14) {
+        Eyebrow(text: title)
+        content()
+    }
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .timiCard(Color.white)
+}
+
+func settingsField(_ title: String, @ViewBuilder content: () -> some View) -> some View {
+    VStack(alignment: .leading, spacing: 8) {
+        Text(title).font(.headline)
+        content()
+    }
+}
+
+/// One door: an icon in a soft tile, the destination, a chevron. The whole
+/// row is the target.
+func settingsNavRow(icon: String, tint: Color, soft: Color, title: String, subtitle: String) -> some View {
+    HStack(spacing: 12) {
+        Image(systemName: icon)
+            .font(.system(size: 16, weight: .bold))
+            .foregroundStyle(tint)
+            .frame(width: 40, height: 40)
+            .background(soft, in: RoundedRectangle(cornerRadius: 12))
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title).font(.headline).foregroundStyle(TimiColor.ink).multilineTextAlignment(.leading)
+            Text(subtitle).font(.caption).foregroundStyle(TimiColor.muted).multilineTextAlignment(.leading)
         }
+        Spacer(minLength: 0)
+        Image(systemName: "chevron.right").font(.caption.weight(.bold)).foregroundStyle(TimiColor.muted)
+    }
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .contentShape(Rectangle())
+}
+
+func settingsChipRow(title: String, selected: Bool, action: @escaping () -> Void) -> some View {
+    Button(action: action) {
+        HStack(spacing: 7) {
+            Image(systemName: selected ? "largecircle.fill.circle" : "circle")
+                .foregroundStyle(selected ? TimiColor.blue : TimiColor.ink.faded(0.3))
+            Text(title).font(.caption).fontWeight(.bold).multilineTextAlignment(.leading)
+            Spacer(minLength: 0)
+        }
+        .padding(11)
+        .frame(minHeight: 48)
+        .background(selected ? TimiColor.blueSoft : .white, in: RoundedRectangle(cornerRadius: 14))
+        .overlay(RoundedRectangle(cornerRadius: 14).stroke(selected ? TimiColor.blue : TimiColor.ink.faded(0.14), lineWidth: CGFloat(selected ? 2 : 1)))
+    }.buttonStyle(.plain)
+}
+
+func settingsLabelled(_ title: String, _ value: String) -> some View {
+    HStack(alignment: .firstTextBaseline) {
+        Text(title).font(.headline)
+        Spacer()
+        Text(value).font(.caption).foregroundStyle(TimiColor.muted).multilineTextAlignment(.trailing)
     }
 }
 

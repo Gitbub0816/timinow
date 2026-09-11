@@ -1,0 +1,24 @@
+{
+  // Widget demo — timinow-widget-demo.
+  //
+  // A fictional clinic homepage with the real availability widget embedded,
+  // so anyone can see the embed in situ without owning a clinic site or a
+  // token. No database, no secrets, no auth — see apps/widget-demo/src/index.js.
+  //
+  // Deploy: npx wrangler deploy --config wrangler.widget-demo.jsonc
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "timinow-widget-demo",
+  "main": "apps/widget-demo/src/index.js",
+  "compatibility_date": "2026-08-20",
+  "workers_dev": true,
+  // Custom Domain: Cloudflare manages the record and certificate, same as
+  // every other Worker in this repo.
+  "routes": [
+    { "pattern": "widget-demo.timinow.pet", "custom_domain": true }
+  ],
+  "vars": {
+    // Where the real embed script and the "Request care" links point.
+    "CUSTOMER_APP_URL": "https://timinow.pet"
+  },
+  "observability": { "enabled": true }
+}

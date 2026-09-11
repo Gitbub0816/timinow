@@ -487,7 +487,7 @@ if [ -n "$TEST_CALL" ]; then
     BODY="{\"to\":\"$TEST_CALL\",\"voice\":\"$TEST_VOICE\"}"
   else
     CONFIGURED="$(env_value VOICE_SAY_VOICE)"
-    echo "  voice   ${CONFIGURED:-Polly.Joanna-Neural (the default)}"
+    echo "  voice   ${CONFIGURED:-Polly.Danielle-Generative (the default)}"
     BODY="{\"to\":\"$TEST_CALL\"}"
   fi
   echo
@@ -500,8 +500,8 @@ if [ -n "$TEST_CALL" ]; then
   dim "  Auditioning voices: re-run with --voice NAME. Nothing is deployed, so"
   dim "  each call can use a different one. Some to try, most natural first:"
   dim "    Google.en-US-Chirp3-HD-Aoede      Google.en-US-Chirp3-HD-Charon"
-  dim "    Google.en-US-Neural2-F            Google.en-US-Studio-O"
-  dim "    Polly.Danielle-Neural             Polly.Joanna-Neural"
+  dim "    Polly.Danielle-Generative         Polly.Ruth-Generative"
+  dim "    Polly.Matthew-Generative          Google.en-US-Studio-O"
   dim "  A name Twilio does not know fails at answer time — the call connects"
   dim "  and then drops — so if a voice goes silent, that is the name."
   dim "  Keep the one you like: VOICE_SAY_VOICE=<name> in $ENV_FILE, then re-run."

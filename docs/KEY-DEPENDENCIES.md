@@ -121,6 +121,29 @@ throws) and the SMS-on-first-offer path is unaffected either way.
 
 ---
 
+## 4b. Markets map in the platform console (new — one key to set)
+
+The admin console's Markets pages now draw every territory on a Mapbox map
+and let you draw polygon boundaries per market. The map needs the public
+Mapbox token on the **admin** Worker — it has never been set there (only the
+customer Worker has it today), so until you set it the map panels show a
+notice and the numeric forms keep working.
+
+| Key | Type | Worker | What it is |
+|---|---|---|---|
+| `MAPBOX_PUBLIC_TOKEN` | SECRET (see below) | admin (`wrangler.admin.jsonc`) | The same `pk.…` public token the customer Worker already carries. |
+
+```bash
+npx wrangler secret put MAPBOX_PUBLIC_TOKEN --config wrangler.admin.jsonc
+```
+
+Set it as a secret for the same reason as `DIDIT_WORKFLOW_ID` above: a
+plain-text dashboard var is wiped by every deploy. (Committing it to
+`wrangler.admin.jsonc`'s `vars` also works — a `pk.` token is public by
+design — but the secret route can't be forgotten about.)
+
+---
+
 ## 5. Everything else from the earlier product-revision pass (recap)
 
 These were introduced before this fix-pass and are already documented in

@@ -21,6 +21,19 @@ import SwiftUI
 //   - `NavigationOptions` is assembled from `mapboxNavigation`,
 //     `routeVoiceController`, and `eventsManager()` on the provider.
 //   - `NavigationRoute.route` is non-optional.
+//   - `handleCancelAction()` (NavigationViewController.swift:499) calls
+//     `delegate?.navigationViewControllerDidDismiss(_:byCanceling:) != nil`
+//     and, because the protocol ships a default implementation, that is
+//     non-nil for ANY delegate — so once a delegate is set, the SDK never
+//     dismisses itself and the × button does nothing unless the delegate
+//     really implements that method. Implemented below; it is the exit.
+//   - Every appearance class and property in the Tími chrome
+//     (`applyTimiNavigationChrome`) — TopBannerView, InstructionsBannerView,
+//     PrimaryLabel.normalTextColor, DistanceLabel.unitTextColor/valueTextColor,
+//     ManeuverView.primaryColor, LaneView, WayNameView.borderColor,
+//     CancelButton, FloatingButton.borderWidth, ResumeButton.cornerRadius,
+//     TimeRemainingLabel.trafficUnknownColor and the rest — was copied out of
+//     Styles/DayStyle.swift, which sets the same properties the same way.
 //
 // None of that is a substitute for compiling it. Everything here is
 // `canImport` guarded, so a mismatch affects only the Mapbox build path; the
@@ -58,12 +71,118 @@ final class TimiDayStyle: StandardDayStyle {
         super.init()
         if let url = URL(string: TimiNowUIStyleSource.current) { mapStyleURL = url }
     }
+
+    override func apply() {
+        super.apply()
+        applyTimiNavigationChrome(night: false)
+    }
 }
 
 final class TimiNightStyle: StandardNightStyle {
     required init() {
         super.init()
         if let url = URL(string: TimiNowUIStyleSource.current) { mapStyleURL = url }
+    }
+
+    override func apply() {
+        super.apply()
+        applyTimiNavigationChrome(night: true)
+    }
+}
+
+/// The customer app's palette, as UIKit colors for Mapbox's appearance
+/// proxies. Values match `TimiColor` (Components.swift) — kept as literals
+/// here because `TimiColor` is SwiftUI `Color` and converting through
+/// `UIColor(Color)` resolves against a trait collection, which is exactly
+/// the ambiguity appearance proxies cannot carry.
+private enum TimiNavPalette {
+    static let ink = UIColor(red: 17 / 255, green: 27 / 255, blue: 59 / 255, alpha: 1)
+    static let inkRaised = UIColor(red: 26 / 255, green: 39 / 255, blue: 80 / 255, alpha: 1)
+    static let cream = UIColor(red: 255 / 255, green: 250 / 255, blue: 240 / 255, alpha: 1)
+    static let creamSoft = UIColor(red: 255 / 255, green: 250 / 255, blue: 240 / 255, alpha: 0.72)
+    static let blue = UIColor(red: 35 / 255, green: 87 / 255, blue: 217 / 255, alpha: 1)
+    static let gold = UIColor(red: 247 / 255, green: 200 / 255, blue: 75 / 255, alpha: 1)
+    static let muted = UIColor(red: 111 / 255, green: 116 / 255, blue: 131 / 255, alpha: 1)
+}
+
+/// Reskins Mapbox's drive UI in Tími's own chrome so the one screen a
+/// customer stares at longest stops looking like a stock SDK: navy
+/// instruction banner with cream text and a gold turn arrow (the same navy
+/// header every Tími surface carries), paper-cream trip bar, hard-bordered
+/// white floating buttons.
+///
+/// This is Mapbox's supported customization path — the SDK's own
+/// `DayStyle.apply()` sets exactly these appearance properties on exactly
+/// these classes, and this runs after `super.apply()` so it wins. Day and
+/// night differ only in the trip bar: the banner navy already reads as a
+/// night surface.
+///
+/// Deliberately NOT `@MainActor`: `Style.apply()` is non-isolated in the SDK
+/// (only `applyMapStyle(to:)` carries the annotation), so an isolated helper
+/// could not be called from the `apply()` overrides above. The SDK's own
+/// `DayStyle.apply()` makes these same UIAppearance calls from the same
+/// non-isolated context.
+private func applyTimiNavigationChrome(night: Bool) {
+    let p = TimiNavPalette.self
+    for traits in [UITraitCollection(userInterfaceIdiom: .phone), UITraitCollection(userInterfaceIdiom: .pad)] {
+        // Top: the turn-by-turn banner. Navy card, cream instruction, gold arrow.
+        TopBannerView.appearance(for: traits).backgroundColor = p.ink
+        InstructionsBannerView.appearance(for: traits).backgroundColor = p.ink
+        PrimaryLabel.appearance(for: traits, whenContainedInInstancesOf: [InstructionsBannerView.self])
+            .normalTextColor = p.cream
+        SecondaryLabel.appearance(for: traits, whenContainedInInstancesOf: [InstructionsBannerView.self])
+            .normalTextColor = p.creamSoft
+        DistanceLabel.appearance(for: traits, whenContainedInInstancesOf: [InstructionsBannerView.self])
+            .valueTextColor = p.gold
+        DistanceLabel.appearance(for: traits, whenContainedInInstancesOf: [InstructionsBannerView.self])
+            .unitTextColor = p.creamSoft
+        ManeuverView.appearance(for: traits, whenContainedInInstancesOf: [InstructionsBannerView.self])
+            .primaryColor = p.gold
+        ManeuverView.appearance(for: traits, whenContainedInInstancesOf: [InstructionsBannerView.self])
+            .secondaryColor = p.creamSoft
+
+        // The "then…" banner and lane guidance ride under the main banner.
+        NextBannerView.appearance(for: traits).backgroundColor = p.inkRaised
+        NextInstructionLabel.appearance(for: traits, whenContainedInInstancesOf: [NextBannerView.self])
+            .normalTextColor = p.cream
+        ManeuverView.appearance(for: traits, whenContainedInInstancesOf: [NextBannerView.self])
+            .primaryColor = p.gold
+        ManeuverView.appearance(for: traits, whenContainedInInstancesOf: [NextBannerView.self])
+            .secondaryColor = p.creamSoft
+        LanesView.appearance(for: traits).backgroundColor = p.inkRaised
+        LaneView.appearance(for: traits).primaryColor = p.cream
+        LaneView.appearance(for: traits).secondaryColor = p.muted
+
+        // Bottom: the trip bar (ETA / distance / ×). Paper by day, navy by night.
+        let tripBar = night ? p.ink : p.cream
+        let tripText = night ? p.cream : p.ink
+        BottomBannerView.appearance(for: traits).backgroundColor = tripBar
+        BottomPaddingView.appearance(for: traits).backgroundColor = tripBar
+        TimeRemainingLabel.appearance(for: traits).normalTextColor = tripText
+        // TimeRemainingLabel colors itself by congestion once underway;
+        // "unknown" is the resting state and should match the bar's text.
+        TimeRemainingLabel.appearance(for: traits).trafficUnknownColor = tripText
+        DistanceRemainingLabel.appearance(for: traits).normalTextColor = night ? p.creamSoft : p.muted
+        ArrivalTimeLabel.appearance(for: traits).normalTextColor = night ? p.creamSoft : p.muted
+        CancelButton.appearance(for: traits).tintColor = tripText
+
+        // Floating map buttons and the street-name pill, in the app's
+        // hard-border card language.
+        FloatingButton.appearance(for: traits).backgroundColor = night ? p.inkRaised : .white
+        FloatingButton.appearance(for: traits).tintColor = night ? p.cream : p.ink
+        FloatingButton.appearance(for: traits).borderColor = night ? p.cream : p.ink
+        FloatingButton.appearance(for: traits).borderWidth = 2
+        WayNameView.appearance(for: traits).backgroundColor = p.ink.withAlphaComponent(0.85)
+        WayNameView.appearance(for: traits).borderColor = p.gold.withAlphaComponent(0.8)
+        WayNameView.appearance(for: traits).borderWidth = 1
+        WayNameLabel.appearance(for: traits).normalTextColor = p.cream
+
+        // "Resume" after panning the map: the app's blue primary button.
+        ResumeButton.appearance(for: traits).backgroundColor = p.blue
+        ResumeButton.appearance(for: traits).tintColor = .white
+        ResumeButton.appearance(for: traits).borderColor = p.ink
+        ResumeButton.appearance(for: traits).borderWidth = 2
+        ResumeButton.appearance(for: traits).cornerRadius = 12
     }
 }
 
@@ -164,9 +283,19 @@ final class NavigationHostController: UIViewController {
     }
 
     private func requestRouteAndPresent() async {
-        let originWaypoint = Waypoint(
-            coordinate: CLLocationCoordinate2D(latitude: origin.latitude, longitude: origin.longitude)
-        )
+        // The route starts where the phone actually is, not where AppStore
+        // last heard it was. `currentLatitude`/`currentLongitude` begin life
+        // as a compiled-in default and only move when something else asks for
+        // location, so a customer who granted permission but never triggered
+        // that ask was shown a route drawn from the default coordinate — "the
+        // route doesn't start at my location". One fresh fix at Navigate time
+        // fixes the drawn polyline; during guidance the SDK follows the real
+        // GPS regardless. Falls back to the passed origin when permission is
+        // missing or the fix times out — same behavior as before, never worse.
+        let fresh = await PlatformPermissions.currentLocation()
+        let originCoordinate = fresh.map { CLLocationCoordinate2D(latitude: $0.0, longitude: $0.1) }
+            ?? CLLocationCoordinate2D(latitude: origin.latitude, longitude: origin.longitude)
+        let originWaypoint = Waypoint(coordinate: originCoordinate)
         let destinationWaypoint = Waypoint(
             coordinate: CLLocationCoordinate2D(latitude: destination.latitude, longitude: destination.longitude),
             name: destination.name
@@ -327,6 +456,19 @@ private struct NavigationFallbackCard: View {
 // failure — arrival never fired, so "I'm here" was the only way to finish a
 // trip and the `arrived` milestone was never recorded on its own.
 extension NavigationHostController: NavigationViewControllerDelegate {
+    /// The × on the trip bar. `handleCancelAction()` in the SDK checks
+    /// `delegate?.navigationViewControllerDidDismiss(...) != nil` — and since
+    /// the protocol ships a default implementation, ANY set delegate makes
+    /// that non-nil, which the SDK reads as "the receiver handles dismissal"
+    /// and does nothing itself. With a delegate set and this method missing,
+    /// the × was therefore completely dead: no way out of navigation short
+    /// of arriving. This is the real dismissal — tear down the trip and hand
+    /// control back to whatever presented the screen.
+    func navigationViewControllerDidDismiss(_ navigationViewController: NavigationViewController, byCanceling canceled: Bool) {
+        TimiBreadcrumb.clear()
+        onEnd()
+    }
+
     func navigationViewController(_ navigationViewController: NavigationViewController, didArriveAt waypoint: Waypoint) {
         TimiBreadcrumb.clear()
         onArrival()

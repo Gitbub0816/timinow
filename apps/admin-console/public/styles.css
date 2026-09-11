@@ -154,6 +154,22 @@ legend { padding: 0 .4rem; font-size: .68rem; font-weight: 900; }
 .map-field { display: grid; gap: .6rem; }
 #tenant-map { width: 100%; height: 320px; border: 2px solid var(--ink); border-radius: 12px; overflow: hidden; }
 .map-notice { padding: .8rem 1rem; border-left: 4px solid var(--gold); background: var(--gold-soft); font-size: .7rem; line-height: 1.5; }
+
+/* Market territory maps: the all-markets overview and the per-market
+   boundary editor. Same hard ink border as every other surface. */
+.market-map { width: 100%; height: 400px; border: 2px solid var(--ink); border-radius: 12px; overflow: hidden; }
+#market-editor-map { height: 460px; }
+.map-legend { display: inline-flex; gap: .4rem; align-items: center; }
+.legend-chip { font-size: .62rem; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; padding: .2rem .55rem; border-radius: 999px; border: 1.5px solid var(--ink); }
+.legend-green { background: #d9f2e5; color: #0c5c40; }
+.legend-yellow { background: var(--gold-soft); color: #7a5a00; }
+.legend-red { background: var(--coral-soft); color: var(--coral-dark); }
+.boundary-toolbar { display: flex; flex-wrap: wrap; gap: .5rem; margin: .8rem 0; }
+.map-pin-key { display: flex; gap: 1rem; margin-top: .6rem; font-size: .68rem; color: var(--muted); }
+.map-pin-key i { display: inline-block; width: .7rem; height: .7rem; border-radius: 50%; border: 1.5px solid var(--ink); margin-right: .3rem; vertical-align: -1px; }
+/* Mapbox popups inherit the console's type, not Mapbox's */
+.mapboxgl-popup-content { font-family: var(--sans); font-size: .75rem; border: 2px solid var(--ink); border-radius: 10px; box-shadow: var(--shadow-sm); }
+.mapboxgl-popup-content .button { margin-top: .4rem; }
 .latlng-row { display: grid; grid-template-columns: 1fr 1fr; gap: .7rem; }
 
 /* --------------------------------------------------------------- sign-in --- */

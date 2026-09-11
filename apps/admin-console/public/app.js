@@ -454,6 +454,79 @@ function setMarker(lat, lng) {
   state.marker.setLngLat([lng, lat]).addTo(state.map);
 }
 
+/* ------------------------------------------------- market territory maps --- */
+
+/**
+ * A map in `containerId`, or null with the matching notice shown when there
+ * is no token (or the CDN script was blocked). Unlike the tenant map's
+ * single global, these are tracked per container and torn down before each
+ * re-render — market screens rebuild their DOM on every load, and a Map
+ * bound to a detached node leaks a WebGL context per visit.
+ */
+function makeMap(containerId, noticeSelector, options = {}) {
+  const el = document.getElementById(containerId);
+  const notice = noticeSelector ? document.querySelector(noticeSelector) : null;
+  if (!el) return null;
+  const token = state.config?.map?.token;
+  if (!token || typeof window.mapboxgl === "undefined") {
+    el.hidden = true;
+    if (notice) notice.hidden = false;
+    return null;
+  }
+  el.hidden = false;
+  if (notice) notice.hidden = true;
+  if (!state.maps) state.maps = {};
+  if (state.maps[containerId]) {
+    try { state.maps[containerId].remove(); } catch { /* already gone */ }
+    delete state.maps[containerId];
+  }
+  window.mapboxgl.accessToken = token;
+  const map = new window.mapboxgl.Map({
+    container: containerId,
+    style: state.config.map.styleUrl,
+    center: options.center || [-122.27, 37.8],
+    zoom: options.zoom ?? 8
+  });
+  map.addControl(new window.mapboxgl.NavigationControl(), "top-right");
+  state.maps[containerId] = map;
+  return map;
+}
+
+/** A market's territory as a GeoJSON geometry: the drawn polygon when one is
+ * stored, otherwise its circle approximated with 64 segments — the visual
+ * twin of the exact haversine test the Worker runs. */
+function marketGeometry(market) {
+  if (market.boundaryKind === "polygon" && market.boundaryGeojson) return market.boundaryGeojson;
+  const points = [];
+  const latRad = (market.centerLatitude * Math.PI) / 180;
+  const degLat = market.radiusKm / 110.574;
+  const degLng = market.radiusKm / (111.32 * Math.max(0.087, Math.cos(latRad)));
+  for (let i = 0; i <= 64; i += 1) {
+    const angle = (i / 64) * 2 * Math.PI;
+    points.push([market.centerLongitude + degLng * Math.cos(angle), market.centerLatitude + degLat * Math.sin(angle)]);
+  }
+  return { type: "Polygon", coordinates: [points] };
+}
+
+const MARKET_STATE_COLORS = { green: "#12845D", yellow: "#B7791F", red: "#BD3E31" };
+
+/** Every coordinate in a geometry, for bounds fitting. */
+function geometryPositions(geometry) {
+  const polygons = geometry.type === "Polygon" ? [geometry.coordinates] : geometry.coordinates;
+  const positions = [];
+  for (const rings of polygons) for (const ring of rings) for (const position of ring) positions.push(position);
+  return positions;
+}
+
+function fitToPositions(map, positions, padding = 40) {
+  if (!positions.length) return;
+  const bounds = positions.reduce(
+    (extent, position) => extent.extend(position),
+    new window.mapboxgl.LngLatBounds(positions[0], positions[0])
+  );
+  map.fitBounds(bounds, { padding, maxZoom: 12, duration: 0 });
+}
+
 function initTenantForm() {
   const form = document.querySelector('form[data-form="create-tenant"]');
   form.reset();
@@ -2166,9 +2239,49 @@ async function loadMarkets() {
     ]);
     renderMarkets(markets || []);
     renderUnassignedLocations(unassigned.locations || []);
+    renderMarketsOverviewMap(markets || [], unassigned.locations || []);
   } catch (error) {
     mount.innerHTML = `<div class="empty-state"><p>${escapeHtml(error.message)}</p></div>`;
   }
+}
+
+/** All territories at once, colored by state, with unassigned clinics as
+ * gray dots — the fastest way to see a coverage gap is to look at it. */
+function renderMarketsOverviewMap(markets, unassignedLocations) {
+  const map = makeMap("markets-map", "[data-markets-map-notice]");
+  if (!map) return;
+  map.on("load", () => {
+    const features = markets.map((market) => ({
+      type: "Feature",
+      properties: { id: market.id, name: market.name, state: market.state, color: MARKET_STATE_COLORS[market.state] || "#BD3E31" },
+      geometry: marketGeometry(market)
+    }));
+    map.addSource("markets", { type: "geojson", data: { type: "FeatureCollection", features } });
+    map.addLayer({ id: "markets-fill", type: "fill", source: "markets", paint: { "fill-color": ["get", "color"], "fill-opacity": 0.14 } });
+    map.addLayer({ id: "markets-line", type: "line", source: "markets", paint: { "line-color": ["get", "color"], "line-width": 2.5 } });
+    map.on("click", "markets-fill", (event) => {
+      const feature = event.features?.[0];
+      if (feature?.properties?.id) location.hash = `#markets/${encodeURIComponent(feature.properties.id)}`;
+    });
+    map.on("mouseenter", "markets-fill", () => { map.getCanvas().style.cursor = "pointer"; });
+    map.on("mouseleave", "markets-fill", () => { map.getCanvas().style.cursor = ""; });
+
+    for (const market of markets) {
+      new window.mapboxgl.Popup({ closeButton: false, closeOnClick: false, offset: 6 })
+        .setLngLat([market.centerLongitude, market.centerLatitude])
+        .setHTML(`<a class="row-link" href="#markets/${encodeURIComponent(market.id)}">${escapeHtml(market.name)}</a>`)
+        .addTo(map);
+    }
+    for (const clinic of unassignedLocations) {
+      if (!Number.isFinite(clinic.latitude) || !Number.isFinite(clinic.longitude)) continue;
+      new window.mapboxgl.Marker({ color: "#6F7483", scale: 0.7 })
+        .setLngLat([clinic.longitude, clinic.latitude])
+        .setPopup(new window.mapboxgl.Popup({ offset: 12 }).setHTML(`<strong>${escapeHtml(clinic.name)}</strong><br>Unassigned`))
+        .addTo(map);
+    }
+    const positions = features.flatMap((feature) => geometryPositions(feature.geometry));
+    fitToPositions(map, positions, 60);
+  });
 }
 
 function renderMarkets(markets) {
@@ -2183,13 +2296,13 @@ function renderMarkets(markets) {
       <td>${statePill(market.state)}</td>
       <td>${activationPill(market.activation)}</td>
       <td>${Number(market.locationCount || 0)}</td>
-      <td>${market.radiusKm} km</td>
+      <td>${market.boundaryKind === "polygon" ? "Drawn territory" : `Circle · ${market.radiusKm} km`}</td>
       <td>${market.stateSetAt ? formatDate(market.stateSetAt) : "—"}</td>
     </tr>`).join("");
   mount.innerHTML = `
     <div class="table-wrap">
       <table class="data-table">
-        <thead><tr><th>Market</th><th>State</th><th>Activation</th><th>Clinics</th><th>Radius</th><th>State set</th></tr></thead>
+        <thead><tr><th>Market</th><th>State</th><th>Activation</th><th>Clinics</th><th>Boundary</th><th>State set</th></tr></thead>
         <tbody>${rows}</tbody>
       </table>
     </div>`;
@@ -2337,19 +2450,38 @@ function renderMarketDetail(market, locations, report, unassignedLocations) {
         </div>
 
         <div class="panel">
-          <h2>Market boundary</h2>
+          <h2>Market details</h2>
           <form data-form="market-edit" class="form-grid two-col">
             <label class="field wide"><span>Name</span><input type="text" name="name" value="${escapeAttr(market.name)}"></label>
             <label class="field"><span>Center latitude</span><input type="number" name="centerLatitude" step="0.000001" value="${market.centerLatitude}"></label>
             <label class="field"><span>Center longitude</span><input type="number" name="centerLongitude" step="0.000001" value="${market.centerLongitude}"></label>
-            <label class="field"><span>Radius (km)</span><input type="number" name="radiusKm" min="1" max="500" value="${market.radiusKm}"></label>
+            <label class="field"><span>Fallback radius (km)</span><input type="number" name="radiusKm" min="1" max="500" value="${market.radiusKm}"></label>
             <label class="field wide"><span>Notes</span><input type="text" name="notes" maxlength="2000" value="${escapeAttr(market.notes || "")}"></label>
-            <div class="field wide" style="text-align:right;"><button class="button" type="submit">Save boundary</button></div>
+            <div class="field wide" style="text-align:right;"><button class="button" type="submit">Save details</button></div>
           </form>
+          <p class="hint" style="margin-top:.5rem;">${market.boundaryKind === "polygon"
+            ? "This market uses a drawn territory — the radius applies only if the polygon is removed."
+            : "This market is a circle around its center. Draw a territory on the map for an exact boundary."}</p>
         </div>
       </div>
 
       <div>
+        <div class="panel map-panel">
+          <div class="page-head" style="margin-bottom:.5rem;">
+            <h2 style="margin:0;">Territory</h2>
+            <span class="hint">${market.boundaryKind === "polygon" ? "Drawn polygon" : `Circle · ${market.radiusKm} km`}</span>
+          </div>
+          <div id="market-editor-map" class="market-map" hidden></div>
+          <p class="map-notice" data-market-map-notice hidden>Set MAPBOX_PUBLIC_TOKEN on the admin Worker to draw territories. The numeric fields on the left keep working without it.</p>
+          <div class="boundary-toolbar" data-boundary-toolbar hidden>
+            <button class="button button-small" type="button" data-draw-boundary>✏️ Draw new territory</button>
+            <button class="button button-small button-primary" type="button" data-save-boundary disabled>Save drawn territory</button>
+            ${market.boundaryKind === "polygon" ? '<button class="button button-small button-danger" type="button" data-clear-boundary>Remove polygon (back to circle)</button>' : ""}
+          </div>
+          <p class="hint" data-boundary-hint hidden>Click the map to place vertices; double-click to close the shape. Draw several shapes for a split territory. Saving replaces the current boundary and changes which future searches and clinics count as this market's.</p>
+          <div class="map-pin-key"><span><i style="background:#2357D9;"></i>Assigned clinic</span><span><i style="background:#6F7483;"></i>Unassigned clinic</span></div>
+        </div>
+
         <div class="panel">
           <h2>Assigned clinics (${locations.length})</h2>
           ${locations.length ? locations.map((location) => `
@@ -2398,7 +2530,7 @@ function renderMarketDetail(market, locations, report, unassignedLocations) {
           notes: form.notes.value.trim() || undefined
         })
       });
-      toast("Market boundary saved.");
+      toast("Market details saved.");
       await loadMarketDetail(market.id);
     } catch (error) { toast(error.message, true); }
   });
@@ -2426,6 +2558,115 @@ function renderMarketDetail(market, locations, report, unassignedLocations) {
         button.disabled = false;
       }
     });
+  });
+
+  initMarketBoundaryEditor(market, locations, unassignedLocations);
+}
+
+/**
+ * The territory editor: the stored boundary as a colored layer, assigned
+ * clinics in blue, unassigned in gray with an assign button in their popup,
+ * and mapbox-gl-draw for replacing the boundary with hand-drawn polygons.
+ *
+ * The drawn shapes are the operator's draft, not the stored boundary — the
+ * static layer keeps showing what is live until "Save drawn territory"
+ * PATCHes it and the whole detail page reloads from the Worker's answer.
+ */
+function initMarketBoundaryEditor(market, locations, unassignedLocations) {
+  const map = makeMap("market-editor-map", "[data-market-map-notice]");
+  const toolbar = document.querySelector("[data-boundary-toolbar]");
+  const hint = document.querySelector("[data-boundary-hint]");
+  if (!map) return;
+
+  map.on("load", () => {
+    const color = MARKET_STATE_COLORS[market.state] || "#BD3E31";
+    const geometry = marketGeometry(market);
+    map.addSource("boundary", { type: "geojson", data: { type: "Feature", properties: {}, geometry } });
+    map.addLayer({ id: "boundary-fill", type: "fill", source: "boundary", paint: { "fill-color": color, "fill-opacity": 0.12 } });
+    map.addLayer({ id: "boundary-line", type: "line", source: "boundary", paint: { "line-color": color, "line-width": 2.5, "line-dasharray": market.boundaryKind === "polygon" ? [1, 0] : [2, 1.4] } });
+
+    const positions = geometryPositions(geometry);
+    for (const clinic of locations) {
+      if (!Number.isFinite(clinic.latitude) || !Number.isFinite(clinic.longitude)) continue;
+      positions.push([clinic.longitude, clinic.latitude]);
+      new window.mapboxgl.Marker({ color: "#2357D9", scale: 0.8 })
+        .setLngLat([clinic.longitude, clinic.latitude])
+        .setPopup(new window.mapboxgl.Popup({ offset: 12 }).setHTML(`<strong>${escapeHtml(clinic.name)}</strong><br>${escapeHtml(clinic.city || "")}${clinic.active ? "" : " · inactive"}`))
+        .addTo(map);
+    }
+    for (const clinic of unassignedLocations) {
+      if (!Number.isFinite(clinic.latitude) || !Number.isFinite(clinic.longitude)) continue;
+      const popupNode = document.createElement("div");
+      popupNode.innerHTML = `<strong>${escapeHtml(clinic.name)}</strong><br>Unassigned<br><button class="button button-small" type="button">Assign to ${escapeHtml(market.name)}</button>`;
+      popupNode.querySelector("button").addEventListener("click", async (event) => {
+        event.target.disabled = true;
+        try {
+          await apiFetch(`/api/admin/markets/${encodeURIComponent(market.id)}/locations`, {
+            method: "POST", body: JSON.stringify({ locationId: clinic.id })
+          });
+          toast("Clinic assigned.");
+          await loadMarketDetail(market.id);
+        } catch (error) {
+          toast(error.message, true);
+          event.target.disabled = false;
+        }
+      });
+      new window.mapboxgl.Marker({ color: "#6F7483", scale: 0.7 })
+        .setLngLat([clinic.longitude, clinic.latitude])
+        .setPopup(new window.mapboxgl.Popup({ offset: 12 }).setDOMContent(popupNode))
+        .addTo(map);
+    }
+    fitToPositions(map, positions, 50);
+  });
+
+  // Drawing needs the plugin; without it the map still shows everything and
+  // the numeric radius form remains the editor.
+  if (typeof window.MapboxDraw === "undefined" || !toolbar) return;
+  toolbar.hidden = false;
+  if (hint) hint.hidden = false;
+  const draw = new window.MapboxDraw({ displayControlsDefault: false, controls: { polygon: true, trash: true } });
+  map.addControl(draw, "top-left");
+
+  const saveButton = toolbar.querySelector("[data-save-boundary]");
+  const refreshSaveState = () => { saveButton.disabled = draw.getAll().features.length === 0; };
+  map.on("draw.create", refreshSaveState);
+  map.on("draw.update", refreshSaveState);
+  map.on("draw.delete", refreshSaveState);
+
+  toolbar.querySelector("[data-draw-boundary]").addEventListener("click", () => draw.changeMode("draw_polygon"));
+
+  saveButton.addEventListener("click", async () => {
+    const drawn = draw.getAll().features.filter((feature) => feature.geometry?.type === "Polygon");
+    if (!drawn.length) return;
+    const boundaryGeojson = drawn.length === 1
+      ? drawn[0].geometry
+      : { type: "MultiPolygon", coordinates: drawn.map((feature) => feature.geometry.coordinates) };
+    saveButton.disabled = true;
+    try {
+      await apiFetch(`/api/admin/markets/${encodeURIComponent(market.id)}`, {
+        method: "PATCH", body: JSON.stringify({ boundaryGeojson })
+      });
+      toast("Territory saved.");
+      track("market_boundary_drawn");
+      await loadMarketDetail(market.id);
+    } catch (error) {
+      toast(error.message, true);
+      saveButton.disabled = false;
+    }
+  });
+
+  toolbar.querySelector("[data-clear-boundary]")?.addEventListener("click", async (event) => {
+    event.target.disabled = true;
+    try {
+      await apiFetch(`/api/admin/markets/${encodeURIComponent(market.id)}`, {
+        method: "PATCH", body: JSON.stringify({ boundaryGeojson: null })
+      });
+      toast("Polygon removed — the market is a circle again.");
+      await loadMarketDetail(market.id);
+    } catch (error) {
+      toast(error.message, true);
+      event.target.disabled = false;
+    }
   });
 }
 

@@ -83,8 +83,22 @@ export async function requirePlatformAdmin(env, actor) {
 
 /* -------------------------------------------------------------- CRUD --- */
 
+/** The stored geometry, or null when absent or unparseable. Unparseable is
+ * treated as absent rather than thrown: containment then falls back to the
+ * circle columns, which every market still carries (migration 0027). */
+function parseBoundary(row) {
+  if (!row?.boundary_geojson) return null;
+  try {
+    const geometry = JSON.parse(row.boundary_geojson);
+    return geometry && (geometry.type === "Polygon" || geometry.type === "MultiPolygon") ? geometry : null;
+  } catch {
+    return null;
+  }
+}
+
 export function marketFromRow(row) {
   if (!row) return null;
+  const boundaryGeojson = parseBoundary(row);
   return {
     id: row.id,
     name: row.name,
@@ -94,6 +108,8 @@ export function marketFromRow(row) {
     centerLatitude: row.center_latitude,
     centerLongitude: row.center_longitude,
     radiusKm: row.radius_km,
+    boundaryKind: boundaryGeojson && row.boundary_kind === "polygon" ? "polygon" : "circle",
+    boundaryGeojson,
     notes: row.notes || null,
     stateSetBy: row.state_set_by || null,
     stateSetAt: row.state_set_at || null,
@@ -132,6 +148,59 @@ async function uniqueMarketSlug(env, name) {
   return candidate;
 }
 
+/** Caps chosen against the admin worker's 32 KiB readJson limit: 500
+ * vertices of "[-122.123456,37.123456]," is ~13 KB, comfortably under it,
+ * and far more detail than a hand-drawn territory ever carries. */
+const BOUNDARY_MAX_VERTICES = 500;
+const BOUNDARY_MAX_BYTES = 24_000;
+
+/**
+ * A GeoJSON Polygon/MultiPolygon geometry (not a Feature), checked the way a
+ * hand-drawn boundary can actually go wrong: open rings, coordinates out of
+ * range, latitude/longitude swapped (a lat past ±90 in the longitude slot is
+ * caught by the range check), or a paste far too large to store. Returns
+ * { errors: string[], geometry: object|null } — geometry is the parsed,
+ * validated object ready to stringify.
+ */
+function validateBoundaryGeojson(value) {
+  const errors = [];
+  const geometry = typeof value === "string" ? (() => { try { return JSON.parse(value); } catch { return null; } })() : value;
+  if (!geometry || typeof geometry !== "object") return { errors: ["boundaryGeojson must be a GeoJSON Polygon or MultiPolygon geometry"], geometry: null };
+  const type = geometry.type;
+  if (type !== "Polygon" && type !== "MultiPolygon") return { errors: ["boundaryGeojson.type must be Polygon or MultiPolygon"], geometry: null };
+  const polygons = type === "Polygon" ? [geometry.coordinates] : geometry.coordinates;
+  if (!Array.isArray(polygons) || !polygons.length) return { errors: ["boundaryGeojson has no coordinates"], geometry: null };
+
+  let vertices = 0;
+  for (const rings of polygons) {
+    if (!Array.isArray(rings) || !rings.length) { errors.push("each polygon needs at least an outer ring"); continue; }
+    for (const ring of rings) {
+      if (!Array.isArray(ring) || ring.length < 4) { errors.push("each ring needs at least 4 positions"); continue; }
+      const first = ring[0];
+      const last = ring[ring.length - 1];
+      if (!Array.isArray(first) || !Array.isArray(last) || first[0] !== last[0] || first[1] !== last[1]) {
+        errors.push("each ring must close (first and last position equal)");
+      }
+      for (const position of ring) {
+        vertices += 1;
+        const lng = Array.isArray(position) ? Number(position[0]) : NaN;
+        const lat = Array.isArray(position) ? Number(position[1]) : NaN;
+        if (!Number.isFinite(lng) || lng < -180 || lng > 180 || !Number.isFinite(lat) || lat < -90 || lat > 90) {
+          errors.push("positions must be [longitude, latitude] within range");
+        }
+      }
+      if (errors.length) break;
+    }
+    if (errors.length) break;
+  }
+  if (vertices > BOUNDARY_MAX_VERTICES) errors.push(`boundary has ${vertices} vertices; the maximum is ${BOUNDARY_MAX_VERTICES}`);
+  const clean = errors.length ? null : { type, coordinates: geometry.coordinates };
+  if (clean && JSON.stringify(clean).length > BOUNDARY_MAX_BYTES) {
+    return { errors: [`boundary exceeds ${BOUNDARY_MAX_BYTES} bytes`], geometry: null };
+  }
+  return { errors, geometry: clean };
+}
+
 function validateMarketInput(body, { requireAll } = { requireAll: true }) {
   const errors = [];
   const name = cleanString(body?.name, 120);
@@ -143,7 +212,17 @@ function validateMarketInput(body, { requireAll } = { requireAll: true }) {
     if (centerLatitude === null || centerLongitude === null) errors.push("centerLatitude and centerLongitude are required");
     if (radiusKm === null) errors.push("radiusKm must be between 1 and 500");
   }
-  return { errors, name, centerLatitude, centerLongitude, radiusKm, notes: cleanString(body?.notes, 2000) || null };
+  // Three boundary shapes in a request body: absent (leave as-is), null
+  // (clear the polygon, back to the circle), or a geometry (validate it).
+  let boundary; // undefined = untouched
+  if (body?.boundaryGeojson === null) {
+    boundary = null;
+  } else if (body?.boundaryGeojson !== undefined) {
+    const checked = validateBoundaryGeojson(body.boundaryGeojson);
+    errors.push(...checked.errors);
+    boundary = checked.geometry;
+  }
+  return { errors, name, centerLatitude, centerLongitude, radiusKm, boundary, notes: cleanString(body?.notes, 2000) || null };
 }
 
 export async function createMarket(env, actor, body) {
@@ -153,11 +232,12 @@ export async function createMarket(env, actor, body) {
 
   const id = newId("market");
   const slug = await uniqueMarketSlug(env, input.name);
+  const boundaryJson = input.boundary ? JSON.stringify(input.boundary) : null;
   await env.DB.prepare(`
-    INSERT INTO markets (id, name, slug, center_latitude, center_longitude, radius_km, notes, created_by)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `).bind(id, input.name, slug, input.centerLatitude, input.centerLongitude, input.radiusKm, input.notes, actor.userId).run();
-  await recordAudit(env, { actorUserId: actor.userId, actorScope: "platform", action: "market.created", target: id, detail: { name: input.name, slug } });
+    INSERT INTO markets (id, name, slug, center_latitude, center_longitude, radius_km, boundary_kind, boundary_geojson, notes, created_by)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).bind(id, input.name, slug, input.centerLatitude, input.centerLongitude, input.radiusKm, boundaryJson ? "polygon" : "circle", boundaryJson, input.notes, actor.userId).run();
+  await recordAudit(env, { actorUserId: actor.userId, actorScope: "platform", action: "market.created", target: id, detail: { name: input.name, slug, boundaryKind: boundaryJson ? "polygon" : "circle" } });
   return { status: 201, body: { market: await getMarket(env, id) } };
 }
 
@@ -173,11 +253,23 @@ export async function updateMarket(env, actor, marketId, body) {
   const centerLongitude = input.centerLongitude ?? market.centerLongitude;
   const radiusKm = input.radiusKm ?? market.radiusKm;
   const notes = body?.notes !== undefined ? input.notes : market.notes;
+  // undefined = leave the stored boundary alone; null = clear back to the
+  // circle; a geometry = replace. A boundary edit silently changes which
+  // future searches and clinics belong here, so the audit row says so.
+  const boundaryTouched = input.boundary !== undefined;
+  const boundaryJson = boundaryTouched
+    ? (input.boundary ? JSON.stringify(input.boundary) : null)
+    : (market.boundaryGeojson ? JSON.stringify(market.boundaryGeojson) : null);
   await env.DB.prepare(`
-    UPDATE markets SET name = ?, center_latitude = ?, center_longitude = ?, radius_km = ?, notes = ?, updated_at = CURRENT_TIMESTAMP
+    UPDATE markets SET name = ?, center_latitude = ?, center_longitude = ?, radius_km = ?, boundary_kind = ?, boundary_geojson = ?, notes = ?, updated_at = CURRENT_TIMESTAMP
     WHERE id = ?
-  `).bind(name, centerLatitude, centerLongitude, radiusKm, notes, marketId).run();
-  await recordAudit(env, { actorUserId: actor.userId, actorScope: "platform", action: "market.updated", target: marketId, detail: { name } });
+  `).bind(name, centerLatitude, centerLongitude, radiusKm, boundaryJson ? "polygon" : "circle", boundaryJson, notes, marketId).run();
+  await recordAudit(env, {
+    actorUserId: actor.userId, actorScope: "platform", action: "market.updated", target: marketId,
+    detail: boundaryTouched
+      ? { name, boundaryKind: boundaryJson ? "polygon" : "circle", boundaryChanged: true }
+      : { name }
+  });
   return { status: 200, body: { market: await getMarket(env, marketId) } };
 }
 
@@ -230,15 +322,20 @@ export async function listUnassignedLocations(env) {
     listMarkets(env)
   ]);
   return locationRows.results.map((row) => {
+    // The suggestion is the nearest market that actually CONTAINS the clinic
+    // — polygon or circle, same test the search resolver uses — so a drawn
+    // territory suggests exactly the clinics inside its lines.
     let nearest = null;
     let nearestDistanceKm = Infinity;
     for (const market of markets) {
+      if (!marketContains(market, row.latitude, row.longitude)) continue;
       const distanceKm = haversineKm(row.latitude, row.longitude, market.centerLatitude, market.centerLongitude);
       if (distanceKm < nearestDistanceKm) { nearestDistanceKm = distanceKm; nearest = market; }
     }
     return {
       id: row.id, tenantId: row.tenant_id, name: row.name, city: row.city, region: row.region,
-      suggestedMarket: nearest && nearestDistanceKm <= nearest.radiusKm
+      latitude: row.latitude, longitude: row.longitude,
+      suggestedMarket: nearest
         ? { id: nearest.id, name: nearest.name, distanceKm: round1(nearestDistanceKm) }
         : null
     };
@@ -265,6 +362,64 @@ export async function unassignLocation(env, actor, locationId) {
 
 /* --------------------------------------------------- point resolution --- */
 
+/** Even-odd ray cast over one GeoJSON ring ([lng, lat] positions). The
+ * standard half-open crossing test, so shared edges between adjacent
+ * territories do not double-count. */
+function pointInRing(ring, longitude, latitude) {
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i, i += 1) {
+    const [xi, yi] = ring[i];
+    const [xj, yj] = ring[j];
+    if (yi > latitude !== yj > latitude
+      && longitude < ((xj - xi) * (latitude - yi)) / (yj - yi) + xi) {
+      inside = !inside;
+    }
+  }
+  return inside;
+}
+
+/** Even-odd across every ring of the geometry: inside the outer ring and
+ * inside a hole cancel out, which is exactly GeoJSON's hole semantics. */
+function pointInBoundary(geometry, latitude, longitude) {
+  const polygons = geometry.type === "Polygon" ? [geometry.coordinates] : geometry.coordinates;
+  let crossings = 0;
+  for (const rings of polygons) {
+    for (const ring of rings) {
+      if (pointInRing(ring, longitude, latitude)) crossings += 1;
+    }
+  }
+  return crossings % 2 === 1;
+}
+
+/**
+ * Whether a point is in a market, respecting its shape: the drawn polygon
+ * when one is stored (with a bounding-box pre-check so the per-search loop in
+ * resolveSearchMarket stays cheap), otherwise the original circle. Exported
+ * for the console and the tests; every containment decision in this module
+ * goes through here so the two shapes cannot drift.
+ */
+export function marketContains(market, latitude, longitude) {
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return false;
+  if (market.boundaryKind === "polygon" && market.boundaryGeojson) {
+    const polygons = market.boundaryGeojson.type === "Polygon" ? [market.boundaryGeojson.coordinates] : market.boundaryGeojson.coordinates;
+    let minLng = Infinity;
+    let maxLng = -Infinity;
+    let minLat = Infinity;
+    let maxLat = -Infinity;
+    for (const rings of polygons) {
+      for (const [lng, lat] of rings[0] || []) {
+        if (lng < minLng) minLng = lng;
+        if (lng > maxLng) maxLng = lng;
+        if (lat < minLat) minLat = lat;
+        if (lat > maxLat) maxLat = lat;
+      }
+    }
+    if (longitude < minLng || longitude > maxLng || latitude < minLat || latitude > maxLat) return false;
+    return pointInBoundary(market.boundaryGeojson, latitude, longitude);
+  }
+  return haversineKm(latitude, longitude, market.centerLatitude, market.centerLongitude) <= market.radiusKm;
+}
+
 /**
  * The nearest market whose circle contains (lat, lng), regardless of its
  * state or activation — this is deliberately unfiltered so a search landing
@@ -280,8 +435,11 @@ export async function nearestContainingMarket(env, latitude, longitude) {
   let nearest = null;
   let nearestDistanceKm = Infinity;
   for (const market of markets) {
+    // Containment respects the market's shape (drawn polygon or circle);
+    // center distance stays the tiebreaker when two territories overlap.
+    if (!marketContains(market, latitude, longitude)) continue;
     const distanceKm = haversineKm(latitude, longitude, market.centerLatitude, market.centerLongitude);
-    if (distanceKm <= market.radiusKm && distanceKm < nearestDistanceKm) { nearestDistanceKm = distanceKm; nearest = market; }
+    if (distanceKm < nearestDistanceKm) { nearestDistanceKm = distanceKm; nearest = market; }
   }
   return nearest;
 }

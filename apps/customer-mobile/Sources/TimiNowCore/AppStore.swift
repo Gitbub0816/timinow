@@ -53,6 +53,13 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
     public var navigationPreferences: NavigationPreferences {
         didSet { persistNavigationPreferences() }
     }
+    /// Whether product analytics stay on the device. The measurements are
+    /// already cookieless and unlinkable by contract (see trackEvent), but a
+    /// choice you cannot make is not a promise you can trust — this is the
+    /// switch behind Settings → Privacy & your data.
+    public var analyticsOptOut = false {
+        didSet { persistAnalyticsChoice() }
+    }
 
     #if !os(Android)
     private let defaults: UserDefaults
@@ -79,6 +86,7 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
         let storedNavigationPreferences = NavigationPreferences.default
         let storedOnboardingNames: [String] = []
         let storedOnboardingIndex = -1
+        let storedAnalyticsOptOut = false
         #else
         let defaults = UserDefaults.standard
         self.defaults = defaults
@@ -107,6 +115,7 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
         // resume on the first pet's detail page with no names collected.
         let storedOnboardingNames = Self.decode([String].self, from: defaults.data(forKey: "timi.onboarding.names")) ?? []
         let storedOnboardingIndex = defaults.object(forKey: "timi.onboarding.petIndex") == nil ? -1 : defaults.integer(forKey: "timi.onboarding.petIndex")
+        let storedAnalyticsOptOut = defaults.bool(forKey: "timi.analytics.optOut")
         #endif
         self.pets = storedPets
         self.selectedPetId = selectedPetId
@@ -124,6 +133,7 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
         self.ownerPhone = storedOwner.1
         self.ownerEmail = storedOwner.2
         self.navigationPreferences = storedNavigationPreferences
+        self.analyticsOptOut = storedAnalyticsOptOut
         let gateway = TimiGateway(baseURL: Self.validBaseURL(apiBaseURLText))
         self.gateway = gateway
         self.auth = AuthController(gateway: gateway)
@@ -1124,6 +1134,7 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
     /// Nothing here may carry a user id or a coordinate: the endpoint is
     /// cookieless by contract, and this is the client's half of that promise.
     func trackEvent(_ name: String, path: String? = nil, meta: [String: String]? = nil) {
+        guard !analyticsOptOut else { return }
         Task { [gateway] in await gateway.recordAnalytics([TimiAnalyticsEvent(name: name, path: path, meta: meta)]) }
     }
 
@@ -1183,6 +1194,11 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
     private func persistNavigationPreferences() {
         #if !os(Android)
         defaults.set(try? JSONEncoder().encode(navigationPreferences), forKey: "timi.navigation.preferences")
+        #endif
+    }
+    private func persistAnalyticsChoice() {
+        #if !os(Android)
+        defaults.set(analyticsOptOut, forKey: "timi.analytics.optOut")
         #endif
     }
     private static func decode<T: Decodable>(_ type: T.Type, from data: Data?) -> T? { guard let data else { return nil }; return try? JSONDecoder().decode(type, from: data) }

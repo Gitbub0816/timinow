@@ -6,7 +6,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
 const run = promisify(execFile);
-const roots = ["src", "public", "scripts", "apps/vet-web", "apps/admin-console", "apps/voice-gateway"];
+const roots = ["src", "public", "scripts", "apps/vet-web", "apps/admin-console", "apps/voice-gateway", "apps/widget-demo"];
 const skipDirectories = new Set(["node_modules", ".wrangler", ".git", "assets", "bin", "obj"]);
 
 async function collect(directory) {

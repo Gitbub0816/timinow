@@ -38,13 +38,18 @@ export function buildCallScript({ locationName, spokenConcern, travelMinutes, ur
 /* --------------------------------------------------------------- TwiML --- */
 
 /**
- * Twilio's neural Polly voices cost marginally more per character than the
- * standard ones and sound markedly less synthetic. This is the first thing a
- * veterinary practice hears from Tími, often over a speakerphone in a noisy
- * treatment area, so the better voice is worth it. Override with
- * VOICE_SAY_VOICE if you prefer another.
+ * Twilio hosts Amazon Polly's generative voices, which are a clear step up
+ * from the neural tier — conversational pacing and intonation instead of the
+ * flat announcer read. This is the first thing a veterinary practice hears
+ * from Tími, often over a speakerphone in a noisy treatment area, so the
+ * best voice Twilio can speak natively is worth the marginal per-character
+ * cost. Override with VOICE_SAY_VOICE if you prefer another.
+ *
+ * Note when changing this: the generative engine supports only a subset of
+ * SSML — <phoneme> (which pronounceBrand relies on) is in that subset, but
+ * effects like whisper/drc are not.
  */
-export const DEFAULT_SAY_VOICE = "Polly.Joanna-Neural";
+export const DEFAULT_SAY_VOICE = "Polly.Danielle-Generative";
 
 /** The configured voice, or the default. VOICE_SAY_VOICE was documented and
  * read by nothing, so every call used Joanna whatever the setting said. */
