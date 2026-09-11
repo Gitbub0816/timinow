@@ -1044,7 +1044,9 @@
                                                         screen, for a token that is still active — a revoke button
                                                         on an already-revoked row is an action that can only fail.
                                                     -->
-                                                    <Button Grid.Column="1" Content="Revoke" Style="{StaticResource QuietButton}"
+                                                    <!-- Style set only through the Button.Style element below (WPF
+                                                         forbids setting it twice); its BasedOn carries QuietButton. -->
+                                                    <Button Grid.Column="1" Content="Revoke"
                                                             Command="{Binding DataContext.RevokeWidgetTokenCommand, RelativeSource={RelativeSource AncestorType=Window}}"
                                                             CommandParameter="{Binding}">
                                                         <Button.Style>

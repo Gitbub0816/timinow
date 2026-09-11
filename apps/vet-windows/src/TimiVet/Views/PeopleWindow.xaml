@@ -100,7 +100,9 @@
                                                VerticalAlignment="Center" Foreground="{StaticResource Muted}"
                                                Visibility="{Binding IsSelf, Converter={StaticResource B2V}}"/>
                                     <TextBlock Grid.Column="3" Text="{Binding JoinedLabel}" FontSize="10" VerticalAlignment="Center" Foreground="{StaticResource Muted}"/>
-                                    <Button Grid.Column="4" Content="Save role" Margin="8,0" Style="{StaticResource QuietButton}"
+                                    <!-- Style set only through the Button.Style element below (WPF
+                                         forbids setting it twice); its BasedOn carries QuietButton. -->
+                                    <Button Grid.Column="4" Content="Save role" Margin="8,0"
                                             Command="{Binding DataContext.ChangeRoleCommand, RelativeSource={RelativeSource AncestorType=Window}}" CommandParameter="{Binding}">
                                         <Button.Style>
                                             <Style TargetType="Button" BasedOn="{StaticResource QuietButton}">
@@ -117,7 +119,7 @@
                                             </Style>
                                         </Button.Style>
                                     </Button>
-                                    <Button Grid.Column="5" Content="Remove" Style="{StaticResource QuietButton}"
+                                    <Button Grid.Column="5" Content="Remove"
                                             Command="{Binding DataContext.RemoveMemberCommand, RelativeSource={RelativeSource AncestorType=Window}}" CommandParameter="{Binding}">
                                         <Button.Style>
                                             <Style TargetType="Button" BasedOn="{StaticResource QuietButton}">
