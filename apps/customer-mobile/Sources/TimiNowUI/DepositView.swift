@@ -15,6 +15,38 @@ import StripePaymentSheet
 import UIKit
 #endif
 
+/// Closes the loop `configuration.returnURL = "timinow://stripe-redirect"`
+/// opens: the app declares that scheme to Stripe as where it can send
+/// somebody back after an out-of-app step, but nothing ever told iOS the app
+/// OWNS that scheme (`CFBundleURLTypes` in Info.plist), and nothing handed a
+/// reopening URL back to Stripe's SDK — `StripeAPI.handleURLCallback(with:)`
+/// was never called from anywhere. Both halves were missing, so a
+/// PaymentIntent confirmation that ever needed the return trip (a
+/// card-network fallback to a redirect-based 3DS challenge; today's
+/// `allow_redirects: "never"` on the PaymentIntent — see src/stripe.js
+/// createPaymentIntent — keeps the ordinary case from ever needing it, but
+/// does not change what the app declares itself capable of) had nowhere to
+/// land.
+///
+/// A standalone public type rather than a member of `DepositSection`
+/// (internal to this module) because `TimiNowApp` — a separate module,
+/// SwiftUI's `.onOpenURL` is only reachable from the app's own root view —
+/// is the caller.
+public enum TimiStripeReturn {
+    /// Returns whether Stripe recognized and handled this URL. Call from
+    /// `.onOpenURL` on the app's root view; a `false` result means the URL
+    /// was not one of Stripe's and the app's own deep-link handling (if any)
+    /// should look at it instead.
+    @discardableResult
+    public static func handle(_ url: URL) -> Bool {
+        #if canImport(StripePaymentSheet) && !SKIP && os(iOS)
+        return StripeAPI.handleURLCallback(with: url)
+        #else
+        return false
+        #endif
+    }
+}
+
 /// The arrival-deposit section of the tracker.
 ///
 /// Never Checkout and never a hosted page. The customer is standing somewhere
@@ -199,6 +231,42 @@ struct DepositSection: View {
         }
     }
 
+    /// Everything Stripe actually knows about a confirmation failure —
+    /// pulled out of the `NSError` userInfo Stripe populates on `PaymentSheetResult.failed`,
+    /// not from `error.localizedDescription`.
+    ///
+    /// `STPPaymentHandler._error(for:...)` (verified against a local clone of
+    /// stripe-ios) maps most of its own failure codes — an unexpected intent
+    /// status, a missing return URL, a 3DS2 SDK error, a confirm-time API
+    /// error with no card-specific code — to the exact same fallback string,
+    /// `NSError.stp_unexpectedErrorMessage()`: "There was an unexpected error
+    /// — try again in a few seconds." That is what `localizedDescription`
+    /// returns for all of them, which is why every one of those failures
+    /// used to look identical on screen and in the logs. The real cause is
+    /// still in the error, under `STPError`'s own keys — `errorMessageKey`
+    /// carries Stripe's developer-facing detail (e.g. "No such payment_intent",
+    /// a client_secret format mismatch, an unexpected intent status), and
+    /// `stripeErrorTypeKey`/`stripeErrorCodeKey`/`httpStatusCodeKey` carry the
+    /// API error's own classification. None of this is PII — it is Stripe's
+    /// error taxonomy, not card data — so it is safe to both log and, in
+    /// developer mode, show.
+    ///
+    /// Shared between `DepositSection` and `BookingPaymentSection` rather
+    /// than duplicated, the same way `appearance` below is.
+    static func stripeFailureDiagnostics(_ error: Error) -> (type: String?, code: String?, detail: String?, status: Int?) {
+        let userInfo = (error as NSError).userInfo
+        func nonEmpty(_ value: Any?) -> String? {
+            guard let text = value as? String, !text.isEmpty else { return nil }
+            return text
+        }
+        return (
+            nonEmpty(userInfo[STPError.stripeErrorTypeKey]),
+            nonEmpty(userInfo[STPError.stripeErrorCodeKey]),
+            nonEmpty(userInfo[STPError.errorMessageKey]),
+            userInfo[STPError.httpStatusCodeKey] as? Int
+        )
+    }
+
     /// The row and confirm button above are entirely Tími's own SwiftUI —
     /// this only reaches the one surface that is still Stripe's: the card
     /// form the payment-options sheet opens. Values are `TimiColor` and the
@@ -249,19 +317,25 @@ struct DepositSection: View {
         configuration.returnURL = "timinow://stripe-redirect"
         configuration.appearance = Self.appearance
 
-        let created: PaymentSheet.FlowController? = await withCheckedContinuation { continuation in
+        let creation: Result<PaymentSheet.FlowController, Error> = await withCheckedContinuation { continuation in
             PaymentSheet.FlowController.create(paymentIntentClientSecret: secret, configuration: configuration) { result in
-                switch result {
-                case .success(let controller): continuation.resume(returning: controller)
-                case .failure: continuation.resume(returning: nil)
-                }
+                continuation.resume(returning: result)
             }
         }
-        if let created {
+        switch creation {
+        case .success(let created):
             flowController = created
             paymentOptionLabel = created.paymentOption?.label ?? ""
-        } else {
-            errorText = "Tími could not open a secure payment. Try again in a moment."
+        case .failure(let error):
+            // `.create`'s own failure case carries an Error too, previously
+            // discarded here — the exact same generic-message problem as
+            // confirmation, at the earlier point where a key/account
+            // mismatch or a stale client secret is just as likely to surface.
+            let diagnostics = Self.stripeFailureDiagnostics(error)
+            store.trackPaymentFailure(context: "deposit_prepare", stripeErrorType: diagnostics.type, stripeErrorCode: diagnostics.code, httpStatus: diagnostics.status)
+            errorText = store.developerModeEnabled
+                ? "Tími could not open a secure payment. [\(diagnostics.type ?? "?")/\(diagnostics.code ?? "?")] \(diagnostics.detail ?? error.localizedDescription)"
+                : "Tími could not open a secure payment. Try again in a moment."
         }
     }
 
@@ -278,7 +352,15 @@ struct DepositSection: View {
         case .canceled:
             errorText = ""
         case .failed(let error):
-            errorText = error.localizedDescription
+            // See DepositSection.stripeFailureDiagnostics: `error.localizedDescription`
+            // alone is Stripe's own generic fallback for most of
+            // STPPaymentHandler's failure codes, which is why this used to
+            // read the same vague sentence for every distinct cause.
+            let diagnostics = Self.stripeFailureDiagnostics(error)
+            store.trackPaymentFailure(context: "deposit", stripeErrorType: diagnostics.type, stripeErrorCode: diagnostics.code, httpStatus: diagnostics.status)
+            errorText = store.developerModeEnabled
+                ? "\(error.localizedDescription)\n[\(diagnostics.type ?? "?")/\(diagnostics.code ?? "?")] \(diagnostics.detail ?? "no further detail from Stripe")"
+                : error.localizedDescription
         }
     }
 

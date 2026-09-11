@@ -1145,6 +1145,23 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
         Task { [gateway] in await gateway.recordAnalytics([TimiAnalyticsEvent(name: name, path: path, meta: meta)]) }
     }
 
+    /// `trackEvent` above is internal to this module, and `TimiNowUI` — where
+    /// every Stripe confirmation actually happens (DepositSection,
+    /// BookingPaymentSection) — is a separate module. This is the one seam
+    /// they cross through: Stripe's own error taxonomy (type/code/HTTP
+    /// status — never card data, never a client secret), reported through
+    /// the same cookieless analytics pipeline as everything else, so a
+    /// payment failure in a build nobody has a device console open for still
+    /// shows up in the operator analytics summary instead of vanishing the
+    /// moment the generic "unexpected error" text is dismissed.
+    public func trackPaymentFailure(context: String, stripeErrorType: String?, stripeErrorCode: String?, httpStatus: Int?) {
+        var meta: [String: String] = ["context": context]
+        if let stripeErrorType { meta["stripeType"] = stripeErrorType }
+        if let stripeErrorCode { meta["stripeCode"] = stripeErrorCode }
+        if let httpStatus { meta["httpStatus"] = String(httpStatus) }
+        trackEvent("payment_confirmation_failed", path: "payment", meta: meta)
+    }
+
     /// Called from the root view's launch task, once per process.
     public func recordAppOpen() {
         guard !hasRecordedAppOpen else { return }

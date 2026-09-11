@@ -32,6 +32,12 @@ public struct RootView: View {
                 .task { await store.auth.start() }
                 .task { await store.loadMapConfig() }
                 .task { WatchBridge.shared.start(observing: store) }
+                // See TimiStripeReturn: the app declares timinow://stripe-redirect
+                // to Stripe (the payment sections' own configuration.returnURL)
+                // as where it can be reopened after an out-of-app payment
+                // step, so it has to actually catch that reopen and hand it
+                // back to the SDK.
+                .onOpenURL { url in TimiStripeReturn.handle(url) }
             #if !SKIP
             if splashVisible && !splashFrames.isEmpty {
                 SplashView(frames: splashFrames)

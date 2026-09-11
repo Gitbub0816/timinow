@@ -77,6 +77,31 @@
     <key>NSUserNotificationsUsageDescription</key><string>Tími can notify you when a clinic sends an availability offer or updates your arrival.</string>
     <key>UILaunchScreen</key><dict><key>UIColorName</key><string>LaunchBackground</string></dict>
     <!--
+      DepositSection/BookingPaymentSection hand Stripe's PaymentSheet
+      `configuration.returnURL = "timinow://stripe-redirect"` — the address
+      Stripe sends the customer back to after any step that has to leave the
+      app (a bank redirect, some 3DS challenge fallbacks). Without the app
+      registering that it owns the "timinow" scheme here, iOS has no route
+      back for that reopen at all: `StripeAPI.handleURLCallback(with:)`
+      (TimiStripeReturn.handle, wired to `.onOpenURL` in TimiNowApp.swift)
+      never fires because the OS never hands the app the URL in the first
+      place. `allow_redirects: "never"` on the PaymentIntent (src/stripe.js
+      createPaymentIntent) keeps the ordinary card flow from ever needing
+      this — deliberately, so nobody is sent to a bank page mid-emergency —
+      but the app still has to be a truthful citizen about the URL it hands
+      Stripe as a fallback, for the cases that aren't the ordinary flow.
+    -->
+    <key>CFBundleURLTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleURLName</key><string>$(PRODUCT_BUNDLE_IDENTIFIER).stripe-redirect</string>
+            <key>CFBundleURLSchemes</key>
+            <array>
+                <string>timinow</string>
+            </array>
+        </dict>
+    </array>
+    <!--
       All four orientations, deliberately: the app was portrait-locked, and a
       dual/foldable-screen iPhone renders every pose — left- and right-handed
       folds, landscape, and the unfolded wide modes — through orientation and

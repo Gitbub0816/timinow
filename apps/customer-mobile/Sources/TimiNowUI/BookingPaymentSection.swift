@@ -366,19 +366,27 @@ struct BookingPaymentSection: View {
         // Reused directly rather than duplicated — see DepositSection.
         configuration.appearance = DepositSection.appearance
 
-        let created: PaymentSheet.FlowController? = await withCheckedContinuation { continuation in
+        let creation: Result<PaymentSheet.FlowController, Error> = await withCheckedContinuation { continuation in
             PaymentSheet.FlowController.create(paymentIntentClientSecret: secret, configuration: configuration) { result in
-                switch result {
-                case .success(let controller): continuation.resume(returning: controller)
-                case .failure: continuation.resume(returning: nil)
-                }
+                continuation.resume(returning: result)
             }
         }
-        if let created {
+        switch creation {
+        case .success(let created):
             flowController = created
             paymentOptionLabel = created.paymentOption?.label ?? ""
-        } else {
-            errorText = "Tími could not open a secure payment. Try again in a moment."
+        case .failure(let error):
+            // See DepositSection.stripeFailureDiagnostics: `.create`'s own
+            // failure case carries an Error too, previously discarded here —
+            // the exact same generic-message problem as confirmation, at the
+            // earlier point where a key/account mismatch or a stale client
+            // secret (this order re-prices on a gift change) is just as
+            // likely to surface.
+            let diagnostics = DepositSection.stripeFailureDiagnostics(error)
+            store.trackPaymentFailure(context: "booking_prepare", stripeErrorType: diagnostics.type, stripeErrorCode: diagnostics.code, httpStatus: diagnostics.status)
+            errorText = store.developerModeEnabled
+                ? "Tími could not open a secure payment. [\(diagnostics.type ?? "?")/\(diagnostics.code ?? "?")] \(diagnostics.detail ?? error.localizedDescription)"
+                : "Tími could not open a secure payment. Try again in a moment."
         }
     }
 
@@ -398,7 +406,17 @@ struct BookingPaymentSection: View {
         case .canceled:
             errorText = ""
         case .failed(let error):
-            errorText = error.localizedDescription
+            // See DepositSection.stripeFailureDiagnostics: `error.localizedDescription`
+            // alone is Stripe's own generic fallback for most of
+            // STPPaymentHandler's failure codes — an unexpected intent
+            // status, a confirm-time API error with no card-specific code, a
+            // stale client secret — which is why this read the identical
+            // vague sentence for every distinct cause.
+            let diagnostics = DepositSection.stripeFailureDiagnostics(error)
+            store.trackPaymentFailure(context: "booking_confirm", stripeErrorType: diagnostics.type, stripeErrorCode: diagnostics.code, httpStatus: diagnostics.status)
+            errorText = store.developerModeEnabled
+                ? "\(error.localizedDescription)\n[\(diagnostics.type ?? "?")/\(diagnostics.code ?? "?")] \(diagnostics.detail ?? "no further detail from Stripe")"
+                : error.localizedDescription
         }
     }
 
