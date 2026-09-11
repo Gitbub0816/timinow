@@ -12,7 +12,7 @@
 
 const DEFAULT_MODEL = "gemini-2.5-flash-preview-tts";
 const DEFAULT_VOICE = "Charon";
-const DEFAULT_STYLE = "Read this warmly and calmly, at an unhurried pace, as a real person calling a veterinary clinic. Do not sound cheerful or promotional.";
+const DEFAULT_STYLE = "Speak as a real person making a quick, friendly phone call to a veterinary clinic: warm, calm, conversational, with natural pacing and small pauses between sentences. Never sound like a text-to-speech system, an announcer, or an ad — no flat monotone, no exaggerated cheer.";
 const SYNTHESIS_HOST = "https://generativelanguage.googleapis.com";
 
 export function geminiVoice(env) {

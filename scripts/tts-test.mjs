@@ -67,10 +67,10 @@ await withFetch(async () => new Response(JSON.stringify({ candidates: [{ content
 // The style is the customisation. It has to reach the model, and the
 // configured one has to beat the default, or "I customised it" quietly means
 // nothing.
-assert(geminiStyle({}).includes("unhurried"), "there is a sensible default reading");
+assert(geminiStyle({}).includes("conversational"), "there is a sensible default reading");
 assert(geminiStyle({ GEMINI_TTS_STYLE: "Speak like a night-shift nurse." }) === "Speak like a night-shift nurse.",
   "a configured style replaces the default outright");
-assert(geminiStyle({ GEMINI_TTS_STYLE: "   " }).includes("unhurried"), "whitespace is not a style");
+assert(geminiStyle({ GEMINI_TTS_STYLE: "   " }).includes("conversational"), "whitespace is not a style");
 
 await withFetch(async (url, init) => {
   const body = JSON.parse(init.body);

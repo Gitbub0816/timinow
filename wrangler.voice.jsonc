@@ -42,7 +42,12 @@
     "VOICE_CALLS_ENABLED": "true",
     "VOICE_MAX_ATTEMPTS": "2",
     "VOICE_SAY_VOICE": "",
-    "GEMINI_TTS_VOICE": "Iapetus",
+    // Sulafat is Gemini's "warm" voice. Iapetus (the previous pick) is
+    // billed as "clear" and lands flat over a phone line — the exact
+    // "robotic" read the clinics were hearing. Audition candidates without
+    // deploying: POST /api/voice/tts-check with {"voice":"NAME"}, or a full
+    // ring via scripts/bootstrap.sh --test-call.
+    "GEMINI_TTS_VOICE": "Sulafat",
     "GEMINI_TTS_MODEL": "",
     "GEMINI_TTS_STYLE": "",
     "VOICE_PUBLIC_URL": "https://voice.timinow.pet",
