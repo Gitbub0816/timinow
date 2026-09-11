@@ -44,10 +44,14 @@ import { marketplaceEventStatement, recordMarketplaceEvent } from "./metrics.js"
 import { notifyAlertBreaches } from "./alert-notifications.js";
 import { dispatchVoiceCalls } from "./voice.js";
 import {
+  handleCreateWidgetPackage,
   handleCreateWidgetToken,
+  handleListWidgetPackages,
   handleListWidgetTokens,
   handlePublicWidgetStatus,
-  handleRevokeWidgetToken
+  handleRevokeWidgetPackage,
+  handleRevokeWidgetToken,
+  handleUpdateWidgetPackage
 } from "./widget.js";
 import { getOrCreateReferralLink, resolveReferralRedirect } from "./referrals.js";
 import {
@@ -2345,6 +2349,12 @@ async function handleAuthenticatedApi(request, env, ctx, actor, url, path, metho
     if (method === "POST" && path === "/api/clinic/widget-tokens") return handleCreateWidgetToken(request, env, actor, tenantId);
     const widgetTokenMatch = path.match(/^\/api\/clinic\/widget-tokens\/([^/]+)$/);
     if (method === "DELETE" && widgetTokenMatch) return handleRevokeWidgetToken(env, actor, tenantId, decodeURIComponent(widgetTokenMatch[1]));
+    // Widget Studio packages — saved designs the embed snippet names by id.
+    if (method === "GET" && path === "/api/clinic/widget-packages") return handleListWidgetPackages(env, tenantId);
+    if (method === "POST" && path === "/api/clinic/widget-packages") return handleCreateWidgetPackage(request, env, actor, tenantId);
+    const widgetPackageMatch = path.match(/^\/api\/clinic\/widget-packages\/([^/]+)$/);
+    if (method === "PATCH" && widgetPackageMatch) return handleUpdateWidgetPackage(request, env, actor, tenantId, decodeURIComponent(widgetPackageMatch[1]));
+    if (method === "DELETE" && widgetPackageMatch) return handleRevokeWidgetPackage(env, actor, tenantId, decodeURIComponent(widgetPackageMatch[1]));
     if (method === "GET" && path === "/api/clinic/referral-link") {
       return json({ referralLink: await getOrCreateReferralLink(env, actor, tenantId) });
     }

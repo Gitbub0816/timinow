@@ -311,9 +311,15 @@
             <div data-market-form-errors class="form-errors" hidden></div>
             <div class="form-grid two-col">
               <label class="field wide"><span>Name *</span><input type="text" name="name" placeholder="East Bay" required></label>
-              <label class="field"><span>Center latitude *</span><input type="number" name="centerLatitude" step="0.000001" min="-90" max="90" required></label>
-              <label class="field"><span>Center longitude *</span><input type="number" name="centerLongitude" step="0.000001" min="-180" max="180" required></label>
-              <label class="field"><span>Radius (km) *</span><input type="number" name="radiusKm" min="1" max="500" value="40" required></label>
+              <div class="field wide geo-field">
+                <span>Find the area — no coordinates needed</span>
+                <input type="search" data-market-geocode placeholder="Search a city, neighborhood, or ZIP — e.g. Denver, CO" autocomplete="off">
+                <div class="geo-results" data-market-geocode-results hidden></div>
+                <p class="hint" style="margin:.3rem 0 0">Pick a result and the center and a sensible radius fill themselves in. Fine-tune the exact territory later by drawing it on the market's map.</p>
+              </div>
+              <label class="field"><span>Center latitude (auto-filled)</span><input type="number" name="centerLatitude" step="0.000001" min="-90" max="90" required></label>
+              <label class="field"><span>Center longitude (auto-filled)</span><input type="number" name="centerLongitude" step="0.000001" min="-180" max="180" required></label>
+              <label class="field"><span>Radius (km)</span><input type="number" name="radiusKm" min="1" max="500" value="40" required></label>
               <label class="field wide"><span>Notes</span><input type="text" name="notes" maxlength="2000"></label>
             </div>
             <div class="form-actions">

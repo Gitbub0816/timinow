@@ -1,15 +1,44 @@
 # Clinic availability widget
 
-A small status card a clinic embeds on its own public website:
+A Tími-branded status element a clinic embeds on its own public website:
 
 ```html
-<script src="https://timinow.pet/widget.js" data-timi-widget="YOUR_TOKEN"></script>
+<script src="https://timinow.pet/widget.js"
+        data-timi-widget="YOUR_WIDGET_TOKEN"
+        data-timi-client="tenant_…"
+        data-timi-package="pkg_…"></script>
 ```
 
 It shows pet owners whether the clinic is currently accepting urgent
 patients, and — if not — links them into Tími to find another available
 veterinary team nearby, instead of a phone that rings unanswered or a page
 that says nothing.
+
+Three ids ride in the snippet:
+
+- `data-timi-widget` — the **widget token**, the API key. Minted in the
+  provider portal, hashed at rest, shown once.
+- `data-timi-client` — the **tenant/client id**. Plain configuration; the
+  server refuses a token/client mismatch.
+- `data-timi-package` — the **package id**, naming a design saved in the
+  provider portal's **Widget Studio**: one of ten layouts (badge, card,
+  banner, poster, ticker, stat tile, window sign, paws, ledger, after
+  hours), one of five color variants (cream, ink, blue, coral, forest), a
+  width, and optional Tími elements — a coverage line ("Serving the East
+  Bay area", driven by the platform's market map), a gold *Give to Paw It
+  Forward* button, and a *Reserve a spot* CTA. A package id is
+  configuration, not a secret — it is fine to keep in page source. A
+  revoked or foreign package id degrades to the default card design; the
+  clinic's live status keeps rendering.
+
+Browse every design live at the gallery: https://widget-demo.timinow.pet.
+
+**The "Powered by Tími" credit is part of the widget.** Every design
+renders it, it always links to Tími, and no configuration removes it —
+hiding or unlinking it is a violation of the widget terms.
+
+Legacy embeds (`data-timi-widget` alone) keep working and render the
+default card design.
 
 ## What the widget can access
 
@@ -25,6 +54,10 @@ accidentally include:
 | `status` | One of `accepting`, `diverting`, `full`, or `unavailable` |
 | `freshness` | A coarse phrase like "Updated 6 minutes ago" |
 | `link` | A link into Tími's own search, carrying attribution so Tími can see the widget is working |
+| `coverage` | The market's public display name ("East Bay") when a platform operator has assigned the clinic to one — nothing about the clinic itself |
+| `donateLink` | Where the optional Paw It Forward element points |
+| `poweredByLink` | Where the mandatory "Powered by Tími" credit points |
+| `package` | The resolved Studio design (layout/variant/size/elements) — pure design vocabulary |
 | `generatedAt` | When this response was produced |
 
 ## What the widget can never access

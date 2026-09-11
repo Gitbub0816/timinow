@@ -518,6 +518,76 @@ function geometryPositions(geometry) {
   return positions;
 }
 
+/**
+ * Place-name search over Mapbox's geocoder, because nobody knows a
+ * latitude. Returns up to five candidates; empty (never throws) without a
+ * token or on any API hiccup, so callers can leave the numeric inputs as
+ * the fallback path.
+ */
+async function geocodePlaces(query) {
+  const token = state.config?.map?.token;
+  const text = String(query || "").trim();
+  if (!token || text.length < 2) return [];
+  try {
+    const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(text)}.json`
+      + `?access_token=${encodeURIComponent(token)}&limit=5&types=region,district,postcode,place,locality,neighborhood,address`;
+    const response = await fetch(url);
+    if (!response.ok) return [];
+    const data = await response.json();
+    return (data.features || []).map((feature) => ({
+      name: feature.place_name,
+      shortName: feature.text,
+      latitude: feature.center?.[1],
+      longitude: feature.center?.[0],
+      bbox: Array.isArray(feature.bbox) ? feature.bbox : null
+    })).filter((place) => Number.isFinite(place.latitude) && Number.isFinite(place.longitude));
+  } catch {
+    return [];
+  }
+}
+
+/** A radius that roughly covers the picked place: half its bounding-box
+ * diagonal, clamped to something a market plausibly is. A point result
+ * (an address) gets the 40 km default. */
+function radiusForPlace(place) {
+  if (!place.bbox) return 40;
+  const [west, south, east, north] = place.bbox;
+  const toRadians = (deg) => deg * (Math.PI / 180);
+  const dLat = toRadians(north - south);
+  const dLon = toRadians(east - west);
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRadians(south)) * Math.cos(toRadians(north)) * Math.sin(dLon / 2) ** 2;
+  const diagonalKm = 2 * 6371 * Math.asin(Math.sqrt(a));
+  return Math.min(200, Math.max(5, Math.round(diagonalKm / 2)));
+}
+
+/** Debounced search-as-you-type with a results dropdown. */
+function wireGeocoder(input, resultsEl, onPick) {
+  if (!input || !resultsEl) return;
+  let timer = null;
+  let requestSeq = 0;
+  const close = () => { resultsEl.hidden = true; resultsEl.innerHTML = ""; };
+  input.addEventListener("input", () => {
+    clearTimeout(timer);
+    timer = setTimeout(async () => {
+      const seq = ++requestSeq;
+      const places = await geocodePlaces(input.value);
+      if (seq !== requestSeq) return; // a newer keystroke's answer wins
+      if (!places.length) { close(); return; }
+      resultsEl.innerHTML = "";
+      for (const place of places) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.textContent = place.name;
+        button.addEventListener("click", () => { close(); onPick(place); });
+        resultsEl.appendChild(button);
+      }
+      resultsEl.hidden = false;
+    }, 300);
+  });
+  input.addEventListener("keydown", (event) => { if (event.key === "Escape") close(); });
+  input.addEventListener("blur", () => setTimeout(close, 200));
+}
+
 function fitToPositions(map, positions, padding = 40) {
   if (!positions.length) return;
   const bounds = positions.reduce(
@@ -1221,7 +1291,23 @@ function wireStaticHandlers() {
     document.querySelector('form[data-form="create-market"]').reset();
     document.querySelector("[data-market-form-errors]").hidden = true;
     document.querySelector("[data-create-market-modal]").hidden = false;
+    document.querySelector("[data-market-geocode]")?.focus();
   });
+  // Search a place instead of typing coordinates: picking a result fills the
+  // center, suggests a radius that covers the place, and offers the short
+  // name ("Denver") as the market name if none was typed yet.
+  wireGeocoder(
+    document.querySelector("[data-market-geocode]"),
+    document.querySelector("[data-market-geocode-results]"),
+    (place) => {
+      const form = document.querySelector('form[data-form="create-market"]');
+      form.centerLatitude.value = place.latitude.toFixed(6);
+      form.centerLongitude.value = place.longitude.toFixed(6);
+      form.radiusKm.value = radiusForPlace(place);
+      if (!form.name.value.trim()) form.name.value = place.shortName || "";
+      document.querySelector("[data-market-geocode]").value = place.name;
+    }
+  );
   document.querySelector("[data-close-create-market]")?.addEventListener("click", () => {
     document.querySelector("[data-create-market-modal]").hidden = true;
   });
@@ -2471,6 +2557,11 @@ function renderMarketDetail(market, locations, report, unassignedLocations) {
             <h2 style="margin:0;">Territory</h2>
             <span class="hint">${market.boundaryKind === "polygon" ? "Drawn polygon" : `Circle · ${market.radiusKm} km`}</span>
           </div>
+          <div class="map-search geo-field" data-boundary-search hidden>
+            <input type="search" data-market-detail-geocode placeholder="Jump to a city, neighborhood, or ZIP…" autocomplete="off">
+            <button class="button button-small" type="button" data-set-center-here title="Use the map's current center as this market's center point">Set center here</button>
+            <div class="geo-results" data-market-detail-geocode-results hidden></div>
+          </div>
           <div id="market-editor-map" class="market-map" hidden></div>
           <p class="map-notice" data-market-map-notice hidden>Set MAPBOX_PUBLIC_TOKEN on the admin Worker to draw territories. The numeric fields on the left keep working without it.</p>
           <div class="boundary-toolbar" data-boundary-toolbar hidden>
@@ -2577,6 +2668,27 @@ function initMarketBoundaryEditor(market, locations, unassignedLocations) {
   const toolbar = document.querySelector("[data-boundary-toolbar]");
   const hint = document.querySelector("[data-boundary-hint]");
   if (!map) return;
+
+  // Nobody knows coordinates: search a place to jump the map there, then
+  // draw. "Set center here" writes the map's center into the details form
+  // so the anchor point can be fixed by eye instead of by number.
+  const searchBar = document.querySelector("[data-boundary-search]");
+  if (searchBar) {
+    searchBar.hidden = false;
+    wireGeocoder(
+      document.querySelector("[data-market-detail-geocode]"),
+      document.querySelector("[data-market-detail-geocode-results]"),
+      (place) => map.flyTo({ center: [place.longitude, place.latitude], zoom: place.bbox ? 10 : 13 })
+    );
+    document.querySelector("[data-set-center-here]")?.addEventListener("click", () => {
+      const center = map.getCenter();
+      const form = document.querySelector('form[data-form="market-edit"]');
+      if (!form) return;
+      form.centerLatitude.value = center.lat.toFixed(6);
+      form.centerLongitude.value = center.lng.toFixed(6);
+      toast("Center set from the map — save the details to keep it.");
+    });
+  }
 
   map.on("load", () => {
     const color = MARKET_STATE_COLORS[market.state] || "#BD3E31";

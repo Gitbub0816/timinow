@@ -81,6 +81,14 @@ const state = {
   workstation: readWorkstation(),
   workstations: null,
   overflow: { widgetTokens: [], referralLink: null, newSecret: null, loaded: false },
+  /** Widget Studio: the design being built, saved packages, and — held only
+   * in memory, only right after creation — a fresh token secret so the
+   * embed snippets can be generated complete. */
+  studio: {
+    packages: [], tokens: [], loaded: false,
+    config: { design: "card", variant: "cream", size: "standard", elements: [] },
+    name: "", previewState: "accepting", selectedPackageId: null, newSecret: null, snippetFramework: "html"
+  },
   miniWin: null,
   miniKind: null // "pip" | "popup"
 };
@@ -609,7 +617,7 @@ async function renderRoute() {
   document.title = ({
     "sign-in": "Sign in · Tími Vet", workspace: "Choose a workspace · Tími Vet",
     pill: "Quick status · Tími Vet", console: "Clinic operations · Tími Vet", billing: "Billing · Tími Vet",
-    payouts: "Payouts · Tími Vet", overflow: "Overflow tools · Tími Vet",
+    payouts: "Payouts · Tími Vet", overflow: "Overflow tools · Tími Vet", studio: "Widget studio · Tími Vet",
     people: "People · Tími Vet", settings: "Facility settings · Tími Vet", legal: "Legal · Tími Vet"
   })[route] || "Tími Vet";
 
@@ -652,6 +660,7 @@ async function renderRoute() {
   if (route === "billing") await enterBilling();
   if (route === "payouts") await enterPayouts();
   if (route === "overflow") await enterOverflow();
+  if (route === "studio") await enterStudio();
   if (route === "people") await enterPeople();
   if (route === "settings") await enterSettings();
   if (route === "legal") {
@@ -2069,6 +2078,7 @@ function renderOverflow() {
       <p class="eyebrow">WEBSITE STATUS WIDGET</p>
       <h2 style="font-family:var(--serif);font-size:1.4rem;margin:.2rem 0 .6rem">Embed live status on your own site</h2>
       <p style="font-size:.82rem;color:var(--ink-soft);margin:0 0 .8rem">A small card pet owners see on your website: whether you're currently accepting urgent patients, and — if not — a link into Tími to find another available team. It never shows your name, address, exact capacity, or any customer data. See <a href="https://timinow.pet/docs/WIDGET.md" target="_blank" rel="noopener noreferrer">what it can and can't access</a>.</p>
+      <p style="font-size:.82rem;color:var(--ink-soft);margin:0 0 .8rem">Tokens live here; the widget's look lives in the <a href="#studio">Widget studio</a> — ten designs, five color variants, optional Tími elements, and ready-made embed code for your site's framework.</p>
       ${canManage ? `
       <div class="people-add" style="margin-bottom:1rem">
         <label class="field">Label (optional)<input type="text" data-widget-label placeholder="Front page badge" maxlength="80"></label>
@@ -2134,6 +2144,288 @@ function renderOverflow() {
           await enterOverflow();
         } catch (error) { showToast(error.message); }
       });
+    });
+  }
+}
+
+/* --------------------------------------------------------------- studio --- */
+/* The Widget Studio: pick one of the embed script's ten designs, a color
+   variant, a width, and optional Tími elements; preview it live through the
+   REAL embed renderer (window.TimiWidget, loaded from the customer Worker so
+   previews cannot drift from production); save it as a package; copy the
+   embed snippet for the site's framework. Admin permissions for anything
+   that writes, same as widget tokens. */
+
+var STUDIO_DESIGNS = [
+  { key: "badge", label: "Badge", hint: "An inline pill — drops into a header or footer." },
+  { key: "card", label: "Card", hint: "The classic status card. The default." },
+  { key: "banner", label: "Banner", hint: "A wide strip for the top of a page." },
+  { key: "poster", label: "Poster", hint: "Big serif statement with a hard shadow." },
+  { key: "ticker", label: "Ticker", hint: "A slim live strip — the whole thing is the link." },
+  { key: "stack", label: "Stat tile", hint: "One big word: Open, Diverting, Full." },
+  { key: "window", label: "Window sign", hint: "A framed storefront sign, centered." },
+  { key: "paws", label: "Paws", hint: "Friendly and conversational, paw icon included." },
+  { key: "ledger", label: "Ledger", hint: "Labeled rows — status, updated, coverage." },
+  { key: "night", label: "After hours", hint: "Dark navy with a gold-ringed dot." }
+];
+var STUDIO_VARIANTS = [
+  { key: "cream", label: "Cream", swatch: "#FFFAF0" },
+  { key: "ink", label: "Ink", swatch: "#111B3B" },
+  { key: "blue", label: "Blue", swatch: "#E5ECFF" },
+  { key: "coral", label: "Coral", swatch: "#FFE5DF" },
+  { key: "forest", label: "Forest", swatch: "#E9F7F1" }
+];
+var STUDIO_ELEMENTS = [
+  { key: "reserve", label: "Reserve a spot CTA", hint: "When you're accepting, the button reads \"Reserve a spot\"." },
+  { key: "donate", label: "Paw It Forward button", hint: "A gold \"Give to Paw It Forward\" button linking to the fund." },
+  { key: "coverage", label: "Coverage line", hint: "\"Serving the … area\" — driven by your market on the Tími map." }
+];
+var STUDIO_STATES = ["accepting", "diverting", "full", "unavailable"];
+
+/** The real embed renderer, loaded once from the customer Worker. */
+function loadEmbedRenderer() {
+  if (window.TimiWidget) return Promise.resolve(window.TimiWidget);
+  if (!loadEmbedRenderer.pending) {
+    loadEmbedRenderer.pending = new Promise((resolve, reject) => {
+      const script = document.createElement("script");
+      script.src = `${customerAppOrigin()}/widget.js`;
+      script.async = true;
+      script.onload = () => window.TimiWidget ? resolve(window.TimiWidget) : reject(new Error("renderer missing"));
+      script.onerror = () => reject(new Error("could not load the widget script"));
+      document.head.appendChild(script);
+    });
+  }
+  return loadEmbedRenderer.pending;
+}
+
+function studioPreviewData(status) {
+  const origin = customerAppOrigin();
+  return {
+    status,
+    freshness: status === "unavailable" ? null : "Updated 4 minutes ago",
+    link: origin,
+    coverage: "East Bay",
+    donateLink: `${origin}/#paw-it-forward`,
+    poweredByLink: origin,
+    generatedAt: new Date().toISOString()
+  };
+}
+
+function studioSnippets({ token, client, packageId }) {
+  const origin = customerAppOrigin();
+  const tokenValue = token || "YOUR_WIDGET_TOKEN";
+  const attrs = [
+    `data-timi-widget="${tokenValue}"`,
+    client ? `data-timi-client="${client}"` : "",
+    packageId ? `data-timi-package="${packageId}"` : ""
+  ].filter(Boolean);
+  const html = `<script src="${origin}/widget.js"\n        ${attrs.join("\n        ")}></scr` + `ipt>`;
+  const datasetLines = [
+    `      s.dataset.timiWidget = "${tokenValue}";`,
+    client ? `      s.dataset.timiClient = "${client}";` : "",
+    packageId ? `      s.dataset.timiPackage = "${packageId}";` : ""
+  ].filter(Boolean).join("\n");
+  const react = `import { useEffect, useRef } from "react";\n\nexport function TimiWidget() {\n  const ref = useRef(null);\n  useEffect(() => {\n    const host = ref.current;\n    if (!host) return;\n    const s = document.createElement("script");\n    s.src = "${origin}/widget.js";\n    s.async = true;\n${datasetLines}\n    s.dataset.timiMount = "#timi-widget-mount";\n    host.appendChild(s);\n    return () => { host.replaceChildren(); };\n  }, []);\n  return <div id="timi-widget-mount" ref={ref} />;\n}`;
+  const vue = `<template>\n  <div id="timi-widget-mount" ref="host" />\n</template>\n\n<script setup>\nimport { onMounted, onUnmounted, ref } from "vue";\nconst host = ref(null);\nonMounted(() => {\n  const s = document.createElement("script");\n  s.src = "${origin}/widget.js";\n  s.async = true;\n${datasetLines.replaceAll("      s.", "  s.")}\n  s.dataset.timiMount = "#timi-widget-mount";\n  host.value.appendChild(s);\n});\nonUnmounted(() => host.value?.replaceChildren());\n</scr` + `ipt>`;
+  const svelte = `<script>\n  import { onMount } from "svelte";\n  let host;\n  onMount(() => {\n    const s = document.createElement("script");\n    s.src = "${origin}/widget.js";\n    s.async = true;\n${datasetLines.replaceAll("      s.", "    s.")}\n    s.dataset.timiMount = "#timi-widget-mount";\n    host.appendChild(s);\n    return () => host.replaceChildren();\n  });\n</scr` + `ipt>\n\n<div id="timi-widget-mount" bind:this={host} />`;
+  const wordpress = `In the WordPress editor, add a "Custom HTML" block where the widget should appear and paste:\n\n${html}\n\n(Widgets → Custom HTML works the same for classic themes.)`;
+  return { html, react, vue, svelte, wordpress };
+}
+
+async function enterStudio() {
+  const mount = $("[data-studio-body]");
+  if (!state.studio.loaded) mount.innerHTML = `<p class="workspace-empty">Loading the studio…</p>`;
+  try {
+    const [packages, tokens] = await Promise.all([
+      api("/api/clinic/widget-packages"),
+      api("/api/clinic/widget-tokens")
+    ]);
+    state.studio.packages = packages.packages || [];
+    state.studio.tokens = tokens.tokens || [];
+    state.studio.loaded = true;
+    renderStudio();
+  } catch (error) {
+    mount.innerHTML = `<p class="workspace-fail">${escapeHtml(error.message)}</p>`;
+  }
+}
+
+function renderStudio() {
+  const mount = $("[data-studio-body]");
+  const canManage = isSelfAdmin();
+  const s = state.studio;
+  const clientId = state.session?.tenant?.id || "";
+  const selected = s.packages.find((p) => p.id === s.selectedPackageId) || null;
+  const snippets = studioSnippets({ token: s.newSecret, client: clientId, packageId: selected?.id || "" });
+  const frameworks = [["html", "HTML"], ["react", "React"], ["vue", "Vue 3"], ["svelte", "Svelte"], ["wordpress", "WordPress"]];
+
+  mount.innerHTML = `
+    <div class="card" style="margin-bottom:1.2rem">
+      <p class="eyebrow">1 · BUILD</p>
+      <h2 style="font-family:var(--serif);font-size:1.4rem;margin:.2rem 0 .8rem">Design your widget</h2>
+      <div class="studio-grid">
+        <div>
+          <p class="studio-label">Design</p>
+          <div class="studio-designs">
+            ${STUDIO_DESIGNS.map((design) => `
+              <button type="button" class="studio-design ${s.config.design === design.key ? "is-active" : ""}" data-studio-design="${design.key}">
+                <strong>${escapeHtml(design.label)}</strong>
+                <span>${escapeHtml(design.hint)}</span>
+              </button>`).join("")}
+          </div>
+          <p class="studio-label" style="margin-top:1rem">Color variant</p>
+          <div class="studio-swatches">
+            ${STUDIO_VARIANTS.map((variant) => `
+              <button type="button" class="studio-swatch ${s.config.variant === variant.key ? "is-active" : ""}" data-studio-variant="${variant.key}" title="${escapeHtml(variant.label)}">
+                <i style="background:${variant.swatch}"></i>${escapeHtml(variant.label)}
+              </button>`).join("")}
+          </div>
+          <p class="studio-label" style="margin-top:1rem">Width</p>
+          <div class="studio-swatches">
+            ${["compact", "standard", "full"].map((size) => `
+              <button type="button" class="studio-swatch ${s.config.size === size ? "is-active" : ""}" data-studio-size="${size}">${size}</button>`).join("")}
+          </div>
+          <p class="studio-label" style="margin-top:1rem">Tími elements</p>
+          ${STUDIO_ELEMENTS.map((element) => `
+            <label class="studio-element">
+              <input type="checkbox" data-studio-element="${element.key}" ${s.config.elements.includes(element.key) ? "checked" : ""}>
+              <span><strong>${escapeHtml(element.label)}</strong><br><small>${escapeHtml(element.hint)}</small></span>
+            </label>`).join("")}
+          <p style="font-size:.72rem;color:var(--muted);margin-top:.8rem">Every design carries a clickable "Powered by Tími" credit. It's part of the deal — there's no option to remove it.</p>
+        </div>
+        <div>
+          <p class="studio-label">Live preview</p>
+          <div class="studio-statechips">
+            ${STUDIO_STATES.map((preview) => `<button type="button" class="studio-swatch ${s.previewState === preview ? "is-active" : ""}" data-studio-state="${preview}">${preview}</button>`).join("")}
+          </div>
+          <div class="studio-preview" data-studio-preview><p class="workspace-empty">Loading preview…</p></div>
+          ${canManage ? `
+          <div class="field-row" style="margin-top:.9rem;align-items:flex-end;gap:.6rem">
+            <label class="field" style="flex:1">Package name<input type="text" data-studio-name value="${escapeHtml(s.name)}" placeholder="Homepage sidebar card" maxlength="80"></label>
+            <button class="button button-primary" type="button" data-studio-save>${selected ? "Save as new package" : "Save package"}</button>
+          </div>
+          ${selected ? `<button class="button button-quiet" type="button" data-studio-update style="margin-top:.4rem">Update “${escapeHtml(selected.name)}” with this design</button>` : ""}
+          ` : '<p class="people-note" style="margin-top:.9rem">Only a workspace administrator can save packages or manage tokens.</p>'}
+        </div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-bottom:1.2rem">
+      <p class="eyebrow">2 · YOUR PACKAGES</p>
+      <h2 style="font-family:var(--serif);font-size:1.4rem;margin:.2rem 0 .6rem">Saved designs</h2>
+      <table class="people-table">
+        <thead><tr><th>Name</th><th>Design</th><th>Package id</th><th></th></tr></thead>
+        <tbody>${s.packages.map((pkg) => `
+          <tr class="${pkg.id === s.selectedPackageId ? "is-selected-row" : ""}">
+            <td>${escapeHtml(pkg.name)}</td>
+            <td>${escapeHtml(pkg.design)} · ${escapeHtml(pkg.variant)} · ${escapeHtml(pkg.size)}${pkg.elements.length ? " · " + pkg.elements.map(escapeHtml).join(", ") : ""}</td>
+            <td><code>${escapeHtml(pkg.id)}</code></td>
+            <td class="row-actions">
+              <button type="button" data-studio-select="${escapeHtml(pkg.id)}">${pkg.id === s.selectedPackageId ? "Selected" : "Use in snippet"}</button>
+              <button type="button" data-studio-load="${escapeHtml(pkg.id)}">Load</button>
+              ${canManage ? `<button type="button" data-studio-revoke="${escapeHtml(pkg.id)}">Revoke</button>` : ""}
+            </td>
+          </tr>`).join("") || `<tr><td colspan="4">No packages yet — build one above and save it.</td></tr>`}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="card">
+      <p class="eyebrow">3 · EMBED</p>
+      <h2 style="font-family:var(--serif);font-size:1.4rem;margin:.2rem 0 .6rem">Copy the code for your site</h2>
+      <p style="font-size:.8rem;color:var(--ink-soft);margin:0 0 .8rem">
+        The snippet carries three ids: your <strong>widget token</strong> (the API key — created below, shown once),
+        your <strong>client id</strong> (<code>${escapeHtml(clientId || "—")}</code>), and the <strong>package id</strong> of the design you selected
+        ${selected ? `(<code>${escapeHtml(selected.id)}</code>)` : "(select one above — without it the default card renders)"}.
+        The package id is plain configuration and is fine to keep in your code.
+      </p>
+      ${s.newSecret
+        ? `<p style="font-size:.78rem;color:var(--ink-soft);margin:0 0 .6rem"><strong>Your new token is filled in below — copy it now.</strong> It is never shown again after you leave this page.</p>`
+        : `<p style="font-size:.78rem;color:var(--muted);margin:0 0 .6rem">Snippets show <code>YOUR_WIDGET_TOKEN</code> — ${canManage ? "create a token here (or in Overflow tools) and it fills in automatically:" : "ask a workspace administrator for a token."}</p>
+           ${canManage ? `<button class="button" type="button" data-studio-token-create style="margin-bottom:.8rem">Create a widget token</button>` : ""}`}
+      <div class="studio-statechips" style="margin-bottom:.6rem">
+        ${frameworks.map(([key, label]) => `<button type="button" class="studio-swatch ${s.snippetFramework === key ? "is-active" : ""}" data-studio-framework="${key}">${label}</button>`).join("")}
+      </div>
+      <pre class="studio-snippet">${escapeHtml(snippets[s.snippetFramework])}</pre>
+      <button class="button button-quiet" type="button" data-copy="${escapeHtml(snippets[s.snippetFramework])}" data-copy-label="Embed code">Copy ${escapeHtml(frameworks.find(([key]) => key === s.snippetFramework)?.[1] || "")} code</button>
+      <p style="font-size:.72rem;color:var(--muted);margin-top:.8rem">Active tokens: ${s.tokens.length ? s.tokens.map((token) => `<code>${escapeHtml(token.prefix)}…</code>${token.label ? ` (${escapeHtml(token.label)})` : ""}`).join(", ") : "none yet"}. Tokens are managed here and in Overflow tools.</p>
+    </div>`;
+
+  // Preview through the real renderer.
+  loadEmbedRenderer()
+    .then((renderer) => {
+      const preview = $("[data-studio-preview]", mount);
+      if (preview) renderer.render(preview, studioPreviewData(s.previewState), s.config);
+    })
+    .catch(() => {
+      const preview = $("[data-studio-preview]", mount);
+      if (preview) preview.innerHTML = `<p class="workspace-fail">Couldn't load the widget renderer from ${escapeHtml(customerAppOrigin())} — the preview needs it.</p>`;
+    });
+
+  const rerender = () => renderStudio();
+  $$("[data-studio-design]", mount).forEach((button) => button.addEventListener("click", () => { s.config.design = button.dataset.studioDesign; rerender(); }));
+  $$("[data-studio-variant]", mount).forEach((button) => button.addEventListener("click", () => { s.config.variant = button.dataset.studioVariant; rerender(); }));
+  $$("[data-studio-size]", mount).forEach((button) => button.addEventListener("click", () => { s.config.size = button.dataset.studioSize; rerender(); }));
+  $$("[data-studio-state]", mount).forEach((button) => button.addEventListener("click", () => { s.previewState = button.dataset.studioState; rerender(); }));
+  $$("[data-studio-framework]", mount).forEach((button) => button.addEventListener("click", () => { s.snippetFramework = button.dataset.studioFramework; rerender(); }));
+  $$("[data-studio-element]", mount).forEach((box) => box.addEventListener("change", () => {
+    const key = box.dataset.studioElement;
+    s.config.elements = box.checked ? [...new Set([...s.config.elements, key])] : s.config.elements.filter((element) => element !== key);
+    rerender();
+  }));
+  $("[data-studio-name]", mount)?.addEventListener("input", (event) => { s.name = event.target.value; });
+  $$("[data-copy]", mount).forEach((button) => button.addEventListener("click", () => copyToClipboard(button.dataset.copy, button.dataset.copyLabel || "Text")));
+
+  $$("[data-studio-select]", mount).forEach((button) => button.addEventListener("click", () => {
+    s.selectedPackageId = button.dataset.studioSelect;
+    rerender();
+  }));
+  $$("[data-studio-load]", mount).forEach((button) => button.addEventListener("click", () => {
+    const pkg = s.packages.find((candidate) => candidate.id === button.dataset.studioLoad);
+    if (!pkg) return;
+    s.config = { design: pkg.design, variant: pkg.variant, size: pkg.size, elements: [...pkg.elements] };
+    s.name = pkg.name;
+    s.selectedPackageId = pkg.id;
+    rerender();
+  }));
+
+  if (canManage) {
+    $("[data-studio-save]", mount)?.addEventListener("click", async () => {
+      try {
+        const data = await api("/api/clinic/widget-packages", {
+          method: "POST",
+          body: JSON.stringify({ name: s.name || "Untitled widget", ...s.config })
+        });
+        s.selectedPackageId = data.package.id;
+        showToast(`Package saved — ${data.package.id}`);
+        await enterStudio();
+      } catch (error) { showToast(error.message); }
+    });
+    $("[data-studio-update]", mount)?.addEventListener("click", async () => {
+      if (!selected) return;
+      try {
+        await api(`/api/clinic/widget-packages/${encodeURIComponent(selected.id)}`, {
+          method: "PATCH",
+          body: JSON.stringify({ name: s.name || selected.name, ...s.config })
+        });
+        showToast("Package updated — live embeds pick it up on their next load.");
+        await enterStudio();
+      } catch (error) { showToast(error.message); }
+    });
+    $$("[data-studio-revoke]", mount).forEach((button) => button.addEventListener("click", async () => {
+      if (!confirm("Revoke this package? Embeds naming it fall back to the default card design (status keeps working).")) return;
+      try {
+        await api(`/api/clinic/widget-packages/${encodeURIComponent(button.dataset.studioRevoke)}`, { method: "DELETE" });
+        if (s.selectedPackageId === button.dataset.studioRevoke) s.selectedPackageId = null;
+        showToast("Package revoked.");
+        await enterStudio();
+      } catch (error) { showToast(error.message); }
+    }));
+    $("[data-studio-token-create]", mount)?.addEventListener("click", async () => {
+      try {
+        const data = await api("/api/clinic/widget-tokens", { method: "POST", body: JSON.stringify({ label: "Widget studio" }) });
+        s.newSecret = data.token.secret;
+        await enterStudio();
+      } catch (error) { showToast(error.message); }
     });
   }
 }

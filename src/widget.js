@@ -115,6 +115,43 @@ async function recordWidgetAudit(env, tenantId, tokenId, eventType, detail) {
   }
 }
 
+/* ------------------------------------------------------ package vocabulary --- */
+
+/**
+ * The Studio's design vocabulary, validated here rather than in a CHECK
+ * constraint so the embed script (public/widget.js) is the source of truth
+ * for what each name renders. An unknown value never fails a request — it
+ * degrades to the default, because a widget on a stranger's website must
+ * keep rendering through any vocabulary drift.
+ */
+export const WIDGET_DESIGNS = ["badge", "card", "banner", "poster", "ticker", "stack", "window", "paws", "ledger", "night"];
+export const WIDGET_VARIANTS = ["cream", "ink", "blue", "coral", "forest"];
+export const WIDGET_SIZES = ["compact", "standard", "full"];
+export const WIDGET_ELEMENTS = ["coverage", "donate", "reserve"];
+
+function normalizePackageConfig(body) {
+  const design = WIDGET_DESIGNS.includes(body?.design) ? body.design : "card";
+  const variant = WIDGET_VARIANTS.includes(body?.variant) ? body.variant : "cream";
+  const size = WIDGET_SIZES.includes(body?.size) ? body.size : "standard";
+  const raw = Array.isArray(body?.elements) ? body.elements : [];
+  const elements = WIDGET_ELEMENTS.filter((element) => raw.includes(element));
+  return { design, variant, size, elements };
+}
+
+function rowToPackageSummary(row) {
+  return {
+    id: row.id,
+    name: row.name,
+    design: row.design,
+    variant: row.variant,
+    size: row.size,
+    elements: parseJsonArray(row.elements_json),
+    status: row.status,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
+
 function rowToTokenSummary(row) {
   return {
     id: row.id,
@@ -183,6 +220,71 @@ export async function handleRevokeWidgetToken(env, actor, tenantId, tokenId) {
   if (!result.meta?.changes) return apiError(404, "WIDGET_TOKEN_NOT_FOUND", "That widget token was not found, or is already revoked.");
   await recordWidgetAudit(env, tenantId, tokenId, "token_revoked", {});
   return json({ revoked: tokenId });
+}
+
+/* ----------------------------------------------------- widget packages --- */
+
+export async function handleListWidgetPackages(env, tenantId) {
+  if (!hasDatabase(env)) return json({ packages: [] });
+  const result = await env.DB.prepare(`
+    SELECT * FROM widget_packages WHERE tenant_id = ? AND status = 'active' ORDER BY datetime(created_at) DESC
+  `).bind(tenantId).all();
+  return json({ packages: result.results.map(rowToPackageSummary) });
+}
+
+export async function handleCreateWidgetPackage(request, env, actor, tenantId) {
+  if (!hasDatabase(env)) return apiError(503, "DATABASE_REQUIRED", "D1 is required to save a widget package.");
+  if (!isOrgAdmin(actor)) return apiError(403, "ADMIN_REQUIRED", "Only a workspace administrator can save a widget package.");
+  const body = await readJson(request).catch(() => null);
+  const name = cleanString(body?.name, 80) || "Untitled widget";
+  const config = normalizePackageConfig(body);
+  const countRow = await env.DB.prepare("SELECT COUNT(*) AS total FROM widget_packages WHERE tenant_id = ? AND status = 'active'").bind(tenantId).first();
+  if (Number(countRow?.total || 0) >= 50) {
+    return apiError(422, "PACKAGE_LIMIT", "This workspace already has 50 widget packages. Revoke one you no longer embed first.");
+  }
+  const id = newId("pkg");
+  const now = new Date().toISOString();
+  await env.DB.prepare(`
+    INSERT INTO widget_packages (id, tenant_id, name, design, variant, size, elements_json, status, created_by, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?)
+  `).bind(id, tenantId, name, config.design, config.variant, config.size, JSON.stringify(config.elements), actor.userId || null, now, now).run();
+  await recordWidgetAudit(env, tenantId, null, "package_created", { packageId: id, ...config });
+  return json({ package: { id, name, ...config, status: "active", createdAt: now, updatedAt: now } }, { status: 201 });
+}
+
+export async function handleUpdateWidgetPackage(request, env, actor, tenantId, packageId) {
+  if (!hasDatabase(env)) return apiError(503, "DATABASE_REQUIRED", "D1 is required to update a widget package.");
+  if (!isOrgAdmin(actor)) return apiError(403, "ADMIN_REQUIRED", "Only a workspace administrator can update a widget package.");
+  const body = await readJson(request).catch(() => null);
+  const existing = await env.DB.prepare("SELECT * FROM widget_packages WHERE id = ? AND tenant_id = ? AND status = 'active' LIMIT 1").bind(packageId, tenantId).first();
+  if (!existing) return apiError(404, "PACKAGE_NOT_FOUND", "That widget package was not found.");
+  const config = normalizePackageConfig({
+    design: body?.design ?? existing.design,
+    variant: body?.variant ?? existing.variant,
+    size: body?.size ?? existing.size,
+    elements: body?.elements ?? parseJsonArray(existing.elements_json)
+  });
+  const name = body?.name !== undefined ? (cleanString(body.name, 80) || existing.name) : existing.name;
+  const now = new Date().toISOString();
+  await env.DB.prepare(`
+    UPDATE widget_packages SET name = ?, design = ?, variant = ?, size = ?, elements_json = ?, updated_at = ?
+    WHERE id = ? AND tenant_id = ?
+  `).bind(name, config.design, config.variant, config.size, JSON.stringify(config.elements), now, packageId, tenantId).run();
+  await recordWidgetAudit(env, tenantId, null, "package_updated", { packageId, ...config });
+  return json({ package: { id: packageId, name, ...config, status: "active", createdAt: existing.created_at, updatedAt: now } });
+}
+
+export async function handleRevokeWidgetPackage(env, actor, tenantId, packageId) {
+  if (!hasDatabase(env)) return apiError(503, "DATABASE_REQUIRED", "D1 is required to revoke a widget package.");
+  if (!isOrgAdmin(actor)) return apiError(403, "ADMIN_REQUIRED", "Only a workspace administrator can revoke a widget package.");
+  const result = await env.DB.prepare(`
+    UPDATE widget_packages SET status = 'revoked', updated_at = ? WHERE id = ? AND tenant_id = ? AND status = 'active'
+  `).bind(new Date().toISOString(), packageId, tenantId).run();
+  if (!result.meta?.changes) return apiError(404, "PACKAGE_NOT_FOUND", "That widget package was not found, or is already revoked.");
+  await recordWidgetAudit(env, tenantId, null, "package_revoked", { packageId });
+  // Embeds carrying this package id keep rendering — in the default design.
+  // Revoking a package retires a look, never a clinic's live status.
+  return json({ revoked: packageId });
 }
 
 /* ------------------------------------------------------------- rate limit --- */
@@ -267,12 +369,25 @@ function originAllowed(request, allowedOrigins) {
  * gains later, because nothing from that row reaches this function except
  * the two fields it destructures.
  */
-function buildStatusPayload({ availability }, link) {
+function buildStatusPayload({ availability }, link, { coverage = null, donateLink = null, poweredByLink = null, packageConfig = null } = {}) {
   const status = bucketFor(availability);
   return {
     status,
     freshness: status === "unavailable" ? null : coarseFreshness(availability?.reportedAt),
     link,
+    // The market's display name ("East Bay") when the clinic's location is
+    // assigned to one — the widget's optional coverage line. A name chosen
+    // by a platform operator for public use, never derived from the
+    // location row.
+    coverage,
+    // Where the optional Paw It Forward element points.
+    donateLink,
+    // Where the mandatory "Powered by Tími" credit points. Sent from here
+    // so every embed, whatever its age, links to the same place.
+    poweredByLink,
+    // The Studio package the embed asked for, already tenant-checked —
+    // design vocabulary only, nothing about the clinic.
+    package: packageConfig,
     generatedAt: new Date().toISOString()
   };
 }
@@ -304,10 +419,52 @@ export async function handlePublicWidgetStatus(request, env, rawToken) {
     return apiError(403, "ORIGIN_NOT_ALLOWED", "This widget is not configured for this site.");
   }
 
+  const url = new URL(request.url);
+
+  // ?client= is a consistency check, not authentication: the Studio's embed
+  // snippets carry the tenant id in the clear, and a mismatch means somebody
+  // stitched one clinic's package onto another clinic's token. Answer like
+  // an unknown token rather than describing which half was wrong.
+  const claimedClient = cleanString(url.searchParams.get("client"), 80);
+  if (claimedClient && claimedClient !== row.tenant_id) {
+    await recordWidgetAudit(env, row.tenant_id, row.id, "client_mismatch", { claimed: claimedClient });
+    return apiError(404, "WIDGET_NOT_FOUND", "This widget link is no longer active.");
+  }
+
+  // ?package= selects a Studio design. Only this tenant's own active
+  // packages apply; anything else silently falls back to the default design
+  // — a stale or foreign package id must never blank a clinic's website.
+  let packageConfig = null;
+  const packageId = cleanString(url.searchParams.get("package"), 80);
+  if (packageId) {
+    const packageRow = await env.DB.prepare(`
+      SELECT * FROM widget_packages WHERE id = ? AND tenant_id = ? AND status = 'active' LIMIT 1
+    `).bind(packageId, row.tenant_id).first();
+    if (packageRow) {
+      packageConfig = {
+        design: packageRow.design,
+        variant: packageRow.variant,
+        size: packageRow.size,
+        elements: parseJsonArray(packageRow.elements_json)
+      };
+    }
+  }
+
   const location = row.location_id ? await getLocation(env, row.location_id) : await getClinicLocation(env, row.tenant_id);
+
+  // Coverage: the market's public display name, when the clinic is assigned
+  // to one on the admin console's market map.
+  let coverage = null;
+  if (location?.marketId) {
+    const marketRow = await env.DB.prepare("SELECT name FROM markets WHERE id = ? LIMIT 1").bind(location.marketId).first();
+    coverage = marketRow?.name || null;
+  }
+
   const now = new Date().toISOString();
-  const origin = new URL(request.url).origin;
+  const origin = url.origin;
   const link = `${origin}/?ref=widget_${row.id}&utm_source=widget&utm_medium=referral&utm_campaign=clinic_availability_widget`;
+  const donateLink = `${origin}/#paw-it-forward`;
+  const poweredByLink = `${origin}/?utm_source=widget&utm_medium=powered_by&utm_campaign=clinic_availability_widget`;
 
   // Best-effort presence stamp, throttled to at most once a minute so a busy
   // embedded page does not turn every status poll into a database write.
@@ -318,5 +475,5 @@ export async function handlePublicWidgetStatus(request, env, rawToken) {
     console.warn(JSON.stringify({ event: "widget_last_used_stamp_failed", message: error.message }));
   });
 
-  return json(buildStatusPayload(location || {}, link));
+  return json(buildStatusPayload(location || {}, link, { coverage, donateLink, poweredByLink, packageConfig }));
 }
