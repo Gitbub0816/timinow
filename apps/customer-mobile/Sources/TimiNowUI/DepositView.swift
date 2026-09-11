@@ -236,24 +236,33 @@ struct DepositSection: View {
     /// not from `error.localizedDescription`.
     ///
     /// `STPPaymentHandler._error(for:...)` (verified against a local clone of
-    /// stripe-ios) maps most of its own failure codes — an unexpected intent
-    /// status, a missing return URL, a 3DS2 SDK error, a confirm-time API
-    /// error with no card-specific code — to the exact same fallback string,
-    /// `NSError.stp_unexpectedErrorMessage()`: "There was an unexpected error
-    /// — try again in a few seconds." That is what `localizedDescription`
-    /// returns for all of them, which is why every one of those failures
-    /// used to look identical on screen and in the logs. The real cause is
-    /// still in the error, under `STPError`'s own keys — `errorMessageKey`
-    /// carries Stripe's developer-facing detail (e.g. "No such payment_intent",
-    /// a client_secret format mismatch, an unexpected intent status), and
-    /// `stripeErrorTypeKey`/`stripeErrorCodeKey`/`httpStatusCodeKey` carry the
-    /// API error's own classification. None of this is PII — it is Stripe's
-    /// error taxonomy, not card data — so it is safe to both log and, in
-    /// developer mode, show.
+    /// stripe-ios, at the newest tag actually resolvable under this app's
+    /// `from: "24.0.0"` pin — see the note on `httpStatusCodeKey` below,
+    /// which cost a build once already from checking against the unreleased
+    /// default branch instead) maps most of its own failure codes — an
+    /// unexpected intent status, a missing return URL, a 3DS2 SDK error, a
+    /// confirm-time API error with no card-specific code — to the exact same
+    /// fallback string, `NSError.stp_unexpectedErrorMessage()`: "There was
+    /// an unexpected error — try again in a few seconds." That is what
+    /// `localizedDescription` returns for all of them, which is why every
+    /// one of those failures used to look identical on screen and in the
+    /// logs. The real cause is still in the error, under `STPError`'s own
+    /// keys — `errorMessageKey` carries Stripe's developer-facing detail
+    /// (e.g. "No such payment_intent", a client_secret format mismatch, an
+    /// unexpected intent status), and `stripeErrorTypeKey`/`stripeErrorCodeKey`
+    /// carry the API error's own classification. None of this is PII — it
+    /// is Stripe's error taxonomy, not card data — so it is safe to both log
+    /// and, in developer mode, show.
+    ///
+    /// `STPError.httpStatusCodeKey` is deliberately NOT read here: it does
+    /// not exist anywhere in the 24.x line stripe-ios-spm resolves to under
+    /// this package's `from: "24.0.0"` constraint (checked at both `24.0.0`
+    /// and the newest `24.25.0` tag) — it was added in a later major
+    /// version this app cannot reach without widening that pin.
     ///
     /// Shared between `DepositSection` and `BookingPaymentSection` rather
     /// than duplicated, the same way `appearance` below is.
-    static func stripeFailureDiagnostics(_ error: Error) -> (type: String?, code: String?, detail: String?, status: Int?) {
+    static func stripeFailureDiagnostics(_ error: Error) -> (type: String?, code: String?, detail: String?) {
         let userInfo = (error as NSError).userInfo
         func nonEmpty(_ value: Any?) -> String? {
             guard let text = value as? String, !text.isEmpty else { return nil }
@@ -262,8 +271,7 @@ struct DepositSection: View {
         return (
             nonEmpty(userInfo[STPError.stripeErrorTypeKey]),
             nonEmpty(userInfo[STPError.stripeErrorCodeKey]),
-            nonEmpty(userInfo[STPError.errorMessageKey]),
-            userInfo[STPError.httpStatusCodeKey] as? Int
+            nonEmpty(userInfo[STPError.errorMessageKey])
         )
     }
 
@@ -332,7 +340,7 @@ struct DepositSection: View {
             // confirmation, at the earlier point where a key/account
             // mismatch or a stale client secret is just as likely to surface.
             let diagnostics = Self.stripeFailureDiagnostics(error)
-            store.trackPaymentFailure(context: "deposit_prepare", stripeErrorType: diagnostics.type, stripeErrorCode: diagnostics.code, httpStatus: diagnostics.status)
+            store.trackPaymentFailure(context: "deposit_prepare", stripeErrorType: diagnostics.type, stripeErrorCode: diagnostics.code)
             errorText = store.developerModeEnabled
                 ? "Tími could not open a secure payment. [\(diagnostics.type ?? "?")/\(diagnostics.code ?? "?")] \(diagnostics.detail ?? error.localizedDescription)"
                 : "Tími could not open a secure payment. Try again in a moment."
@@ -357,7 +365,7 @@ struct DepositSection: View {
             // STPPaymentHandler's failure codes, which is why this used to
             // read the same vague sentence for every distinct cause.
             let diagnostics = Self.stripeFailureDiagnostics(error)
-            store.trackPaymentFailure(context: "deposit", stripeErrorType: diagnostics.type, stripeErrorCode: diagnostics.code, httpStatus: diagnostics.status)
+            store.trackPaymentFailure(context: "deposit", stripeErrorType: diagnostics.type, stripeErrorCode: diagnostics.code)
             errorText = store.developerModeEnabled
                 ? "\(error.localizedDescription)\n[\(diagnostics.type ?? "?")/\(diagnostics.code ?? "?")] \(diagnostics.detail ?? "no further detail from Stripe")"
                 : error.localizedDescription

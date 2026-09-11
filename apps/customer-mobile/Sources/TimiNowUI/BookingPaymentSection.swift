@@ -383,7 +383,7 @@ struct BookingPaymentSection: View {
             // secret (this order re-prices on a gift change) is just as
             // likely to surface.
             let diagnostics = DepositSection.stripeFailureDiagnostics(error)
-            store.trackPaymentFailure(context: "booking_prepare", stripeErrorType: diagnostics.type, stripeErrorCode: diagnostics.code, httpStatus: diagnostics.status)
+            store.trackPaymentFailure(context: "booking_prepare", stripeErrorType: diagnostics.type, stripeErrorCode: diagnostics.code)
             errorText = store.developerModeEnabled
                 ? "Tími could not open a secure payment. [\(diagnostics.type ?? "?")/\(diagnostics.code ?? "?")] \(diagnostics.detail ?? error.localizedDescription)"
                 : "Tími could not open a secure payment. Try again in a moment."
@@ -413,7 +413,7 @@ struct BookingPaymentSection: View {
             // stale client secret — which is why this read the identical
             // vague sentence for every distinct cause.
             let diagnostics = DepositSection.stripeFailureDiagnostics(error)
-            store.trackPaymentFailure(context: "booking_confirm", stripeErrorType: diagnostics.type, stripeErrorCode: diagnostics.code, httpStatus: diagnostics.status)
+            store.trackPaymentFailure(context: "booking_confirm", stripeErrorType: diagnostics.type, stripeErrorCode: diagnostics.code)
             errorText = store.developerModeEnabled
                 ? "\(error.localizedDescription)\n[\(diagnostics.type ?? "?")/\(diagnostics.code ?? "?")] \(diagnostics.detail ?? "no further detail from Stripe")"
                 : error.localizedDescription
