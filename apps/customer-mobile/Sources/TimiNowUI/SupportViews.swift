@@ -715,13 +715,13 @@ struct PrivacySettingsView: View {
 
 // MARK: - Settings pieces, shared by the hub and its screens
 
-func signedInAs(_ store: AppStore) -> String {
+@MainActor func signedInAs(_ store: AppStore) -> String {
     if !store.ownerEmail.isEmpty { return store.ownerEmail }
     if !store.ownerPhone.isEmpty { return store.ownerPhone }
     return store.ownerName.isEmpty ? "This device" : store.ownerName
 }
 
-func settingsCard(_ title: String, @ViewBuilder content: () -> some View) -> some View {
+@MainActor func settingsCard(_ title: String, @ViewBuilder content: () -> some View) -> some View {
     VStack(alignment: .leading, spacing: 14) {
         Eyebrow(text: title)
         content()
@@ -730,7 +730,7 @@ func settingsCard(_ title: String, @ViewBuilder content: () -> some View) -> som
     .timiCard(Color.white)
 }
 
-func settingsField(_ title: String, @ViewBuilder content: () -> some View) -> some View {
+@MainActor func settingsField(_ title: String, @ViewBuilder content: () -> some View) -> some View {
     VStack(alignment: .leading, spacing: 8) {
         Text(title).font(.headline)
         content()
@@ -739,7 +739,7 @@ func settingsField(_ title: String, @ViewBuilder content: () -> some View) -> so
 
 /// One door: an icon in a soft tile, the destination, a chevron. The whole
 /// row is the target.
-func settingsNavRow(icon: String, tint: Color, soft: Color, title: String, subtitle: String) -> some View {
+@MainActor func settingsNavRow(icon: String, tint: Color, soft: Color, title: String, subtitle: String) -> some View {
     HStack(spacing: 12) {
         Image(systemName: icon)
             .font(.system(size: 16, weight: .bold))
@@ -757,7 +757,7 @@ func settingsNavRow(icon: String, tint: Color, soft: Color, title: String, subti
     .contentShape(Rectangle())
 }
 
-func settingsChipRow(title: String, selected: Bool, action: @escaping () -> Void) -> some View {
+@MainActor func settingsChipRow(title: String, selected: Bool, action: @escaping () -> Void) -> some View {
     Button(action: action) {
         HStack(spacing: 7) {
             Image(systemName: selected ? "largecircle.fill.circle" : "circle")
@@ -772,7 +772,7 @@ func settingsChipRow(title: String, selected: Bool, action: @escaping () -> Void
     }.buttonStyle(.plain)
 }
 
-func settingsLabelled(_ title: String, _ value: String) -> some View {
+@MainActor func settingsLabelled(_ title: String, _ value: String) -> some View {
     HStack(alignment: .firstTextBaseline) {
         Text(title).font(.headline)
         Spacer()
