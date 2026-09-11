@@ -30,7 +30,14 @@ public sealed class ClinicApiException(string message, HttpStatusCode? statusCod
 
 public sealed class ClinicApiClient
 {
-    private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web) { PropertyNameCaseInsensitive = true };
+    // The timestamp converter is load-bearing: without it the first D1
+    // "YYYY-MM-DD HH:MM:SS" value in any response fails the whole
+    // deserialization — see SqliteTimestampJsonConverter for the incident.
+    private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
+    {
+        PropertyNameCaseInsensitive = true,
+        Converters = { new SqliteTimestampJsonConverter() }
+    };
     private readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(20) };
     private readonly DemoClinicData _demo = new();
     private readonly ClerkAuthService _auth;

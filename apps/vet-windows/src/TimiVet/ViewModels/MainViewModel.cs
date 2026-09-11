@@ -105,6 +105,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         SaveAlertSettingsCommand = new RelayCommand(SaveAlertSettings);
         CopyWidgetSecretCommand = new RelayCommand(CopyWidgetSecret);
         ResetWorkspaceCommand = new RelayCommand(ResetWorkspace);
+        ToggleEditStatusCommand = new RelayCommand(() => EditingStatus = !EditingStatus);
 
         // A clinic PC that finishes booting before its Wi-Fi associates, a switch rebooted overnight, a
         // laptop carried between rooms: the network coming back is a fact the OS already knows, and
@@ -233,6 +234,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public RelayCommand SaveAlertSettingsCommand { get; }
     public RelayCommand CopyWidgetSecretCommand { get; }
     public RelayCommand ResetWorkspaceCommand { get; }
+    public RelayCommand ToggleEditStatusCommand { get; }
 
     private void SaveAlertSettings()
     {
@@ -393,6 +395,15 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     public string IntakeCapacitySubtitle =>
         $"{CapacityCount} spot{(CapacityCount == 1 ? "" : "s")} · {StableWaitMin}–{StableWaitMax} min wait · {(AcceptsCritical ? "critical patients accepted" : "stable patients only")}";
+
+    private bool _editingStatus;
+    /// <summary>
+    /// The publish form is behind "Edit status" now, the way the Mac
+    /// console's capacity sheet is — the summary bar states the published
+    /// truth in words, and the form appears only when somebody means to
+    /// change it. Collapses itself after a successful publish.
+    /// </summary>
+    public bool EditingStatus { get => _editingStatus; set => Set(ref _editingStatus, value); }
     public string PublicNote { get => _publicNote; set => Set(ref _publicNote, value); }
 
     private string _responseType = "available_now", _clinicNote = "", _availableTimeText = DateTime.Now.AddMinutes(30).ToString("h:mm tt");
@@ -943,7 +954,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     {
         if (StableWaitMin > StableWaitMax) { Fail("Minimum wait cannot exceed maximum wait."); return; }
         IsBusy = true;
-        try { await _api.PublishAvailabilityAsync(new AvailabilityUpdate { IntakeStatus = AvailabilityStatus, StableWaitMin = StableWaitMin, StableWaitMax = StableWaitMax, CapacityCount = CapacityCount, TtlMinutes = TtlMinutes, AcceptsCritical = AcceptsCritical, Note = PublicNote }, _lifetime.Token); Succeed("Live intake status published."); await RefreshAsync(true); }
+        try { await _api.PublishAvailabilityAsync(new AvailabilityUpdate { IntakeStatus = AvailabilityStatus, StableWaitMin = StableWaitMin, StableWaitMax = StableWaitMax, CapacityCount = CapacityCount, TtlMinutes = TtlMinutes, AcceptsCritical = AcceptsCritical, Note = PublicNote }, _lifetime.Token); Succeed("Live intake status published."); EditingStatus = false; await RefreshAsync(true); }
         catch (Exception ex) { Fail(ex.Message); }
         finally { IsBusy = false; }
     }
