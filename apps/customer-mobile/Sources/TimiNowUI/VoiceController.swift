@@ -325,18 +325,18 @@ public final class VoicePreviewer: NSObject, AVSpeechSynthesizerDelegate {
 //   - `RouteStep.maneuverType` is a `String`-backed `ManeuverType` whose raw
 //     values are exactly the keys used in `instruction-phrases.json`.
 #if canImport(MapboxNavigationCore) && os(iOS) && !SKIP
-// @_spi(MapboxInternal), not a plain import: `SystemSpeechSynthesizer` — the
-// on-device voice, used below when the map token is absent or the on-device
-// profile is chosen — is declared `@_spi(MapboxInternal) public` in the SDK,
-// so a plain import leaves it out of scope entirely ("cannot find
-// 'SystemSpeechSynthesizer' in scope", from a symbol that is plainly there in
-// the sources). MapboxNavigationCore is a source package, not a binary one, so
+// @_spi(MapboxInternal) is kept for the SDK-internal symbols this file still
+// reaches (`SystemSpeechSynthesizer` and friends are declared
+// `@_spi(MapboxInternal) public`, so a plain import leaves them out of scope
+// entirely — "cannot find … in scope", from a symbol plainly there in the
+// sources). MapboxNavigationCore is a source package, not a binary one, so
 // the SPI is compiled with the rest of it and nothing extra is needed.
 //
-// The alternative is writing our own AVSpeechSynthesizer-backed
-// SpeechSynthesizing. Not worth it: Mapbox's handles AVAudioSession
-// activation, ducking, and deactivation ordering, which is exactly the code
-// you do not want to be debugging from a car.
+// The on-device voice itself is no longer Mapbox's. `SystemSpeechSynthesizer`
+// asks for the *compact* system voice, which is the flat, clipped one that
+// reads as robotic, and that is what every drive fell back to — see
+// `TimiDeviceSpeechSynthesizer`, which uses the best voice the phone has
+// installed instead.
 @_spi(MapboxInternal) import MapboxNavigationCore
 import MapboxDirections
 import Combine
@@ -419,8 +419,26 @@ final class TimiNaturalSpeechSynthesizer: NSObject, SpeechSynthesizing, AVAudioP
         }
     }
 
-    public func prepareIncomingSpokenInstructions(_ instructions: [SpokenInstruction], locale: Locale?) {
-        for instruction in instructions.prefix(4) { prefetch(instruction.text) }
+    /// Deliberately does nothing, and this is the fix for why every drive
+    /// sounded like a robot.
+    ///
+    /// `RouteVoiceController` hands this the navigator's *raw* instructions,
+    /// and `TimiSpeechSynthesizer` rewrites every line into Tími's wording
+    /// before asking anyone to speak it. Caching the raw text therefore filled
+    /// this cache with strings that would never be requested — "Turn left onto
+    /// Watkins Street" stored, "Take a left onto Watkins Street" asked for —
+    /// so `speak` missed on *every* line, reported `EncounteredError` on every
+    /// line, and the multiplexer handed every line to the on-device voice. The
+    /// natural voice was fetched, paid for, and never once played.
+    ///
+    /// Prefetching now happens in `TimiSpeechSynthesizer.speak`, which knows
+    /// the rewritten wording, via `warm(_:)`.
+    public func prepareIncomingSpokenInstructions(_ instructions: [SpokenInstruction], locale: Locale?) { }
+
+    /// Prefetch exactly these lines — already rewritten, already the strings
+    /// `speak` will look up.
+    func warm(_ texts: [String]) {
+        for text in texts.prefix(4) { prefetch(text) }
     }
 
     public func speak(_ instruction: SpokenInstruction, during legProgress: RouteLegProgress, locale: Locale?) {
@@ -493,6 +511,80 @@ final class TimiNaturalSpeechSynthesizer: NSObject, SpeechSynthesizing, AVAudioP
     // touching state or publishing events.
     public nonisolated func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
         Task { @MainActor [weak self] in self?.finishPlayback() }
+    }
+}
+
+/// The on-device voice, using the best voice the phone actually has.
+///
+/// Replaces Mapbox's own `SystemSpeechSynthesizer` in the fallback slot. That
+/// one asks for `AVSpeechSynthesisVoice(language:)`, which returns the
+/// *compact* voice — the flat, clipped one everybody recognises as robotic —
+/// and on `en-US` prefers Alex, who is not much better. `VoicePreviewer`
+/// already knows how to rank the installed voices by quality; this is that
+/// ranking applied to guidance instead of only to the Settings preview.
+///
+/// The honest limit, worth knowing before blaming this code: iOS ships only
+/// compact voices by default. Enhanced and Premium voices are free but are a
+/// *download*, under Settings → Accessibility → Spoken Content → Voices. With
+/// none installed there is no good on-device voice to pick and this sounds
+/// like the old one — which is why the Tími gateway voice above is the
+/// primary path and this is only what covers a cache miss.
+@MainActor
+final class TimiDeviceSpeechSynthesizer: NSObject, SpeechSynthesizing, AVSpeechSynthesizerDelegate {
+    private let _voiceInstructions = PassthroughSubject<VoiceInstructionEvent, Never>()
+    var voiceInstructions: AnyPublisher<VoiceInstructionEvent, Never> { _voiceInstructions.eraseToAnyPublisher() }
+    var muted = false { didSet { if muted { stopSpeaking() } } }
+    var volume: VolumeMode = .system
+    var isSpeaking: Bool { synthesizer.isSpeaking }
+    var locale: Locale? = Locale.autoupdatingCurrent
+    var managesAudioSession = true
+
+    private let synthesizer = AVSpeechSynthesizer()
+    private var currentInstruction: SpokenInstruction?
+    /// Resolved once and kept: `speechVoices()` is not cheap enough to call on
+    /// every maneuver, and the installed set does not change mid-drive.
+    private lazy var preferredVoice: AVSpeechSynthesisVoice? = VoicePreviewer.bestVoice()
+
+    override init() {
+        super.init()
+        synthesizer.delegate = self
+    }
+
+    func prepareIncomingSpokenInstructions(_ instructions: [SpokenInstruction], locale: Locale?) { }
+
+    func speak(_ instruction: SpokenInstruction, during legProgress: RouteLegProgress, locale: Locale?) {
+        guard !muted else {
+            _voiceInstructions.send(VoiceInstructionEvents.DidSpeak(instruction: instruction))
+            return
+        }
+        if managesAudioSession { TimiAudioSession.activateForSpeech() }
+        if synthesizer.isSpeaking { synthesizer.stopSpeaking(at: .immediate) }
+        let utterance = AVSpeechUtterance(string: instruction.text)
+        utterance.voice = preferredVoice
+        if case .override(let level) = volume { utterance.volume = level }
+        currentInstruction = instruction
+        _voiceInstructions.send(VoiceInstructionEvents.WillSpeak(instruction: instruction))
+        synthesizer.speak(utterance)
+    }
+
+    func stopSpeaking() {
+        if synthesizer.isSpeaking { synthesizer.stopSpeaking(at: .immediate) }
+        finish()
+    }
+
+    func interruptSpeaking() { stopSpeaking() }
+
+    private func finish() {
+        if let instruction = currentInstruction {
+            _voiceInstructions.send(VoiceInstructionEvents.DidSpeak(instruction: instruction))
+        }
+        currentInstruction = nil
+    }
+
+    // AVSpeechSynthesizerDelegate is not MainActor-isolated; hop back before
+    // touching state or publishing, exactly as the natural synthesizer does.
+    nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
+        Task { @MainActor [weak self] in self?.finish() }
     }
 }
 
@@ -584,10 +676,10 @@ public final class TimiSpeechSynthesizer: SpeechSynthesizing {
                 let natural = TimiNaturalSpeechSynthesizer(endpoint: endpoint)
                 natural.tone = tone
                 self.naturalSynthesizer = natural
-                self.inner = MultiplexedSpeechSynthesizer(speechSynthesizers: [natural, SystemSpeechSynthesizer()])
+                self.inner = MultiplexedSpeechSynthesizer(speechSynthesizers: [natural, TimiDeviceSpeechSynthesizer()])
             } else {
                 self.naturalSynthesizer = nil
-                self.inner = MultiplexedSpeechSynthesizer(speechSynthesizers: [SystemSpeechSynthesizer()])
+                self.inner = MultiplexedSpeechSynthesizer(speechSynthesizers: [TimiDeviceSpeechSynthesizer()])
             }
         case .mapboxCloud where !mapToken.isEmpty:
             self.naturalSynthesizer = nil
@@ -597,7 +689,7 @@ public final class TimiSpeechSynthesizer: SpeechSynthesizing {
             )
         default:
             self.naturalSynthesizer = nil
-            self.inner = MultiplexedSpeechSynthesizer(speechSynthesizers: [SystemSpeechSynthesizer()])
+            self.inner = MultiplexedSpeechSynthesizer(speechSynthesizers: [TimiDeviceSpeechSynthesizer()])
         }
     }
 
@@ -609,6 +701,16 @@ public final class TimiSpeechSynthesizer: SpeechSynthesizing {
     }
 
     public func speak(_ instruction: SpokenInstruction, during legProgress: RouteLegProgress, locale: Locale?) {
+        // Warm the cache with what this step will ask for next, rewritten the
+        // same way this line was — same step, so the same maneuver, direction
+        // and road name feed the rewrite, and the cached key is exactly the
+        // key the next lookup uses. This replaces the raw-text prefetch that
+        // never matched anything (see
+        // TimiNaturalSpeechSynthesizer.prepareIncomingSpokenInstructions).
+        if let natural = naturalSynthesizer {
+            let upcoming = legProgress.currentStepProgress.remainingSpokenInstructions ?? []
+            natural.warm(upcoming.map { rewritten($0, legProgress: legProgress).text })
+        }
         inner.speak(rewritten(instruction, legProgress: legProgress), during: legProgress, locale: locale)
     }
 

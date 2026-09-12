@@ -275,6 +275,41 @@ struct DepositSection: View {
         )
     }
 
+    /// The one sentence every Stripe mount failure shows, with the reason
+    /// attached.
+    ///
+    /// The reason used to be visible only in developer mode, which is seven
+    /// taps on the version number in Settings. That is the reason this class
+    /// of failure has been diagnosed by hand, over days, rather than read off
+    /// the screen: on every real phone the app answered "try again in a
+    /// moment" no matter whether the account was inactive, the keys were from
+    /// two different accounts, or the intent had already been paid.
+    ///
+    /// A Stripe error *code* is not a secret — it is a short, stable token
+    /// like `resource_missing`, designed to be quoted at support, and every
+    /// serious payment UI prints one. The developer-mode text keeps Stripe's
+    /// full developer message, which can name object ids and is therefore
+    /// still held back from an ordinary customer.
+    static func paymentFailureText(_ diagnostics: (type: String?, code: String?, detail: String?), error: Error, developer: Bool) -> String {
+        if developer {
+            return "Tími could not open a secure payment. [\(diagnostics.type ?? "?")/\(diagnostics.code ?? "?")] \(diagnostics.detail ?? error.localizedDescription)"
+        }
+        guard let reference = diagnostics.code ?? diagnostics.type else {
+            return "Tími could not open a secure payment. Try again in a moment."
+        }
+        return "Tími could not open a secure payment. Try again in a moment. (Reference: \(reference))"
+    }
+
+    /// The same, for a failure during confirmation rather than mounting,
+    /// where Stripe's own localized message is already the better sentence.
+    static func paymentConfirmText(_ diagnostics: (type: String?, code: String?, detail: String?), error: Error, developer: Bool) -> String {
+        if developer {
+            return "\(error.localizedDescription)\n[\(diagnostics.type ?? "?")/\(diagnostics.code ?? "?")] \(diagnostics.detail ?? "no further detail from Stripe")"
+        }
+        guard let reference = diagnostics.code ?? diagnostics.type else { return error.localizedDescription }
+        return "\(error.localizedDescription) (Reference: \(reference))"
+    }
+
     /// The row and confirm button above are entirely Tími's own SwiftUI —
     /// this only reaches the one surface that is still Stripe's: the card
     /// form the payment-options sheet opens. Values are `TimiColor` and the
@@ -340,10 +375,8 @@ struct DepositSection: View {
             // confirmation, at the earlier point where a key/account
             // mismatch or a stale client secret is just as likely to surface.
             let diagnostics = Self.stripeFailureDiagnostics(error)
-            store.trackPaymentFailure(context: "deposit_prepare", stripeErrorType: diagnostics.type, stripeErrorCode: diagnostics.code)
-            errorText = store.developerModeEnabled
-                ? "Tími could not open a secure payment. [\(diagnostics.type ?? "?")/\(diagnostics.code ?? "?")] \(diagnostics.detail ?? error.localizedDescription)"
-                : "Tími could not open a secure payment. Try again in a moment."
+            store.trackPaymentFailure(context: "deposit_prepare", stripeErrorType: diagnostics.type, stripeErrorCode: diagnostics.code, stripeMessage: diagnostics.detail)
+            errorText = Self.paymentFailureText(diagnostics, error: error, developer: store.developerModeEnabled)
         }
     }
 
@@ -365,10 +398,8 @@ struct DepositSection: View {
             // STPPaymentHandler's failure codes, which is why this used to
             // read the same vague sentence for every distinct cause.
             let diagnostics = Self.stripeFailureDiagnostics(error)
-            store.trackPaymentFailure(context: "deposit", stripeErrorType: diagnostics.type, stripeErrorCode: diagnostics.code)
-            errorText = store.developerModeEnabled
-                ? "\(error.localizedDescription)\n[\(diagnostics.type ?? "?")/\(diagnostics.code ?? "?")] \(diagnostics.detail ?? "no further detail from Stripe")"
-                : error.localizedDescription
+            store.trackPaymentFailure(context: "deposit", stripeErrorType: diagnostics.type, stripeErrorCode: diagnostics.code, stripeMessage: diagnostics.detail)
+            errorText = Self.paymentConfirmText(diagnostics, error: error, developer: store.developerModeEnabled)
         }
     }
 

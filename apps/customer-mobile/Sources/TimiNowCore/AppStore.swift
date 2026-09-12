@@ -1154,11 +1154,47 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
     /// failure in a build nobody has a device console open for still shows
     /// up in the operator analytics summary instead of vanishing the moment
     /// the generic "unexpected error" text is dismissed.
-    public func trackPaymentFailure(context: String, stripeErrorType: String?, stripeErrorCode: String?) {
+    public func trackPaymentFailure(context: String, stripeErrorType: String?, stripeErrorCode: String?, stripeMessage: String? = nil) {
         var meta: [String: String] = ["context": context]
         if let stripeErrorType { meta["stripeType"] = stripeErrorType }
         if let stripeErrorCode { meta["stripeCode"] = stripeErrorCode }
         trackEvent("payment_confirmation_failed", path: "payment", meta: meta)
+
+        // Analytics is anonymous and aggregated — it can say that payments are
+        // failing, never why. A payment that will not open is one specific
+        // misconfiguration somebody has to go and fix, so Stripe's own words
+        // go to the error log too. Until this existed, the only copy of the
+        // reason was a string on the customer's screen, behind a seven-tap
+        // developer toggle, which is why this class of failure has been
+        // relayed by hand from a phone instead of read out of a log.
+        var detail: [String: String] = ["context": context]
+        if let stripeErrorType { detail["stripeType"] = stripeErrorType }
+        if let stripeErrorCode { detail["stripeCode"] = stripeErrorCode }
+        if let stripeMessage { detail["stripeMessage"] = Self.redactingSecrets(stripeMessage) }
+        let report = ClientErrorReport(
+            surface: "customer_ios",
+            appVersion: TimiEnvironment.appVersion,
+            path: "payment/\(context)",
+            code: stripeErrorCode ?? stripeErrorType ?? "stripe_unknown",
+            message: stripeMessage.map(Self.redactingSecrets),
+            detail: detail
+        )
+        Task { [gateway] in await gateway.reportFailure(report) }
+    }
+
+    /// Stripe's developer messages quote the object that failed, and a
+    /// PaymentIntent id is fine in a log while the client secret that follows
+    /// it is not — it authorizes confirming the payment. Anything carrying
+    /// `_secret_` is cut at that boundary rather than shipped.
+    static func redactingSecrets(_ text: String) -> String {
+        guard text.contains("_secret_") else { return text }
+        return text
+            .split(separator: " ", omittingEmptySubsequences: false)
+            .map { word -> String in
+                guard let range = word.range(of: "_secret_") else { return String(word) }
+                return String(word[word.startIndex..<range.lowerBound]) + "_secret_[redacted]"
+            }
+            .joined(separator: " ")
     }
 
     /// Called from the root view's launch task, once per process.

@@ -3,14 +3,32 @@ import SwiftUI
 
 // Tími's maneuver symbols. One drawing system for the banner glyph, the
 // "then" chip, and lane guidance, so every arrow in the navigation screen
-// shares the same geometry: a stroked spine with a filled triangular head,
-// round caps and joins, drawn in a 100×100 design space and scaled to
-// whatever frame the caller gives it. The shapes themselves keep the
-// standardized road-sign geometry a driver already knows — a branded arrow
-// nobody can read at 60 mph is not a design, it is a hazard — and the brand
-// lives in the stroke weight, the rounding, and the palette around them.
+// shares the same geometry.
+//
+// The proportions are the design, and they are the road's, not ours. A
+// guidance arrow is read in under a second, at arm's length, in daylight, by
+// someone who is also driving — so it is built like a road sign: a heavy
+// shaft, a head clearly wider than the shaft, one generous corner radius
+// reused everywhere, and the whole figure filling its box. The first version
+// of this file drew a 13-unit shaft with a small-radius corner, which at
+// banner size read as a thin hooked line — closer to the typographic "↰"
+// than to a sign — and that is exactly what "cheap" looks like.
+//
+// Everything is drawn in a 100×100 design space and scaled to whatever frame
+// the caller gives it, so one set of numbers governs a 20pt lane arrow and a
+// 58pt banner glyph identically. The brand lives in the weight, the rounding
+// and the palette around these shapes — never in the direction they point,
+// which belongs to the driver.
+//
+// Coverage: every `TimiManeuverKind`, which is the flattened OSRM/Mapbox
+// maneuver vocabulary (type × modifier). The combinatorial cases are covered
+// by composition rather than by drawing each one — roundabout exits by
+// rotating the exit arm through `roundaboutExitDegrees` (any angle, not a
+// fixed set), and lane guidance by stacking several arrows per lane in
+// `TimiLaneGlyph`. That is what keeps a finite set of shapes able to draw the
+// unbounded set of real maneuvers.
 
-/// The stroked-spine-plus-arrowhead path for one maneuver, in a 100×100
+/// The stroked-shaft-plus-arrowhead path for one maneuver, in a 100×100
 /// space. `Shape` so it can be `.fill`ed in any color the surface needs.
 struct TimiManeuverShape: Shape {
     var kind: TimiManeuverKind
@@ -18,118 +36,144 @@ struct TimiManeuverShape: Shape {
     /// through) when unknown.
     var roundaboutExitDegrees: Double = 180
 
+    // The proportion system. Every shape below is built from these four
+    // numbers, which is what makes a fork and a U-turn look like members of
+    // one family rather than two drawings that happen to share a color.
+    /// Shaft thickness.
+    private static let shaft: CGFloat = 19
+    /// Corner radius wherever a shaft changes direction.
+    private static let corner: CGFloat = 17
+    /// Arrowhead length along the direction of travel.
+    private static let headLength: CGFloat = 33
+    /// Half the arrowhead's width across it. Comfortably wider than the shaft
+    /// — an arrowhead the width of its own shaft stops reading as an arrow.
+    private static let headHalfWidth: CGFloat = 23.5
+
     func path(in rect: CGRect) -> Path {
         let scale = min(rect.width, rect.height) / 100
-        let stroke = StrokeStyle(lineWidth: 13, lineCap: .round, lineJoin: .round)
+        let stroke = StrokeStyle(lineWidth: Self.shaft, lineCap: .round, lineJoin: .round)
+        let thin = StrokeStyle(lineWidth: Self.shaft * 0.58, lineCap: .round, lineJoin: .round)
         var path = Path()
 
-        func spine(_ build: (inout Path) -> Void, head headPoint: CGPoint, angle: Double) {
-            var line = Path()
-            build(&line)
-            path.addPath(line.strokedPath(stroke))
-            path.addPath(arrowHead(at: headPoint, angle: angle))
-        }
+        func p(_ x: Double, _ y: Double) -> CGPoint { CGPoint(x: x, y: y) }
+
+        /// Mirrors an x coordinate across the vertical centerline, for the
+        /// right-handed variant of a left-handed drawing.
+        func m(_ x: Double, _ mirrored: Bool) -> Double { mirrored ? 100 - x : x }
 
         /// Filled triangular head. `angle` is the direction of travel in
         /// degrees, 0 pointing up, positive clockwise.
-        func arrowHead(at tip: CGPoint, angle: Double) -> Path {
+        func head(at tip: CGPoint, angle: Double) -> Path {
             var head = Path()
             let radians = (angle - 90) * .pi / 180
-            let length = 30.0, halfWidth = 17.0
             let direction = CGVector(dx: cos(radians), dy: sin(radians))
             let side = CGVector(dx: -direction.dy, dy: direction.dx)
-            let back = CGPoint(x: tip.x - direction.dx * length, y: tip.y - direction.dy * length)
+            let back = CGPoint(
+                x: tip.x - direction.dx * Self.headLength,
+                y: tip.y - direction.dy * Self.headLength
+            )
             head.move(to: tip)
-            head.addLine(to: CGPoint(x: back.x + side.dx * halfWidth, y: back.y + side.dy * halfWidth))
-            head.addLine(to: CGPoint(x: back.x - side.dx * halfWidth, y: back.y - side.dy * halfWidth))
+            head.addLine(to: CGPoint(x: back.x + side.dx * Self.headHalfWidth, y: back.y + side.dy * Self.headHalfWidth))
+            head.addLine(to: CGPoint(x: back.x - side.dx * Self.headHalfWidth, y: back.y - side.dy * Self.headHalfWidth))
             head.closeSubpath()
             return head
         }
 
-        func point(_ x: Double, _ y: Double) -> CGPoint { CGPoint(x: x, y: y) }
+        /// A shaft plus its head: build the centre line, stroke it, and union
+        /// the arrowhead on the end.
+        func shaft(_ build: (inout Path) -> Void, tip: CGPoint, angle: Double) {
+            var line = Path()
+            build(&line)
+            path.addPath(line.strokedPath(stroke))
+            path.addPath(head(at: tip, angle: angle))
+        }
+
+        /// An unheaded shaft — the road not taken in a fork, the through lane
+        /// past an exit. Lighter so the taken branch wins the glance.
+        func ghost(_ build: (inout Path) -> Void) {
+            var line = Path()
+            build(&line)
+            path.addPath(line.strokedPath(thin))
+        }
 
         switch kind {
         case .depart, .straight:
-            spine({ $0.move(to: point(50, 88)); $0.addLine(to: point(50, 34)) }, head: point(50, 12), angle: 0)
+            shaft({ $0.move(to: p(50, 92)); $0.addLine(to: p(50, 46)) }, tip: p(50, 13), angle: 0)
 
         case .slightLeft, .slightRight:
-            let mirrored = kind == .slightRight
-            spine({
-                $0.move(to: point(m(50, mirrored), 88))
-                $0.addLine(to: point(m(50, mirrored), 60))
-                $0.addLine(to: point(m(30, mirrored), 38))
-            }, head: point(m(19, mirrored), 26), angle: mirrored ? 42 : -42)
+            let r = kind == .slightRight
+            shaft({
+                $0.move(to: p(m(58, r), 92))
+                $0.addArc(tangent1End: p(m(58, r), 56), tangent2End: p(m(24, r), 26), radius: Self.corner)
+                $0.addLine(to: p(m(40, r), 41))
+            }, tip: p(m(22, r), 22), angle: r ? 45 : -45)
 
         case .left, .right:
-            let mirrored = kind == .right
-            spine({
-                $0.move(to: point(m(58, mirrored), 88))
-                $0.addLine(to: point(m(58, mirrored), 44))
-                $0.addQuadCurve(to: point(m(40, mirrored), 30), control: point(m(58, mirrored), 30))
-            }, head: point(m(18, mirrored), 30), angle: mirrored ? 90 : -90)
+            // The reference turn. Everything else is a variation on its
+            // shaft width, corner radius and head.
+            let r = kind == .right
+            shaft({
+                $0.move(to: p(m(62, r), 92))
+                $0.addArc(tangent1End: p(m(62, r), 38), tangent2End: p(m(20, r), 38), radius: Self.corner)
+                $0.addLine(to: p(m(44, r), 38))
+            }, tip: p(m(16, r), 38), angle: r ? 90 : -90)
 
         case .sharpLeft, .sharpRight:
-            let mirrored = kind == .sharpRight
-            spine({
-                $0.move(to: point(m(52, mirrored), 88))
-                $0.addLine(to: point(m(52, mirrored), 40))
-                $0.addLine(to: point(m(36, mirrored), 58))
-            }, head: point(m(24, mirrored), 71), angle: mirrored ? 138 : -138)
+            let r = kind == .sharpRight
+            shaft({
+                $0.move(to: p(m(60, r), 92))
+                $0.addArc(tangent1End: p(m(60, r), 36), tangent2End: p(m(26, r), 66), radius: Self.corner)
+                $0.addLine(to: p(m(37, r), 56))
+            }, tip: p(m(25, r), 67), angle: r ? 140 : -140)
 
         case .uTurn:
-            spine({
-                $0.move(to: point(64, 88))
-                $0.addLine(to: point(64, 42))
-                $0.addArc(center: point(50, 42), radius: 14, startAngle: .degrees(0), endAngle: .degrees(180), clockwise: true)
-                $0.addLine(to: point(36, 62))
-            }, head: point(36, 80), angle: 180)
+            shaft({
+                $0.move(to: p(68, 92))
+                $0.addArc(tangent1End: p(68, 34), tangent2End: p(32, 34), radius: 18)
+                $0.addArc(tangent1End: p(32, 34), tangent2End: p(32, 74), radius: 18)
+                $0.addLine(to: p(32, 56))
+            }, tip: p(32, 80), angle: 180)
 
         case .mergeLeft, .mergeRight:
-            let mirrored = kind == .mergeRight
-            // The joining lane curving into the through lane.
-            spine({
-                $0.move(to: point(m(66, mirrored), 88))
-                $0.addQuadCurve(to: point(m(46, mirrored), 48), control: point(m(66, mirrored), 62))
-                $0.addLine(to: point(m(46, mirrored), 34))
-            }, head: point(m(46, mirrored), 12), angle: 0)
-            var through = Path()
-            through.move(to: point(m(34, mirrored), 88))
-            through.addLine(to: point(m(42, mirrored), 62))
-            path.addPath(through.strokedPath(StrokeStyle(lineWidth: 9, lineCap: .round)))
+            // The joining lane bending into the through lane, which continues.
+            let r = kind == .mergeRight
+            shaft({
+                $0.move(to: p(m(72, r), 92))
+                $0.addArc(tangent1End: p(m(72, r), 58), tangent2End: p(m(50, r), 40), radius: Self.corner)
+                $0.addLine(to: p(m(50, r), 46))
+            }, tip: p(m(50, r), 14), angle: 0)
+            ghost { $0.move(to: p(m(32, r), 92)); $0.addLine(to: p(m(41, r), 64)) }
 
         case .forkLeft, .forkRight, .keepLeft, .keepRight:
-            let mirrored = kind == .forkRight || kind == .keepRight
-            // Taken branch, full weight.
-            spine({
-                $0.move(to: point(50, 88))
-                $0.addLine(to: point(50, 62))
-                $0.addLine(to: point(m(32, mirrored), 40))
-            }, head: point(m(24, mirrored), 28), angle: mirrored ? 38 : -38)
-            // Declined branch, lighter.
-            var other = Path()
-            other.move(to: point(50, 62))
-            other.addLine(to: point(m(64, mirrored), 42))
-            path.addPath(other.strokedPath(StrokeStyle(lineWidth: 8, lineCap: .round)))
+            // One shaft splitting: the branch taken at full weight, the one
+            // declined as a ghost, so the choice is the shape.
+            let r = kind == .forkRight || kind == .keepRight
+            shaft({
+                $0.move(to: p(50, 92))
+                $0.addArc(tangent1End: p(50, 56), tangent2End: p(m(24, r), 28), radius: Self.corner)
+                $0.addLine(to: p(m(38, r), 42))
+            }, tip: p(m(22, r), 24), angle: r ? 42 : -42)
+            ghost { $0.move(to: p(50, 62)); $0.addLine(to: p(m(70, r), 38)) }
 
         case .onRampLeft, .onRampRight:
-            let mirrored = kind == .onRampRight
-            spine({
-                $0.move(to: point(m(38, mirrored), 88))
-                $0.addQuadCurve(to: point(m(58, mirrored), 44), control: point(m(38, mirrored), 56))
-                $0.addLine(to: point(m(60, mirrored), 34))
-            }, head: point(m(62, mirrored), 14), angle: mirrored ? 10 : -10)
+            // A ramp curves away and climbs; no through lane, because taking
+            // the ramp is the whole instruction.
+            let r = kind == .onRampRight
+            shaft({
+                $0.move(to: p(m(34, r), 92))
+                $0.addArc(tangent1End: p(m(34, r), 52), tangent2End: p(m(66, r), 30), radius: 26)
+                $0.addLine(to: p(m(58, r), 36))
+            }, tip: p(m(72, r), 22), angle: r ? 36 : -36)
 
         case .offRampLeft, .offRampRight:
-            let mirrored = kind == .offRampRight
-            spine({
-                $0.move(to: point(m(44, mirrored), 88))
-                $0.addLine(to: point(m(44, mirrored), 64))
-                $0.addQuadCurve(to: point(m(66, mirrored), 34), control: point(m(46, mirrored), 42))
-            }, head: point(m(74, mirrored), 22), angle: mirrored ? 32 : -32)
-            var through = Path()
-            through.move(to: point(m(44, mirrored), 58))
-            through.addLine(to: point(m(44, mirrored), 24))
-            path.addPath(through.strokedPath(StrokeStyle(lineWidth: 8, lineCap: .round)))
+            // The exit peels off while the road it leaves carries on.
+            let r = kind == .offRampRight
+            shaft({
+                $0.move(to: p(m(44, r), 92))
+                $0.addArc(tangent1End: p(m(44, r), 56), tangent2End: p(m(74, r), 30), radius: 24)
+                $0.addLine(to: p(m(66, r), 36))
+            }, tip: p(m(80, r), 22), angle: r ? 38 : -38)
+            ghost { $0.move(to: p(m(42, r), 60)); $0.addLine(to: p(m(42, r), 20)) }
 
         case .roundabout, .roundaboutLeft, .roundaboutRight, .roundaboutStraight:
             let exit: Double
@@ -139,45 +183,47 @@ struct TimiManeuverShape: Shape {
             case .roundaboutStraight: exit = 180
             default: exit = roundaboutExitDegrees
             }
-            let center = point(50, 44)
-            let ring = 20.0
+            let centre = p(50, 46)
+            let ring = 23.0
             var circle = Path()
-            circle.addEllipse(in: CGRect(x: center.x - ring, y: center.y - ring, width: ring * 2, height: ring * 2))
-            path.addPath(circle.strokedPath(StrokeStyle(lineWidth: 11)))
+            circle.addEllipse(in: CGRect(x: centre.x - ring, y: centre.y - ring, width: ring * 2, height: ring * 2))
+            path.addPath(circle.strokedPath(StrokeStyle(lineWidth: Self.shaft * 0.75)))
+            // Entry from the bottom, up to the ring.
             var entry = Path()
-            entry.move(to: point(50, 90))
-            entry.addLine(to: point(50, 44 + ring + 4))
+            entry.move(to: p(50, 94))
+            entry.addLine(to: p(50, centre.y + ring + 3))
             path.addPath(entry.strokedPath(stroke))
-            // Exit arm: from the ring edge outward at the exit heading.
-            // 0° = back the way we came (u-turn), 180° = straight through.
-            let exitAngle = (exit + 90) * .pi / 180
-            let from = CGPoint(x: center.x + cos(exitAngle) * (ring + 2), y: center.y + sin(exitAngle) * (ring + 2))
-            let to = CGPoint(x: center.x + cos(exitAngle) * (ring + 16), y: center.y + sin(exitAngle) * (ring + 16))
+            // Exit arm, rotated to the reported heading. 0° would be back the
+            // way we came; 180° is straight through.
+            let angle = (exit + 90) * .pi / 180
             var arm = Path()
-            arm.move(to: from)
-            arm.addLine(to: to)
+            arm.move(to: CGPoint(x: centre.x + cos(angle) * (ring + 1), y: centre.y + sin(angle) * (ring + 1)))
+            arm.addLine(to: CGPoint(x: centre.x + cos(angle) * (ring + 12), y: centre.y + sin(angle) * (ring + 12)))
             path.addPath(arm.strokedPath(stroke))
-            path.addPath(arrowHead(
-                at: CGPoint(x: center.x + cos(exitAngle) * (ring + 28), y: center.y + sin(exitAngle) * (ring + 28)),
+            path.addPath(head(
+                at: CGPoint(x: centre.x + cos(angle) * (ring + 27), y: centre.y + sin(angle) * (ring + 27)),
                 angle: exit + 180
             ))
 
         case .arrive, .arriveLeft, .arriveRight:
-            let xOffset: Double = kind == .arriveLeft ? -14 : (kind == .arriveRight ? 14 : 0)
-            spine({ $0.move(to: point(50, 88)); $0.addLine(to: point(50 + xOffset, 52)) },
-                  head: point(50 + xOffset, 34), angle: xOffset == 0 ? 0 : (xOffset > 0 ? 21 : -21))
-            // The destination dot the arrow points at — Tími's map-pin motif.
+            // Arrival is a destination, not a direction: the shaft runs to a
+            // ringed point rather than to an arrowhead.
+            let offset: Double = kind == .arriveLeft ? -17 : (kind == .arriveRight ? 17 : 0)
+            var line = Path()
+            line.move(to: p(50, 92))
+            line.addLine(to: p(50, 62))
+            // A straight bend rather than a tangent arc: the round line join
+            // already softens the corner, and at this shallow an angle an
+            // arc-to with a 17-unit radius is where the geometry gets fragile.
+            line.addLine(to: p(50 + offset, 48))
+            path.addPath(line.strokedPath(stroke))
             var pin = Path()
-            pin.addEllipse(in: CGRect(x: 50 + xOffset - 9, y: 6, width: 18, height: 18))
-            path.addPath(pin.strokedPath(StrokeStyle(lineWidth: 9)))
+            pin.addEllipse(in: CGRect(x: 50 + offset - 15, y: 10, width: 30, height: 30))
+            path.addPath(pin.strokedPath(StrokeStyle(lineWidth: Self.shaft * 0.8)))
         }
 
         return path.applying(CGAffineTransform(scaleX: scale, y: scale))
     }
-
-    /// Mirrors an x coordinate across the vertical centerline for the
-    /// right-handed variant of a left-handed drawing.
-    private func m(_ x: Double, _ mirrored: Bool) -> Double { mirrored ? 100 - x : x }
 }
 
 /// The banner/chip glyph: the maneuver shape in a single color, sized by the
@@ -196,8 +242,9 @@ struct TimiManeuverGlyph: View {
     }
 }
 
-/// One lane in the lane-guidance row: every painted arrow in the lane, with
-/// the arrow to follow at full strength and the rest receded.
+/// One lane in the lane-guidance row: every arrow painted on that lane, with
+/// the one to follow at full strength and the rest receded. Stacking is what
+/// lets a finite set of arrows draw the unbounded set of real lane markings.
 struct TimiLaneGlyph: View {
     var lane: TimiLane
     var activeColor: Color
