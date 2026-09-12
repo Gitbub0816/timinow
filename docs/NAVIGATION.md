@@ -12,12 +12,83 @@ build and verify on a Mac before shipping.
 | --- | --- |
 | Skip-safe navigation/voice models | `Sources/TimiNowCore/NavigationModels.swift` |
 | Map (offer comparison + tracker) | `Sources/TimiNowUI/ClinicMapView.swift` |
-| Turn-by-turn | `Sources/TimiNowUI/NavigationView.swift` |
+| Turn-by-turn flow (route request, states, screen assembly) | `Sources/TimiNowUI/NavigationView.swift` |
+| Navigation presentation models (no Mapbox imports) | `Sources/TimiNowUI/TimiNavigationModel.swift` |
+| Maneuver/lane glyph drawing system | `Sources/TimiNowUI/TimiManeuverGlyph.swift` |
+| Navigation chrome (banner, alerts, trip/arrival cards, controls) | `Sources/TimiNowUI/TimiNavigationChrome.swift` |
+| Mapbox engine adapter + map view | `Sources/TimiNowUI/TimiNavigationSession.swift` |
 | Voice (rewrite table + synthesizer) | `Sources/TimiNowUI/VoiceController.swift`, `Sources/TimiNowUI/Resources/instruction-phrases.json` |
 | Settings → Navigation section | `Sources/TimiNowUI/SupportViews.swift` |
 | Watch → phone bridge (phone side) | `Sources/TimiNowUI/WatchBridge.swift` |
 | CarPlay scene | `Sources/TimiNowCarPlay/CarPlaySceneDelegate.swift`, `Darwin/Sources/CarPlayBridge.swift` |
 | Watch app | `Watch/` (separate Xcode target, no SwiftPM dependency) |
+
+## The custom navigation UI: Mapbox engine, Tími presentation
+
+The turn-by-turn screen is Tími's own. Mapbox provides the navigation
+intelligence — route calculation and alternatives, map matching and
+progress, rerouting and faster-route detection, maneuver/instruction/lane
+data, spoken-instruction timing, the navigation camera, the map rendering
+with live traffic, and arrival detection — and Tími draws everything the
+driver sees. The stock `MapboxNavigationUIKit` drop-in UI
+(`NavigationViewController`, which an earlier pass had hosted and reskinned
+through UIAppearance proxies) is out of the build entirely.
+
+The seam is a set of plain presentation models with **no Mapbox imports**:
+
+```
+MapboxNavigationCore publishers          (engine — Mapbox)
+        │  TimiNavigationSession.swift   (adapter — Mapbox-gated)
+        ▼
+TimiNavigationModel.swift                (plain models — CI-compiled)
+        │
+        ▼
+TimiNavigationChrome.swift + TimiManeuverGlyph.swift   (UI — CI-compiled)
+```
+
+- `TimiNavigationSession` subscribes the engine's Combine publishers
+  (`routeProgress`, `bannerInstructions`, `locationMatching`, `session`,
+  `rerouting`, `fasterRoutes`, `waypointsArrival`, `errors`) and reduces
+  them to `TimiManeuver` / `TimiTripProgress` / `TimiSpeedInfo` /
+  `TimiNavAlert` / `TimiNavPhase`. Arrival comes from `waypointsArrival`'s
+  `ToFinalDestination` event (enforced by `scripts/validate-native.mjs`).
+  Voice guidance still runs through the SDK's self-driving
+  `RouteVoiceController` and the custom `TimiSpeechSynthesizer` — the
+  session only arms it and exposes mute.
+- `TimiNavigationMapView` (same file) wraps `NavigationMapView` — the
+  engine's own map component, which draws and updates the route line
+  itself from the progress publisher — and styles it through supported
+  properties only: congestion colors in Tími's palette, a gray traversed
+  line, an ink maneuver arrow, a cobalt/ink course-indicator puck, and the
+  app's one custom map style. No layer surgery, no view-hierarchy hacks.
+- The chrome and glyph files are plain SwiftUI over the plain models, so
+  the default CI build (no `TIMI_MAPBOX`) compiles all of it; only the
+  session adapter is invisible to CI, which is why its header inventories
+  every SDK symbol it uses against a clone of `mapbox-navigation-ios`
+  v3.27.3.
+
+**Maneuver symbols** are drawn by `TimiManeuverShape` — one geometry system
+(stroked spine + filled head, 100×100 design space) covering turns, merges,
+forks, keeps, ramps, roundabouts with a rotating exit arm, U-turns, lane
+arrows, and arrival. The geometry stays conventional road-sign geometry;
+the branding is the weight, rounding, and palette around it.
+
+**Faster routes are informational**: `CoreConfig.fasterRouteDetectionConfig`
+defaults `fasterRouteApproval` to `.automatically`, so the engine applies a
+faster route itself and the alert banner announces the switch rather than
+offering a fake "Switch" button.
+
+**CarPlay seam**: everything below the models is UIKit/SwiftUI-free of
+Mapbox and everything above the models is Mapbox-free of UI, so a future
+CarPlay app can drive Apple-HIG `CPManeuver`/`CPTravelEstimates` templates
+from the same `TimiNavigationSession` without touching the iPhone chrome.
+
+**Dark mode**: the chrome's `NavPalette` carries a genuine tuned dark
+palette (not an inversion), keyed off `@Environment(\.colorScheme)` — but
+the app currently pins `.preferredColorScheme(.light)` at `RootView`
+(`TimiNowApp.swift`; the fixed light palette is a deliberate product
+decision). The dark palette is therefore dormant until that decision
+changes; nothing in navigation needs to be rewritten when it does.
 
 ## Mapbox products and tokens
 
@@ -27,11 +98,15 @@ below):
 - **`mapbox-maps-ios`** (`from: "11.26.0"`) → product `MapboxMaps`, used by
   `ClinicMapView.swift` for the offer-comparison and tracker maps.
 - **`mapbox-navigation-ios`** (`from: "3.27.0"`) → products
-  `MapboxNavigationCore` and `MapboxNavigationUIKit`, used by
-  `NavigationView.swift` for turn-by-turn and by `TimiNowCarPlay` for the
-  CarPlay map/guidance templates. It depends on `mapbox-maps-ios`
+  `MapboxNavigationCore` (the engine: routing, rerouting, progress,
+  instructions, voice timing, camera, `NavigationMapView`) and
+  `MapboxDirections` (the vocabulary types: `Waypoint`, `RouteOptions`,
+  `ManeuverType`, lane indications). It depends on `mapbox-maps-ios`
   transitively; both are still declared explicitly so the product names
-  above resolve directly.
+  above resolve directly. **`MapboxNavigationUIKit` — the stock drop-in
+  `NavigationViewController` UI — is deliberately not linked** (see the next
+  section); `scripts/validate-native.mjs` fails the build if an import of it
+  comes back.
 
 Two kinds of Mapbox token, per `docs/PLATFORM-CONTRACT.md`'s
 `GET /api/config` → `map` block:

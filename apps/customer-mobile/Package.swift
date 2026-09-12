@@ -76,7 +76,11 @@ if enableMapbox {
     timiNowUIDependencies.append(contentsOf: [
         .product(name: "MapboxMaps", package: "mapbox-maps-ios", condition: .when(platforms: [.iOS])),
         .product(name: "MapboxNavigationCore", package: "mapbox-navigation-ios", condition: .when(platforms: [.iOS])),
-        .product(name: "MapboxNavigationUIKit", package: "mapbox-navigation-ios", condition: .when(platforms: [.iOS])),
+        // MapboxNavigationUIKit (the stock drop-in NavigationViewController)
+        // is deliberately NOT linked: the app draws its own navigation chrome
+        // (TimiNavigationChrome.swift) over MapboxNavigationCore's engine and
+        // NavigationMapView — see docs/NAVIGATION.md. Linking the UIKit
+        // product again would only be needed to return to the stock UI.
         .product(name: "MapboxDirections", package: "mapbox-navigation-ios", condition: .when(platforms: [.iOS]))
     ])
 }

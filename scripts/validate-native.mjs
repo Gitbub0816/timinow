@@ -756,19 +756,38 @@ for (const path of await collectFiles("apps/customer-mobile/Sources/TimiNowUI", 
   }
 }
 
-// A protocol with default implementations does not complain about a near-miss:
-// the wrong signature satisfies nothing, the default runs, and the method is
-// simply never called. didArriveAt returns Void in
-// mapbox-navigation-ios v3.27.0; returning Bool cost us arrival detection with
-// no build error and no run-time complaint.
+// Arrival detection, since the custom chrome replaced the stock
+// NavigationViewController (whose delegate near-miss — didArriveAt returning
+// Bool instead of Void — once cost us arrival with no build error), comes
+// from the engine's waypointsArrival publisher: the session must subscribe
+// it and gate on ToFinalDestination, or "arrived" is never recorded and the
+// arrival card never shows.
 {
-  const path = "apps/customer-mobile/Sources/TimiNowUI/NavigationView.swift";
+  const path = "apps/customer-mobile/Sources/TimiNowUI/TimiNavigationSession.swift";
   const source = await read(path);
-  if (/didArriveAt\s+waypoint:\s*Waypoint\)\s*->/.test(source)) {
-    throw new Error(`${path}: navigationViewController(_:didArriveAt:) returns a value. The SDK declares it returning Void, so this satisfies no protocol requirement, the default implementation runs, and arrival is never reported.`);
+  const code = source.split("\n").filter((line) => !line.trim().startsWith("//") && !line.trim().startsWith("///")).join("\n");
+  if (!/\.waypointsArrival\b/.test(code) || !/WaypointArrivalStatus\.Events\.ToFinalDestination/.test(code)) {
+    throw new Error(`${path}: no longer subscribes waypointsArrival and checks ToFinalDestination, so arriving at the clinic records nothing and the drive never ends on its own.`);
   }
-  if (!/didArriveAt\s+waypoint:\s*Waypoint\)\s*\{/.test(source)) {
-    throw new Error(`${path}: no longer implements navigationViewController(_:didArriveAt:), so arriving at the clinic records nothing.`);
+  // The voice controller is self-driving but lazily built: something must
+  // touch provider.routeVoiceController or no instruction is ever spoken.
+  // The stock NavigationViewController used to be the thing that touched it.
+  if (!/routeVoiceController/.test(code)) {
+    throw new Error(`${path}: nothing touches provider.routeVoiceController any more. Constructing it is what subscribes voice guidance; without it every drive is silent.`);
+  }
+}
+
+// The stock Mapbox drop-in UI stays out of the build. The whole point of the
+// custom chrome (docs/NAVIGATION.md) is that MapboxNavigationCore is the
+// engine and Tími draws the screen — reintroducing MapboxNavigationUIKit or
+// NavigationViewController quietly reverts the product to a reskinned SDK.
+{
+  for (const path of await collectFiles("apps/customer-mobile/Sources", ".swift")) {
+    const source = await read(path);
+    const code = source.split("\n").filter((line) => !line.trim().startsWith("//") && !line.trim().startsWith("///")).join("\n");
+    if (/import MapboxNavigationUIKit|NavigationViewController\(/.test(code)) {
+      throw new Error(`${path}: uses MapboxNavigationUIKit (the stock drop-in navigation UI) again. The navigation screen is Tími's own chrome over MapboxNavigationCore — see docs/NAVIGATION.md before reintroducing the stock UI.`);
+    }
   }
 }
 
@@ -2120,7 +2139,7 @@ for (const [path, marker] of [
   // MapboxOptions.accessToken instead, and nothing set it.
   const stack = await read("apps/customer-mobile/Sources/TimiNowUI/MapboxStack.swift");
   if (!/MapboxOptions\.accessToken = token/.test(stack)) {
-    throw new Error("apps/customer-mobile/Sources/TimiNowUI/MapboxStack.swift no longer sets MapboxOptions.accessToken. The map inside NavigationViewController reads only that global and traps fatally without it: 'No access token provided', straight off the device log.");
+    throw new Error("apps/customer-mobile/Sources/TimiNowUI/MapboxStack.swift no longer sets MapboxOptions.accessToken. Every map pane — the navigation map included — reads only that global and traps fatally without it: 'No access token provided', straight off the device log.");
   }
   const root = await read("apps/customer-mobile/Sources/TimiNowUI/CustomerRootView.swift");
   if (!/TimiMapboxToken\.apply\(store\.mapToken\)/.test(root)) {
@@ -2150,10 +2169,10 @@ for (const [path, marker] of [
   const nav = await read("apps/customer-mobile/Sources/TimiNowUI/NavigationView.swift");
   const code = nav.split("\n").filter((line) => !line.trim().startsWith("//") && !line.trim().startsWith("///")).join("\n");
   if (!code.includes('TimiBreadcrumb.mark("nav:live")')) {
-    throw new Error("apps/customer-mobile/Sources/TimiNowUI/NavigationView.swift no longer marks nav:live after presenting the navigation controller, so a crash in the live screen's first frames reports nothing.");
+    throw new Error("apps/customer-mobile/Sources/TimiNowUI/NavigationView.swift no longer marks nav:live once guidance starts, so a crash in the live screen's first frames reports nothing.");
   }
   if (!code.includes('TimiBreadcrumb.mark("nav:host_setup")')) {
-    throw new Error("apps/customer-mobile/Sources/TimiNowUI/NavigationView.swift no longer marks nav:host_setup in makeUIViewController, so a crash before viewDidLoad reports nothing.");
+    throw new Error("apps/customer-mobile/Sources/TimiNowUI/NavigationView.swift no longer marks nav:host_setup at the start of route preparation, so a crash before the route request reports nothing.");
   }
   const finish = code.slice(code.indexOf("private func finish()"));
   if (!/TimiBreadcrumb\.clear\(\)/.test(finish.slice(0, 200))) {

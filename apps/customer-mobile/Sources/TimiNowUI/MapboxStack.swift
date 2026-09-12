@@ -82,6 +82,19 @@ enum TimiNavigationStack {
     static func beginTrip(clinicName: String, petName: String, clinicKind: String?, tone: NavigationTone) {
         synthesizer?.beginTrip(clinicName: clinicName, petName: petName, clinicKind: clinicKind, tone: tone)
     }
+
+    /// The mute switch for the navigation chrome's voice button. Goes through
+    /// `routeVoiceController.speechSynthesizer` rather than the Tími
+    /// synthesizer directly so it also works for the `.localOnly` voice a
+    /// voice-disabled preference builds — `SpeechSynthesizing.muted` is the
+    /// SDK's supported mute, whatever synthesizer is installed.
+    static var isVoiceMuted: Bool {
+        provider?.routeVoiceController.speechSynthesizer.muted ?? false
+    }
+
+    static func setVoiceMuted(_ muted: Bool) {
+        provider?.routeVoiceController.speechSynthesizer.muted = muted
+    }
 }
 #endif
 
