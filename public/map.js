@@ -10,7 +10,7 @@
  * never pays for the download.
  */
 
-const GL_VERSION = "v3.15.0";
+const GL_VERSION = "v3.30.0";
 const GL_SCRIPT = `https://api.mapbox.com/mapbox-gl-js/${GL_VERSION}/mapbox-gl.js`;
 const GL_STYLESHEET = `https://api.mapbox.com/mapbox-gl-js/${GL_VERSION}/mapbox-gl.css`;
 const DIRECTIONS_ENDPOINT = "https://api.mapbox.com/directions/v5/mapbox";

@@ -103,10 +103,10 @@ public struct MiniConsoleView: View {
     private var hoverControls: some View {
         HStack(spacing: 10) {
             if let onMinimize {
-                Button(action: onMinimize) { Image(systemName: "minus") }.buttonStyle(.plain)
+                Button(action: onMinimize) { Image(systemName: "minus") }.buttonStyle(.plain).accessibilityLabel("Minimize")
             }
             if let onHide {
-                Button(action: onHide) { Image(systemName: "xmark") }.buttonStyle(.plain)
+                Button(action: onHide) { Image(systemName: "xmark") }.buttonStyle(.plain).accessibilityLabel("Hide — alerts keep running in the tray")
             }
         }
         .font(.system(size: 9, weight: .bold))

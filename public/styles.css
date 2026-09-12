@@ -11,10 +11,13 @@
   --coral-soft: #ffe5df;
   --gold: #f7c84b;
   --gold-soft: #fff0b9;
-  --green: #2357d9;
-  --green-soft: #e5ecff;
+  --green: #12845d;
+  --green-dark: #0f6b45;
+  --green-soft: #e9f7f1;
   --line: #d9d8d2;
-  --muted: #6f7483;
+  /* #5B6072 — darkened from #6F7483 to clear WCAG 1.4.3's 4.5:1 minimum on
+     the light surfaces this token pairs with across the site. */
+  --muted: #5b6072;
   --danger: #bd3e31;
   --shadow: 7px 7px 0 var(--ink);
   --soft-shadow: 0 18px 60px rgba(17, 27, 59, .12);
@@ -227,7 +230,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--blue); box-shado
 
 /* Trust badge: shown at search start and while offers are being collected. */
 .pay-nothing-badge { display: flex; align-items: center; gap: .5rem; margin: .8rem 0; padding: .65rem .85rem; border: 1px solid var(--blue-soft); border-radius: 10px; background: var(--blue-soft); color: var(--blue-dark); font-size: .72rem; font-weight: 600; line-height: 1.4; }
-.secure-payment-note { display: flex; align-items: center; gap: .4rem; margin: .6rem 0; padding: .6rem .8rem; border-radius: 9px; background: var(--green-soft); color: var(--blue-dark); font-size: .68rem; font-weight: 700; line-height: 1.4; }
+.secure-payment-note { display: flex; align-items: center; gap: .4rem; margin: .6rem 0; padding: .6rem .8rem; border-radius: 9px; background: var(--green-soft); color: var(--green-dark); font-size: .68rem; font-weight: 700; line-height: 1.4; }
 
 /* Verified network stats: server-gated, so empty stats are simply absent —
    see GET /api/public-stats and loadNetworkStats() in app.js. */

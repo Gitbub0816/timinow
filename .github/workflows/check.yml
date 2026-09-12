@@ -1,0 +1,21 @@
+name: check
+
+# The gate this repository did not have: every prior control (syntax,
+# subprocessor/CSP sync, schema validation, smoke tests, every integration
+# test) already existed as an npm script — see package.json's "check" —
+# but nothing stopped a pull request from merging without running it. This
+# workflow is that stop. See docs/SOC2-READINESS.md, CC5 (change management).
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm run check

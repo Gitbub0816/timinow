@@ -63,11 +63,28 @@ import {
 import { getOrCreateReferralLink } from "../../../src/referrals.js";
 
 const JSON_HEADERS = { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" };
+// Kept in step with docs/SUBPROCESSORS.md by scripts/check-subprocessors.mjs
+// — see the identical comment in src/index.js (the customer Worker).
+const CONTENT_SECURITY_POLICY = [
+  "default-src 'self'",
+  "script-src 'self' https://cdn.jsdelivr.net https://timinow.pet",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data: blob:",
+  "font-src 'self' data:",
+  "connect-src 'self' https://clerk.timinow.pet https://timinow.pet",
+  "worker-src 'self' blob:",
+  "object-src 'none'",
+  "base-uri 'self'",
+  "form-action 'self'",
+  "frame-ancestors 'none'"
+].join("; ");
+
 const SECURITY_HEADERS = {
   "referrer-policy": "strict-origin-when-cross-origin",
   "x-content-type-options": "nosniff",
   "x-frame-options": "DENY",
-  "permissions-policy": "camera=(), microphone=(), payment=(self), geolocation=(self)"
+  "permissions-policy": "camera=(), microphone=(), payment=(self), geolocation=(self)",
+  "content-security-policy": CONTENT_SECURITY_POLICY
 };
 
 function json(data, init = {}) {

@@ -83,11 +83,32 @@ import { signSearchToken, verifySearchToken } from "./search-links.js";
 import { registerPushDevice, sendPushForFirstOffer, unregisterPushDevice } from "./push.js";
 
 const JSON_HEADERS = { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" };
+// Every external host this site's own pages load a script from, fetch from,
+// or embed a frame from — see docs/SUBPROCESSORS.md, which is the source of
+// truth this list is kept in step with. A new subprocessor or third-party
+// script host is not live here until it is added to BOTH that document and
+// this policy; scripts/check-subprocessors.mjs fails CI if they drift apart.
+const CONTENT_SECURITY_POLICY = [
+  "default-src 'self'",
+  "script-src 'self' https://js.stripe.com https://cdn.jsdelivr.net https://unpkg.com https://api.mapbox.com",
+  "style-src 'self' 'unsafe-inline' https://api.mapbox.com",
+  "img-src 'self' data: blob: https://api.mapbox.com https://*.tiles.mapbox.com",
+  "font-src 'self' data:",
+  "connect-src 'self' https://clerk.timinow.pet https://api.stripe.com https://api.mapbox.com https://events.mapbox.com https://verification.didit.me",
+  "frame-src https://js.stripe.com https://hooks.stripe.com https://verification.didit.me",
+  "worker-src 'self' blob:",
+  "object-src 'none'",
+  "base-uri 'self'",
+  "form-action 'self'",
+  "frame-ancestors 'none'"
+].join("; ");
+
 const SECURITY_HEADERS = {
   "referrer-policy": "strict-origin-when-cross-origin",
   "x-content-type-options": "nosniff",
   "x-frame-options": "DENY",
-  "permissions-policy": "camera=(), microphone=(), payment=(self), geolocation=(self)"
+  "permissions-policy": "camera=(), microphone=(), payment=(self), geolocation=(self)",
+  "content-security-policy": CONTENT_SECURITY_POLICY
 };
 const VALID_SYMPTOMS = new Set(["vomiting_or_diarrhea", "breathing_or_coughing", "pain_or_limping", "not_eating_or_drinking", "urination_or_stool", "injury_or_bleeding", "energy_or_behavior", "eye_ear_or_skin", "other_observable"]);
 const VALID_ONSETS = new Set(["within_hour", "today", "one_to_three_days", "more_than_three_days", "unknown"]);

@@ -177,12 +177,19 @@ struct IntakeFlowView: View {
     /// The Tími switch (Components.swift) instead of the system toggle: the
     /// two consent rows were the last stock-grey controls in the intake flow.
     func acknowledgement(_ binding: Binding<Bool>, _ text: String) -> some View {
-        HStack(alignment: .center, spacing: 12) {
-            Text(text).font(.caption).fontWeight(.semibold).multilineTextAlignment(.leading)
-            Spacer(minLength: 8)
-            TimiToggle(isOn: binding)
+        Button {
+            withAnimation(.spring(response: 0.28, dampingFraction: 0.8)) { binding.wrappedValue.toggle() }
+        } label: {
+            HStack(alignment: .center, spacing: 12) {
+                Text(text).font(.caption).fontWeight(.semibold).multilineTextAlignment(.leading)
+                Spacer(minLength: 8)
+                TimiToggle(isOn: binding)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+            }
+            .contentShape(Rectangle())
         }
-        .contentShape(Rectangle())
-        .onTapGesture { withAnimation(.spring(response: 0.28, dampingFraction: 0.8)) { binding.wrappedValue.toggle() } }
+        .buttonStyle(.plain)
+        .timiToggleAccessibility(label: text, isOn: binding.wrappedValue)
     }
 }

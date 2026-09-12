@@ -180,7 +180,11 @@ function updateNavActive() {
     : ["markets", "market-detail"].includes(state.route.screen) ? "markets"
     : state.route.screen === "clinic-contract-detail" ? "clinic-contracts"
     : "tenants";
-  document.querySelectorAll("[data-nav]").forEach((a) => a.classList.toggle("active", a.dataset.nav === top));
+  document.querySelectorAll("[data-nav]").forEach((a) => {
+    const active = a.dataset.nav === top;
+    a.classList.toggle("active", active);
+    if (active) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
+  });
 }
 
 async function route() {
@@ -635,7 +639,7 @@ function renderTenantsTable(tenants) {
   container.innerHTML = `
     <div class="table-wrap">
       <table class="data-table">
-        <thead><tr><th>Name</th><th>Slug</th><th>Status</th><th>Locations</th><th>Members</th><th>Created</th></tr></thead>
+        <thead><tr><th scope="col">Name</th><th scope="col">Slug</th><th scope="col">Status</th><th scope="col">Locations</th><th scope="col">Members</th><th scope="col">Created</th></tr></thead>
         <tbody>${rows}</tbody>
       </table>
     </div>`;
@@ -1175,13 +1179,27 @@ function wireStaticHandlers() {
     }
   });
 
-  document.querySelector("[data-account-trigger]").addEventListener("click", () => {
+  const accountTrigger = document.querySelector("[data-account-trigger]");
+  accountTrigger.addEventListener("click", () => {
     const dropdown = document.querySelector("[data-account-dropdown]");
     dropdown.hidden = !dropdown.hidden;
+    accountTrigger.setAttribute("aria-expanded", String(!dropdown.hidden));
   });
   document.addEventListener("click", (event) => {
     const menu = document.querySelector("[data-account-menu]");
-    if (!menu.contains(event.target)) document.querySelector("[data-account-dropdown]").hidden = true;
+    if (!menu.contains(event.target)) {
+      document.querySelector("[data-account-dropdown]").hidden = true;
+      accountTrigger.setAttribute("aria-expanded", "false");
+    }
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape") return;
+    const dropdown = document.querySelector("[data-account-dropdown]");
+    if (!dropdown.hidden) {
+      dropdown.hidden = true;
+      accountTrigger.setAttribute("aria-expanded", "false");
+      accountTrigger.focus();
+    }
   });
   document.querySelector("[data-sign-out]").addEventListener("click", async () => {
     document.querySelector("[data-account-dropdown]").hidden = true;
@@ -1287,11 +1305,23 @@ function wireStaticHandlers() {
   document.querySelector('form[data-form="analytics-range"]')?.addEventListener("change", () => loadAnalytics());
   document.querySelector('form[data-form="analytics-range"]')?.addEventListener("submit", (event) => { event.preventDefault(); loadAnalytics(); });
 
-  document.querySelector("[data-open-create-market]")?.addEventListener("click", () => {
+  const openCreateMarketButton = document.querySelector("[data-open-create-market]");
+  function closeCreateMarketModal() {
+    document.querySelector("[data-create-market-modal]").hidden = true;
+    openCreateMarketButton?.focus();
+  }
+  openCreateMarketButton?.addEventListener("click", () => {
     document.querySelector('form[data-form="create-market"]').reset();
     document.querySelector("[data-market-form-errors]").hidden = true;
     document.querySelector("[data-create-market-modal]").hidden = false;
     document.querySelector("[data-market-geocode]")?.focus();
+  });
+  document.querySelector("[data-create-market-modal]")?.addEventListener("click", (event) => {
+    if (event.target === event.currentTarget) closeCreateMarketModal();
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape") return;
+    if (!document.querySelector("[data-create-market-modal]")?.hidden) closeCreateMarketModal();
   });
   // Search a place instead of typing coordinates: picking a result fills the
   // center, suggests a radius that covers the place, and offers the short
@@ -1308,9 +1338,7 @@ function wireStaticHandlers() {
       document.querySelector("[data-market-geocode]").value = place.name;
     }
   );
-  document.querySelector("[data-close-create-market]")?.addEventListener("click", () => {
-    document.querySelector("[data-create-market-modal]").hidden = true;
-  });
+  document.querySelector("[data-close-create-market]")?.addEventListener("click", closeCreateMarketModal);
   document.querySelector('form[data-form="create-market"]')?.addEventListener("submit", async (event) => {
     event.preventDefault();
     const form = event.target;
@@ -1325,7 +1353,7 @@ function wireStaticHandlers() {
     };
     try {
       const { market } = await apiFetch("/api/admin/markets", { method: "POST", body: JSON.stringify(payload) });
-      document.querySelector("[data-create-market-modal]").hidden = true;
+      closeCreateMarketModal();
       toast(`${market.name} was created.`);
       location.hash = `#markets/${encodeURIComponent(market.id)}`;
     } catch (error) {
@@ -1598,7 +1626,7 @@ function renderAnalytics(data) {
         <h2>Per day</h2>
         <div class="table-wrap" style="border:1px solid var(--line); box-shadow:none;">
           <table class="data-table" style="min-width:0;">
-            <thead><tr><th>Date</th><th>Visitors</th><th>Events</th><th style="width:38%"></th></tr></thead>
+            <thead><tr><th scope="col">Date</th><th scope="col">Visitors</th><th scope="col">Events</th><th style="width:38%" scope="col"></th></tr></thead>
             <tbody>${days.length ? days.map((day) => `
               <tr>
                 <td>${escapeHtml(formatDate(day.date))}</td>
@@ -1665,7 +1693,7 @@ function renderApplications(applications) {
   mount.innerHTML = `
     <div class="table-wrap">
       <table class="data-table">
-        <thead><tr><th>Practice</th><th>Contact</th><th>Location</th><th>Message</th><th>Received</th><th>Status</th></tr></thead>
+        <thead><tr><th scope="col">Practice</th><th scope="col">Contact</th><th scope="col">Location</th><th scope="col">Message</th><th scope="col">Received</th><th scope="col">Status</th></tr></thead>
         <tbody>${rows}</tbody>
       </table>
     </div>`;
@@ -1885,7 +1913,7 @@ function renderClinicContracts(contracts) {
   mount.innerHTML = `
     <div class="table-wrap">
       <table class="data-table">
-        <thead><tr><th>Clinic</th><th>Status</th><th>Agreement version</th><th>Effective</th><th>Deposit election</th><th>Recorded</th></tr></thead>
+        <thead><tr><th scope="col">Clinic</th><th scope="col">Status</th><th scope="col">Agreement version</th><th scope="col">Effective</th><th scope="col">Deposit election</th><th scope="col">Recorded</th></tr></thead>
         <tbody>${rows}</tbody>
       </table>
     </div>`;
@@ -2388,7 +2416,7 @@ function renderMarkets(markets) {
   mount.innerHTML = `
     <div class="table-wrap">
       <table class="data-table">
-        <thead><tr><th>Market</th><th>State</th><th>Activation</th><th>Clinics</th><th>Boundary</th><th>State set</th></tr></thead>
+        <thead><tr><th scope="col">Market</th><th scope="col">State</th><th scope="col">Activation</th><th scope="col">Clinics</th><th scope="col">Boundary</th><th scope="col">State set</th></tr></thead>
         <tbody>${rows}</tbody>
       </table>
     </div>`;
@@ -2855,7 +2883,7 @@ function renderMetrics(data, alerts) {
       </div>
       <div class="table-wrap" style="border:1px solid var(--line); box-shadow:none;">
         <table class="data-table" style="min-width:0;">
-          <thead><tr><th>Date</th><th>Searches</th><th style="width:40%"></th></tr></thead>
+          <thead><tr><th scope="col">Date</th><th scope="col">Searches</th><th style="width:40%" scope="col"></th></tr></thead>
           <tbody>${demand.byDay.length ? demand.byDay.map((d) => `
             <tr><td>${escapeHtml(formatDate(d.date))}</td><td>${d.total}</td><td>${bar(d.total, maxByDay)}</td></tr>`).join("") : '<tr class="empty-row"><td colspan="3">No searches in this window.</td></tr>'}</tbody>
         </table>
@@ -2893,7 +2921,7 @@ function renderMetrics(data, alerts) {
           <h3 style="font-size:.8rem; margin: .8rem 0 .4rem;">By wave</h3>
           <div class="table-wrap" style="border:1px solid var(--line); box-shadow:none;">
             <table class="data-table" style="min-width:0;">
-              <thead><tr><th>Wave</th><th>Contacted</th><th>Offered</th><th>Offer rate</th></tr></thead>
+              <thead><tr><th scope="col">Wave</th><th scope="col">Contacted</th><th scope="col">Offered</th><th scope="col">Offer rate</th></tr></thead>
               <tbody>${(matching.byWave || []).map((w) => `<tr><td>${w.wave}</td><td>${w.total}</td><td>${w.offered}</td><td>${fmtPct(w.offerRatePct)}</td></tr>`).join("")}</tbody>
             </table>
           </div>` : '<p class="page-lede">Per-wave performance activates once staged wave routing lands.</p>'}
@@ -3143,7 +3171,7 @@ function renderPifCustody(status, transfers) {
       <h2>Transfers (${transfers.length})</h2>
       ${transfers.length ? `<div class="table-wrap" style="border:1px solid var(--line); box-shadow:none;">
         <table class="data-table" style="min-width:0;">
-          <thead><tr><th>Direction</th><th>Amount</th><th>State</th><th>Requested</th><th>Settled</th></tr></thead>
+          <thead><tr><th scope="col">Direction</th><th scope="col">Amount</th><th scope="col">State</th><th scope="col">Requested</th><th scope="col">Settled</th></tr></thead>
           <tbody>${transfers.map((t) => `<tr>
             <td>${escapeHtml(labelize(t.direction))}</td>
             <td>${formatCents(t.amountCents)}</td>
@@ -3202,7 +3230,7 @@ function renderPifReconciliation(runs, exceptions) {
       <p class="page-lede">Reconciles protected custody to the penny (§21) — no threshold, no auto-adjustment. A run only examines; it never moves money.</p>
       ${runs.length ? `<div class="table-wrap" style="border:1px solid var(--line); box-shadow:none;">
         <table class="data-table" style="min-width:0;">
-          <thead><tr><th>Started</th><th>Scope</th><th>Status</th><th>Difference</th><th>Exceptions</th><th>Critical</th></tr></thead>
+          <thead><tr><th scope="col">Started</th><th scope="col">Scope</th><th scope="col">Status</th><th scope="col">Difference</th><th scope="col">Exceptions</th><th scope="col">Critical</th></tr></thead>
           <tbody>${runs.map((r) => `<tr>
             <td>${formatDateTime(r.startedAt)}</td>
             <td>${escapeHtml(labelize(r.scope))}</td>
@@ -3313,14 +3341,16 @@ function actionFieldHtml(field) {
   return `<label class="field${wide}">${label}<input type="${inputType}" name="${escapeAttr(field.name)}" value="${escapeAttr(value)}" ${step ? `step="${step}"` : ""} ${req}></label>`;
 }
 
+let actionModalTrigger = null;
 function openActionModal({ title, lede, fields, confirmText, submitLabel = "Submit", onSubmit }) {
+  actionModalTrigger = document.activeElement;
   const modal = document.querySelector("[data-action-modal]");
   modal.querySelector("[data-action-modal-title]").textContent = title;
   const body = modal.querySelector("[data-action-modal-body]");
   body.innerHTML = `
     ${lede ? `<p class="page-lede">${escapeHtml(lede)}</p>` : ""}
     <form data-action-form novalidate>
-      <div data-action-modal-errors class="form-errors" hidden></div>
+      <div data-action-modal-errors class="form-errors" hidden role="alert"></div>
       <div class="form-grid two-col">${fields.map(actionFieldHtml).join("")}</div>
       ${confirmText ? `<label class="checkbox-row wide" style="margin-top:1rem; color:var(--coral-dark);"><input type="checkbox" data-confirm-checkbox required> ${escapeHtml(confirmText)}</label>` : ""}
       <div class="form-actions">
@@ -3361,10 +3391,17 @@ function openActionModal({ title, lede, fields, confirmText, submitLabel = "Subm
     }
   });
   modal.hidden = false;
+  (body.querySelector("input, select, textarea") || body.querySelector("[data-action-modal-submit]"))?.focus();
 }
 function closeActionModal() {
   document.querySelector("[data-action-modal]").hidden = true;
+  actionModalTrigger?.focus();
+  actionModalTrigger = null;
 }
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape") return;
+  if (!document.querySelector("[data-action-modal]")?.hidden) closeActionModal();
+});
 
 async function boot() {
   try {

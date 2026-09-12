@@ -16,7 +16,9 @@
   --green: #12845d;
   --green-soft: #e9f7f1;
   --line: #d7dce7;
-  --muted: #6d7487;
+  /* #575D71 — darkened from #6D7487 to clear WCAG 1.4.3's 4.5:1 minimum,
+     most notably behind the .eyebrow coral-on-white pairing. */
+  --muted: #575d71;
   --danger: #bd3e31;
   --shadow: 0 12px 36px rgba(16, 27, 61, .12);
   --soft-shadow: 0 18px 60px rgba(17, 27, 59, .12);
@@ -81,7 +83,9 @@ h1, h2, h3, p { margin-top: 0; }
 .button-coral { background: var(--coral); border-color: var(--coral); color: white; }
 .button-quiet { background: white; border-color: var(--input-border); color: var(--ink); }
 .button-block { width: 100%; }
-.eyebrow { margin: 0 0 .4rem; font-size: .68rem; letter-spacing: .12em; font-weight: 800; text-transform: uppercase; color: var(--coral); }
+/* --coral-dark, not --coral: the lighter coral measures ~3.15:1 on white,
+   below WCAG 1.4.3's 4.5:1 floor for text this small. */
+.eyebrow { margin: 0 0 .4rem; font-size: .68rem; letter-spacing: .12em; font-weight: 800; text-transform: uppercase; color: var(--coral-dark); }
 input, select, textarea { width: 100%; min-height: 38px; border: 1px solid var(--input-border); border-radius: 9px; background: white; padding: .55rem .65rem; font-size: .85rem; }
 textarea { resize: vertical; line-height: 1.5; }
 input:focus, select:focus, textarea:focus { border-color: var(--blue); box-shadow: 0 0 0 3px rgba(45,91,215,.14); outline: none; }
@@ -100,7 +104,7 @@ label.field { display: grid; gap: .35rem; font-size: .72rem; font-weight: 700; c
 .sign-in-divider::before, .sign-in-divider::after { content: ""; flex: 1; height: 1px; background: var(--line); }
 .sign-in-error { padding: .7rem .8rem; border-radius: 9px; background: var(--coral-soft); color: var(--coral-dark); font-size: .72rem; line-height: 1.5; }
 .sign-in-note { padding: .8rem; border-radius: 9px; background: var(--gold-soft); font-size: .72rem; line-height: 1.5; }
-.sign-in-back { background: none; border: 0; color: var(--blue); font-size: .72rem; font-weight: 800; padding: 0; text-align: left; }
+.sign-in-back { background: none; border: 0; color: var(--blue); font-size: .72rem; font-weight: 800; padding: .5rem 0; min-height: 24px; text-align: left; }
 .oauth-icon { width: 18px; height: 18px; display: inline-block; }
 
 /* --------------------------------------------------------------- workspace --- */
@@ -175,7 +179,7 @@ label.field { display: grid; gap: .35rem; font-size: .72rem; font-weight: 700; c
 .capacity-icon svg { width: 22px; height: 22px; }
 .summary-title { margin: 0; font-size: 16px; font-weight: 800; }
 .summary-subtitle { margin: 3px 0 0; color: var(--muted); font-size: 12.5px; }
-.edit-link { margin-left: auto; flex: 0 0 auto; border: 0; padding: 0; color: var(--blue); background: transparent; font-size: 13px; font-weight: 800; }
+.edit-link { margin-left: auto; flex: 0 0 auto; border: 0; padding: .35rem 0; min-height: 24px; color: var(--blue); background: transparent; font-size: 13px; font-weight: 800; }
 .metric { padding: 16px 18px; border-right: 1px solid var(--card-border); }
 .metric:last-child { border-right: 0; }
 .metric-label { color: var(--muted); font-size: 10.5px; font-weight: 800; letter-spacing: .05em; text-transform: uppercase; }

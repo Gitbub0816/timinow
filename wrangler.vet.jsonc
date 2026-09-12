@@ -20,7 +20,7 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "timinow-vet",
   "main": "apps/vet-web/src/index.js",
-  "compatibility_date": "2026-08-20",
+  "compatibility_date": "2026-09-12",
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": true,
   // Custom Domain: Cloudflare manages the record and certificate.

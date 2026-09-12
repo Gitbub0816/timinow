@@ -2529,7 +2529,10 @@ async function loadDiditSdk() {
   if (window.DiditSDK?.DiditSdk) return window.DiditSDK.DiditSdk;
   await new Promise((resolve, reject) => {
     const script = document.createElement("script");
-    script.src = "https://unpkg.com/@didit-protocol/sdk-web/dist/didit-sdk.umd.min.js";
+    // Pinned, not floating: an unpinned unpkg URL serves whatever the
+    // package's latest tag happens to be at fetch time — a supply-chain risk
+    // for a script that runs during identity verification. Bump deliberately.
+    script.src = "https://unpkg.com/@didit-protocol/sdk-web@0.3.1/dist/didit-sdk.umd.min.js";
     script.onload = resolve;
     script.onerror = reject;
     document.head.append(script);

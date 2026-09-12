@@ -33,7 +33,8 @@
     <Color x:Key="NavyColor">#101B3D</Color>
     <Color x:Key="GreenColor">#12845D</Color>
     <Color x:Key="CanvasColor">#F3F5FA</Color>
-    <Color x:Key="MutedColor">#6F7483</Color>
+    <!-- #575D71 - darkened from #6F7483 to clear WCAG 1.4.3's 4.5:1 minimum. -->
+    <Color x:Key="MutedColor">#575D71</Color>
     <Color x:Key="PaperColor">#FFFFFF</Color>
 
     <SolidColorBrush x:Key="Ink" Color="{StaticResource InkColor}"/>

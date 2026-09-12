@@ -179,7 +179,10 @@ const SECURITY_HEADERS = {
   "referrer-policy": "strict-origin-when-cross-origin",
   "x-content-type-options": "nosniff",
   "x-frame-options": "DENY",
-  "permissions-policy": "camera=(), microphone=(), payment=(self), geolocation=(self)"
+  "permissions-policy": "camera=(), microphone=(), payment=(self), geolocation=(self)",
+  // This Worker never serves an HTML page — TwiML and TTS audio only — so a
+  // locked-down default-src is safe with no per-host allowlist to maintain.
+  "content-security-policy": "default-src 'none'; frame-ancestors 'none'"
 };
 
 /** How many times the IVR replays the prompt after silence before it gives up and hangs up. */

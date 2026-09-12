@@ -219,11 +219,60 @@ enum TimiMorph {
     #endif
 }
 
+/// Reads iOS's own "Reduce Motion" accessibility setting (Settings →
+/// Accessibility → Motion) and substitutes a plain crossfade for the flight
+/// transitions above. This is not a stylistic fallback — Reduce Motion exists
+/// specifically for vestibular disorders, where a 820pt full-screen flight on
+/// every navigation is not merely unwanted but can trigger real physical
+/// symptoms (WCAG 2.3.3, Animation from Interactions). A `ViewModifier`
+/// rather than a plain function because it needs `@Environment`, which is
+/// unavailable to the static properties on `TimiMorph`/`TimiScreenChange`
+/// themselves; every existing `.timiMorph(_:)` call site picks this up with
+/// no change, and it stays reactive if the setting changes mid-session.
+private struct TimiMorphModifier: ViewModifier {
+    // Android's TimiMorph.transition is already the plain `.opacity` crossfade
+    // (see the enum above), so there is nothing to reduce there — and reading
+    // `accessibilityReduceMotion` is an unproven Skip surface this module's
+    // own rule (stated on TimiTabBar's `highlightNamespace`, among others)
+    // says not to ship blind. Apple-only, like every other refinement here.
+    #if !os(Android)
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    #endif
+    let index: Int
+    func body(content: Content) -> some View {
+        #if os(Android)
+        content.transition(TimiMorph.transition(index))
+        #else
+        content.transition(reduceMotion ? AnyTransition.opacity.animation(.easeInOut(duration: 0.18)) : TimiMorph.transition(index))
+        #endif
+    }
+}
+
+private struct TimiScreenTransitionModifier: ViewModifier {
+    #if !os(Android)
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    #endif
+    func body(content: Content) -> some View {
+        #if os(Android)
+        content.transition(TimiScreenChange.transition)
+        #else
+        content.transition(reduceMotion ? AnyTransition.opacity.animation(.easeInOut(duration: 0.18)) : TimiScreenChange.transition)
+        #endif
+    }
+}
+
 extension View {
     /// Tag a screen's nth major block for the morph. Indices start at 0 from
     /// the top of the screen; they set the stagger order and the direction.
     func timiMorph(_ index: Int) -> some View {
-        transition(TimiMorph.transition(index))
+        modifier(TimiMorphModifier(index: index))
+    }
+
+    /// The container-level counterpart to `timiMorph`, for the four top-level
+    /// route transitions in `CustomerRootView`. See `TimiMorphModifier` for
+    /// why this reads Reduce Motion instead of the static `TimiScreenChange.transition`.
+    func timiScreenTransition() -> some View {
+        modifier(TimiScreenTransitionModifier())
     }
 }
 
@@ -293,6 +342,7 @@ struct TimiTabBar: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(label)
+        .accessibilityAddTraits(selected ? [.isSelected] : [])
     }
 
     /// The coral pill (fill and ink stroke together, so the border travels
@@ -398,16 +448,38 @@ struct TimiToggleRow: View {
     @Binding var isOn: Bool
 
     var body: some View {
-        HStack(alignment: .center, spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(.headline).foregroundStyle(TimiColor.ink).multilineTextAlignment(.leading)
-                if let subtitle { Text(subtitle).font(.caption).foregroundStyle(TimiColor.muted).multilineTextAlignment(.leading) }
+        Button {
+            withAnimation(.spring(response: 0.28, dampingFraction: 0.8)) { isOn.toggle() }
+        } label: {
+            HStack(alignment: .center, spacing: 12) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title).font(.headline).foregroundStyle(TimiColor.ink).multilineTextAlignment(.leading)
+                    if let subtitle { Text(subtitle).font(.caption).foregroundStyle(TimiColor.muted).multilineTextAlignment(.leading) }
+                }
+                Spacer(minLength: 8)
+                TimiToggle(isOn: $isOn)
+                    // The row itself is the Button now; the switch's own tap
+                    // target and accessibility element would otherwise nest
+                    // inside it and offer a second, redundant activation.
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
             }
-            Spacer(minLength: 8)
-            TimiToggle(isOn: $isOn)
+            .contentShape(Rectangle())
         }
-        .contentShape(Rectangle())
-        .onTapGesture { withAnimation(.spring(response: 0.28, dampingFraction: 0.8)) { isOn.toggle() } }
+        .buttonStyle(.plain)
+        .timiToggleAccessibility(label: subtitle.map { "\(title). \($0)" } ?? title, isOn: isOn)
+    }
+}
+
+extension View {
+    /// Exposes a tap-to-toggle row as one combined element — a real name,
+    /// its on/off value, and the button trait — instead of a bare tap
+    /// gesture, which VoiceOver and Switch Control cannot reliably activate.
+    func timiToggleAccessibility(label: String, isOn: Bool) -> some View {
+        accessibilityElement(children: .combine)
+            .accessibilityLabel(label)
+            .accessibilityValue(isOn ? "On" : "Off")
+            .accessibilityAddTraits(.isButton)
     }
 }
 
@@ -784,7 +856,7 @@ struct StaffingNotice: View {
     var body: some View {
         if let notice, !notice.isEmpty {
             HStack(alignment: .top, spacing: 10) {
-                Image(systemName: "stethoscope").foregroundStyle(TimiColor.ink)
+                Image(systemName: "stethoscope").foregroundStyle(TimiColor.ink).accessibilityHidden(true)
                 Text(notice).font(.caption).fontWeight(.semibold).foregroundStyle(TimiColor.ink)
             }
             .padding(11)
@@ -799,7 +871,7 @@ struct ErrorToast: View {
     var message: String
     var dismiss: () -> Void
     var body: some View {
-        HStack { Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(TimiColor.gold); Text(message).font(.callout).fontWeight(.semibold); Spacer(); Button(action: dismiss) { Image(systemName: "xmark") } }
+        HStack { Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(TimiColor.gold).accessibilityHidden(true); Text(message).font(.callout).fontWeight(.semibold); Spacer(); Button(action: dismiss) { Image(systemName: "xmark") }.accessibilityLabel("Dismiss") }
             .padding().background(TimiColor.ink, in: RoundedRectangle(cornerRadius: 16)).foregroundStyle(.white).padding(.horizontal)
     }
 }

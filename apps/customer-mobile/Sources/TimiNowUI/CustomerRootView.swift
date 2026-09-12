@@ -81,22 +81,22 @@ public struct CustomerRootView: View {
                 // its canvas cover the outgoing tracker's exit flight on the
                 // way back.
                 homeTabs
-                    .transition(TimiScreenChange.transition)
+                    .timiScreenTransition()
                     .zIndex(0)
             case .intake:
                 IntakeFlowView(store: store)
                     .background(TimiColor.canvas.ignoresSafeArea())
-                    .transition(TimiScreenChange.transition)
+                    .timiScreenTransition()
                     .zIndex(1)
             case .searching:
                 OfferSearchView(store: store)
                     .background(TimiColor.canvas.ignoresSafeArea())
-                    .transition(TimiScreenChange.transition)
+                    .timiScreenTransition()
                     .zIndex(2)
             case .tracker:
                 TrackerView(store: store)
                     .background(TimiColor.canvas.ignoresSafeArea())
-                    .transition(TimiScreenChange.transition)
+                    .timiScreenTransition()
                     .zIndex(3)
             }
         }

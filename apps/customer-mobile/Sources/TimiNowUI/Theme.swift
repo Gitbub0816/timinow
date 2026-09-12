@@ -30,7 +30,11 @@ enum TimiColor {
     static let gold = Color(red: 0.969, green: 0.784, blue: 0.294)
     static let goldSoft = Color(red: 1.0, green: 0.941, blue: 0.725)
     static let canvas = Color(red: 0.965, green: 0.969, blue: 0.984)
-    static let muted = Color(red: 0.435, green: 0.455, blue: 0.514)
+    // #5B6072 — darkened from the original #6F7483 so caption/secondary text
+    // clears WCAG 1.4.3's 4.5:1 minimum against every light surface it sits
+    // on here (paper, canvas, goldSoft, blueSoft, coralSoft, white); the
+    // lighter value measured as low as 3.9:1 on some of them.
+    static let muted = Color(red: 0.357, green: 0.376, blue: 0.447)
 }
 
 struct TimiPrimaryButtonStyle: ButtonStyle {

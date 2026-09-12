@@ -102,11 +102,29 @@ import {
 import { checkAlerts, getAlertThresholds, getMetrics, updateAlertThresholds } from "../../../src/metrics.js";
 
 const JSON_HEADERS = { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" };
+// Kept in step with docs/SUBPROCESSORS.md by scripts/check-subprocessors.mjs
+// — see the identical comment in src/index.js (the customer Worker).
+const CONTENT_SECURITY_POLICY = [
+  "default-src 'self'",
+  "script-src 'self' https://cdn.jsdelivr.net https://api.mapbox.com",
+  "style-src 'self' 'unsafe-inline' https://api.mapbox.com",
+  "img-src 'self' data: blob: https://api.mapbox.com https://*.tiles.mapbox.com",
+  "font-src 'self' data:",
+  "connect-src 'self' https://clerk.timinow.pet https://api.stripe.com https://api.mapbox.com https://events.mapbox.com",
+  "frame-src https://connect.stripe.com https://js.stripe.com",
+  "worker-src 'self' blob:",
+  "object-src 'none'",
+  "base-uri 'self'",
+  "form-action 'self'",
+  "frame-ancestors 'none'"
+].join("; ");
+
 const SECURITY_HEADERS = {
   "referrer-policy": "strict-origin-when-cross-origin",
   "x-content-type-options": "nosniff",
   "x-frame-options": "DENY",
-  "permissions-policy": "camera=(), microphone=(), payment=(self), geolocation=(self)"
+  "permissions-policy": "camera=(), microphone=(), payment=(self), geolocation=(self)",
+  "content-security-policy": CONTENT_SECURITY_POLICY
 };
 
 const VALID_SPECIES = new Set(["dog", "cat", "bird", "rabbit", "reptile", "small_mammal", "other"]);

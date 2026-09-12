@@ -365,12 +365,12 @@ function renderSignIn() {
   disabled.hidden = true;
   mount.hidden = false;
   if (!state.clerk) {
-    mount.innerHTML = `<p class="sign-in-error">Clerk is not configured on this deployment. Set CLERK_PUBLISHABLE_KEY, CLERK_JS_URL, and (as a Worker secret) CLERK_SECRET_KEY.</p>`;
+    mount.innerHTML = `<p class="sign-in-error" role="alert">Clerk is not configured on this deployment. Set CLERK_PUBLISHABLE_KEY, CLERK_JS_URL, and (as a Worker secret) CLERK_SECRET_KEY.</p>`;
     return;
   }
 
   const { stage, error, busy } = state.signIn;
-  const errorHtml = error ? `<p class="sign-in-error">${escapeHtml(error)}</p>` : "";
+  const errorHtml = error ? `<p class="sign-in-error" role="alert">${escapeHtml(error)}</p>` : "";
 
   if (stage === "identifier") {
     mount.innerHTML = `
@@ -472,7 +472,7 @@ function renderWorkstationEntry() {
       <label class="field">Workstation code
         <input name="token" autocomplete="off" required placeholder="Paste the enrollment code">
       </label>
-      <p class="sign-in-error" data-workstation-error hidden></p>
+      <p class="sign-in-error" data-workstation-error hidden role="alert"></p>
       <button class="button button-primary button-block" type="submit">Start this workstation</button>
     </form>
     <p class="sign-in-note" style="margin-top:.8rem">A workspace administrator creates workstation codes under People → Workstations.</p>`;
@@ -607,7 +607,9 @@ async function renderRoute() {
   }
   $$("[data-screen]").forEach((screen) => screen.classList.toggle("is-active", screen.dataset.screen === route));
   $$("[data-nav]").forEach((link) => {
-    link.classList.toggle("active", link.dataset.nav === route);
+    const active = link.dataset.nav === route;
+    link.classList.toggle("active", active);
+    if (active) link.setAttribute("aria-current", "page"); else link.removeAttribute("aria-current");
     // Hidden, not merely disabled: a workstation session has no path to
     // succeed on any of these server-side, so offering the link at all is
     // the bug (see WORKSTATION_ALLOWED_ROUTES above).
@@ -844,15 +846,20 @@ function renderLiveSummary(availability) {
   $("[data-summary-subtitle]").textContent = [spots, wait, critical].filter(Boolean).join(" · ");
 }
 
+let capacityModalTrigger = null;
 function openCapacityModal() {
   const modal = $("[data-capacity-modal]");
   if (!modal) return;
+  capacityModalTrigger = document.activeElement;
   modal.hidden = false;
+  (modal.querySelector("select, input, textarea, button") || modal)?.focus();
 }
 
 function closeCapacityModal() {
   const modal = $("[data-capacity-modal]");
   if (modal) modal.hidden = true;
+  capacityModalTrigger?.focus();
+  capacityModalTrigger = null;
 }
 
 /**
@@ -1710,7 +1717,7 @@ function renderBilling() {
 
   $("[data-billing-invoice-count]").textContent = invoices.length ? `${invoices.length} statement${invoices.length === 1 ? "" : "s"}` : "None yet";
   $("[data-billing-invoices]").innerHTML = invoices.length
-    ? `<table class="billing-table"><thead><tr><th>Period</th><th>Connections</th><th>Total</th><th>Status</th><th>Paid</th></tr></thead><tbody>${invoices.map((invoice) => `
+    ? `<table class="billing-table"><thead><tr><th scope="col">Period</th><th scope="col">Connections</th><th scope="col">Total</th><th scope="col">Status</th><th scope="col">Paid</th></tr></thead><tbody>${invoices.map((invoice) => `
         <tr><td>${escapeHtml(billingDate(invoice.periodStart))} – ${escapeHtml(billingDate(invoice.periodEnd))}</td>
         <td>${invoice.lineCount}</td>
         <td>${escapeHtml(formatMoney(invoice.totalCents))}</td>
@@ -1720,7 +1727,7 @@ function renderBilling() {
 
   $("[data-billing-receivable-count]").textContent = completed ? `${completed} completed` : "None yet";
   $("[data-billing-receivables]").innerHTML = completed
-    ? `<table class="billing-table"><thead><tr><th>Completed</th><th>Booking</th><th>Fee</th><th>Basis</th><th>Status</th><th>Statement</th></tr></thead><tbody>${receivables.map((row) => `
+    ? `<table class="billing-table"><thead><tr><th scope="col">Completed</th><th scope="col">Booking</th><th scope="col">Fee</th><th scope="col">Basis</th><th scope="col">Status</th><th scope="col">Statement</th></tr></thead><tbody>${receivables.map((row) => `
         <tr><td>${escapeHtml(billingDate(row.completedAt))}</td>
         <td class="billing-id">${escapeHtml(row.intakeId)}</td>
         <td>${escapeHtml(formatMoney(row.amountCents))}</td>
@@ -1756,7 +1763,7 @@ async function enterPayouts() {
 
 function payoutsRowsTable(rows, columns) {
   if (!rows.length) return null;
-  return `<table class="billing-table"><thead><tr>${columns.map((column) => `<th>${escapeHtml(column.label)}</th>`).join("")}</tr></thead><tbody>${rows.map((row) => `
+  return `<table class="billing-table"><thead><tr>${columns.map((column) => `<th scope="col">${escapeHtml(column.label)}</th>`).join("")}</tr></thead><tbody>${rows.map((row) => `
     <tr>${columns.map((column) => `<td${column.mono ? ' class="billing-id"' : ""}>${column.render(row)}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
 }
 
@@ -1845,7 +1852,7 @@ function renderWorkstations() {
       <button class="button button-primary" type="button" data-add-workstation-submit>Create workstation</button>
     </div>
     <table class="people-table">
-      <thead><tr><th>Name</th><th>Status</th><th>Created</th><th></th></tr></thead>
+      <thead><tr><th scope="col">Name</th><th scope="col">Status</th><th scope="col">Created</th><th scope="col"></th></tr></thead>
       <tbody>${list.map((workstation) => `
         <tr data-workstation="${escapeHtml(workstation.id)}">
           <td>${escapeHtml(workstation.name)}</td>
@@ -1907,7 +1914,7 @@ function renderPeople() {
       <button class="button button-primary" type="button" data-add-submit>Add person</button>
     </div>` : ""}
     <table class="people-table">
-      <thead><tr><th>Name</th><th>Email</th><th>Role</th><th></th></tr></thead>
+      <thead><tr><th scope="col">Name</th><th scope="col">Email</th><th scope="col">Role</th><th scope="col"></th></tr></thead>
       <tbody>${members.map((member) => `
         <tr data-member="${escapeHtml(member.clerkUserId)}">
           <td>${escapeHtml(member.name)}${member.isSelf ? " (you)" : ""}</td>
@@ -1923,7 +1930,7 @@ function renderPeople() {
     ${invitations.length ? `
     <div class="section-heading"><h2>Pending invitations</h2></div>
     <table class="people-table">
-      <thead><tr><th>Email</th><th>Role</th><th>Sent</th><th></th></tr></thead>
+      <thead><tr><th scope="col">Email</th><th scope="col">Role</th><th scope="col">Sent</th><th scope="col"></th></tr></thead>
       <tbody>${invitations.map((invite) => `
         <tr data-invitation="${escapeHtml(invite.id)}">
           <td>${escapeHtml(invite.email)}</td>
@@ -2098,7 +2105,7 @@ function renderOverflow() {
           <button class="button button-quiet" type="button" data-widget-secret-dismiss style="margin-left:.5rem">I've saved it</button>
         </div>` : ""}
       <table class="people-table">
-        <thead><tr><th>Label</th><th>Token</th><th>Sites</th><th>Last used</th><th></th></tr></thead>
+        <thead><tr><th scope="col">Label</th><th scope="col">Token</th><th scope="col">Sites</th><th scope="col">Last used</th><th scope="col"></th></tr></thead>
         <tbody>${state.overflow.widgetTokens.map((token) => `
           <tr data-widget-token="${escapeHtml(token.id)}">
             <td>${escapeHtml(token.label || "—")}</td>
@@ -2281,7 +2288,7 @@ function renderStudio() {
           <p class="studio-label">Design</p>
           <div class="studio-designs">
             ${STUDIO_DESIGNS.map((design) => `
-              <button type="button" class="studio-design ${s.config.design === design.key ? "is-active" : ""}" data-studio-design="${design.key}">
+              <button type="button" class="studio-design ${s.config.design === design.key ? "is-active" : ""}" aria-pressed="${s.config.design === design.key}" data-studio-design="${design.key}">
                 <strong>${escapeHtml(design.label)}</strong>
                 <span>${escapeHtml(design.hint)}</span>
               </button>`).join("")}
@@ -2289,20 +2296,20 @@ function renderStudio() {
           <p class="studio-label" style="margin-top:1rem">Color variant</p>
           <div class="studio-swatches">
             ${STUDIO_VARIANTS.map((variant) => `
-              <button type="button" class="studio-swatch ${s.config.variant === variant.key ? "is-active" : ""}" data-studio-variant="${variant.key}" title="${escapeHtml(variant.label)}">
+              <button type="button" class="studio-swatch ${s.config.variant === variant.key ? "is-active" : ""}" aria-pressed="${s.config.variant === variant.key}" data-studio-variant="${variant.key}" title="${escapeHtml(variant.label)}">
                 <i style="background:${variant.swatch}"></i>${escapeHtml(variant.label)}
               </button>`).join("")}
           </div>
           <p class="studio-label" style="margin-top:1rem">Width</p>
           <div class="studio-swatches">
             ${["compact", "standard", "full"].map((size) => `
-              <button type="button" class="studio-swatch ${s.config.size === size ? "is-active" : ""}" data-studio-size="${size}">${size}</button>`).join("")}
+              <button type="button" class="studio-swatch ${s.config.size === size ? "is-active" : ""}" aria-pressed="${s.config.size === size}" data-studio-size="${size}">${size}</button>`).join("")}
           </div>
           ${STUDIO_OPTION_ROWS.map((row) => `
             <p class="studio-label" style="margin-top:1rem">${escapeHtml(row.label)}</p>
             <div class="studio-swatches">
               ${row.values.map((value) => `
-                <button type="button" class="studio-swatch ${s.config.options[row.key] === value ? "is-active" : ""}" data-studio-option="${row.key}" data-studio-option-value="${value}">
+                <button type="button" class="studio-swatch ${s.config.options[row.key] === value ? "is-active" : ""}" aria-pressed="${s.config.options[row.key] === value}" data-studio-option="${row.key}" data-studio-option-value="${value}">
                   ${row.key === "accent" ? `<i style="background:${STUDIO_ACCENT_SWATCH[value]}"></i>` : ""}${value}
                 </button>`).join("")}
             </div>`).join("")}
@@ -2323,7 +2330,7 @@ function renderStudio() {
         <div>
           <p class="studio-label">Live preview</p>
           <div class="studio-statechips">
-            ${STUDIO_STATES.map((preview) => `<button type="button" class="studio-swatch ${s.previewState === preview ? "is-active" : ""}" data-studio-state="${preview}">${preview}</button>`).join("")}
+            ${STUDIO_STATES.map((preview) => `<button type="button" class="studio-swatch ${s.previewState === preview ? "is-active" : ""}" aria-pressed="${s.previewState === preview}" data-studio-state="${preview}">${preview}</button>`).join("")}
           </div>
           <div class="studio-preview" data-studio-preview><p class="workspace-empty">Loading preview…</p></div>
           ${canManage ? `
@@ -2341,7 +2348,7 @@ function renderStudio() {
       <p class="eyebrow">2 · YOUR PACKAGES</p>
       <h2 style="font-family:var(--serif);font-size:1.4rem;margin:.2rem 0 .6rem">Saved designs</h2>
       <table class="people-table">
-        <thead><tr><th>Name</th><th>Design</th><th>Package id</th><th></th></tr></thead>
+        <thead><tr><th scope="col">Name</th><th scope="col">Design</th><th scope="col">Package id</th><th scope="col"></th></tr></thead>
         <tbody>${s.packages.map((pkg) => `
           <tr class="${pkg.id === s.selectedPackageId ? "is-selected-row" : ""}">
             <td>${escapeHtml(pkg.name)}</td>
@@ -2371,7 +2378,7 @@ function renderStudio() {
         : `<p style="font-size:.78rem;color:var(--muted);margin:0 0 .6rem">Snippets show <code>YOUR_WIDGET_TOKEN</code> — ${canManage ? "create a token here (or in Overflow tools) and it fills in automatically:" : "ask a workspace administrator for a token."}</p>
            ${canManage ? `<button class="button" type="button" data-studio-token-create style="margin-bottom:.8rem">Create a widget token</button>` : ""}`}
       <div class="studio-statechips" style="margin-bottom:.6rem">
-        ${frameworks.map(([key, label]) => `<button type="button" class="studio-swatch ${s.snippetFramework === key ? "is-active" : ""}" data-studio-framework="${key}">${label}</button>`).join("")}
+        ${frameworks.map(([key, label]) => `<button type="button" class="studio-swatch ${s.snippetFramework === key ? "is-active" : ""}" aria-pressed="${s.snippetFramework === key}" data-studio-framework="${key}">${label}</button>`).join("")}
       </div>
       <pre class="studio-snippet">${escapeHtml(snippets[s.snippetFramework])}</pre>
       <button class="button button-quiet" type="button" data-copy="${escapeHtml(snippets[s.snippetFramework])}" data-copy-label="Embed code">Copy ${escapeHtml(frameworks.find(([key]) => key === s.snippetFramework)?.[1] || "")} code</button>

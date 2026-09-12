@@ -573,6 +573,7 @@ public struct ConsoleView: View {
                     Image(systemName: "xmark.circle.fill").foregroundStyle(TimiVetColor.muted)
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("Close")
             }
             VStack(alignment: .leading, spacing: 8) {
                 Text("Intake status").font(TimiVetFont.ui(13, weight: .semibold))

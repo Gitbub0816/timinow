@@ -106,7 +106,7 @@ assert(result.response.status === 200 && result.body.locations.length === 5, "D1
 // so this test can never disagree with the Worker, and against the literal
 // dollar figures, because the numbers themselves are the commercial contract.
 result = await call("/api/config");
-assert(result.response.status === 200 && result.body.legalVersion === LEGAL_VERSION && result.body.legalVersion === "2026-08-29", "/api/config must serve legal version 2026-08-29, the one the Worker validates intakes against");
+assert(result.response.status === 200 && result.body.legalVersion === LEGAL_VERSION && result.body.legalVersion === "2026-09-12", "/api/config must serve legal version 2026-09-12, the one the Worker validates intakes against");
 assert(result.body.fees?.ownerFeeCents === 1500, "/api/config must disclose the $15 owner fee");
 assert(result.body.fees?.clinicFeeCents === 2500, "/api/config must disclose the $25 clinic fee");
 assert(result.body.fees?.timiMatchCents === 1000, "/api/config must disclose Tími's $10 match");

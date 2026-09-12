@@ -32,6 +32,26 @@ function apiError(status, code, message) {
   return json({ error: { code, message } }, { status });
 }
 
+// `/api/widget/:token/status` is the one route in this file a browser calls
+// from a page this platform does not control — every clinic's own public
+// site. Without an Access-Control-Allow-Origin header here, the fetch in
+// public/widget.js (credentials: "omit") is same-origin-only by default and
+// silently fails on every third-party embed. `*` is safe specifically
+// because this response is built from an explicit public whitelist that
+// never carries clinic, customer, or financial data (see the module comment
+// above) — origin gating against the token's allowed_origins_json already
+// happens before this ever gets attached, so this is not this endpoint's
+// access-control boundary, just what lets an allowed browser read the reply.
+const WIDGET_STATUS_CORS = { "access-control-allow-origin": "*" };
+
+function widgetStatusJson(data, init = {}) {
+  return json(data, { ...init, headers: { ...WIDGET_STATUS_CORS, ...(init.headers || {}) } });
+}
+
+function widgetStatusError(status, code, message) {
+  return widgetStatusJson({ error: { code, message } }, { status });
+}
+
 function newId(prefix) {
   return `${prefix}_${crypto.randomUUID().replaceAll("-", "")}`;
 }
@@ -432,13 +452,13 @@ function buildStatusPayload({ availability }, link, { coverage = null, donateLin
 
 export async function handlePublicWidgetStatus(request, env, rawToken) {
   const token = typeof rawToken === "string" ? rawToken.trim() : "";
-  if (!token || token.length > 200) return apiError(404, "WIDGET_NOT_FOUND", "This widget link is no longer active.");
+  if (!token || token.length > 200) return widgetStatusError(404, "WIDGET_NOT_FOUND", "This widget link is no longer active.");
 
   if (rateLimited(token)) {
     await recordWidgetAudit(env, null, null, "rate_limited", { tokenPrefix: token.slice(0, 12) });
-    return apiError(429, "RATE_LIMITED", "Too many requests. Try again shortly.");
+    return widgetStatusError(429, "RATE_LIMITED", "Too many requests. Try again shortly.");
   }
-  if (!hasDatabase(env)) return apiError(503, "DATABASE_REQUIRED", "The widget service is not available on this deployment.");
+  if (!hasDatabase(env)) return widgetStatusError(503, "DATABASE_REQUIRED", "The widget service is not available on this deployment.");
 
   const hash = await sha256Hex(token);
   const row = await env.DB.prepare(`
@@ -446,7 +466,7 @@ export async function handlePublicWidgetStatus(request, env, rawToken) {
   `).bind(hash).first();
   // Unknown and revoked tokens answer identically — nothing here should let
   // a caller distinguish "never existed" from "was revoked".
-  if (!row) return apiError(404, "WIDGET_NOT_FOUND", "This widget link is no longer active.");
+  if (!row) return widgetStatusError(404, "WIDGET_NOT_FOUND", "This widget link is no longer active.");
 
   const allowedOrigins = parseJsonArray(row.allowed_origins_json);
   if (allowedOrigins.length && !originAllowed(request, allowedOrigins)) {
@@ -454,7 +474,7 @@ export async function handlePublicWidgetStatus(request, env, rawToken) {
       origin: cleanString(request.headers.get("origin"), 200) || null,
       referer: cleanString(request.headers.get("referer"), 200) || null
     });
-    return apiError(403, "ORIGIN_NOT_ALLOWED", "This widget is not configured for this site.");
+    return widgetStatusError(403, "ORIGIN_NOT_ALLOWED", "This widget is not configured for this site.");
   }
 
   const url = new URL(request.url);
@@ -466,7 +486,7 @@ export async function handlePublicWidgetStatus(request, env, rawToken) {
   const claimedClient = cleanString(url.searchParams.get("client"), 80);
   if (claimedClient && claimedClient !== row.tenant_id) {
     await recordWidgetAudit(env, row.tenant_id, row.id, "client_mismatch", { claimed: claimedClient });
-    return apiError(404, "WIDGET_NOT_FOUND", "This widget link is no longer active.");
+    return widgetStatusError(404, "WIDGET_NOT_FOUND", "This widget link is no longer active.");
   }
 
   // ?package= selects a Studio design. Only this tenant's own active
@@ -514,5 +534,5 @@ export async function handlePublicWidgetStatus(request, env, rawToken) {
     console.warn(JSON.stringify({ event: "widget_last_used_stamp_failed", message: error.message }));
   });
 
-  return json(buildStatusPayload(location || {}, link, { coverage, donateLink, poweredByLink, packageConfig }));
+  return widgetStatusJson(buildStatusPayload(location || {}, link, { coverage, donateLink, poweredByLink, packageConfig }));
 }

@@ -21,7 +21,7 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "timinow-voice",
   "main": "apps/voice-gateway/src/index.js",
-  "compatibility_date": "2026-08-20",
+  "compatibility_date": "2026-09-12",
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": true,
   // Custom Domain. Twilio must reach this hostname, and VOICE_PUBLIC_URL below

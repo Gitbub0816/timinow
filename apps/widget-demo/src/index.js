@@ -44,10 +44,29 @@ const STATE_FRESHNESS = {
 };
 
 const HTML_HEADERS = { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" };
+// Kept in step with docs/SUBPROCESSORS.md by scripts/check-subprocessors.mjs
+// — see the identical comment in src/index.js (the customer Worker). This
+// gallery only ever loads the customer Worker's own widget.js.
+const CONTENT_SECURITY_POLICY = [
+  "default-src 'self'",
+  "script-src 'self' https://timinow.pet",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data:",
+  "font-src 'self' data:",
+  "connect-src 'self' https://timinow.pet",
+  "object-src 'none'",
+  "base-uri 'self'",
+  "form-action 'self'",
+  "frame-ancestors 'none'"
+].join("; ");
+
 const SECURITY_HEADERS = {
   "referrer-policy": "strict-origin-when-cross-origin",
   "x-content-type-options": "nosniff",
-  "x-robots-tag": "noindex"
+  "x-robots-tag": "noindex",
+  "x-frame-options": "DENY",
+  "permissions-policy": "camera=(), microphone=(), payment=(), geolocation=()",
+  "content-security-policy": CONTENT_SECURITY_POLICY
 };
 
 function customerOrigin(env) {
@@ -133,7 +152,7 @@ function demoStatus(token, url, env) {
 /* -------------------------------------------------------------- gallery --- */
 
 const PAGE_CSS = `
-  :root { --ink:#111B3B; --paper:#FFFAF0; --muted:#6F7483; --blue:#2357D9; --coral:#F25F4C; --gold:#F7C84B; --line:#D9D8D2; }
+  :root { --ink:#111B3B; --paper:#FFFAF0; --muted:#5B6072; --blue:#2357D9; --coral:#F25F4C; --gold:#F7C84B; --line:#D9D8D2; }
   * { box-sizing: border-box; }
   body { margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,sans-serif; color:var(--ink); background:#f3f1ea; line-height:1.5; }
   .demo-banner { background:var(--ink); color:var(--paper); font-size:13px; padding:8px 16px; text-align:center; }
@@ -233,14 +252,15 @@ function galleryPage(env, url) {
       <p>Every design carries your live intake status, links pet owners into Tími, and wears a clickable "Powered by Tími" credit. Clinics build the exact one they want — design, color, width, elements — in the provider portal's Widget Studio, which generates the embed code.</p>
     </header>
 
+    <h2>Every design, live</h2>
     <div class="toolbar">
-      <div class="row"><span class="k">State</span>${STATES.map((candidate) => `<a class="chip ${candidate === state ? "is-on" : ""}" href="${qs({ state: candidate })}">${candidate}</a>`).join("")}</div>
-      <div class="row"><span class="k">Variant</span>${VARIANTS.map((candidate) => `<a class="chip ${candidate === variant ? "is-on" : ""}" href="${qs({ variant: candidate })}"><i style="background:${VARIANT_SWATCH[candidate]}"></i>${candidate}</a>`).join("")}</div>
-      <div class="row"><span class="k">Accent</span>${ACCENTS.map((candidate) => `<a class="chip ${candidate === accent ? "is-on" : ""}" href="${qs({ accent: candidate })}"><i style="background:${{ blue: "#2357D9", coral: "#F25F4C", gold: "#F7C84B", green: "#12845D" }[candidate]}"></i>${candidate}</a>`).join("")}</div>
-      <div class="row"><span class="k">Frame</span>${FRAMES.map((candidate) => `<a class="chip ${candidate === frame ? "is-on" : ""}" href="${qs({ frame: candidate })}">${candidate}</a>`).join("")}</div>
+      <div class="row"><span class="k">State</span>${STATES.map((candidate) => `<a class="chip ${candidate === state ? "is-on" : ""}" href="${qs({ state: candidate })}"${candidate === state ? ' aria-current="true"' : ""}>${candidate}</a>`).join("")}</div>
+      <div class="row"><span class="k">Variant</span>${VARIANTS.map((candidate) => `<a class="chip ${candidate === variant ? "is-on" : ""}" href="${qs({ variant: candidate })}"${candidate === variant ? ' aria-current="true"' : ""}><i style="background:${VARIANT_SWATCH[candidate]}"></i>${candidate}</a>`).join("")}</div>
+      <div class="row"><span class="k">Accent</span>${ACCENTS.map((candidate) => `<a class="chip ${candidate === accent ? "is-on" : ""}" href="${qs({ accent: candidate })}"${candidate === accent ? ' aria-current="true"' : ""}><i style="background:${{ blue: "#2357D9", coral: "#F25F4C", gold: "#F7C84B", green: "#12845D" }[candidate]}"></i>${candidate}</a>`).join("")}</div>
+      <div class="row"><span class="k">Frame</span>${FRAMES.map((candidate) => `<a class="chip ${candidate === frame ? "is-on" : ""}" href="${qs({ frame: candidate })}"${candidate === frame ? ' aria-current="true"' : ""}>${candidate}</a>`).join("")}</div>
       <div class="row"><span class="k">Elements</span>
-        <a class="chip ${rich ? "" : "is-on"}" href="${qs({ elements: null })}">Pure status</a>
-        <a class="chip ${rich ? "is-on" : ""}" href="${qs({ elements: "rich" })}">+ coverage, donate, reserve</a>
+        <a class="chip ${rich ? "" : "is-on"}" href="${qs({ elements: null })}"${rich ? "" : ' aria-current="true"'}>Pure status</a>
+        <a class="chip ${rich ? "is-on" : ""}" href="${qs({ elements: "rich" })}"${rich ? ' aria-current="true"' : ""}>+ coverage, donate, reserve</a>
       </div>
     </div>
 
@@ -304,7 +324,7 @@ function clinicPage(env, url) {
   <div class="demo-banner">A <strong>fictional clinic website</strong> showing the widget in situ. Back to <a href="/">the design gallery</a>.</div>
   <header class="site">
     <h1 class="clinic-name">Hearthside Animal Hospital <small>Fictional practice · demo only</small></h1>
-    <nav class="fake" aria-hidden="true"><a href="#">Services</a><a href="#">Our team</a><a href="#">Contact</a></nav>
+    <nav class="fake" aria-hidden="true"><a href="#" tabindex="-1">Services</a><a href="#" tabindex="-1">Our team</a><a href="#" tabindex="-1">Contact</a></nav>
   </header>
   <div class="hero2"><div class="shell">
     <h2>Caring for your pets, seven days a week.</h2>

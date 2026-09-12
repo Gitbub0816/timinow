@@ -76,7 +76,8 @@
                 </Border>
                 <Button Content="✕" Style="{StaticResource HeaderGlyphButton}" Margin="10,0,0,0"
                         Visibility="{Binding IsMouseOver, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource B2V}}"
-                        Click="Hide_Click" ToolTip="Hide — alerts keep running in the tray"/>
+                        Click="Hide_Click" ToolTip="Hide — alerts keep running in the tray"
+                        AutomationProperties.Name="Hide — alerts keep running in the tray"/>
             </StackPanel>
         </Border>
 
@@ -97,7 +98,8 @@
                         </StackPanel>
                         <Button Content="✕" Style="{StaticResource HeaderGlyphButton}" HorizontalAlignment="Right"
                                 Visibility="{Binding IsMouseOver, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource B2V}}"
-                                Click="Hide_Click" ToolTip="Hide — alerts keep running in the tray"/>
+                                Click="Hide_Click" ToolTip="Hide — alerts keep running in the tray"
+                                AutomationProperties.Name="Hide — alerts keep running in the tray"/>
                     </Grid>
                 </Border>
 

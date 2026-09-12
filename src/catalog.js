@@ -213,7 +213,7 @@ export const TECHNICIAN_NOTICE =
  * represented as tax deductible. Prices are versioned rows now — see
  * src/pricing.js and `fees` on /api/config.
  */
-export const LEGAL_VERSION = "2026-08-29";
+export const LEGAL_VERSION = "2026-09-12";
 export const VALID_INTAKE_STATUS = new Set(["available", "limited", "confirm_first", "critical_only", "diverting", "closed", "unverified"]);
 
 /**

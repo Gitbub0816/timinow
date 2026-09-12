@@ -41,7 +41,8 @@ enum TimiVetColor {
     static let goldSoft = hex(0xFFF0B9)
     static let canvas = hex(0xF3F5FB)
     static let line = hex(0xD7DCE7)
-    static let muted = hex(0x6D7487)
+    // #575D71 — darkened from #6D7487 to clear WCAG 1.4.3's 4.5:1 minimum.
+    static let muted = hex(0x575D71)
     static let danger = hex(0xBD3E31)
     /// The mockup's `--green`/`--green-soft` — status pills ("Active",
     /// "Published", "On the way") and the connection dot.

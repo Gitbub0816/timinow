@@ -79,7 +79,7 @@
     unavailable: {
       label: "Status unavailable",
       short: "Status unavailable",
-      word: "—",
+      word: "Unavailable",
       poster: "Checking our status…",
       friendly: "We can’t show a live status right now.",
       cta: "Check availability"
@@ -114,7 +114,7 @@
     ".timi-w{font-family:", SANS, ";box-sizing:border-box;line-height:1.45;color:var(--tw-fg);display:block;text-align:left;",
     "--tw-radius:14px;--tw-framew:2px;--tw-framec:var(--tw-fg);--tw-shadow:4px 4px 0 var(--tw-framec)}",
     ".timi-w *{box-sizing:border-box;margin:0;padding:0}",
-    ".timi-w--cream{--tw-bg:#FFFAF0;--tw-fg:#111B3B;--tw-muted:#6F7483;--tw-line:#D9D8D2;--tw-accent:#2357D9;--tw-btn:#2357D9;--tw-btnfg:#FFFAF0;--tw-soft:#F3F5FA}",
+    ".timi-w--cream{--tw-bg:#FFFAF0;--tw-fg:#111B3B;--tw-muted:#5B6072;--tw-line:#D9D8D2;--tw-accent:#2357D9;--tw-btn:#2357D9;--tw-btnfg:#FFFAF0;--tw-soft:#F3F5FA}",
     ".timi-w--ink{--tw-bg:#111B3B;--tw-fg:#FFFAF0;--tw-muted:rgba(255,250,240,.66);--tw-line:rgba(255,250,240,.22);--tw-accent:#F7C84B;--tw-btn:#F25F4C;--tw-btnfg:#FFFAF0;--tw-soft:#1A2750}",
     ".timi-w--blue{--tw-bg:#E5ECFF;--tw-fg:#111B3B;--tw-muted:#3F4862;--tw-line:#B9C6EE;--tw-accent:#173C9A;--tw-btn:#2357D9;--tw-btnfg:#FFFAF0;--tw-soft:#F4F7FF}",
     ".timi-w--coral{--tw-bg:#FFE5DF;--tw-fg:#111B3B;--tw-muted:#7A4A42;--tw-line:#F0BDB2;--tw-accent:#BD3E31;--tw-btn:#F25F4C;--tw-btnfg:#FFFAF0;--tw-soft:#FFF4F1}",
@@ -176,6 +176,7 @@
     ".timi-wd--ticker .timi-w-fresh{margin-left:2px}",
     ".timi-wd--ticker .timi-w-powered{margin-left:auto;padding-left:10px}",
     ".timi-wd--ticker .timi-w-dot--live{animation:timi-w-pulse 2.2s infinite}",
+    "@media (prefers-reduced-motion: reduce){.timi-wd--ticker .timi-w-dot--live{animation:none}}",
 
     // 6 · stack — a stat tile.
     ".timi-wd--stack{background:var(--tw-bg);border:var(--tw-framew) solid var(--tw-framec);border-radius:var(--tw-radius);box-shadow:var(--tw-shadow);padding:17px;text-align:center}",
@@ -282,6 +283,19 @@
     return a;
   }
 
+  /**
+   * Same credit, as a plain span rather than an anchor — for the two designs
+   * (badge, ticker) whose own root element is already an `<a>`. A nested
+   * `<a>` inside an `<a>` is invalid HTML and drops the inner link's click
+   * target in most browsers, so those two use this instead.
+   */
+  function poweredText() {
+    var span = el("span", "timi-w-powered");
+    span.appendChild(document.createTextNode("Powered by "));
+    span.appendChild(el("strong", null, "Tími"));
+    return span;
+  }
+
   function ctaHref(data, fallbackOrigin) {
     return (data && data.link) || fallbackOrigin || "https://timinow.pet";
   }
@@ -327,7 +341,7 @@
       var root = link(ctaHref(data, origin), "timi-w-badgelink timi-wd--badge");
       root.appendChild(dot(status, 9, true));
       root.appendChild(el("span", null, COPY[status].short));
-      root.appendChild(powered(data, origin));
+      root.appendChild(poweredText());
       return root;
     },
 
@@ -405,7 +419,7 @@
       root.appendChild(el("span", null, COPY[status].short));
       var fresh = freshnessNode(data, config, "timi-w-fresh");
       if (fresh) { fresh.textContent = "· " + fresh.textContent; root.appendChild(fresh); }
-      root.appendChild(powered(data, origin));
+      root.appendChild(poweredText());
       return root;
     },
 
@@ -577,6 +591,11 @@
     if (SCALE_ZOOM[options.scale] && SCALE_ZOOM[options.scale] !== "1") shell.style.zoom = SCALE_ZOOM[options.scale];
     var renderer = RENDERERS[config.design] || RENDERERS.card;
     shell.appendChild(renderer(data || {}, config, origin));
+    // The mounted widget re-fetches and re-renders on a timer with no
+    // navigation or user action to cue a screen-reader user that the status
+    // just changed — role="status" makes each re-render announce itself.
+    shell.setAttribute("role", "status");
+    shell.setAttribute("aria-live", "polite");
     container.appendChild(shell);
   }
 

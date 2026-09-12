@@ -18,7 +18,8 @@
   --gold-soft: #fff0b9;
   --canvas: #f3f5fa;
   --line: #d9d8d2;
-  --muted: #6f7483;
+  /* #5B6072 — darkened from #6F7483 to clear WCAG 1.4.3's 4.5:1 minimum. */
+  --muted: #5b6072;
   --danger: #bd3e31;
   --shadow: 7px 7px 0 var(--ink);
   --shadow-sm: 4px 4px 0 var(--ink);
@@ -49,6 +50,7 @@ a { color: inherit; text-decoration: none; }
 h1, h2, h3 { margin: 0 0 .5rem; font-family: var(--serif); letter-spacing: -.03em; }
 p { margin: 0 0 .75rem; line-height: 1.55; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; }
+.skip-link:focus { position: fixed; top: 1rem; left: 1rem; width: auto; height: auto; overflow: visible; clip: auto; z-index: 1000; padding: .6rem 1rem; border-radius: 8px; background: var(--ink); color: white; font-weight: 700; }
 :focus-visible { outline: 3px solid var(--gold); outline-offset: 2px; }
 [hidden] { display: none !important; }
 
@@ -85,7 +87,9 @@ p { margin: 0 0 .75rem; line-height: 1.55; }
 .shell-narrow { width: min(920px, 100%); }
 
 .eyebrow { margin: 0 0 .5rem; font-size: .64rem; font-weight: 900; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); }
-.eyebrow.coral { color: var(--coral); }
+/* --coral-dark, not --coral: the lighter coral measures ~3.2:1 on white,
+   below WCAG 1.4.3's 4.5:1 floor for text this small. */
+.eyebrow.coral { color: var(--coral-dark); }
 h1.page-title { font-size: clamp(1.8rem, 3vw, 2.6rem); }
 .page-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 1.5rem; margin-bottom: 1.75rem; flex-wrap: wrap; }
 .page-lede { max-width: 640px; color: var(--muted); font-size: .82rem; }

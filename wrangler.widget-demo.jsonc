@@ -9,7 +9,7 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "timinow-widget-demo",
   "main": "apps/widget-demo/src/index.js",
-  "compatibility_date": "2026-08-20",
+  "compatibility_date": "2026-09-12",
   "workers_dev": true,
   // Custom Domain: Cloudflare manages the record and certificate, same as
   // every other Worker in this repo.
