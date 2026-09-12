@@ -589,7 +589,7 @@ private struct AnalyticsPayload: Encodable { var events: [TimiAnalyticsEvent] }
 /// `TimiGateway.acceptedLegalVersion`), which is what lets a Worker bump its
 /// terms without stranding every already-installed build.
 public enum TimiLegal {
-    public static let version = "2026-09-12"
+    public static let version = "2026-09-12.1"
 }
 
 

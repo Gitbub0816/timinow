@@ -79,7 +79,7 @@ The backend is deployed; the clients are not distributable yet.
   providers, data sharing) was written to be accurate to the product, but no
   lawyer has read it. Before real money moves at real volume, one should.
 - **Support inboxes**: the app and console link `privacy@`, `billing@`, and
-  `legal@clearkey.solutions`, and the new Settings → Privacy screen promises
+  `legal@timinow.pet`, and the new Settings → Privacy screen promises
   a human answers data requests (California law does require it). Make sure
   those mailboxes exist and someone reads them.
 - **App analytics opt-out** now exists in-app (Settings → Privacy & your

@@ -62,13 +62,13 @@ final class HardshipDecodingTests: XCTestCase {
           "status": "NOT_VERIFIED",
           "title": "We could not verify your hardship",
           "message": "TímiNOW could not independently verify your hardship at this time. This booking will require our standard $20 fee.",
-          "supportEmail": "hardship@clearkey.solutions",
+          "supportEmail": "hardship@timinow.pet",
           "ownerFeeCents": 2000
         }
         """
         let view = try JSONDecoder().decode(HardshipApplicantView.self, from: Data(json.utf8))
         XCTAssertEqual(view.status, "NOT_VERIFIED")
-        XCTAssertEqual(view.supportEmail, "hardship@clearkey.solutions")
+        XCTAssertEqual(view.supportEmail, "hardship@timinow.pet")
         XCTAssertNil(view.expiresAt)
         XCTAssertNil(view.sponsoredVisitLimit)
     }

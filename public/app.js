@@ -544,6 +544,11 @@ async function renderRoute() {
   }
   if (route === "legal") {
     const section = routeQuery().get("section") || "terms";
+    $$(".legal-nav nav a").forEach((link) => {
+      const target = (link.getAttribute("href") || "").split("section=")[1] || "";
+      if (target === section) link.setAttribute("aria-current", "true");
+      else link.removeAttribute("aria-current");
+    });
     requestAnimationFrame(() => document.getElementById(section)?.scrollIntoView({ block: "start" }));
   }
   if (route === "find") {
@@ -1852,7 +1857,7 @@ function renderBookingReceipt(intake, location) {
     depositCents ? `<div><dt>Clinic deposit</dt><dd>${formatMoneyExact(depositCents)} <small>charged by ${escapeHtml(location.name || "the clinic")}${intake.paymentStatus === "paid" ? " · paid" : ""}</small></dd></div>` : "",
     `<div class="order-total"><dt>Charged by Tími NOW</dt><dd>${formatMoneyExact(feeCents + contributionCents)}</dd></div>`
   ].filter(Boolean).join("");
-  $("[data-booking-receipt-note]").innerHTML = `${escapeHtml(location.name || "The clinic")} bills its own deposit and all veterinary charges${sponsored ? ", which remain your responsibility" : ""}. ${contributionCents ? "This contribution is not represented by TímiNOW as tax deductible. " : ""}Questions about a charge: <a href="mailto:billing@clearkey.solutions">billing@clearkey.solutions</a>.`;
+  $("[data-booking-receipt-note]").innerHTML = `${escapeHtml(location.name || "The clinic")} bills its own deposit and all veterinary charges${sponsored ? ", which remain your responsibility" : ""}. ${contributionCents ? "This contribution is not represented by TímiNOW as tax deductible. " : ""}Questions about a charge: <a href="mailto:billing@timinow.pet">billing@timinow.pet</a>.`;
 }
 
 function maybePresentPayment(intake) {

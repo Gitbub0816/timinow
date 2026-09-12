@@ -359,10 +359,10 @@ struct SettingsView: View {
                                        subtitle: "What Tími is, and is not")
                     }.buttonStyle(.plain)
                     Divider()
-                    Link(destination: URL(string: "mailto:billing@clearkey.solutions")!) {
+                    Link(destination: URL(string: "mailto:billing@timinow.pet")!) {
                         settingsNavRow(icon: "envelope.fill", tint: TimiColor.ink, soft: TimiColor.goldSoft,
                                        title: "Billing support",
-                                       subtitle: "billing@clearkey.solutions")
+                                       subtitle: "billing@timinow.pet")
                     }.buttonStyle(.plain)
                 }
 
@@ -689,18 +689,18 @@ struct PrivacySettingsView: View {
                 }
 
                 settingsCard("YOUR REQUESTS") {
-                    Link(destination: URL(string: "mailto:privacy@clearkey.solutions?subject=Data%20export%20request")!) {
+                    Link(destination: URL(string: "mailto:privacy@timinow.pet?subject=Data%20export%20request")!) {
                         settingsNavRow(icon: "square.and.arrow.down.fill", tint: TimiColor.blue, soft: TimiColor.blueSoft,
                                        title: "Request a copy of my data",
                                        subtitle: "Everything Tími holds about you, by email")
                     }.buttonStyle(.plain)
                     Divider()
-                    Link(destination: URL(string: "mailto:privacy@clearkey.solutions?subject=Account%20deletion%20request")!) {
+                    Link(destination: URL(string: "mailto:privacy@timinow.pet?subject=Account%20deletion%20request")!) {
                         settingsNavRow(icon: "trash.fill", tint: TimiColor.coral, soft: TimiColor.coralSoft,
                                        title: "Delete my account and data",
                                        subtitle: "Removes your account, pets, and history")
                     }.buttonStyle(.plain)
-                    Text("Requests go to privacy@clearkey.solutions and are answered by a person, as California law requires.")
+                    Text("Requests go to privacy@timinow.pet and are answered by a person, as California law requires.")
                         .font(.caption).foregroundStyle(TimiColor.muted)
                 }
             }
@@ -794,7 +794,7 @@ struct LegalView: View {
             legalSection("Finding emergency hospitals", "The emergency list is not limited to Tími's participating clinics, because the nearest emergency hospital often is not one. Listings outside the network come from third-party map data, including their names, addresses and phone numbers. Tími has not verified that they exist as listed, are open, are equipped for your animal, or will accept a patient, and no request is sent to them — the list is somewhere to drive, not a booking and not a recommendation. Call before you travel where you can.")
             legalSection("Emergency safety", "Do not wait for Tími if your animal may be in immediate danger. Travel to the nearest appropriate emergency-capable veterinary facility while someone calls ahead. For suspected poisoning, contact a veterinarian or recognized animal poison-control service immediately.")
             legalSection("Analytics", "Tími measures its own app with first-party, cookieless analytics. What is recorded: the event name, the screen it happened on, coarse device and country information, and a daily-rotating anonymous hash. No cookies are set, no advertising identifiers are used, and nothing is sold or shared for advertising. Because the hash rotates every day, these measurements cannot follow you across days.")
-            legalSection("Operator and contact", "Tími NOW is operated by ClearKey Solutions, LLC in Hayward, California. California law governs the service to the extent permitted. Contact legal@clearkey.solutions or privacy@clearkey.solutions for applicable requests.")
+            legalSection("Operator and contact", "Tími NOW is operated by ClearKey Solutions, LLC in Hayward, California. California law governs the service to the extent permitted. Contact legal@timinow.pet or privacy@timinow.pet for applicable requests.")
         }.padding(20).padding(.bottom, 40) }.background(TimiColor.paper).navigationTitle("Legal")
     }
     func legalSection(_ title: String, _ text: String) -> some View { VStack(alignment: .leading, spacing: 8) { Text(title).font(.title3).fontWeight(.black); Text(text).font(.callout).foregroundStyle(TimiColor.muted).lineSpacing(4) } }
