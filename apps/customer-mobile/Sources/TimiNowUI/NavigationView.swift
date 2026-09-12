@@ -154,13 +154,20 @@ struct TurnByTurnNavigationView: View {
         // the credentials and the custom voice configured on it apply to the
         // trip too — see TimiNavigationStack for why there is exactly one.
         TimiBreadcrumb.mark("nav:provider")
+        // `shared` first, then `beginTrip` — in that order, and the order is
+        // the whole point. `beginTrip` retunes the synthesizer the provider
+        // owns, and on the first drive of a launch that synthesizer does not
+        // exist until `shared` builds it, so calling `beginTrip` first was a
+        // silent no-op: the voice kept the placeholder identity it is
+        // constructed with and said "the clinic" and "your pet", in the calm
+        // register, on a drive to a named emergency hospital.
+        let provider = TimiNavigationStack.shared(mapToken: mapboxAccessToken, preferences: preferences)
         TimiNavigationStack.beginTrip(
             clinicName: destination.name,
             petName: petName,
             clinicKind: destination.kind,
             tone: tone
         )
-        let provider = TimiNavigationStack.shared(mapToken: mapboxAccessToken, preferences: preferences)
         do {
             TimiBreadcrumb.mark("nav:calculate_routes")
             let routes = try await provider.routingProvider().calculateRoutes(options: options).value
@@ -232,9 +239,9 @@ struct TimiActiveNavigationView: View {
                         }
                         Spacer(minLength: 0)
                         TimiMapControls(
-                            isOverview: !session.cameraFollowing,
+                            isOverview: !session.cameraIsFollowing,
                             isMuted: session.voiceMuted,
-                            onToggleOverview: { session.toggleOverview() },
+                            onToggleOverview: { session.toggleCamera() },
                             onToggleMute: { session.setMuted(!session.voiceMuted) }
                         )
                     }
@@ -262,6 +269,9 @@ struct TimiActiveNavigationView: View {
             .padding(.horizontal, 12)
             .padding(.top, 6)
             .padding(.bottom, 8)
+            // The chrome lives inside the safe area even though the map does
+            // not: a driving instruction that shares pixels with the system
+            // clock is unreadable exactly when it matters.
         }
     }
 }
@@ -423,7 +433,15 @@ struct NavigationScreen: View {
                     if recordsArrival { Task { await store.record("arrived") } }
                 },
                 onEnd: { finish() }
-            ).ignoresSafeArea()
+            )
+            // Deliberately NOT `.ignoresSafeArea()` here. It reads as "let the
+            // map fill the screen", and it does — but it applies to the whole
+            // navigation view, chrome included, so the instruction banner ran
+            // under the status bar (the clock and battery sat on top of the
+            // street name) and the trip card's distance line was cut off by
+            // the home indicator. The map ignores the safe area on its own,
+            // one level down in TimiActiveNavigationView, which is the only
+            // part that should.
 
             // With the Mapbox build, arrival gets its own card inside the
             // navigation view (TimiArrivalCard); this overlay is the

@@ -73,10 +73,58 @@ forks, keeps, ramps, roundabouts with a rotating exit arm, U-turns, lane
 arrows, and arrival. The geometry stays conventional road-sign geometry;
 the branding is the weight, rounding, and palette around it.
 
+**The driving camera is configured, not defaulted.** `TimiNavigationMapView`
+sets `MobileViewportDataSource.options.followingCameraOptions` explicitly,
+because the SDK's defaults produce a flat, far-off, north-up map:
+
+- `zoomRange` floor goes from `10.5` to `15.5` (the upper bound also sets
+  the zoom guidance opens at, so it is a street-level `17.0`).
+- `defaultPitch` `45°` → `50°`.
+- `pitchNearManeuver.triggerDistanceToManeuver` `180 m` → `70 m`. The SDK
+  ramps pitch linearly to zero across this distance to show a turn from
+  above; at the default the camera is nearly flat for most of a city block
+  before every turn, which is why it looked worst exactly where guidance
+  matters most.
+
+Two camera behaviours are the SDK's, not bugs, and are worth knowing before
+"fixing" them: any pan, pinch, rotate or pitch gesture drops the camera to
+`.idle` (`NavigationMapView+Gestures` wires the recognisers straight to it),
+and `CLLocation.course` is invalid while the vehicle is stationary, so a
+parked phone frames north-up until it moves. The first is why the session
+returns the camera to following ~6 s after a pan instead of leaving the map
+where the driver left it.
+
+**Camera state flows one way.** `TimiNavigationSession` keeps what the driver
+asked for (`cameraMode` plus a `cameraRequest` counter the map view applies
+exactly once) separate from what the SDK reports (`cameraIsFollowing`, which
+only labels the button). An earlier version fed the reported state back in as
+a command, and the two fought: the engine idles the camera on a pan, the view
+read that as intent, and the map stayed flat and north-up for the rest of the
+drive.
+
 **Faster routes are informational**: `CoreConfig.fasterRouteDetectionConfig`
 defaults `fasterRouteApproval` to `.automatically`, so the engine applies a
 faster route itself and the alert banner announces the switch rather than
 offering a fake "Switch" button.
+
+**Safe areas**: the map ignores the safe area, the chrome does not, and the
+distinction is load-bearing. `.ignoresSafeArea()` belongs on
+`TimiNavigationMapView` inside `TimiActiveNavigationView` and nowhere higher
+— applied to the whole navigation view it also lifts the chrome, which puts
+the maneuver banner under the status bar and clips the trip card behind the
+home indicator. `scripts/validate-native.mjs` fails the build if it moves
+back up.
+
+**Audio session ownership**: the drive claims `AVAudioSession` once, in
+`TimiNavigationSession.start`, and releases it once, in
+`TimiNavigationStack.endTrip`. It is deliberately *not* claimed and released
+per spoken line: `MultiplexedSpeechSynthesizer.stopSpeaking()` forwards to
+every synthesizer in the chain, so a per-line `setActive(false)` from the
+Tími voice could deactivate the session under the device voice mid-sentence
+on the fallback path, and re-negotiating the session every maneuver is the
+kind of churn that makes guidance audible on one turn and silent on the next.
+`.playback` is the category (not `.soloAmbient`) so the hardware ringer
+switch does not silence guidance.
 
 **CarPlay seam**: everything below the models is UIKit/SwiftUI-free of
 Mapbox and everything above the models is Mapbox-free of UI, so a future

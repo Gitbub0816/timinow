@@ -95,6 +95,15 @@ enum TimiNavigationStack {
     static func setVoiceMuted(_ muted: Bool) {
         provider?.routeVoiceController.speechSynthesizer.muted = muted
     }
+
+    /// Releases what the drive held: the audio session, and any line still
+    /// playing. The session is claimed for the whole trip rather than per
+    /// utterance (see `TimiNaturalSpeechSynthesizer`), so something has to
+    /// give it back, and the end of guidance is that something.
+    static func endTrip() {
+        synthesizer?.stopSpeaking()
+        TimiAudioSession.release()
+    }
 }
 #endif
 

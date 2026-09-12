@@ -60,10 +60,17 @@ final class TimiNavigationSession {
     private(set) var speed: TimiSpeedInfo?
     private(set) var roadName: String?
     private(set) var alert: TimiNavAlert?
-    /// Whether the camera is in following mode; toggled by the overview
-    /// button, reset by the SDK when the user pans (the map view reports
-    /// camera-state changes back through `syncCameraState`).
-    private(set) var cameraFollowing = true
+    /// What the SDK's camera is actually doing, as it reports it. Drives the
+    /// control's label only — never fed back into a camera command, because
+    /// a view that both reads and writes the same state fights the SDK: the
+    /// engine idles the camera itself on any pan (NavigationMapView+Gestures
+    /// wires pan/pinch/rotate/pitch straight to `.idle`), and treating that
+    /// report as an instruction left the map stuck flat and north-up.
+    private(set) var cameraIsFollowing = true
+    /// What the driver last asked the camera to do, and a counter the map
+    /// view watches so one request is applied exactly once.
+    private(set) var cameraMode: TimiCameraMode = .following
+    private(set) var cameraRequest = 0
     /// Mirrors the synthesizer's mute here because `@Observable` tracks
     /// stored properties only — a computed passthrough to
     /// `TimiNavigationStack` would mute correctly and never re-render the
@@ -78,6 +85,13 @@ final class TimiNavigationSession {
     private var subscriptions = Set<AnyCancellable>()
     private var lastMirror = Date.distantPast
     private var alertClearTask: Task<Void, Never>?
+    private var cameraResumeTask: Task<Void, Never>?
+
+    /// How long a map the driver panned stays where they put it before the
+    /// camera returns to following. Panning away mid-drive is almost always a
+    /// glance ahead, not a decision to stop being navigated — and a map that
+    /// never comes back is the failure the driver notices at the next turn.
+    private static let cameraResumeDelay: Double = 6
 
     /// Distance from the destination at which the trip card gives way to the
     /// clinic card. Matches the voice synthesizer's own "look for the
@@ -106,9 +120,16 @@ final class TimiNavigationSession {
     /// from. Called once, after routes are calculated.
     func start(with routes: NavigationRoutes) {
         subscribe()
+        // Claim the audio session for the whole drive rather than per line.
+        // Spoken guidance arrives as a `.playback` category with ducking, and
+        // a category set at the moment of the first utterance is a category
+        // set too late — the first instruction is the one most likely to be
+        // swallowed, and on a phone with the ringer switch off, a session that
+        // is not `.playback` is silent rather than quiet.
+        TimiAudioSession.activateForSpeech()
         // Touching `routeVoiceController` constructs it, and construction is
         // the subscription: the voice controller drives itself off the
-        // navigator's voice instructions from here on (RouteVoiceController
+        // navigator's route progress from here on (RouteVoiceController
         // subscribes in its initializer). Without this line there is no
         // spoken guidance at all — the stock NavigationViewController used to
         // be the thing that touched it.
@@ -121,21 +142,47 @@ final class TimiNavigationSession {
     func end() {
         subscriptions.removeAll()
         alertClearTask?.cancel()
+        cameraResumeTask?.cancel()
         provider.mapboxNavigation.tripSession().setToIdle()
+        // The drive owned the audio session; hand it back so music and calls
+        // resume at full volume.
+        TimiNavigationStack.endTrip()
     }
 
-    /// The overview/re-center toggle. The map representable reads
-    /// `cameraFollowing` and pushes the state into `NavigationCamera`.
-    func toggleOverview() { cameraFollowing.toggle() }
+    /// The overview / re-center control. Asks for the opposite of whatever the
+    /// camera is actually doing, so the button always does what it says even
+    /// after the SDK idled the camera on a pan.
+    func toggleCamera() {
+        setCamera(cameraIsFollowing ? .overview : .following)
+    }
+
+    private func setCamera(_ mode: TimiCameraMode) {
+        cameraResumeTask?.cancel()
+        cameraMode = mode
+        cameraRequest += 1
+    }
 
     func setMuted(_ muted: Bool) {
         voiceMuted = muted
         TimiNavigationStack.setVoiceMuted(muted)
     }
 
-    /// Called by the map view when the SDK's camera leaves or re-enters
-    /// following (a pan gesture idles the camera without asking us).
-    func syncCameraState(following: Bool) { cameraFollowing = following }
+    /// Called by the map view when the SDK's camera changes state on its own —
+    /// a pan idles it, a transition completes. Recorded for the button, and
+    /// used to schedule the return to following; never turned straight back
+    /// into a camera command.
+    func syncCameraState(following: Bool, idle: Bool) {
+        cameraIsFollowing = following
+        cameraResumeTask?.cancel()
+        // Overview is a deliberate choice and waits for a second tap. Idle is
+        // the by-product of a pan, and comes back on its own.
+        guard idle, phase != .arrived else { return }
+        cameraResumeTask = Task { [weak self] in
+            _ = try? await Task.sleep(nanoseconds: UInt64(Self.cameraResumeDelay * 1_000_000_000))
+            guard let self, !Task.isCancelled, !cameraIsFollowing else { return }
+            setCamera(.following)
+        }
+    }
 
     // MARK: - Publisher wiring
 
@@ -490,21 +537,51 @@ struct TimiNavigationMapView: UIViewRepresentable {
         mapView.puckBearing = .course
 
         // Keep the maneuver zone clear of Tími's own chrome: banner up top,
-        // trip card below.
-        mapView.viewportPadding = UIEdgeInsets(top: 180, left: 24, bottom: 220, right: 24)
+        // trip card below. Added to the safe-area insets by the SDK, not
+        // instead of them (NavigationMapView.updateViewportPadding).
+        mapView.viewportPadding = UIEdgeInsets(top: 150, left: 24, bottom: 200, right: 24)
 
+        configureFollowingCamera(mapView)
         mapView.update(navigationCameraState: .following)
         context.coordinator.observeCamera(of: mapView, session: session)
         return mapView
     }
 
+    /// The driving camera, set deliberately rather than left on the SDK's
+    /// defaults — which produce the flat, far-off, north-up view this screen
+    /// shipped with. Three changes, each for a reason:
+    ///
+    /// - `zoomRange` floor raised from the default 10.5: at that zoom a city
+    ///   is legible and a turn is not. A driver needs the next 200 m. The
+    ///   upper bound doubles as the zoom guidance opens at, per the SDK's own
+    ///   documentation on the property, so it is set to a street-level 17.
+    /// - `defaultPitch` 50° rather than 45°: a little more horizon, which is
+    ///   what makes a navigation map read as a road ahead instead of a plan.
+    /// - `pitchNearManeuver.triggerDistanceToManeuver` cut from 180 m to 70 m.
+    ///   The SDK ramps pitch linearly to zero across that distance to show a
+    ///   turn from above, so at the default the camera spends most of a city
+    ///   block flat — which is exactly the unappealing top-down view, and why
+    ///   it looked worst right where guidance matters most. 70 m keeps the
+    ///   flattening for the turn itself.
+    private func configureFollowingCamera(_ mapView: NavigationMapView) {
+        guard let viewport = mapView.navigationCamera.viewportDataSource as? MobileViewportDataSource else { return }
+        var options = viewport.options
+        options.followingCameraOptions.zoomRange = 15.5...17.0
+        options.followingCameraOptions.defaultPitch = 50
+        options.followingCameraOptions.pitchNearManeuver.triggerDistanceToManeuver = 70
+        viewport.options = options
+    }
+
+    /// Applies a camera request exactly once. The SDK owns the camera between
+    /// requests — it idles on a pan and re-frames on its own — so anything
+    /// that compared desired state against reported state here would undo the
+    /// engine's own behavior on the next SwiftUI update.
     func updateUIView(_ mapView: NavigationMapView, context: Context) {
-        let wantsFollowing = session.cameraFollowing
-        let current = mapView.navigationCamera.currentCameraState
-        if wantsFollowing, current != .following {
-            mapView.update(navigationCameraState: .following)
-        } else if !wantsFollowing, current == .following {
-            mapView.update(navigationCameraState: .overview)
+        guard context.coordinator.lastAppliedCameraRequest != session.cameraRequest else { return }
+        context.coordinator.lastAppliedCameraRequest = session.cameraRequest
+        switch session.cameraMode {
+        case .following: mapView.update(navigationCameraState: .following)
+        case .overview: mapView.update(navigationCameraState: .overview)
         }
     }
 
@@ -513,15 +590,19 @@ struct TimiNavigationMapView: UIViewRepresentable {
     @MainActor
     final class Coordinator {
         private var subscription: AnyCancellable?
+        /// The last `cameraRequest` this map actually carried out, so a
+        /// SwiftUI update triggered by anything else — a new maneuver, a speed
+        /// change — does not re-issue a camera command.
+        var lastAppliedCameraRequest = 0
 
-        /// Mirrors the SDK's camera state back into the session so a pan
-        /// gesture (which idles the camera inside the SDK) flips the
-        /// re-center button without us guessing.
+        /// Reports the SDK's camera state into the session so a pan (which
+        /// idles the camera inside the SDK) relabels the control and starts
+        /// the countdown back to following.
         func observeCamera(of mapView: NavigationMapView, session: TimiNavigationSession) {
             subscription = mapView.navigationCamera.cameraStates
                 .receive(on: DispatchQueue.main)
                 .sink { [weak session] state in
-                    session?.syncCameraState(following: state == .following)
+                    session?.syncCameraState(following: state == .following, idle: state == .idle)
                 }
         }
     }

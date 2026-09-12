@@ -94,6 +94,16 @@ enum TimiNavAlert: Equatable, Sendable {
     case error(String)
 }
 
+/// What the driver has asked the map camera to do. Deliberately smaller than
+/// the SDK's own camera vocabulary: `idle` is something the engine does to
+/// itself when a pan interrupts following, never something this app requests.
+enum TimiCameraMode: Equatable, Sendable {
+    /// Locked to the vehicle: pitched, course-up, framed on the next maneuver.
+    case following
+    /// Pulled back to the whole remaining route.
+    case overview
+}
+
 /// Where the trip is in its lifecycle. Drives which bottom card is shown.
 enum TimiNavPhase: Equatable, Sendable {
     /// Route requested, guidance not yet running.

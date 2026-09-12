@@ -777,6 +777,25 @@ for (const path of await collectFiles("apps/customer-mobile/Sources/TimiNowUI", 
   }
 }
 
+// Only the map ignores the safe area. Applying it to the whole navigation
+// view reads as "let the map fill the screen" and does exactly that — along
+// with putting the instruction banner under the status bar (the clock sitting
+// on top of the street name) and the trip card's distance line under the home
+// indicator. Reported from a real device, and invisible in a simulator
+// screenshot taken without the status bar.
+{
+  const path = "apps/customer-mobile/Sources/TimiNowUI/NavigationView.swift";
+  const source = await read(path);
+  const code = source.split("\n").filter((line) => !line.trim().startsWith("//") && !line.trim().startsWith("///")).join("\n");
+  const screen = code.slice(code.indexOf("struct NavigationScreen"));
+  if (/TurnByTurnNavigationView\([\s\S]{0,4000}?\)\s*\.ignoresSafeArea\(\)/.test(screen)) {
+    throw new Error(`${path}: NavigationScreen applies .ignoresSafeArea() to the whole TurnByTurnNavigationView again, which pushes the maneuver banner under the status bar and clips the trip card behind the home indicator. The map ignores the safe area on its own inside TimiActiveNavigationView; the chrome must not.`);
+  }
+  if (!/TimiNavigationMapView\(session: session, styleURL: styleURL\)\s*\n\s*\.ignoresSafeArea\(\)/.test(code)) {
+    throw new Error(`${path}: the navigation map no longer ignores the safe area, so the map is letterboxed inside the safe area instead of filling the screen behind Tími's chrome.`);
+  }
+}
+
 // The stock Mapbox drop-in UI stays out of the build. The whole point of the
 // custom chrome (docs/NAVIGATION.md) is that MapboxNavigationCore is the
 // engine and Tími draws the screen — reintroducing MapboxNavigationUIKit or

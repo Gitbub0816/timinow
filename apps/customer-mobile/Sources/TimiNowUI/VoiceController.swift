@@ -425,6 +425,13 @@ final class TimiNaturalSpeechSynthesizer: NSObject, SpeechSynthesizing, AVAudioP
 
     public func speak(_ instruction: SpokenInstruction, during legProgress: RouteLegProgress, locale: Locale?) {
         guard !muted else { return }
+        // Re-issuing the line already playing restarts it. `RouteVoiceController`
+        // speaks whatever the navigator reports as the current instruction, and
+        // the navigator refills that field from its own status updates, so a
+        // repeat is cheap for it to send and expensive here: every repeat would
+        // stop the player and start the sentence again, and a sentence that
+        // restarts every second is never heard to the end.
+        if isSpeaking, currentInstruction?.text == instruction.text { return }
         currentInstruction = instruction
         guard let data = audioCache[cacheKey(instruction.text)] else {
             // Not cached: this line goes to the fallback voice NOW (a
@@ -464,7 +471,17 @@ final class TimiNaturalSpeechSynthesizer: NSObject, SpeechSynthesizing, AVAudioP
     public func interruptSpeaking() { stopSpeaking() }
 
     private func finishPlayback() {
-        if managesAudioSession { TimiAudioSession.release() }
+        // The audio session is NOT released here, and that is the fix for a
+        // real defect rather than an omission. Releasing per line meant
+        // `setActive(false)` ran at the end of every utterance — including
+        // from `stopSpeaking()`, which `MultiplexedSpeechSynthesizer` calls on
+        // every synthesizer in the chain, so finishing a Tími line could
+        // deactivate the session out from under the device voice that was
+        // mid-sentence on the fallback path. It also re-negotiated the session
+        // with every maneuver, which is the kind of churn that makes guidance
+        // audible on one turn and silent on the next. The drive claims the
+        // session once in `TimiNavigationSession.start` and gives it back once
+        // in `TimiNavigationStack.endTrip`.
         if let instruction = currentInstruction {
             _voiceInstructions.send(VoiceInstructionEvents.DidSpeak(instruction: instruction))
         }
