@@ -229,7 +229,7 @@ enum TimiMorph {
 /// unavailable to the static properties on `TimiMorph`/`TimiScreenChange`
 /// themselves; every existing `.timiMorph(_:)` call site picks this up with
 /// no change, and it stays reactive if the setting changes mid-session.
-private struct TimiMorphModifier: ViewModifier {
+struct TimiMorphModifier: ViewModifier {
     // Android's TimiMorph.transition is already the plain `.opacity` crossfade
     // (see the enum above), so there is nothing to reduce there — and reading
     // `accessibilityReduceMotion` is an unproven Skip surface this module's
@@ -248,7 +248,7 @@ private struct TimiMorphModifier: ViewModifier {
     }
 }
 
-private struct TimiScreenTransitionModifier: ViewModifier {
+struct TimiScreenTransitionModifier: ViewModifier {
     #if !os(Android)
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     #endif

@@ -314,7 +314,9 @@ public enum ConsoleConnectionState: String, Sendable {
             // `wakePoll()` (network back, Reconnect now) cuts a widening
             // backoff short instead of waiting it out.
             let delay = nextDelaySeconds
-            let sleep = Task { try? await Task.sleep(for: .seconds(delay)) }
+            // `_ =` keeps the closure's type Void: newer Swift infers the bare
+            // `try? await` expression as `()?`, making this Task<()?, Never>.
+            let sleep = Task { _ = try? await Task.sleep(for: .seconds(delay)) }
             sleepTask = sleep
             await sleep.value
             sleepTask = nil
