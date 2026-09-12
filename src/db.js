@@ -168,16 +168,27 @@ export async function listLocations(env, filters = {}) {
     ? { latitude: filters.latitude, longitude: filters.longitude }
     : null;
 
+  // The fictional demonstration clinics (migrations/0002_seed.sql, and the
+  // no-database fixtures below) exist for local development and the test
+  // suite. They must never be DISCOVERABLE outside demo mode: a real pet
+  // owner shown "Bayview Veterinary Emergency" could drive a sick animal to
+  // an address that does not exist. DEMO_MODE is "false" in every production
+  // wrangler config and scripts/validate.mjs enforces that it stays so.
+  const demoMode = env.DEMO_MODE === "true";
+
   let locations;
   if (!hasDatabase(env)) {
-    locations = DEMO_LOCATIONS.map((location) => ({
-      ...location,
-      distanceMiles: coordinates
-        ? Number(haversineMiles(coordinates.latitude, coordinates.longitude, location.latitude, location.longitude).toFixed(1))
-        : null
-    }));
+    locations = demoMode
+      ? DEMO_LOCATIONS.map((location) => ({
+        ...location,
+        distanceMiles: coordinates
+          ? Number(haversineMiles(coordinates.latitude, coordinates.longitude, location.latitude, location.longitude).toFixed(1))
+          : null
+      }))
+      : [];
   } else {
-    const query = `${LOCATION_SELECT} WHERE l.active = 1 ORDER BY l.name`;
+    const demoFilter = demoMode ? "" : " AND l.tenant_id NOT IN (SELECT id FROM tenants WHERE clerk_org_id LIKE 'org_demo_%')";
+    const query = `${LOCATION_SELECT} WHERE l.active = 1${demoFilter} ORDER BY l.name`;
     const result = await env.DB.prepare(query).all();
     locations = result.results.map((row) => locationFromRow(row, coordinates));
   }

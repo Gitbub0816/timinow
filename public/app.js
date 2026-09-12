@@ -83,7 +83,7 @@ const APP_ROUTES = new Set(["find", "results", "tracker", "pets", "clinic", "sig
 // may force sign-in ahead of it. Only "clinic" still requires an account (an
 // org member) or, on the veterinary console, a workstation session.
 const PROTECTED_ROUTES = new Set(["clinic"]);
-const DEFAULT_POSITION = { latitude: 37.6688, longitude: -122.0808, label: "Hayward, California", detail: "Using demonstration coordinates" };
+const DEMO_AREA_POSITION = { latitude: 37.6688, longitude: -122.0808, label: "Demonstration area (Hayward, CA)", detail: "Sample coordinates for trying Tími — not your real location" };
 const STORAGE_KEYS = {
   draft: "timi_intake_draft_v1",
   intake: "timi_current_intake_v1",
@@ -185,19 +185,19 @@ const state = {
   attribution: captureAttribution(),
   intakeStep: 1,
   intakeDraft: readStorage(STORAGE_KEYS.draft, {
-    position: DEFAULT_POSITION,
-    petName: "Otis",
+    position: null,
+    petName: "",
     species: "dog",
-    breed: "Golden retriever",
-    weightLbs: 72,
+    breed: "",
+    weightLbs: null,
     urgency: "same_day",
     symptoms: [],
     startedWhen: "",
     concernSummary: "",
     redFlags: [],
-    ownerName: "Maya Morgan",
-    ownerPhone: "(510) 555-0147",
-    ownerEmail: "maya@example.com"
+    ownerName: "",
+    ownerPhone: "",
+    ownerEmail: ""
   }),
   locations: [],
   selectedLocation: null,
@@ -239,6 +239,25 @@ const state = {
     avoidFerries: false
   })
 };
+
+// Earlier builds shipped the intake pre-filled with a fictional pet owner
+// ("Otis" / "Maya Morgan" / a 555 number) and persisted it as the visitor's
+// draft, so returning visitors would still see it even after the prefill was
+// removed. The 555 number plus that exact name can only be the old prefill,
+// never something a person typed about themselves — clear the identity
+// fields once, keeping anything the visitor may genuinely have written.
+if (state.intakeDraft?.ownerPhone === "(510) 555-0147" && state.intakeDraft?.ownerName === "Maya Morgan") {
+  state.intakeDraft.ownerName = "";
+  state.intakeDraft.ownerPhone = "";
+  if (state.intakeDraft.ownerEmail === "maya@example.com") state.intakeDraft.ownerEmail = "";
+  if (state.intakeDraft.petName === "Otis") {
+    state.intakeDraft.petName = "";
+    if (state.intakeDraft.breed === "Golden retriever") state.intakeDraft.breed = "";
+    if (state.intakeDraft.weightLbs === 72) state.intakeDraft.weightLbs = null;
+  }
+  if (state.intakeDraft.position?.detail === "Using demonstration coordinates") state.intakeDraft.position = null;
+  writeStorage(STORAGE_KEYS.draft, state.intakeDraft);
+}
 
 function readStorage(key, fallback) {
   try {
@@ -390,7 +409,10 @@ function formatRelativeTime(iso) {
   const minutes = Math.round(seconds / 60);
   if (minutes < 60) return `${minutes} min ago`;
   const hours = Math.round(minutes / 60);
-  return `${hours} hr ago`;
+  if (hours < 48) return `${hours} hr ago`;
+  const days = Math.round(hours / 24);
+  if (days < 14) return `${days} days ago`;
+  return `${Math.round(days / 7)} weeks ago`;
 }
 
 function formatClock(iso) {
@@ -971,8 +993,8 @@ function hydrateIntakeForm() {
   $$('[name="symptom"]', form).forEach((input) => { input.checked = (draft.symptoms || []).includes(input.value); });
   if (form.elements.legalConsent) form.elements.legalConsent.checked = draft.legalConsent === true;
   if (form.elements.contactConsent) form.elements.contactConsent.checked = draft.contactConsent === true;
-  $("[data-location-label]").textContent = draft.position?.label || DEFAULT_POSITION.label;
-  $("[data-location-detail]").textContent = draft.position?.detail || DEFAULT_POSITION.detail;
+  $("[data-location-label]").textContent = draft.position?.label || "Set your location";
+  $("[data-location-detail]").textContent = draft.position?.detail || "Share your location, or use the demonstration area";
   updateSafetyCallout();
   updateConcernSpecificity();
 }
@@ -1024,6 +1046,14 @@ function validateStep(step) {
   }
   const fields = $$('input, select, textarea', panel).filter((field) => field.required && !field.checkValidity());
   $$('.field-error', panel).forEach((error) => error.remove());
+  if (step === 2 && !state.intakeDraft.position) {
+    const error = document.createElement("p");
+    error.className = "field-error";
+    error.textContent = "Share your location or choose the demonstration area so Tími knows where to search.";
+    $(".location-panel", panel)?.insertAdjacentElement("afterend", error);
+    $("[data-use-location]", panel)?.focus();
+    return false;
+  }
   if (!fields.length) return true;
   const first = fields[0];
   const error = document.createElement("p");
@@ -1057,6 +1087,9 @@ function updateSafetyCallout() {
 async function useLocation() {
   if (!navigator.geolocation) return showToast("Location services are not available in this browser.");
   showToast("Finding your location…");
+  // Persist typed-but-unsaved fields before the success handler re-hydrates
+  // the form, or granting location would wipe the visitor's own entries.
+  persistFormDraft();
   navigator.geolocation.getCurrentPosition(
     (position) => {
       state.intakeDraft.position = {
@@ -1070,7 +1103,7 @@ async function useLocation() {
       else hydrateIntakeForm();
       showToast("Location updated.");
     },
-    () => showToast("We could not access your location. You can continue with the demonstration area."),
+    () => showToast("We could not access your location. You can choose the demonstration area instead."),
     { enableHighAccuracy: true, timeout: 9000, maximumAge: 60_000 }
   );
 }
@@ -1082,7 +1115,11 @@ function careType() {
 async function loadLocations() {
   const list = $("[data-hospital-list]");
   list.innerHTML = '<div class="loading-state"><span class="evander evander-sm" aria-hidden="true"></span><strong>Checking nearby capacity…</strong></div>';
-  const position = state.intakeDraft.position || DEFAULT_POSITION;
+  const position = state.intakeDraft.position;
+  if (!position) {
+    list.innerHTML = '<div class="empty-state"><strong>Set a search location first.</strong><p>Go back to the intake form and share your location, or choose the demonstration area.</p><button class="button button-quiet" type="button" data-route="find">Back to intake</button></div>';
+    return;
+  }
   const params = new URLSearchParams({ lat: position.latitude, lng: position.longitude, radius: "50", species: state.intakeDraft.species || "dog", care: careType() });
   try {
     const data = await api(`/api/locations?${params}`);
@@ -2900,6 +2937,16 @@ document.addEventListener("click", (event) => {
   if (routeButton) setRoute(routeButton.dataset.route);
   const locationButton = event.target.closest("[data-use-location]");
   if (locationButton) useLocation();
+  const demoAreaButton = event.target.closest("[data-use-demo-area]");
+  if (demoAreaButton) {
+    // Persist what the visitor already typed BEFORE hydrating, or the
+    // re-hydrate would wipe unsaved fields back to the stored draft.
+    persistFormDraft();
+    state.intakeDraft.position = { ...DEMO_AREA_POSITION };
+    writeStorage(STORAGE_KEYS.draft, state.intakeDraft);
+    hydrateIntakeForm();
+    showToast("Using the demonstration area. Results there are samples, not real clinics.");
+  }
   const next = event.target.closest("[data-next-step]");
   if (next && validateStep(state.intakeStep)) { persistFormDraft(); state.intakeStep = Math.min(2, state.intakeStep + 1); renderIntakeStep(); }
   const previous = event.target.closest("[data-prev-step]");

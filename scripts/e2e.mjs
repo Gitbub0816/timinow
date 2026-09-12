@@ -100,6 +100,25 @@ const intakePayload = {
 let result = await call("/api/locations?lat=37.6688&lng=-122.0808&species=dog&care=urgent");
 assert(result.response.status === 200 && result.body.locations.length === 5, "D1 location search must return all seeded clinics");
 
+/* --------------------------------- demo clinics stay out of production --- */
+
+// The seed migration's fictional clinics (org_demo_* tenants) live in every
+// database that ran migrations — production included. With DEMO_MODE off
+// (its value in every production wrangler config), discovery must never
+// surface them: a real pet owner shown "Bayview Veterinary Emergency" could
+// drive a sick animal to an address that does not exist.
+{
+  const productionLike = { ...env, DEMO_MODE: "false" };
+  const response = await worker.fetch(new Request("https://timi.example/api/locations?lat=37.6688&lng=-122.0808&species=dog&care=urgent"), productionLike);
+  const body = await response.json();
+  assert(response.status === 200, "location search must still answer with DEMO_MODE off");
+  const demoNames = ["Bayview Veterinary Emergency", "Hearth & Paw Urgent Care", "Juniper Animal Care", "Cedar Grove Veterinary Urgent Care", "Solano Pet Emergency"];
+  assert(
+    body.locations.every((location) => !demoNames.includes(location.name)),
+    "with DEMO_MODE off, the seeded demonstration clinics must not be discoverable"
+  );
+}
+
 /* -------------------------------------------------- public config: fees --- */
 
 // The fee amounts are asserted twice over on purpose: against the constants,
