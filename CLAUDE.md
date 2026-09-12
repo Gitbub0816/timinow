@@ -190,3 +190,55 @@ no blur) are the signature card/button treatment across every surface —
 don't introduce a soft-shadow, blurred, or borderless variant as a
 one-off; if a screen needs a different treatment, it needs a design
 decision, not a local override.
+
+## 8. Avoid generic "vibe-coded" AI-app tells
+
+This product's visual identity (Section 7) exists specifically so it never
+reads as an interchangeable AI-generated SaaS template. A 2026-09 audit
+checked for, and found and fixed, the concrete tells listed below; treat
+this as a standing checklist for new UI, not a one-time cleanup:
+
+- **No indigo/violet/purple gradients.** The generic "AI startup" palette
+  (`#6366f1`/`#8b5cf6`-family gradients, usually diagonal, usually behind a
+  hero headline) has never appeared in this codebase and must not start
+  now. This product's palette is coral/blue/gold/ink — see Section 7 — full
+  stop.
+- **No glassmorphism as a default.** `backdrop-filter: blur()` appears in
+  exactly two deliberate, restrained places (the sticky header on scroll,
+  a modal's backdrop dimming) — it is not this product's aesthetic and
+  must not spread to cards, panels, or buttons as a generic "modern" effect.
+- **No soft, blurred box-shadows.** Every shadow in this codebase has zero
+  blur radius and a hard offset (`Npx Npx 0 color`) — that's Section 7's
+  signature treatment. A Tailwind-default soft shadow
+  (`0 4px 6px rgba(0,0,0,.1)`-shaped) is the single most common "vibe-coded"
+  tell and does not belong here.
+- **No emoji as icon substitutes in visible copy.** An emoji standing in
+  for an icon in body text or a button label (a "🔒 Secure checkout"-style
+  trust badge, an "✏️ Edit" button prefix) was a real bug this pass fixed
+  (`public/index.html`'s payment and pay-nothing notices, an admin-console
+  button) — plain text alone, or this codebase's own typographic
+  "sketch-icon" glyph system (`?`, `⌁`, `✓`, `✎`, `☎`, `$` — monochrome
+  dingbats, not full-color emoji, always styled by `color` not rendered as
+  a platform emoji), is the standard. The one deliberate exception is
+  `SPECIES_EMOJI` in `public/app.js` (🐶🐱🐦🐰🦎🐹🐾 as a pet-profile
+  fallback avatar) — contextually appropriate for a pet-care product's
+  actual subject matter, not decoration, and not a precedent for using
+  emoji elsewhere.
+- **No generic CDN icon library.** No Font Awesome, Heroicons, Feather, or
+  Material Icons import exists in this codebase, and none should be added
+  for "a few icons" — this product's icons are either the typographic
+  sketch-icon glyphs above or purpose-drawn inline SVGs (see the vet-web
+  nav icons for the pattern: `aria-hidden="true"`, `currentColor` stroke,
+  paired with visible text).
+- **No AI-marketing cliché copy.** Words like "seamless," "effortless,"
+  "revolutionize," "game-changer," "cutting-edge," "supercharge," "unlock
+  your," "all-in-one," "next-generation," or "unleash" have never appeared
+  in this product's copy and shouldn't start — every surface's copy is
+  written specific to what it actually does (see any existing headline for
+  the register: concrete, slightly wry, never generic).
+- **Watch inline-style sprawl.** `apps/admin-console/public/app.js` and
+  `apps/vet-web/public/app.js` carry a real number of one-off
+  `style="…"` attributes in dynamically-generated HTML — mostly small,
+  consistent utility tweaks (`margin`, `font-size`), not visual chaos, but
+  worth converging into shared CSS classes when you're already touching a
+  block that has several, rather than adding another one-off.

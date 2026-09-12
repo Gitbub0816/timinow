@@ -2593,7 +2593,7 @@ function renderMarketDetail(market, locations, report, unassignedLocations) {
           <div id="market-editor-map" class="market-map" hidden></div>
           <p class="map-notice" data-market-map-notice hidden>Set MAPBOX_PUBLIC_TOKEN on the admin Worker to draw territories. The numeric fields on the left keep working without it.</p>
           <div class="boundary-toolbar" data-boundary-toolbar hidden>
-            <button class="button button-small" type="button" data-draw-boundary>✏️ Draw new territory</button>
+            <button class="button button-small" type="button" data-draw-boundary>Draw new territory</button>
             <button class="button button-small button-primary" type="button" data-save-boundary disabled>Save drawn territory</button>
             ${market.boundaryKind === "polygon" ? '<button class="button button-small button-danger" type="button" data-clear-boundary>Remove polygon (back to circle)</button>' : ""}
           </div>
