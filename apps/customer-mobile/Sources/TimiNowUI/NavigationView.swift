@@ -219,7 +219,7 @@ struct TimiActiveNavigationView: View {
 
     var body: some View {
         ZStack {
-            TimiNavigationMapView(session: session, styleURL: styleURL)
+            TimiNavigationMapView(session: session, styleURL: styleURL, cameraRequest: session.cameraRequest)
                 .ignoresSafeArea()
 
             VStack(spacing: 10) {

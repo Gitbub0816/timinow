@@ -478,6 +478,13 @@ enum TimiManeuverMapping {
 struct TimiNavigationMapView: UIViewRepresentable {
     var session: TimiNavigationSession
     var styleURL: String
+    /// The session's camera-request counter, taken as a stored property so the
+    /// enclosing body *reads* it and `@Observable` therefore re-renders when it
+    /// changes. Without that read, a camera request would only reach
+    /// `updateUIView` on the next unrelated re-render — which during guidance
+    /// means the next progress tick, and while stopped means never. Re-centring
+    /// a map is exactly the thing a stationary driver does.
+    var cameraRequest: Int
 
     func makeUIView(context: Context) -> NavigationMapView {
         let navigation = session.navigation
