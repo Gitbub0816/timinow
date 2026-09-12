@@ -27,6 +27,11 @@ on:
         required: true
         default: false
         type: boolean
+      cleanup_demo:
+        description: Deactivate the seeded demonstration clinics in production D1
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -60,6 +65,13 @@ jobs:
       - name: Apply migrations
         if: ${{ inputs.migrate }}
         run: npm run db:migrate:remote
+
+      # Data hygiene, not schema: flips the fictional seed clinics inactive
+      # in the production database. The runtime DEMO_MODE filter already
+      # keeps them out of discovery either way — see scripts/remove-demo-seed.sql.
+      - name: Deactivate demo clinics
+        if: ${{ inputs.cleanup_demo }}
+        run: npm run db:cleanup-demo:remote
 
       # --var GIT_SHA stamps the deployed commit into each Worker's
       # /api/health `build` field, so which code is live is a fact you can

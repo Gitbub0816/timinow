@@ -10,6 +10,7 @@
     "dev:admin": "wrangler dev --config wrangler.admin.jsonc --local --persist-to .wrangler/state --port 8789",
     "db:migrate:local": "wrangler d1 migrations apply timinow --config wrangler.local.jsonc --local --persist-to .wrangler/state",
     "db:migrate:remote": "wrangler d1 migrations apply timinow --remote",
+    "db:cleanup-demo:remote": "wrangler d1 execute timinow --remote --file scripts/remove-demo-seed.sql",
     "deploy": "wrangler deploy",
     "deploy:vet": "wrangler deploy --config wrangler.vet.jsonc",
     "deploy:admin": "wrangler deploy --config wrangler.admin.jsonc",
