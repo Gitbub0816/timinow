@@ -20,6 +20,7 @@ import {
   encodeForm,
   idempotencyKey,
   parseStripeSignatureHeader,
+  stripeKeyProblem,
   verifyWebhookSignature
 } from "../src/stripe.js";
 import {
@@ -128,13 +129,16 @@ async function stripeSignature(payload, secret, timestampSeconds) {
   return `t=${timestampSeconds},v1=${hex}`;
 }
 
+// The fake keys below are shaped like real ones on purpose: the body is plain
+// alphanumerics, because src/stripe.js now rejects anything else and a fixture
+// that could not survive the product's own validation tests nothing.
 const LIVE_ENV = {
   DB,
   SIGN_IN_REQUIRED: "false",
   DEMO_MODE: "false",
   SURFACE: "customer",
-  STRIPE_SECRET_KEY: "sk_test_not_a_real_key",
-  STRIPE_PUBLISHABLE_KEY: "pk_test_not_a_real_key",
+  STRIPE_SECRET_KEY: "sk_test_51NotARealKey00000000",
+  STRIPE_PUBLISHABLE_KEY: "pk_test_51NotARealKey00000000",
   STRIPE_WEBHOOK_SECRET: WEBHOOK_SECRET,
   ASSETS: { fetch: async () => new Response("", { status: 404 }) }
 };
@@ -769,7 +773,7 @@ function record(name) { results.push(name); }
   assertEqual(response.status, 201, "the live deposit path answers 201");
   const payload = await response.json();
   assertEqual(payload.clientSecret, "pi_live_1_secret_x", "the client secret reaches the client that will mount Elements");
-  assertEqual(payload.publishableKey, "pk_test_not_a_real_key", "the publishable key is served with it so no client holds its own copy");
+  assertEqual(payload.publishableKey, "pk_test_51NotARealKey00000000", "the publishable key is served with it so no client holds its own copy");
 
   const created = callsTo("/v1/payment_intents")[0];
   assertEqual(created.form.amount, "5000", "the PaymentIntent is for the deposit amount");
@@ -853,7 +857,7 @@ function record(name) { results.push(name); }
   const intakeId = "intake_mode_mismatch";
   await seedIntake({ id: intakeId, status: "accepted", paymentStatus: "pending" });
 
-  const MISMATCHED = { ...LIVE_ENV, STRIPE_PUBLISHABLE_KEY: "pk_live_not_a_real_key" };
+  const MISMATCHED = { ...LIVE_ENV, STRIPE_PUBLISHABLE_KEY: "pk_live_51NotARealKey00000000" };
   const refused = await worker.fetch(
     new Request(`https://timinow.pet/api/intakes/${intakeId}/payment-intent`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }),
     MISMATCHED,
@@ -883,6 +887,25 @@ function record(name) { results.push(name); }
     { waitUntil() {} }
   );
   assertEqual(empty.status, 503, "a secret key with no publishable key is refused too");
+
+  // A key that was copied from somewhere that masked it. This is not
+  // hypothetical: a stored secret of "sk_test_" plus 111 U+2022 BULLET
+  // characters passed the prefix check, passed the mode check, appeared by
+  // name in `wrangler secret list`, and produced "Invalid API Key provided" on
+  // every charge with nothing saying why.
+  resetStripe();
+  const MASKED = { ...LIVE_ENV, STRIPE_SECRET_KEY: `sk_test_${"\u2022".repeat(111)}` };
+  let maskedError = null;
+  try {
+    await createPaymentIntent(MASKED, { amountCents: 5000, idempotencyKey: "k" });
+  } catch (error) {
+    maskedError = error;
+  }
+  assertEqual(maskedError?.message, "PAYMENTS_MISCONFIGURED", "a key pasted with its display mask still attached is refused before it reaches Stripe");
+  assertEqual(callsTo("api.stripe.com").length, 0, "and never spends a call to find out");
+  assertEqual(stripeKeyProblem(`sk_test_${"\u2022".repeat(4)}`)?.includes("not plain ASCII"), true, "and the reason names the actual cause rather than \"invalid key\"");
+  assertEqual(stripeKeyProblem("sk_test_51U7abcXYZ"), null, "a well-formed key has no problem to report");
+  assertEqual(stripeKeyProblem(""), null, "an absent key is a different check's business");
 
   // And matched keys still go through, so the guard is not simply off.
   resetStripe();

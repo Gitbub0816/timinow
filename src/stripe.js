@@ -54,10 +54,39 @@ export function stripeConfigured(env) {
  * `pk_test_` / `pk_live_` — including the restricted (`rk_`) form.
  */
 export function stripeKeyMode(key) {
-  if (typeof key !== "string") return null;
-  if (/^(sk|rk|pk)_test_/.test(key)) return "test";
-  if (/^(sk|rk|pk)_live_/.test(key)) return "live";
-  return null;
+  const match = STRIPE_KEY_SHAPE.exec(typeof key === "string" ? key : "");
+  return match ? match[2] : null;
+}
+
+/**
+ * A whole Stripe key: prefix, mode, then the key body, which is plain
+ * alphanumerics and nothing else.
+ *
+ * The body pattern is the part that earns its keep. A prefix test alone passed
+ * a stored secret of `sk_test_` followed by 111 U+2022 BULLET characters — a
+ * key copied from a surface that had masked it for display, mask and all. It
+ * looked right in every listing (`wrangler secret list` prints names, never
+ * values), it satisfied the mode check, and Stripe answered "Invalid API Key
+ * provided" on every single charge.
+ */
+const STRIPE_KEY_SHAPE = /^(sk|rk|pk)_(test|live)_([A-Za-z0-9]+)$/;
+
+/**
+ * Why a configured key cannot be used, as a sentence, or null when it is fine.
+ *
+ * Absence is deliberately not a problem here — a Worker with no Stripe key at
+ * all is a different condition with its own error. This is about a key that is
+ * present and unusable, which is the case that otherwise reaches Stripe and
+ * comes back as a flat "Invalid API Key provided" with no hint as to why.
+ */
+export function stripeKeyProblem(key) {
+  if (typeof key !== "string" || key === "") return null;
+  if (STRIPE_KEY_SHAPE.test(key)) return null;
+  if (/[^\x20-\x7E]/.test(key)) {
+    return "contains characters that are not plain ASCII. The usual cause is a copy from somewhere that masked the key for display — bullets (\u2022) or asterisks pasted in place of the real characters. Copy it from the Stripe dashboard itself.";
+  }
+  if (/\s/.test(key)) return "contains whitespace, which usually means a line break or a stray space survived the paste.";
+  return "is not shaped like a Stripe key. It should be a prefix (sk_, rk_ or pk_), then test_ or live_, then letters and digits.";
 }
 
 /**
@@ -416,6 +445,18 @@ export function createAccountLink(env, accountId, { returnUrl, refreshUrl }) {
  */
 export function assertStripeKeysUsable(env) {
   if (!stripeConfigured(env)) return;
+  // Named only in this comment, never on the console lines below —
+  // scripts/validate-native.mjs greps console.* for secret variable names, and
+  // it is right to: a log line is the last place a key should be able to reach.
+  // Only the diagnosis travels, never the value.
+  for (const [which, problem] of [
+    ["secret", stripeKeyProblem(env.STRIPE_SECRET_KEY)],
+    ["publishable", stripeKeyProblem(env.STRIPE_PUBLISHABLE_KEY)]
+  ]) {
+    if (!problem) continue;
+    console.error(JSON.stringify({ event: "payments_misconfigured", detail: `the ${which} key ${problem}` }));
+    throw new Error("PAYMENTS_MISCONFIGURED");
+  }
   if (!env.STRIPE_PUBLISHABLE_KEY || !stripeKeysAgree(env)) throw new Error("PAYMENTS_MISCONFIGURED");
 }
 
