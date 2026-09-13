@@ -19,12 +19,18 @@ enum TimiManeuverKind: String, Sendable {
     case slightLeft, slightRight
     case left, right
     case sharpLeft, sharpRight
-    case uTurn
-    case mergeLeft, mergeRight
+    /// `uTurn` is the left-hand turnaround — the one a right-hand-drive road
+    /// network asks for, and the default here. `uTurnRight` exists because the
+    /// asset set draws both and left-hand-traffic countries need the mirror.
+    case uTurn, uTurnRight
+    case merge, mergeLeft, mergeRight
     case forkLeft, forkRight
     case keepLeft, keepRight
     case onRampLeft, onRampRight
     case offRampLeft, offRampRight
+    /// A signed highway exit, which the asset system draws differently from a
+    /// plain off-ramp: the exit carries the through road beside it.
+    case exitLeft, exitRight
     case roundabout
     case roundaboutLeft, roundaboutRight, roundaboutStraight
     case arrive, arriveLeft, arriveRight

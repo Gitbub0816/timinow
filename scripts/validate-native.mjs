@@ -796,6 +796,62 @@ for (const path of await collectFiles("apps/customer-mobile/Sources/TimiNowUI", 
   }
 }
 
+// Every maneuver the model can report must have artwork behind it. A missing
+// primitive does not fail, warn, or fall back — TimiNavArtView simply draws
+// nothing, and the banner shows a distance and a street name with a hole where
+// the turn should be. Checked against the generated resource rather than the
+// SVG folder, so a stale import is caught too.
+{
+  const modelPath = "apps/customer-mobile/Sources/TimiNowUI/TimiNavigationModel.swift";
+  const glyphPath = "apps/customer-mobile/Sources/TimiNowUI/TimiManeuverGlyph.swift";
+  const model = await read(modelPath);
+  const glyph = await read(glyphPath);
+  const generated = JSON.parse(await read("apps/customer-mobile/Sources/TimiNowUI/Resources/nav-assets.json"));
+
+  const enumBody = model.slice(model.indexOf("enum TimiManeuverKind"));
+  const kinds = [];
+  for (const line of enumBody.slice(0, enumBody.indexOf("\n}")).split("\n")) {
+    const match = line.match(/^\s*case\s+(.+)$/);
+    if (!match) continue;
+    for (const name of match[1].split(",")) kinds.push(name.trim());
+  }
+  if (kinds.length < 20) {
+    throw new Error(`${modelPath}: could not read TimiManeuverKind's cases — the maneuver artwork check cannot run.`);
+  }
+
+  // Read the assetName switch by line rather than by regex per kind: cases are
+  // written with several patterns on one label (`case .roundabout,
+  // .roundaboutStraight:`), and a per-kind pattern silently misses those.
+  const mapped = new Map();
+  const assetBody = glyph.slice(glyph.indexOf("var assetName"));
+  for (const line of assetBody.slice(0, assetBody.indexOf("\n    }")).split("\n")) {
+    const match = line.match(/^\s*case\s+(.+?):\s*return\s+"([^"]+)"/);
+    if (!match) continue;
+    for (const pattern of match[1].split(",")) {
+      mapped.set(pattern.trim().replace(/^\./, ""), match[2]);
+    }
+  }
+
+  for (const kind of kinds) {
+    const asset = mapped.get(kind);
+    if (!asset) {
+      throw new Error(`${glyphPath}: TimiManeuverKind.${kind} has no assetName mapping, so its banner glyph draws nothing.`);
+    }
+    if (!generated.assets[asset]) {
+      throw new Error(`${glyphPath}: TimiManeuverKind.${kind} maps to "${asset}", which is not in the generated nav-assets.json. Run: node scripts/import-nav-assets.mjs`);
+    }
+  }
+
+  // The controls the chrome names must exist too — same failure mode, and the
+  // names are string literals nothing else checks.
+  const chrome = await read("apps/customer-mobile/Sources/TimiNowUI/TimiNavigationChrome.swift");
+  for (const [, name] of chrome.matchAll(/"(MapControls\/[a-z-]+)"/g)) {
+    if (!generated.assets[name]) {
+      throw new Error(`apps/customer-mobile/Sources/TimiNowUI/TimiNavigationChrome.swift references the "${name}" primitive, which is not in nav-assets.json.`);
+    }
+  }
+}
+
 // The stock Mapbox drop-in UI stays out of the build. The whole point of the
 // custom chrome (docs/NAVIGATION.md) is that MapboxNavigationCore is the
 // engine and Tími draws the screen — reintroducing MapboxNavigationUIKit or

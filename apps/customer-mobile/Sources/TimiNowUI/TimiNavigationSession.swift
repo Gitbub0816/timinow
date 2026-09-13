@@ -288,7 +288,8 @@ final class TimiNavigationSession {
         let primary = banner.primaryInstruction
         let kind = TimiManeuverMapping.kind(
             type: primary.maneuverType,
-            direction: primary.maneuverDirection
+            direction: primary.maneuverDirection,
+            drivingSide: banner.drivingSide
         )
         maneuver = TimiManeuver(
             kind: kind,
@@ -300,7 +301,11 @@ final class TimiNavigationSession {
         )
         if let tertiary = banner.tertiaryInstruction, let text = tertiary.text, !text.isEmpty {
             nextManeuver = TimiNextManeuver(
-                kind: TimiManeuverMapping.kind(type: tertiary.maneuverType, direction: tertiary.maneuverDirection),
+                kind: TimiManeuverMapping.kind(
+                    type: tertiary.maneuverType,
+                    direction: tertiary.maneuverDirection,
+                    drivingSide: banner.drivingSide
+                ),
                 text: text
             )
         } else {
@@ -368,7 +373,7 @@ final class TimiNavigationSession {
 /// Total over both enums: an unrecognized pairing degrades to `.straight`,
 /// never to a blank banner.
 enum TimiManeuverMapping {
-    static func kind(type: ManeuverType?, direction: ManeuverDirection?) -> TimiManeuverKind {
+    static func kind(type: ManeuverType?, direction: ManeuverDirection?, drivingSide: DrivingSide = .right) -> TimiManeuverKind {
         switch type {
         case .depart:
             return .depart
@@ -379,7 +384,14 @@ enum TimiManeuverMapping {
             default: return .arrive
             }
         case .merge:
-            return leftish(direction) ? .mergeLeft : .mergeRight
+            // A merge with no side reported is still a merge: the asset set
+            // draws one, and guessing a side would point at a lane that may
+            // not exist.
+            switch direction {
+            case .left, .slightLeft, .sharpLeft: return .mergeLeft
+            case .right, .slightRight, .sharpRight: return .mergeRight
+            default: return .merge
+            }
         case .takeOnRamp:
             return leftish(direction) ? .onRampLeft : .onRampRight
         case .takeOffRamp:
@@ -403,7 +415,11 @@ enum TimiManeuverMapping {
             case .sharpRight: return .sharpRight
             case .right: return .right
             case .slightRight: return type == .reachEnd || type == .reachFork ? .keepRight : .slightRight
-            case .uTurn: return .uTurn
+            // Which way a U-turn goes is a property of the road network, not
+            // the instruction: drive on the right and you turn left across
+            // oncoming traffic, and the mirror image holds where they drive on
+            // the left. Mapbox reports the side on the banner, so it is known.
+            case .uTurn: return drivingSide == .left ? .uTurnRight : .uTurn
             case .straightAhead, .undefined, nil: return .straight
             @unknown default: return .straight
             }
@@ -541,6 +557,11 @@ struct TimiNavigationMapView: UIViewRepresentable {
             showsAccuracyRing: false,
             opacity: 1
         ))
+        // The puck is the asset system's own `Destination/course-indicator`:
+        // cream disc, navy keyline, cobalt chevron. The keyline is what keeps
+        // it readable over cream map fill, dark buildings and the cobalt route
+        // itself — and the design system is explicit that it is never a pet, a
+        // car or a mascot.
         mapView.puckBearing = .course
 
         // Keep the maneuver zone clear of Tími's own chrome: banner up top,
@@ -635,11 +656,19 @@ enum TimiNavMapPalette {
         UIGraphicsImageRenderer(size: CGSize(width: 1, height: 1)).image { _ in }
     }
 
-    /// The course chevron: a cobalt disc with a 2px ink ring (the app's card
-    /// border, shrunk to a puck) and a white arrow-tip cut into the top —
-    /// restrained on purpose. A paw print rotates ambiguously; a chevron
-    /// does not.
+    /// The course indicator, drawn from `Destination/course-indicator` in the
+    /// navigation asset system rather than by hand. Falls back to the drawn
+    /// chevron only if the primitive is somehow missing from the bundle, so a
+    /// resource problem degrades to a visible puck instead of an invisible one.
     static func courseIndicator() -> UIImage {
+        if let art = TimiNavArt.image("Destination/course-indicator", size: 46, tint: blue) {
+            return art
+        }
+        return drawnCourseIndicator()
+    }
+
+    /// The original hand-drawn puck, kept only as the fallback above.
+    private static func drawnCourseIndicator() -> UIImage {
         let size = CGSize(width: 44, height: 44)
         return UIGraphicsImageRenderer(size: size).image { context in
             let cg = context.cgContext

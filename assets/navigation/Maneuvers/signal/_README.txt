@@ -1,0 +1,1 @@
+arrive/arrive-left/arrive-right use the flat pin from ../ — the pin is solid amber in signal contexts (fill #F5B32C), no gradient (a gradient on a 25px pin reads as a smudge).

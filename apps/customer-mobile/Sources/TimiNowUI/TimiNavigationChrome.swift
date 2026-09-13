@@ -109,14 +109,15 @@ struct TimiManeuverBanner: View {
         case .right: return "turn right"
         case .sharpLeft: return "turn sharply left"
         case .sharpRight: return "turn sharply right"
-        case .uTurn: return "make a U-turn"
+        case .uTurn, .uTurnRight: return "make a U-turn"
+        case .merge: return "merge"
         case .mergeLeft: return "merge left"
         case .mergeRight: return "merge right"
         case .forkLeft, .keepLeft: return "keep left"
         case .forkRight, .keepRight: return "keep right"
         case .onRampLeft, .onRampRight: return "take the ramp"
-        case .offRampLeft: return "take the exit on the left"
-        case .offRampRight: return "take the exit"
+        case .offRampLeft, .exitLeft: return "take the exit on the left"
+        case .offRampRight, .exitRight: return "take the exit"
         case .roundabout, .roundaboutLeft, .roundaboutRight, .roundaboutStraight: return "take the roundabout"
         case .arrive, .arriveLeft, .arriveRight: return "arrive at your destination"
         }
@@ -398,22 +399,22 @@ struct TimiMapControls: View {
     var body: some View {
         VStack(spacing: 10) {
             control(
-                systemImage: isOverview ? "location.fill" : "map",
+                asset: isOverview ? "MapControls/recenter" : "MapControls/route-overview",
                 label: isOverview ? "Re-center on your route" : "Show route overview",
                 action: onToggleOverview
             )
             control(
-                systemImage: isMuted ? "speaker.slash.fill" : "speaker.wave.2.fill",
+                asset: isMuted ? "MapControls/audio-muted" : "MapControls/audio-on",
                 label: isMuted ? "Unmute voice guidance" : "Mute voice guidance",
                 action: onToggleMute
             )
         }
     }
 
-    private func control(systemImage: String, label: String, action: @escaping () -> Void) -> some View {
+    private func control(asset: String, label: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            Image(systemName: systemImage)
-                .font(.system(size: 18, weight: .bold))
+            TimiNavIcon(name: asset, color: NavPalette.cardText(scheme))
+                .frame(width: 22, height: 22)
                 .frame(width: 52, height: 52)
                 .background(NavPalette.card(scheme), in: Circle())
                 .foregroundStyle(NavPalette.cardText(scheme))

@@ -14,7 +14,10 @@ build and verify on a Mac before shipping.
 | Map (offer comparison + tracker) | `Sources/TimiNowUI/ClinicMapView.swift` |
 | Turn-by-turn flow (route request, states, screen assembly) | `Sources/TimiNowUI/NavigationView.swift` |
 | Navigation presentation models (no Mapbox imports) | `Sources/TimiNowUI/TimiNavigationModel.swift` |
-| Maneuver/lane glyph drawing system | `Sources/TimiNowUI/TimiManeuverGlyph.swift` |
+| Navigation asset primitives (source of truth) | `assets/navigation/**.svg` |
+| Asset importer (SVG → replayable geometry) | `scripts/import-nav-assets.mjs` |
+| Asset renderer (SwiftUI + UIImage) | `Sources/TimiNowUI/TimiNavArt.swift` |
+| Maneuver/lane kind → primitive mapping | `Sources/TimiNowUI/TimiManeuverGlyph.swift` |
 | Navigation chrome (banner, alerts, trip/arrival cards, controls) | `Sources/TimiNowUI/TimiNavigationChrome.swift` |
 | Mapbox engine adapter + map view | `Sources/TimiNowUI/TimiNavigationSession.swift` |
 | Voice (rewrite table + synthesizer) | `Sources/TimiNowUI/VoiceController.swift`, `Sources/TimiNowUI/Resources/instruction-phrases.json` |
@@ -67,11 +70,66 @@ TimiNavigationChrome.swift + TimiManeuverGlyph.swift   (UI — CI-compiled)
   every SDK symbol it uses against a clone of `mapbox-navigation-ios`
   v3.27.3.
 
-**Maneuver symbols** are drawn by `TimiManeuverShape` — one geometry system
-(stroked spine + filled head, 100×100 design space) covering turns, merges,
-forks, keeps, ramps, roundabouts with a rotating exit arm, U-turns, lane
-arrows, and arrival. The geometry stays conventional road-sign geometry;
-the branding is the weight, rounding, and palette around it.
+**Maneuver symbols** come from the navigation asset system described in the
+next section — the designer's own primitives, not geometry written in Swift.
+`TimiManeuverGlyph` is now only the mapping from what the navigator reports to
+which primitive draws it, plus the tint.
+
+## The navigation asset system
+
+`assets/navigation/` holds the designer's primitives — maneuvers, lanes,
+junctions, route shields, map controls, status marks and the course indicator
+— as tintable SVG on the boxes the system specifies (120×120 for maneuvers and
+lanes, 640×300 for junctions, 24×24 for controls). They are the source of
+truth and are checked in unmodified apart from having their C2PA metadata
+stripped, which took the set from 1.9 MB to 101 KB.
+
+**Nothing renders SVG at runtime.** `scripts/import-nav-assets.mjs` resolves
+every file at build time into absolute move/line/curve/close commands and
+writes `Sources/TimiNowUI/Resources/nav-assets.json`; `npm run check` fails if
+that copy is stale. Flattened at import: relative commands, the H/V/S/T
+shorthands, elliptical arcs (converted to cubics via the spec's
+endpoint-to-centre parameterisation), and `marker-end` arrowheads, which are
+resolved into explicit geometry using the path's end tangent. What the app
+replays is the one thing SwiftUI's `Path`, UIKit's `UIBezierPath` and Skip's
+Android bridge all do identically.
+
+`TimiNavArt.swift` loads that resource; `TimiNavArtView` draws a primitive at
+any size, and `TimiNavArt.image(_:size:tint:)` renders one to a `UIImage` for
+the map puck and, later, `CPManeuver.symbolImage`. The design system's rule
+that **state is a tint, never a second file** is kept: primitives paint in
+`currentColor` and the caller supplies the colour, so an unusable lane is the
+same artwork at lower strength. Primitives that declare their own colours (the
+course indicator's cream disc, navy keyline and cobalt chevron) keep them.
+
+`scripts/validate-native.mjs` enforces that every `TimiManeuverKind` maps to a
+primitive that actually exists in the generated resource — a missing one draws
+*nothing*, with no error, leaving a hole where the turn should be.
+
+### Two defects in the supplied pack
+
+Both are recorded rather than silently patched, because the SVGs are the
+designer's artwork:
+
+- **The 25 `Maneuvers/signal/` variants stroke with `url(#sig)`, a gradient no
+  file in the pack defines.** Rendered as supplied they paint nothing at all.
+  The app uses the flat `currentColor` set instead, which is complete and
+  correct; the signal set needs its gradient defined before it can be used.
+- **67 primitives draw outside their own viewBox** — the three roundabout
+  maneuvers by up to 22 units, every lane cell by a smaller margin, and 43 of
+  the junction diagrams by as much as 200. A browser clips this. Rather than
+  clip (a headless arrow) or redraw someone else's artwork, the importer emits
+  the union of the declared viewBox and what the asset actually draws, and the
+  renderer fits that, so a primitive is always whole.
+
+### Not yet wired
+
+`Junctions` (58) and `RouteShields` (94) are imported and available but not yet
+drawn. They are not a rendering problem — it is that the data behind them does
+not exist in the app yet: the junction diagrams need per-branch road class and
+active-route flags, and the shields need `RoadShield` and exit numbers off the
+visual instruction. Both are real features rather than asset work, and building
+half of either would put artwork on screen that does not match the road.
 
 **The driving camera is configured, not defaulted.** `TimiNavigationMapView`
 sets `MobileViewportDataSource.options.followingCameraOptions` explicitly,
