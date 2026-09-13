@@ -29,6 +29,7 @@ import {
   listLedger,
   outcomeForIntake,
   platformFeeFor,
+  reconcilePaymentIntent,
   recordStripeAccount,
   settleIntake,
   splitForOutcome,
@@ -917,6 +918,67 @@ function record(name) { results.push(name); }
   );
   assertEqual(allowed.status, 201, "two keys from the same mode are allowed through");
   record("a deployment whose Stripe keys are from different modes is refused server-side");
+}
+
+/* ------- 19. a payment nobody sent a webhook for is still recognised --- */
+{
+  // The worst failure this codebase has: the charge succeeded, the customer
+  // was debited, and the product kept asking them to pay. A test-mode
+  // deployment with no test-mode webhook endpoint produced it, and the retry
+  // came back "You cannot confirm this PaymentIntent because it has already
+  // succeeded after being previously confirmed."
+  resetStripe();
+  const intakeId = "intake_reconcile";
+  await seedIntake({ id: intakeId, status: "accepted", paymentStatus: "requires_action" });
+  database.prepare("UPDATE intake_requests SET payment_provider_id = 'pi_reconcile_1' WHERE id = ?").run(intakeId);
+
+  const succeeded = {
+    id: "pi_reconcile_1",
+    object: "payment_intent",
+    amount: 5000,
+    amount_received: 5000,
+    currency: "usd",
+    status: "succeeded",
+    livemode: false,
+    created: Math.floor(Date.now() / 1000),
+    latest_charge: { id: "ch_reconcile_1", balance_transaction: { id: "txn_reconcile_1", fee: 175, available_on: Math.floor(Date.now() / 1000) } },
+    metadata: { intake_id: intakeId, tenant_id: "tenant_cedar" }
+  };
+
+  queueStripe(succeeded);
+  const applied = await reconcilePaymentIntent(LIVE_ENV, "pi_reconcile_1");
+  assert(applied, "polling Stripe applies a succeeded payment the webhook never delivered");
+  assertEqual(database.prepare("SELECT payment_status FROM intake_requests WHERE id = ?").get(intakeId).payment_status, "paid", "the intake is marked paid, so the clinic's details unlock");
+
+  const ledgerRows = () => database.prepare("SELECT COUNT(*) AS n FROM payment_ledger WHERE payment_intent_id = 'pi_reconcile_1'").get().n;
+  assertEqual(ledgerRows(), 1, "and the money is posted to the ledger once");
+
+  // Polling again must not post it twice.
+  resetStripe();
+  queueStripe(succeeded);
+  assertEqual(await reconcilePaymentIntent(LIVE_ENV, "pi_reconcile_1"), false, "a second poll reports nothing new to apply");
+  assertEqual(ledgerRows(), 1, "and writes no second ledger row");
+
+  // The real webhook arriving late is a different event id for the same
+  // money. Before ledger ids were derived from the object, this was the
+  // double-post that reconciliation would have introduced.
+  await handleStripeEvent(LIVE_ENV, {
+    id: "evt_reconcile_late_1",
+    type: "payment_intent.succeeded",
+    created: Math.floor(Date.now() / 1000),
+    data: { object: succeeded }
+  });
+  assertEqual(ledgerRows(), 1, "a webhook delivered after reconciliation posts nothing twice");
+
+  // An intent Stripe says is not succeeded changes nothing.
+  resetStripe();
+  queueStripe({ id: "pi_reconcile_2", object: "payment_intent", status: "requires_payment_method", amount: 5000, currency: "usd", created: Math.floor(Date.now() / 1000) });
+  assertEqual(await reconcilePaymentIntent(LIVE_ENV, "pi_reconcile_2"), false, "an unpaid intent is left alone");
+
+  // Stripe being unreachable is not allowed to break the path it backs up.
+  resetStripe();
+  assertEqual(await reconcilePaymentIntent(LIVE_ENV, "pi_reconcile_missing"), false, "a failed read is survivable, not fatal");
+  record("a succeeded payment with no webhook is reconciled by polling, exactly once");
 }
 
 console.log(`Stripe tests passed (${results.length} groups): ${results.join("; ")}.`);

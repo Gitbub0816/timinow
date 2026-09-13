@@ -28,6 +28,7 @@ import {
   getStripeAccountForTenant,
   handleStripeEvent,
   outcomeForIntake,
+  reconcilePaymentIntent,
   settleIntake
 } from "./payments.js";
 import { stripeConfigured, StripeError, verifyWebhookSignature } from "./stripe.js";
@@ -1812,8 +1813,21 @@ async function refreshPayment(env, actor, intakeId) {
   const intake = await getIntake(env, intakeId);
   if (!intake) return apiError(404, "INTAKE_NOT_FOUND", "The intake request was not found.");
   if (signInRequired(env) && intake.customerUserId !== actor?.userId) return apiError(403, "INTAKE_ACCESS_DENIED", "This intake belongs to another account.");
+  /**
+   * The deposit's own reconciliation, for the same reason the booking charge
+   * has one: a webhook that never arrives leaves a paid customer looking at an
+   * unpaid screen. This is the route the client polls while waiting for the
+   * deposit to clear, so it is the right place to ask Stripe rather than to
+   * keep reporting our own stale copy.
+   */
+  let current = intake;
+  if (current.paymentStatus !== "paid" && current.paymentProviderId) {
+    if (await reconcilePaymentIntent(env, current.paymentProviderId)) {
+      current = (await getIntake(env, intakeId)) || current;
+    }
+  }
   return json({
-    intake,
+    intake: current,
     paymentsProvider: stripeConfigured(env) ? "stripe" : (env.DEMO_MODE === "true" ? "demo" : "none")
   });
 }

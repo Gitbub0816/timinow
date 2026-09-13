@@ -40,6 +40,7 @@ import {
   createTransfer,
   idempotencyKey,
   retrieveConnectedAccount,
+  retrievePaymentIntent,
   stripeConfigured,
   StripeError
 } from "./stripe.js";
@@ -395,7 +396,22 @@ export async function transferEligibility(env, tenantId, { refresh = false } = {
  */
 export async function recordLedgerEntry(env, entry) {
   if (!hasDatabase(env)) return null;
-  const id = entry.id || newId("ledger");
+  /**
+   * Derived from the Stripe object rather than random, so `INSERT OR IGNORE`
+   * actually deduplicates.
+   *
+   * Until reconciliation existed, one event applied once was the only thing
+   * keeping a payment from being posted twice, and `stripe_events` enforced
+   * that. It is no longer the only writer: a poll that finds a succeeded
+   * PaymentIntent posts it, and the webhook for that same intent can still
+   * arrive afterwards under its own event id — a different event, the same
+   * money. With a random id those are two `deposit_captured` rows for one
+   * payment, which is a reconciliation report that does not match the bank.
+   * Keyed on kind and object id, the second write is a no-op whichever path
+   * gets there first.
+   */
+  const id = entry.id
+    || (entry.stripeObjectId ? `ledger_${entry.kind}_${entry.stripeObjectId}` : newId("ledger"));
   const amount = Math.abs(Math.trunc(Number(entry.amountCents) || 0));
   const fee = Math.abs(Math.trunc(Number(entry.feeCents) || 0));
   await env.DB.prepare(`
@@ -801,6 +817,59 @@ function intakeIdFromMetadata(object) {
  * Returns `{ handled, ignored, duplicate }` so the route can log what
  * happened without re-deriving it.
  */
+/**
+ * Ask Stripe what actually happened to a PaymentIntent, and apply it locally.
+ *
+ * The webhook is the primary path and stays the primary path. It is not a
+ * sufficient one: it is a single point of failure outside our control, and
+ * when it does not arrive there is no second chance — the charge succeeds, the
+ * customer is debited, and the product goes on showing "payment required" with
+ * the clinic's address still locked. That is the worst failure this codebase
+ * has, because the money moved and the person got nothing for it.
+ *
+ * It is exactly what happened here: a test-mode deployment with no test-mode
+ * webhook endpoint. The customer paid, the app kept asking them to pay, and
+ * the retry came back "You cannot confirm this PaymentIntent because it has
+ * already succeeded."
+ *
+ * So the poll the client is already making reconciles: read the intent, and if
+ * Stripe says it succeeded, apply the same event the webhook would have. The
+ * synthetic event id is derived from the intent, so `stripe_events` collapses
+ * repeated polls to one application, and ledger ids are derived from the
+ * object (see recordLedgerEntry), so a real webhook arriving late posts
+ * nothing twice.
+ *
+ * Returns true only when this call moved the payment to succeeded-and-applied.
+ * Every failure here is non-fatal: reconciliation is a backstop, and a
+ * backstop that can break the path it backs up is worse than none.
+ */
+export async function reconcilePaymentIntent(env, paymentIntentId) {
+  if (!hasDatabase(env) || !stripeConfigured(env) || !paymentIntentId) return false;
+  let intent;
+  try {
+    intent = await retrievePaymentIntent(env, paymentIntentId);
+  } catch (error) {
+    console.warn(JSON.stringify({ event: "payment_reconcile_read_failed", paymentIntentId, message: error.message }));
+    return false;
+  }
+  if (intent?.status !== "succeeded") return false;
+  try {
+    const result = await handleStripeEvent(env, {
+      id: `reconcile_${intent.id}`,
+      type: "payment_intent.succeeded",
+      created: intent.created || Math.floor(Date.now() / 1000),
+      livemode: intent.livemode !== false,
+      data: { object: intent }
+    });
+    if (result.duplicate) return false;
+    console.warn(JSON.stringify({ event: "payment_reconciled", paymentIntentId, detail: "a succeeded payment was applied by polling because no webhook had delivered it" }));
+    return Boolean(result.handled);
+  } catch (error) {
+    console.warn(JSON.stringify({ event: "payment_reconcile_apply_failed", paymentIntentId, message: error.message }));
+    return false;
+  }
+}
+
 export async function handleStripeEvent(env, event) {
   if (!hasDatabase(env)) return { handled: false, ignored: true, reason: "DATABASE_REQUIRED" };
   if (!event?.id || !event?.type) return { handled: false, ignored: true, reason: "MALFORMED_EVENT" };

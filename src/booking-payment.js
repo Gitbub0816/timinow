@@ -30,6 +30,11 @@ import { cancelPaymentIntent, createPaymentIntent, idempotencyKey, stripeConfigu
 import { activeGrantFor, recordSponsoredCompletion } from "./hardship/index.js";
 import { depositOutcomeForBooking, getBookingDepositSnapshot } from "./deposit-policy.js";
 import { postContribution } from "./fund.js";
+// Cyclic with payments.js, which imports markBookingPaymentOrderStatus from
+// here. Both sides are hoisted function declarations resolved at call time,
+// not at module evaluation, so the cycle is inert — the same shape that pair
+// already had before reconciliation was added.
+import { reconcilePaymentIntent } from "./payments.js";
 
 function newId(prefix) {
   return `${prefix}_${crypto.randomUUID().replaceAll("-", "")}`;
@@ -331,8 +336,31 @@ export async function ensureBookingPaymentOrder(env, { intake, contributionCents
   // Oldest wins, ties broken by id: every racer computes the same canonical
   // row no matter which of them inserted it.
   let existing = await env.DB.prepare(
-    "SELECT id FROM payment_orders WHERE intake_id = ? AND purpose = 'BOOKING' AND status NOT IN ('FAILED', 'CANCELLED') ORDER BY created_at ASC, id ASC LIMIT 1"
+    "SELECT id, stripe_payment_intent_id FROM payment_orders WHERE intake_id = ? AND purpose = 'BOOKING' AND status NOT IN ('FAILED', 'CANCELLED') ORDER BY created_at ASC, id ASC LIMIT 1"
   ).bind(intake.id).first();
+
+  /**
+   * Before treating this order as unpaid, ask Stripe whether it is.
+   *
+   * The webhook is the only thing that ever moved an order to PAID, and when
+   * it does not arrive — a mode with no endpoint configured, a delivery that
+   * fails every retry — the customer is charged and the app goes on showing
+   * the payment screen with the clinic's address still locked. They then tap
+   * pay again and Stripe answers "You cannot confirm this PaymentIntent
+   * because it has already succeeded", which is where this was found.
+   *
+   * The client is already polling this route; that poll is now also the
+   * reconciliation. Costs one Stripe read per poll of an order that has a
+   * PaymentIntent and is not yet paid — a narrow window, and the alternative
+   * is taking someone's money and giving them nothing.
+   */
+  if (existing?.stripe_payment_intent_id) {
+    const reconciled = await reconcilePaymentIntent(env, existing.stripe_payment_intent_id);
+    if (reconciled) {
+      const settled = await getPaymentOrder(env, existing.id);
+      if (settled?.status === "PAID") return { ok: true, mode: "paid", totalCents: null, order: settled };
+    }
+  }
 
   if (existing) {
     const sums = await env.DB.prepare(`
