@@ -58,9 +58,20 @@ const CONTENT_SECURITY_POLICY = [
   "default-src 'self'",
   "script-src 'self' https://cdn.jsdelivr.net",
   "style-src 'self' 'unsafe-inline'",
-  "img-src 'self' data:",
+  // blob: and img.clerk.com because Clerk renders avatars from both. This
+  // surface shows none today, but it is the one Clerk-bearing CSP that
+  // differed from the three that work, and a page CSP has only been enforced
+  // at all since the _headers fix — so "it was fine before" proves nothing
+  // about any of these directives.
+  "img-src 'self' data: blob: https://img.clerk.com",
   "font-src 'self' data:",
   "connect-src 'self' https://clerk.timinow.pet",
+  // clerk-js keeps a session alive from a Worker built out of a blob URL.
+  // Chromium allowed it under this CSP when I tested the mechanism directly,
+  // so this is parity with the working surfaces rather than the fix for the
+  // failure at hand — Safari and Firefox are stricter about blob: workers
+  // than Chromium is, and this page is being used on Safari.
+  "worker-src 'self' blob:",
   "object-src 'none'",
   "base-uri 'self'",
   "form-action 'self'",

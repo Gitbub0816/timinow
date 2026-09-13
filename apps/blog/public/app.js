@@ -45,6 +45,8 @@ async function api(path, options = {}) {
  * wait on an auth SDK, and most visits never sign in at all.
  */
 let clerk = null;
+/** Why Clerk could not load, for the message on screen. */
+let clerkFailure = null;
 async function loadClerk() {
   if (clerk !== null) return clerk;
   const key = state.config?.clerkPublishableKey;
@@ -62,10 +64,13 @@ async function loadClerk() {
     clerk.addListener(() => { syncActor(); route(); });
     return clerk;
   } catch (error) {
-    // Logged rather than swallowed. Silence here is what made an unusable page
-    // look like a working one: nothing could sign in, every write path said
-    // "sign in to take part" forever, and the console was clean.
+    // Logged AND kept, rather than swallowed. Silence here is what made an
+    // unusable page look like a working one; a generic "unavailable" on screen
+    // is the same failure one step later, because nobody diagnoses a sign-in
+    // problem from a phone with no console. The reason is shown — see
+    // signInUnavailableText.
     console.error("Clerk initialisation failed", error);
+    clerkFailure = error;
     clerk = false;
     return clerk;
   }
@@ -332,6 +337,22 @@ function showSignIn(afterPath = window.location.pathname) {
   showView("sign-in");
 }
 
+/**
+ * What to say when the sign-in provider itself will not load.
+ *
+ * The reason is included deliberately. This is not a message a reader can act
+ * on either way, but it is the only thing that makes the failure reportable:
+ * the surface is a phone, there is no console on it, and "try again in a
+ * moment" is what a page says when nobody knows what is wrong. Clerk's own
+ * errors name the cause — an origin it does not recognise, a key for another
+ * instance, a network it could not reach.
+ */
+function signInUnavailableText() {
+  const reason = clerkFailure?.message || (clerkFailure ? String(clerkFailure) : "");
+  const base = "Sign-in could not start on this page.";
+  return reason ? `${base} (${reason.slice(0, 200)})` : `${base} Try again in a moment.`;
+}
+
 function signInMessage(error) {
   // Clerk puts the useful sentence in errors[0].longMessage; its top-level
   // message is a generic wrapper.
@@ -357,7 +378,7 @@ function wireSignIn() {
     const identifier = new FormData(event.currentTarget).get("identifier")?.toString().trim();
     if (!identifier) return;
     const instance = await loadClerk();
-    if (!instance) { note.textContent = "Sign-in is unavailable on this page right now. Try again in a moment."; return; }
+    if (!instance) { note.textContent = signInUnavailableText(); return; }
     note.textContent = "Sending…";
     try {
       signInAttempt = await instance.client.signIn.create({ identifier });

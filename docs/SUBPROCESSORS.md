@@ -49,13 +49,14 @@ which `src/index.js` (or `apps/*/src/index.js`) declares it.
 | `https://hooks.stripe.com` | frame-src | Stripe 3DS/verification challenge frame | customer |
 | `https://api.stripe.com` | connect-src | Stripe.js network calls | customer, admin |
 | `https://connect.stripe.com` | frame-src | Stripe Connect embedded onboarding | admin |
-| `https://cdn.jsdelivr.net` | script-src | Clerk JS (`@clerk/clerk-js`), Stripe Connect JS (`@stripe/connect-js`) | customer, vet, admin |
+| `https://cdn.jsdelivr.net` | script-src | Clerk JS (`@clerk/clerk-js`), Stripe Connect JS (`@stripe/connect-js`) | customer, vet, admin, blog |
 | `https://unpkg.com` | script-src | Didit identity verification web SDK | customer |
 | `https://verification.didit.me` | connect-src, frame-src | Didit identity verification session | customer |
 | `https://api.mapbox.com` | script-src, style-src, img-src, connect-src | Mapbox GL JS, tiles, geocoding, directions | customer, admin |
 | `https://*.tiles.mapbox.com` | img-src | Mapbox raster/vector tiles | customer, admin |
 | `https://events.mapbox.com` | connect-src | Mapbox GL JS telemetry | customer, admin |
-| `https://clerk.timinow.pet` | connect-src | Clerk's custom Frontend API domain (`CLERK_ISSUER`) | customer, vet, admin |
+| `https://clerk.timinow.pet` | connect-src | Clerk's custom Frontend API domain (`CLERK_ISSUER`) | customer, vet, admin, blog |
+| `https://img.clerk.com` | img-src | Avatars Clerk serves for a signed-in account | blog |
 | `https://timinow.pet` | script-src, connect-src | The customer Worker's own `/widget.js` and `/api/widget/:token/status`, embedded from the vet console's Widget Studio preview and the widget-demo gallery | vet, widget-demo |
 
 Not in any CSP because it is never loaded by a browser page (server-to-server
