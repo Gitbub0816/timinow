@@ -13,7 +13,7 @@
 
   <header class="site-head">
     <div class="head-inner">
-      <a class="wordmark" href="/">Tími<span>NOW</span></a>
+      <a class="wordmark" href="/"><img src="/assets/brand/timinow-wordmark.svg" alt="Tími NOW"></a>
       <nav class="site-nav" aria-label="Sections">
         <a href="/" data-nav="posts">Notes</a>
         <a href="/forum" data-nav="forum">Community</a>
@@ -21,6 +21,7 @@
       <div class="head-actions">
         <span class="who" data-who hidden></span>
         <button class="button" type="button" data-action="sign-in" hidden>Sign in</button>
+        <button class="button" type="button" data-action="sign-out" hidden>Sign out</button>
         <a class="button button-primary" href="https://timinow.pet">Find care</a>
       </div>
     </div>
@@ -74,7 +75,7 @@
           </label>
           <button class="button button-primary" type="submit">Post comment</button>
         </form>
-        <p class="form-note" data-comment-signin hidden>Sign in to comment.</p>
+        <button class="button" type="button" data-comment-signin hidden data-action="sign-in-inline">Sign in to comment</button>
         <ol class="comment-list" data-comment-list></ol>
       </section>
     </section>
@@ -116,7 +117,7 @@
           </div>
         </fieldset>
       </form>
-      <p class="form-note" data-forum-signin hidden>Sign in to start a thread.</p>
+      <button class="button" type="button" data-forum-signin hidden data-action="sign-in-inline">Sign in to start a thread</button>
 
       <div class="thread-list" data-thread-list><p class="empty">Loading…</p></div>
     </section>
@@ -136,7 +137,36 @@
         </label>
         <button class="button button-primary" type="submit">Post reply</button>
       </form>
-      <p class="form-note" data-reply-signin hidden>Sign in to reply.</p>
+      <button class="button" type="button" data-reply-signin hidden data-action="sign-in-inline">Sign in to reply</button>
+    </section>
+
+    <!-- ========================================================= sign in -->
+    <!-- Built here rather than opened from Clerk: every Tími web surface uses
+         the headless Clerk build, which ships no UI, and offers one-time codes
+         only — no passwords, no passkeys, no OAuth. See apps/vet-web's
+         renderSignIn for the same flow. -->
+    <section class="view" data-view="sign-in" hidden>
+      <div class="message-card">
+        <h1>Sign in to take part</h1>
+        <p>Reading needs no account. Commenting and posting do, so a name sits behind every word here.</p>
+
+        <form data-signin-identifier>
+          <label class="field" for="signin-identifier">Email address
+            <input id="signin-identifier" name="identifier" type="email" autocomplete="email" required>
+          </label>
+          <button class="button button-primary" type="submit">Send me a code</button>
+        </form>
+
+        <form data-signin-code hidden>
+          <label class="field" for="signin-code">The six-digit code we just emailed you
+            <input id="signin-code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" required>
+          </label>
+          <button class="button button-primary" type="submit">Sign in</button>
+          <button class="button" type="button" data-signin-restart>Use a different address</button>
+        </form>
+
+        <p class="form-note" data-signin-note role="status"></p>
+      </div>
     </section>
 
     <!-- ================================================ subscribe outcome -->

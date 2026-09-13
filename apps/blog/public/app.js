@@ -18,7 +18,8 @@ const state = {
   actor: null,
   filter: "",
   post: null,
-  thread: null
+  thread: null,
+  returnTo: null
 };
 
 const $ = (selector, root = document) => root.querySelector(selector);
@@ -49,15 +50,40 @@ async function loadClerk() {
   const key = state.config?.clerkPublishableKey;
   if (!key) { clerk = false; return clerk; }
   try {
-    const module = await import(state.config.clerkJsUrl);
-    const Clerk = module.Clerk || module.default;
+    const module = await import(/* @vite-ignore */ state.config.clerkJsUrl);
+    // Same resolution as every other surface: the jsDelivr +esm build has moved
+    // its export shape between versions, and a bare `module.Clerk` is how this
+    // silently became undefined.
+    const Clerk = module.Clerk || module.default?.Clerk || module.default;
     clerk = new Clerk(key);
     await clerk.load();
+    // Re-render on sign-in and sign-out, so the page stops saying "sign in to
+    // take part" the moment somebody has.
+    clerk.addListener(() => { syncActor(); route(); });
     return clerk;
-  } catch {
+  } catch (error) {
+    // Logged rather than swallowed. Silence here is what made an unusable page
+    // look like a working one: nothing could sign in, every write path said
+    // "sign in to take part" forever, and the console was clean.
+    console.error("Clerk initialisation failed", error);
     clerk = false;
     return clerk;
   }
+}
+
+/** Read the signed-in person out of Clerk and reflect them in the header. */
+function syncActor() {
+  const user = clerk && clerk.user;
+  state.actor = user
+    ? { name: user.fullName || user.primaryEmailAddress?.emailAddress || "You" }
+    : null;
+  const who = $("[data-who]");
+  who.textContent = state.actor?.name || "";
+  who.hidden = !state.actor;
+  // Shown whenever nobody is signed in — including when Clerk failed to load,
+  // because a button that explains itself beats a page with no way in.
+  $("[data-action='sign-in']").hidden = Boolean(state.actor);
+  $("[data-action='sign-out']").hidden = !state.actor;
 }
 
 async function sessionToken() {
@@ -274,7 +300,7 @@ function showMessage(title, body) {
 /* ───────────────────────────────────────────────────────────────── actions ── */
 
 async function reportThing(subjectType, subjectId) {
-  if (!state.actor) { showMessage("Sign in first", "Reporting needs an account, so we can tell one report from many."); return; }
+  if (!state.actor) { showSignIn(); return; }
   const reason = window.prompt("What's wrong with it? (a word or two)");
   if (reason === null) return;
   try {
@@ -283,6 +309,91 @@ async function reportThing(subjectType, subjectId) {
   } catch (error) {
     window.alert(error.message);
   }
+}
+
+/* ───────────────────────────────────────────────────────────── sign in ── */
+
+/**
+ * One-time code sign-in, built here.
+ *
+ * The headless Clerk build ships no UI at all — no openSignIn, no components —
+ * which is the whole reason this page could not be used: calling a method that
+ * does not exist threw inside a catch, so every write path said "sign in to
+ * take part" and offered no way to do it. Every other Tími web surface builds
+ * this same form, and offers codes only: no passwords, no passkeys, no OAuth.
+ */
+let signInAttempt = null;
+
+function showSignIn(afterPath = window.location.pathname) {
+  state.returnTo = afterPath;
+  $("[data-signin-identifier]").hidden = false;
+  $("[data-signin-code]").hidden = true;
+  $("[data-signin-note]").textContent = "";
+  showView("sign-in");
+}
+
+function signInMessage(error) {
+  // Clerk puts the useful sentence in errors[0].longMessage; its top-level
+  // message is a generic wrapper.
+  return error?.errors?.[0]?.longMessage || error?.errors?.[0]?.message || error?.message || "That did not work.";
+}
+
+function wireSignIn() {
+  $("[data-action='sign-in']").addEventListener("click", () => showSignIn());
+  // The inline prompts on a post, a thread and the forum are the same button.
+  $$("[data-action='sign-in-inline']").forEach((button) => {
+    button.addEventListener("click", () => showSignIn());
+  });
+
+  $("[data-action='sign-out']").addEventListener("click", async () => {
+    if (clerk) await clerk.signOut();
+    syncActor();
+    route();
+  });
+
+  $("[data-signin-identifier]").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const note = $("[data-signin-note]");
+    const identifier = new FormData(event.currentTarget).get("identifier")?.toString().trim();
+    if (!identifier) return;
+    const instance = await loadClerk();
+    if (!instance) { note.textContent = "Sign-in is unavailable on this page right now. Try again in a moment."; return; }
+    note.textContent = "Sending…";
+    try {
+      signInAttempt = await instance.client.signIn.create({ identifier });
+      const factor = (signInAttempt.supportedFirstFactors || []).find((f) => f.strategy === "email_code");
+      if (!factor) throw new Error("That account has no email address that can receive a code.");
+      await signInAttempt.prepareFirstFactor({ strategy: "email_code", emailAddressId: factor.emailAddressId });
+      $("[data-signin-identifier]").hidden = true;
+      $("[data-signin-code]").hidden = false;
+      note.textContent = `We emailed a code to ${identifier}.`;
+    } catch (error) {
+      note.textContent = signInMessage(error);
+    }
+  });
+
+  $("[data-signin-code]").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const note = $("[data-signin-note]");
+    const code = new FormData(event.currentTarget).get("code")?.toString().trim();
+    if (!code || !signInAttempt) return;
+    note.textContent = "Checking…";
+    try {
+      const result = await signInAttempt.attemptFirstFactor({ strategy: "email_code", code });
+      if (result.status !== "complete") throw new Error("That code was not accepted.");
+      await clerk.setActive({ session: result.createdSessionId });
+      signInAttempt = null;
+      syncActor();
+      go(state.returnTo || "/");
+    } catch (error) {
+      note.textContent = signInMessage(error);
+    }
+  });
+
+  $("[data-signin-restart]").addEventListener("click", () => {
+    signInAttempt = null;
+    showSignIn(state.returnTo);
+  });
 }
 
 /* ───────────────────────────────────────────────────────────────── routing ── */
@@ -385,7 +496,9 @@ function wire() {
   });
 
   $("[data-action='new-thread']").addEventListener("click", () => {
-    if (!state.actor) { $("[data-forum-signin]").hidden = false; return; }
+    // Somewhere to go, rather than a sentence telling them to do something the
+    // page gave them no way to do.
+    if (!state.actor) { showSignIn("/forum"); return; }
     $("[data-thread-form]").hidden = false;
   });
   $("[data-action='cancel-thread']").addEventListener("click", () => { $("[data-thread-form]").hidden = true; });
@@ -437,17 +550,11 @@ async function start() {
   state.config = await api("/api/config").catch(() => ({}));
   $("[data-not-advice]").textContent = state.config.notAdvice || "";
 
-  const instance = await loadClerk();
-  if (instance && instance.user) {
-    state.actor = { name: instance.user.fullName || instance.user.primaryEmailAddress?.emailAddress || "You" };
-    const who = $("[data-who]");
-    who.textContent = state.actor.name;
-    who.hidden = false;
-  } else if (instance) {
-    $("[data-action='sign-in']").hidden = false;
-  }
+  await loadClerk();
+  syncActor();
 
   wire();
+  wireSignIn();
   await route();
 }
 

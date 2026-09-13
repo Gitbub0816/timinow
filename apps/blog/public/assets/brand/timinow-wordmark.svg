@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 560 160" role="img" aria-labelledby="title desc">
+  <title id="title">Tími NOW</title>
+  <desc id="desc">Regal cobalt Tími wordmark with coral NOW and a marigold accent.</desc>
+  <defs>
+    <linearGradient id="royal" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2f5bea"/><stop offset="1" stop-color="#173fb8"/>
+    </linearGradient>
+  </defs>
+  <text x="12" y="120" fill="url(#royal)" font-family="Georgia, 'Times New Roman', serif" font-size="134" font-weight="700" letter-spacing="-9">Tími</text>
+  <text x="368" y="120" fill="#ff5e50" font-family="Arial, Helvetica, sans-serif" font-size="70" font-weight="800" letter-spacing="-3">NOW</text>
+  <path d="M146 12l17-10 12 8-23 20z" fill="#f7b731"/>
+</svg>

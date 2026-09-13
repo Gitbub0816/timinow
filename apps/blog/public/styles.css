@@ -45,6 +45,11 @@ body {
   font-family: var(--sans);
   font-size: 16px;
   line-height: 1.6;
+  /* So the footer sits at the bottom of the window on a short page rather
+     than halfway down it with canvas below. */
+  min-height: 100svh;
+  display: flex;
+  flex-direction: column;
 }
 button, input, select, textarea { font: inherit; color: inherit; }
 button { cursor: pointer; }
@@ -60,8 +65,11 @@ h1, h2, h3, p, ul, ol { margin-top: 0; }
 
 .site-head { border-bottom: 2px solid var(--ink); background: var(--paper); }
 .head-inner { max-width: 1040px; margin: 0 auto; padding: 14px 20px; display: flex; align-items: center; gap: 20px; flex-wrap: wrap; }
-.wordmark { font-weight: 900; font-size: 1.2rem; letter-spacing: -.02em; color: var(--ink); text-decoration: none; }
-.wordmark span { color: var(--coral); }
+.wordmark { display: inline-flex; align-items: center; text-decoration: none; }
+/* Sized by width, like every other surface (.brand-mark is 130–150px there),
+   because the published SVG's viewBox carries its own whitespace and a height
+   rule makes it read smaller than it does everywhere else. */
+.wordmark img { width: 118px; height: auto; display: block; }
 .site-nav { display: flex; gap: 16px; margin-right: auto; }
 .site-nav a { color: var(--ink-soft); text-decoration: none; font-weight: 700; font-size: .86rem; padding: 4px 0; border-bottom: 2px solid transparent; }
 .site-nav a.is-on { color: var(--ink); border-bottom-color: var(--coral); }
@@ -84,7 +92,7 @@ h1, h2, h3, p, ul, ol { margin-top: 0; }
   border-bottom: 2px solid var(--ink); font-size: .78rem; font-weight: 600; text-align: center;
 }
 
-main { max-width: 1040px; margin: 0 auto; padding: 28px 20px 64px; }
+main { max-width: 1040px; width: 100%; margin: 0 auto; padding: 28px 20px 64px; flex: 1; }
 
 .masthead { margin-bottom: 24px; }
 .masthead h1 { font-family: var(--serif); font-size: clamp(2rem, 5vw, 2.9rem); margin-bottom: 4px; letter-spacing: -.02em; }
@@ -196,12 +204,22 @@ main { max-width: 1040px; margin: 0 auto; padding: 28px 20px 64px; }
   .post-card:hover, .thread-card:hover { transform: none; }
 }
 
-/* Dark: the cards stay light on purpose. This is a reading surface and the
-   article itself is a sheet of paper in both themes; what changes is the
-   ground it sits on, so a dark-mode reader is not staring into a lit page. */
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) { --canvas: #0d1226; --line: #2a3358; }
-  :root:not([data-theme="light"]) body { color: var(--ink); }
-  :root:not([data-theme="light"]) .site-foot { color: var(--muted); }
-}
-:root[data-theme="dark"] { --canvas: #0d1226; --line: #2a3358; }
+/* No dark variant, deliberately.
+ *
+ * The first version darkened --canvas under prefers-color-scheme and left body
+ * text at --ink, which is near-black: the masthead, the forum copy and the
+ * footer were dark text on a dark ground, and the page was unreadable for
+ * anybody whose system is set to dark. That is what "too dark" was.
+ *
+ * Rather than build a second palette, this surface commits to the product's
+ * own, which is a light one — paper and canvas are the two grounds (CLAUDE.md
+ * §7), and every other Tími surface reads the same way in both themes. A
+ * reading surface should look like the rest of the product, not like a
+ * different application after sunset. Every colour below is set explicitly,
+ * so nothing inherits the host's theme. */
+:root { color-scheme: light; }
+
+/* The sign-in panel. Same one-time-code flow as every other Tími surface. */
+[data-view="sign-in"] .message-card form { margin-top: 18px; }
+[data-view="sign-in"] .message-card .button { margin-right: 8px; }
+[data-view="sign-in"] .field input { max-width: 320px; }
