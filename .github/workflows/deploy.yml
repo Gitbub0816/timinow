@@ -1,9 +1,10 @@
-# Manual deploy to production.
+# Deploy to production: automatically when the gate passes on main, or by hand.
 #
-# Deliberately `workflow_dispatch` only. Nothing here fires on a push: a
-# veterinary intake network should not redeploy because someone edited a README,
-# and a surprise production deploy during a busy evening is the kind of thing
-# you find out about from a clinic rather than from a dashboard.
+# This was dispatch-only, on the reasoning that a veterinary intake network
+# should not redeploy because someone edited a README. See the `on:` block for
+# what changed — in short, `workflow_run` means a deploy now requires the full
+# check suite to have passed on that exact commit first, which is a stronger
+# promise than a human remembering to press a button.
 #
 # Repository secrets consumed:
 #   CLOUDFLARE_API_TOKEN   Workers Scripts:Edit + D1:Edit
@@ -24,6 +25,28 @@
 name: Deploy
 
 on:
+  # Hands-off deploys, but only behind the gate.
+  #
+  # This workflow was deliberately dispatch-only, and the reason still holds: a
+  # veterinary intake network should not redeploy because somebody edited a
+  # README, and a surprise production deploy during a busy evening is the kind
+  # of thing you find out about from a clinic rather than from a dashboard.
+  #
+  # What changes that calculus is `workflow_run`: this fires only after the
+  # `check` workflow finishes on main AND only when it succeeded, so the whole
+  # suite — syntax, subprocessor/CSP sync, security-header sync, schema
+  # validation, every integration test — has already passed on exactly this
+  # commit. A red build cannot reach production, which is the property that
+  # made the manual gate worth its cost. (That gate was itself red for ten
+  # commits without anybody noticing, so it is now load-bearing in both
+  # directions: a broken check stops the deploy rather than just the merge.)
+  #
+  # Migrations and the demo-seed cleanup stay manual-only below. Those change
+  # data rather than code, and neither should happen because somebody merged.
+  workflow_run:
+    workflows: [check]
+    types: [completed]
+    branches: [main]
   workflow_dispatch:
     inputs:
       target:
@@ -52,14 +75,30 @@ concurrency:
 
 jobs:
   deploy:
-    name: Deploy ${{ inputs.target }}
+    name: Deploy ${{ inputs.target || 'all' }}
     runs-on: ubuntu-latest
+    # A *completed* check run is not a *passed* one. `workflow_run` fires on
+    # failure too, so without this every red build would deploy — the exact
+    # opposite of the guarantee the trigger above is there to make.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
     timeout-minutes: 15
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
     steps:
+      # Deploy exactly the commit that passed, not whatever is newest.
+      #
+      # On a `workflow_run` event `github.sha` is the tip of the default
+      # branch, which is NOT necessarily the commit the check ran against — two
+      # merges in quick succession and this would ship code no gate has seen,
+      # which is the one thing the automatic trigger is supposed to prevent.
+      # `head_sha` is the commit that actually passed; it is empty on a manual
+      # dispatch, where the ref is whatever was chosen.
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.ref }}
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
@@ -72,15 +111,19 @@ jobs:
       - name: Validate
         run: npm run check
 
+      # Manual only, both of these. They change DATA rather than code, and a
+      # schema change that lands because somebody merged is a schema change
+      # nobody was watching. An automatic run has no inputs at all, so the
+      # event check is belt to that braces.
       - name: Apply migrations
-        if: ${{ inputs.migrate }}
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.migrate }}
         run: npm run db:migrate:remote
 
       # Data hygiene, not schema: flips the fictional seed clinics inactive
       # in the production database. The runtime DEMO_MODE filter already
       # keeps them out of discovery either way — see scripts/remove-demo-seed.sql.
       - name: Deactivate demo clinics
-        if: ${{ inputs.cleanup_demo }}
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.cleanup_demo }}
         run: npm run db:cleanup-demo:remote
 
       # --var GIT_SHA stamps the deployed commit into each Worker's
@@ -95,9 +138,15 @@ jobs:
           # extra --var from this workflow alone, which is why every locally
           # deployed Worker reported `build: null` and nobody could tell what
           # was actually live.
-          GIT_SHA: ${{ github.sha }}
+          # The commit actually checked out above — see the note there. Using
+          # github.sha would stamp /api/health with a commit this deploy may
+          # not contain.
+          GIT_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
         run: |
-          case "${{ inputs.target }}" in
+          # `inputs.target` is empty on an automatic run, and an unmatched case
+          # deploys nothing while reporting success — the worst possible
+          # outcome for a pipeline whose whole job is to have shipped.
+          case "${{ inputs.target || 'all' }}" in
             all)      npm run deploy && npm run deploy:vet && npm run deploy:admin && npm run deploy:blog && npm run deploy:voice && npm run deploy:widget-demo ;;
             customer) npm run deploy ;;
             vet)      npm run deploy:vet ;;
