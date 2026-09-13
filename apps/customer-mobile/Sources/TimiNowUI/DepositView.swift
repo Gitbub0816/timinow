@@ -275,6 +275,25 @@ struct DepositSection: View {
         )
     }
 
+    /// Whether this failure means the money already moved.
+    ///
+    /// `payment_intent_unexpected_state` is Stripe refusing to act on an
+    /// intent that is not in the state the call assumed. The case that matters
+    /// is the one that reads "You cannot confirm this PaymentIntent because it
+    /// has already succeeded after being previously confirmed" — the customer
+    /// paid, and the only thing that went wrong is that we asked twice.
+    ///
+    /// Showing "that didn't work, try again" to somebody who has just been
+    /// charged is the worst sentence this app can produce. Deliberately not
+    /// matched on Stripe's English: any unexpected state means the sheet and
+    /// the server disagree about this intent, and the server is the one that
+    /// can ask Stripe. So stop arguing with the sheet and re-poll — the Worker
+    /// reconciles the intent now (see reconcilePaymentIntent in
+    /// src/payments.js) and answers with what actually happened.
+    static func meansIntentAlreadyResolved(_ diagnostics: (type: String?, code: String?, detail: String?)) -> Bool {
+        diagnostics.code == "payment_intent_unexpected_state"
+    }
+
     /// The one sentence every Stripe mount failure shows, with the reason
     /// attached.
     ///

@@ -384,6 +384,16 @@ struct BookingPaymentSection: View {
             // likely to surface.
             let diagnostics = DepositSection.stripeFailureDiagnostics(error)
             store.trackPaymentFailure(context: "booking_prepare", stripeErrorType: diagnostics.type, stripeErrorCode: diagnostics.code, stripeMessage: diagnostics.detail)
+            if DepositSection.meansIntentAlreadyResolved(diagnostics) {
+                // A sheet cannot be mounted for an intent that has already
+                // succeeded, which is the same disagreement as above reaching
+                // us one step earlier — the Worker still said "stripe", so it
+                // had not yet caught up with the charge. Re-poll rather than
+                // show a card error for a card that already worked.
+                errorText = ""
+                await store.prepareBookingPayment()
+                return
+            }
             errorText = DepositSection.paymentFailureText(diagnostics, error: error, developer: store.developerModeEnabled)
         }
     }
@@ -412,6 +422,17 @@ struct BookingPaymentSection: View {
             // vague sentence for every distinct cause.
             let diagnostics = DepositSection.stripeFailureDiagnostics(error)
             store.trackPaymentFailure(context: "booking_confirm", stripeErrorType: diagnostics.type, stripeErrorCode: diagnostics.code, stripeMessage: diagnostics.detail)
+            if DepositSection.meansIntentAlreadyResolved(diagnostics) {
+                // The customer has already been charged and we asked Stripe to
+                // confirm a second time. Treated exactly like `.completed`:
+                // ask the Worker what the truth is rather than telling someone
+                // who just paid that their payment failed. Still reported
+                // above, because a confirmation arriving twice is worth
+                // knowing about even when it costs the customer nothing.
+                errorText = ""
+                Task { await store.prepareBookingPayment() }
+                return
+            }
             errorText = DepositSection.paymentConfirmText(diagnostics, error: error, developer: store.developerModeEnabled)
         }
     }
