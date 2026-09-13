@@ -16,6 +16,7 @@ import { DatabaseSync } from "node:sqlite";
 import worker from "../src/index.js";
 import {
   accountCapabilities,
+  createPaymentIntent,
   encodeForm,
   idempotencyKey,
   parseStripeSignatureHeader,
@@ -839,6 +840,60 @@ function record(name) { results.push(name); }
   assert(!ignored.handled, "an event type we do not handle is ignored, not an error");
   assertEqual(database.prepare("SELECT status FROM stripe_events WHERE id = 'evt_unknown_1'").get().status, "ignored", "an ignored event is still recorded, so a redelivery is still a no-op");
   record("unhandled event types are recorded and ignored");
+}
+
+/* ------------------- 18. a deployment whose two keys disagree is refused --- */
+{
+  // The failure this exists to stop is invisible server-side: with a test
+  // secret key and a live publishable key, the Worker mints a perfectly good
+  // test PaymentIntent and answers 200, and the phone — mounting the sheet in
+  // live mode — gets `resource_missing` / "No such payment_intent". Every log
+  // says success. Refusing here turns a week of guessing into one line.
+  resetStripe();
+  const intakeId = "intake_mode_mismatch";
+  await seedIntake({ id: intakeId, status: "accepted", paymentStatus: "pending" });
+
+  const MISMATCHED = { ...LIVE_ENV, STRIPE_PUBLISHABLE_KEY: "pk_live_not_a_real_key" };
+  const refused = await worker.fetch(
+    new Request(`https://timinow.pet/api/intakes/${intakeId}/payment-intent`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }),
+    MISMATCHED,
+    { waitUntil() {} }
+  );
+  assertEqual(refused.status, 503, "a test secret key against a live publishable key is refused, not half-completed");
+  assertEqual((await refused.json()).error.code, "PAYMENTS_MISCONFIGURED", "the refusal names the deployment as the problem, not the card");
+
+  // The booking charge reaches Stripe through the same createPaymentIntent,
+  // so assert the guard where every caller shares it rather than only on the
+  // one route this file has a schema for.
+  resetStripe();
+  let threw = null;
+  try {
+    await createPaymentIntent(MISMATCHED, { amountCents: 5000, idempotencyKey: "k" });
+  } catch (error) {
+    threw = error;
+  }
+  assertEqual(threw?.message, "PAYMENTS_MISCONFIGURED", "every charge refuses a mismatched key pair, not just the deposit route");
+  assertEqual(callsTo("api.stripe.com").length, 0, "and refuses before spending a Stripe call or writing an intent id");
+
+  // An empty publishable key is the other half-configured shape.
+  resetStripe();
+  const empty = await worker.fetch(
+    new Request(`https://timinow.pet/api/intakes/${intakeId}/payment-intent`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }),
+    { ...LIVE_ENV, STRIPE_PUBLISHABLE_KEY: "" },
+    { waitUntil() {} }
+  );
+  assertEqual(empty.status, 503, "a secret key with no publishable key is refused too");
+
+  // And matched keys still go through, so the guard is not simply off.
+  resetStripe();
+  queueStripe({ id: "pi_match_1", object: "payment_intent", amount: 5000, currency: "usd", status: "requires_payment_method", client_secret: "pi_match_1_secret_x", created: Math.floor(Date.now() / 1000) });
+  const allowed = await worker.fetch(
+    new Request(`https://timinow.pet/api/intakes/${intakeId}/payment-intent`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }),
+    LIVE_ENV,
+    { waitUntil() {} }
+  );
+  assertEqual(allowed.status, 201, "two keys from the same mode are allowed through");
+  record("a deployment whose Stripe keys are from different modes is refused server-side");
 }
 
 console.log(`Stripe tests passed (${results.length} groups): ${results.join("; ")}.`);

@@ -11,6 +11,16 @@
 #
 # Worker secrets (Clerk, Twilio, Stripe) are set once with `wrangler secret put`
 # and live in Cloudflare, not here. This workflow never sees them.
+#
+# STRIPE_PUBLISHABLE_KEY is among them even though it is public, and that is
+# deliberate: as a `vars` entry it was rewritten from wrangler.jsonc on every
+# deploy, so a literal in the file outranked whatever mode the account was
+# really set to. Pinned live there while the secret key had been switched to
+# test, it surfaced on a customer's phone as `resource_missing` / "No such
+# payment_intent" and nowhere else. Both Stripe keys have to come from the one
+# store a deploy does not overwrite. scripts/validate.mjs fails the build if a
+# Stripe key reappears in a committed config, and src/stripe.js refuses the
+# charge server-side if the two ever drift apart again.
 name: Deploy
 
 on:

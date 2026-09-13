@@ -47,6 +47,39 @@ export function stripeConfigured(env) {
   return Boolean(env?.STRIPE_SECRET_KEY);
 }
 
+/**
+ * Which Stripe mode a key belongs to, or null when it is absent or malformed.
+ *
+ * Both key kinds carry their mode in the prefix — `sk_test_` / `sk_live_`,
+ * `pk_test_` / `pk_live_` — including the restricted (`rk_`) form.
+ */
+export function stripeKeyMode(key) {
+  if (typeof key !== "string") return null;
+  if (/^(sk|rk|pk)_test_/.test(key)) return "test";
+  if (/^(sk|rk|pk)_live_/.test(key)) return "live";
+  return null;
+}
+
+/**
+ * Whether the secret and publishable keys belong to the same Stripe mode.
+ *
+ * A mismatch is not a partial outage, it is a total one, and it fails in the
+ * least obvious place: the Worker mints a PaymentIntent with the secret key
+ * and the device asks the other mode's API for it, so Stripe answers
+ * "No such payment_intent" and the customer sees a generic "could not open a
+ * secure payment". Nothing in the Worker's own logs looks wrong, because from
+ * the Worker's side everything succeeded.
+ *
+ * This cost real days of debugging on a live deployment. It is cheap to
+ * detect and impossible to recover from at runtime, so it is refused up front.
+ */
+export function stripeKeysAgree(env) {
+  const secret = stripeKeyMode(env?.STRIPE_SECRET_KEY);
+  const publishable = stripeKeyMode(env?.STRIPE_PUBLISHABLE_KEY);
+  if (!secret || !publishable) return true; // absence is a different check
+  return secret === publishable;
+}
+
 function requireSecret(env) {
   const secret = env?.STRIPE_SECRET_KEY;
   if (!secret) throw new StripeError(503, "STRIPE_SECRET_KEY is not configured on this Worker.");
@@ -357,7 +390,37 @@ export function createAccountLink(env, accountId, { returnUrl, refreshUrl }) {
  * and it is the only string that will later tie this charge to the transfer
  * that pays the clinic.
  */
+/**
+ * Refuse a charge the deployment cannot actually complete.
+ *
+ * Two half-configured shapes, both of which used to reach the customer as a
+ * vague "payment unreachable" with nothing in any log naming the cause:
+ *
+ * 1. A secret key with an empty publishable key. The response carried a real
+ *    client secret and no key to mount a card form with.
+ * 2. Two keys from different Stripe modes. The Worker mints the intent with
+ *    the secret key and the client confirms it with the publishable one, so a
+ *    test secret against a live publishable key answers `resource_missing` /
+ *    "No such payment_intent" on the device while every server-side step
+ *    reports success — undebuggable from the logs, and it cost real days on a
+ *    live deployment.
+ *
+ * Thrown here rather than checked in the route handlers because this is the
+ * single point every charge funnels through: it fires only when money is
+ * actually about to move (never on a no-charge or zero-deposit booking), it
+ * spends no Stripe call to discover a problem already visible in the env, and
+ * it runs before any intent id can be written to the database.
+ *
+ * The sentinel-message pattern matches PAYMENTS_NOT_CONFIGURED above;
+ * src/index.js's paymentFailure maps it to a 503.
+ */
+export function assertStripeKeysUsable(env) {
+  if (!stripeConfigured(env)) return;
+  if (!env.STRIPE_PUBLISHABLE_KEY || !stripeKeysAgree(env)) throw new Error("PAYMENTS_MISCONFIGURED");
+}
+
 export function createPaymentIntent(env, { amountCents, currency = "usd", transferGroup, description, metadata, idempotencyKey: key, statementDescriptorSuffix }) {
+  assertStripeKeysUsable(env);
   return stripeFetch(env, "/v1/payment_intents", {
     method: "POST",
     idempotencyKey: key,

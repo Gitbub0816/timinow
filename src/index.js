@@ -1760,18 +1760,6 @@ async function handleBookingPayment(request, env, actor, intakeId) {
   try {
     const result = await ensureBookingPaymentOrder(env, { intake, contributionCents });
     if (!result.ok) return apiError(result.code === "DATABASE_REQUIRED" ? 503 : 422, result.code, result.message);
-    // Half-configured Stripe fails loudly, and server-side. With
-    // STRIPE_SECRET_KEY set but STRIPE_PUBLISHABLE_KEY empty, this used to
-    // answer mode "stripe" with publishableKey null — a real PaymentIntent
-    // no client could ever mount a card form for, surfacing on the phone as
-    // a vague "could not open a secure payment" with nothing in any log
-    // naming the actual problem.
-    if (result.mode === "stripe" && !env.STRIPE_PUBLISHABLE_KEY) {
-      // Names the vars only in this comment, not in the log line itself —
-      // scripts/validate-native.mjs greps console.* lines for secret names.
-      console.error(JSON.stringify({ event: "payments_misconfigured", detail: "stripe secret key is configured but the publishable key var is empty" }));
-      return apiError(503, "PAYMENTS_MISCONFIGURED", "Payment is not fully configured on this deployment. The clinic is holding your spot — pay at the desk, or try again shortly.");
-    }
     return json({
       mode: result.mode,
       clientSecret: result.clientSecret || null,
@@ -1787,6 +1775,14 @@ async function handleBookingPayment(request, env, actor, intakeId) {
 function paymentFailure(error) {
   if (error.message === "PAYMENTS_NOT_CONFIGURED") {
     return apiError(503, "PAYMENTS_NOT_CONFIGURED", "Deposits are not configured on this deployment.");
+  }
+  // Stripe is configured, but with a key pair no charge can complete — an
+  // empty publishable key, or two keys from different modes. See
+  // assertStripeKeysUsable in src/stripe.js for why this is worth its own
+  // status: the customer is told the deployment is at fault, not their card,
+  // and the clinic keeps the slot.
+  if (error.message === "PAYMENTS_MISCONFIGURED") {
+    return apiError(503, "PAYMENTS_MISCONFIGURED", "Payment is not fully configured on this deployment. The clinic is holding your spot — pay at the desk, or try again shortly.");
   }
   if (error instanceof StripeError) {
     // Stripe's own message, and never the request that produced it: a

@@ -128,6 +128,33 @@ if (!wrangler.includes('"d1_databases"')) throw new Error("The production deploy
 if (wrangler.includes("REPLACE_WITH_YOUR_D1_DATABASE_ID")) throw new Error("wrangler.jsonc still contains the placeholder D1 database id");
 if (!wranglerLocalExample.includes('"d1_databases"') || !wranglerLocalExample.includes("REPLACE_WITH_YOUR_D1_DATABASE_ID")) throw new Error("The local development configuration template is incomplete");
 
+// No Stripe key may be pinned in a committed Wrangler config, in either mode.
+//
+// A `vars` entry is rewritten from the file on every deploy, so a literal here
+// outranks whatever the account is actually set to — and it does so silently.
+// A live publishable key pinned this way survived a switch of the secret key to
+// test mode, and the only symptom anyone saw was `resource_missing` /
+// "No such payment_intent" on a customer's phone: the Worker minted the intent
+// in test mode and the app looked it up in live mode. Both keys must come from
+// the one store that a deploy does not overwrite, which is the secret store.
+//
+// Scoped to Stripe on purpose. A Clerk publishable key is a var here because
+// nothing pairs it with a mode-matched server key at charge time; Stripe's two
+// keys must agree, so they have to share a source of truth.
+for (const [label, config] of [["wrangler.jsonc", wrangler], ["wrangler.vet.jsonc", wranglerVet], ["wrangler.admin.jsonc", wranglerAdmin]]) {
+  for (const line of config.split("\n")) {
+    if (/^\s*\/\//.test(line)) continue;
+    // A secret or restricted key is never legitimate in a committed file at
+    // all. A publishable key is only flagged on a Stripe line, so Clerk's own
+    // `pk_live_` var above stays where it belongs.
+    const pinned = line.match(/\b(?:sk|rk)_(?:test|live)_[A-Za-z0-9]{8,}/)
+      || (/STRIPE/.test(line) ? line.match(/\bpk_(?:test|live)_[A-Za-z0-9]{8,}/) : null);
+    if (pinned) {
+      throw new Error(`${label} pins a Stripe key (${pinned[0].slice(0, 8)}…) as a plain var. A var is rewritten from the file on every deploy and silently outranks whatever the account is really set to — set it with \`wrangler secret put\` instead, so the secret and publishable keys cannot drift into different modes.`);
+    }
+  }
+}
+
 // The veterinary console and the admin console deploy as their own Workers so the
 // platform operator surface never shares an origin with the public application.
 if (!wranglerVet.includes('"name": "timinow-vet"')) throw new Error("The veterinary Worker must deploy under its own name");
