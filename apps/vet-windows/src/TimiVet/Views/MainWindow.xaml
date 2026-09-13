@@ -27,6 +27,7 @@
         <local:ConnectionHealthToBrushConverter x:Key="ConnectionBrush"/>
         <local:InitialsConverter x:Key="Initials"/>
         <local:UrgencyLabelConverter x:Key="UrgencyLabel"/>
+        <local:StatusToneToBrushConverter x:Key="StatusTone"/>
     </Window.Resources>
 
     <Grid>
@@ -393,11 +394,16 @@
                                                     </Border>
                                                     <StackPanel Grid.Column="1" Margin="10,0" VerticalAlignment="Center">
                                                         <TextBlock Text="{Binding PetLine}" FontSize="13" FontWeight="Bold" TextTrimming="CharacterEllipsis"/>
-                                                        <TextBlock Text="{Binding TravelLabel}" FontSize="11" Foreground="{StaticResource Muted}"/>
+                                                        <TextBlock Text="{Binding ArrivalLine}" FontSize="11" Foreground="{StaticResource Muted}"/>
                                                     </StackPanel>
-                                                    <Border Grid.Column="2" Background="#E9F7F1" CornerRadius="11" Padding="9,5" VerticalAlignment="Center">
-                                                        <TextBlock Text="{Binding Status, Converter={StaticResource UrgencyLabel}}"
-                                                                   FontSize="10" FontWeight="Bold" Foreground="{StaticResource Green}"/>
+                                                    <!-- Label and tone both come from the Worker (src/console-status.js), so
+                                                         this console cannot say "Accepted" for a booking the Mac console is
+                                                         calling "Offered". The chip was hard-coded green on #E9F7F1, which
+                                                         also meant a declined or expired arrival read as a success. -->
+                                                    <Border Grid.Column="2" CornerRadius="11" Padding="9,5" VerticalAlignment="Center"
+                                                            Background="{Binding StatusTone, Converter={StaticResource StatusTone}, ConverterParameter=background}">
+                                                        <TextBlock Text="{Binding StatusLabel}" FontSize="10" FontWeight="Bold"
+                                                                   Foreground="{Binding StatusTone, Converter={StaticResource StatusTone}}"/>
                                                     </Border>
                                                 </Grid>
                                             </DataTemplate>
@@ -491,7 +497,7 @@
                                                             <TextBlock Text="{Binding RequestedLabel}" FontSize="10" HorizontalAlignment="Right"/>
                                                             <TextBlock Text="{Binding TravelLabel}" FontSize="10" HorizontalAlignment="Right"
                                                                        Foreground="{StaticResource Muted}" Margin="0,4,0,0"/>
-                                                            <TextBlock Text="{Binding Status}" FontSize="10" FontWeight="Bold" HorizontalAlignment="Right"
+                                                            <TextBlock Text="{Binding StatusLabel}" FontSize="10" FontWeight="Bold" HorizontalAlignment="Right"
                                                                        Foreground="{StaticResource Blue}" Margin="0,5,0,0"/>
                                                         </StackPanel>
                                                     </Grid>

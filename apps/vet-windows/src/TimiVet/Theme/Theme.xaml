@@ -32,6 +32,16 @@
     <Color x:Key="GoldSoftColor">#FFF0B9</Color>
     <Color x:Key="NavyColor">#101B3D</Color>
     <Color x:Key="GreenColor">#12845D</Color>
+    <!-- Green *on* GreenSoft, which GreenColor itself does not survive: that
+         pair measures 4.25:1, under WCAG 1.4.3's 4.5 minimum, and it was
+         already on every status chip in this console. Same hue and saturation,
+         value dropped only until it clears at 4.65:1, so the chips read as the
+         same colour rather than a new one — the reason CoralDarkColor exists. -->
+    <Color x:Key="GreenDeepColor">#117D58</Color>
+    <Color x:Key="GreenSoftColor">#E9F7F1</Color>
+    <!-- Amber on GoldSoft, same reason: Gold on GoldSoft is 1.38:1, which is
+         not a low-contrast pair, it is an invisible one. -->
+    <Color x:Key="AmberDeepColor">#8C6600</Color>
     <Color x:Key="CanvasColor">#F3F5FA</Color>
     <!-- #575D71 - darkened from #6F7483 to clear WCAG 1.4.3's 4.5:1 minimum. -->
     <Color x:Key="MutedColor">#575D71</Color>
@@ -49,6 +59,9 @@
     <SolidColorBrush x:Key="GoldSoft" Color="{StaticResource GoldSoftColor}"/>
     <SolidColorBrush x:Key="Navy" Color="{StaticResource NavyColor}"/>
     <SolidColorBrush x:Key="Green" Color="{StaticResource GreenColor}"/>
+    <SolidColorBrush x:Key="GreenDeep" Color="{StaticResource GreenDeepColor}"/>
+    <SolidColorBrush x:Key="GreenSoft" Color="{StaticResource GreenSoftColor}"/>
+    <SolidColorBrush x:Key="AmberDeep" Color="{StaticResource AmberDeepColor}"/>
     <SolidColorBrush x:Key="Canvas" Color="{StaticResource CanvasColor}"/>
     <SolidColorBrush x:Key="Muted" Color="{StaticResource MutedColor}"/>
     <SolidColorBrush x:Key="Paper" Color="{StaticResource PaperColor}"/>

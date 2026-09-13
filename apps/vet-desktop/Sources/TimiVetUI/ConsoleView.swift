@@ -23,6 +23,16 @@ public struct ConsoleView: View {
     /// anybody should have to wait for a real patient to test.
     var onTestAlert: () -> Void
 
+    /// Drives the arrival countdown between dashboard polls.
+    ///
+    /// The ETA the Worker sends is an absolute arrival time, so the number on
+    /// screen has to be recomputed from the clock rather than from the last
+    /// response — otherwise it would sit still for the whole poll interval and
+    /// then jump. Fifteen seconds is the coarsest tick that still keeps a
+    /// minute-resolution countdown honest, and a console left open all shift
+    /// should not redraw once a second for a number that changes once a minute.
+    @State var tick = Date()
+
     @State var callPolicy = "always"
     @State var voicePhone = ""
     @State var quietStart = ""
@@ -163,6 +173,16 @@ public struct ConsoleView: View {
         }
         .task { await store.loadPayouts() }
         .task { await store.loadOverflowTools() }
+        // The arrival countdown's clock. Cancelled with the view — a `.task`
+        // is torn down when the console closes, so this does not outlive the
+        // window the way a free-running Timer would.
+        .task {
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 15 * 1_000_000_000)
+                if Task.isCancelled { break }
+                tick = Date()
+            }
+        }
         // Facility settings are bundled into the dashboard response rather
         // than fetched separately (there is no GET /api/clinic/settings) —
         // see `ClinicStore.locationLoaded`. Seeded exactly once so a form
@@ -705,8 +725,8 @@ public struct ConsoleView: View {
             Spacer()
             VStack(alignment: .trailing, spacing: 5) {
                 Text(request.requestedLabel).font(TimiVetFont.ui(10))
-                Text(request.travelLabel).font(TimiVetFont.ui(10)).foregroundStyle(TimiVetColor.muted)
-                Text(request.status).font(TimiVetFont.ui(10, weight: .bold)).foregroundStyle(TimiVetColor.blue)
+                Text(arrivalLine(for: request)).font(TimiVetFont.ui(10)).foregroundStyle(TimiVetColor.muted)
+                Text(request.statusLabel).font(TimiVetFont.ui(10, weight: .bold)).foregroundStyle(request.statusTone.foreground)
             }
         }
         .padding(16)
@@ -921,6 +941,27 @@ public struct ConsoleView: View {
         }
     }
 
+    /// What a clinic actually wants on this row: how long until they walk in.
+    ///
+    /// The quoted travel time is what somebody was told before they set off and
+    /// never moves again, so twenty minutes into a drive it is still saying
+    /// whatever it said at the start. A live estimate from the phone that is
+    /// driving replaces it whenever there is a fresh one — and because it
+    /// counts down to an absolute arrival time, it keeps ticking between polls
+    /// and jumps to the truth when a missed turn makes the route longer.
+    ///
+    /// A stale estimate is labelled, not hidden. "8 min away · 6 min ago" tells
+    /// a team something; a countdown that silently stopped being true does not,
+    /// and a blank where a number used to be reads as a fault.
+    func arrivalLine(for request: ClinicRequest) -> String {
+        guard let eta = request.eta, let minutes = eta.minutesRemaining(now: tick) else { return request.travelLabel }
+        let remaining = minutes == 0 ? "Arriving now" : "\(minutes) min away"
+        if eta.isFresh(now: tick) { return remaining }
+        guard let reportedAt = eta.reportedAt, let reported = ClinicDateFormat.parse(reportedAt) else { return request.travelLabel }
+        let age = max(1, Int((tick.timeIntervalSince(reported) / 60).rounded()))
+        return "\(remaining) · \(age) min ago"
+    }
+
     private var activeArrivalsCard: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("ACTIVE ARRIVALS").timiVetEyebrow()
@@ -936,13 +977,14 @@ public struct ConsoleView: View {
                                 .background(TimiVetColor.green, in: RoundedRectangle(cornerRadius: 11))
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(request.petLine).font(TimiVetFont.ui(13, weight: .bold))
-                                Text(request.travelLabel).font(TimiVetFont.ui(11)).foregroundStyle(TimiVetColor.muted)
+                                Text(arrivalLine(for: request)).font(TimiVetFont.ui(11)).foregroundStyle(TimiVetColor.muted)
                             }
                             Spacer()
-                            Text(request.status.replacingOccurrences(of: "_", with: " ").capitalized)
-                                .font(TimiVetFont.ui(11, weight: .bold)).foregroundStyle(TimiVetColor.green)
+                            Text(request.statusLabel)
+                                .font(TimiVetFont.ui(11, weight: .bold))
+                                .foregroundStyle(request.statusTone.foreground)
                                 .padding(.horizontal, 9).padding(.vertical, 5)
-                                .background(TimiVetColor.greenSoft, in: Capsule())
+                                .background(request.statusTone.background, in: Capsule())
                         }
                         .padding(.vertical, 10)
                         if request.id != activeArrivalsList.last?.id { Divider() }
@@ -1485,5 +1527,32 @@ public struct ConsoleView: View {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
         store.noteCopied(label)
+    }
+}
+
+/// The console's four status tones, painted once.
+///
+/// The Worker decides which tone a request carries (src/console-status.js);
+/// this decides what that tone looks like, and nothing else in the console
+/// picks a status colour by hand. Every pair here clears WCAG 1.4.3's 4.5:1 —
+/// see the notes on `greenDeep` and `amberDeep` in Theme.swift, both of which
+/// exist because the obvious pairing did not.
+extension ConsoleStatus.Tone {
+    var foreground: Color {
+        switch self {
+        case .positive: return TimiVetColor.greenDeep
+        case .waiting: return TimiVetColor.amberDeep
+        case .neutral: return TimiVetColor.muted
+        case .negative: return TimiVetColor.coralDark
+        }
+    }
+
+    var background: Color {
+        switch self {
+        case .positive: return TimiVetColor.greenSoft
+        case .waiting: return TimiVetColor.goldSoft
+        case .neutral: return TimiVetColor.canvas
+        case .negative: return TimiVetColor.coralSoft
+        }
     }
 }

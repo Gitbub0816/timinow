@@ -165,6 +165,35 @@ for (const directory of ["public", "apps/admin-console/public", "apps/vet-web/pu
 }
 if (!wranglerLocalExample.includes('"d1_databases"') || !wranglerLocalExample.includes("REPLACE_WITH_YOUR_D1_DATABASE_ID")) throw new Error("The local development configuration template is incomplete");
 
+// One status vocabulary, decided on the server.
+//
+// Three provider consoles in three languages each printed the raw database
+// status, and the raw status is the booking state machine's word: it says
+// "accepted" the moment an offer is selected, before the fee is charged and
+// while the fifteen-minute sweep can still expire that very row. A clinic saw
+// "Accepted" twice for one patient — once for its own offer, once for the
+// booking — which is what prompted this. The rule is that no console derives
+// the label itself, so they cannot drift apart again.
+{
+  const dashboard = worker.slice(worker.indexOf("export async function clinicDashboard"));
+  if (!/display: consoleStatusFor\(request\)/.test(dashboard)) {
+    throw new Error("clinicDashboard must attach consoleStatusFor() to every request. Without it each console derives its own label, which is how the same booking came to read 'Accepted' on one surface and 'Offered' on another.");
+  }
+  if (!/supersededSearchIds/.test(dashboard)) {
+    throw new Error("clinicDashboard must drop the search target an intake superseded. Listing both is why one patient appeared twice on the clinic console.");
+  }
+  for (const [label, path] of [
+    ["vet-web", "apps/vet-web/public/app.js"],
+    ["Mac console", "apps/vet-desktop/Sources/TimiVetCore/ClinicModels.swift"],
+    ["Windows console", "apps/vet-windows/src/TimiVet/Models/ClinicModels.cs"]
+  ]) {
+    const source = await readFile(path, "utf8");
+    if (!/display\?\.[Ll]abel|Display\?\.Label/.test(source)) {
+      throw new Error(`${label} (${path}) no longer reads the Worker's display label, so it is deriving a status of its own.`);
+    }
+  }
+}
+
 // No Stripe key may be pinned in a committed Wrangler config, in either mode.
 //
 // A `vars` entry is rewritten from the file on every deploy, so a literal here

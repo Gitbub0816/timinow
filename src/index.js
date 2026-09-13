@@ -33,6 +33,7 @@ import {
 } from "./payments.js";
 import { stripeConfigured, StripeError, verifyWebhookSignature } from "./stripe.js";
 import { ensureBookingPaymentOrder } from "./booking-payment.js";
+import { consoleStatusFor } from "./console-status.js";
 import { currentDepositPolicy, depositOutcomeForBooking, snapshotDepositPolicyForBooking } from "./deposit-policy.js";
 import { findEmergencyVeterinaryPlaces, phoneKey } from "./mapbox-places.js";
 import { recordAnalyticsEvents } from "./analytics.js";
@@ -1492,7 +1493,26 @@ export async function clinicDashboard(env, tenantId) {
     listClinicIntakes(env, tenantId),
     listClinicSearchTargets(env, tenantId)
   ]);
-  const requests = [...searchTargets, ...intakes].sort((a, b) => {
+  /**
+   * One row per patient. A search the customer has booked leaves two records
+   * behind — the `selected` care_search_target this clinic answered, and the
+   * intake that selection created — and both were being listed, so the same
+   * animal appeared twice, once as the clinic's own offer and once as the
+   * booking. The intake is the live record (it carries the arrival, the
+   * payment and every status after), so it supersedes the target it came from.
+   */
+  const supersededSearchIds = new Set(intakes.map((intake) => intake.sourceSearchId).filter(Boolean));
+  const liveTargets = searchTargets.filter((target) => !supersededSearchIds.has(target.searchId));
+
+  const requests = [...liveTargets, ...intakes].map((request) => ({
+    ...request,
+    /**
+     * What the clinic reads, decided once here rather than three times in
+     * three languages — see src/console-status.js for why the raw status is
+     * the wrong thing to print.
+     */
+    display: consoleStatusFor(request)
+  })).sort((a, b) => {
     const pendingDifference = Number(b.status === "pending") - Number(a.status === "pending");
     return pendingDifference || timestampMs(b.requestedAt) - timestampMs(a.requestedAt);
   });
@@ -1797,6 +1817,51 @@ function paymentFailure(error) {
 /** The original route, kept so existing clients keep working. */
 function handlePayment(request, env, actor, intakeId) {
   return handlePaymentIntent(request, env, actor, intakeId);
+}
+
+/**
+ * The customer's app reporting how far away it still is.
+ *
+ * Written by the phone that is actually driving, because it is the only thing
+ * that knows: it holds the live Mapbox route and gets a new estimate every
+ * time the route is recalculated, including after a missed turn. The server
+ * cannot compute this — it would be guessing from a straight line — and the
+ * clinic cannot see it any other way.
+ *
+ * Deliberately takes an estimate and not a position. Nothing here records
+ * where anyone is or where they have been; the clinic is told when the patient
+ * arrives, which is what it needs to prepare a room, and nothing about the
+ * route taken to get there.
+ *
+ * Ownership-checked like every other intake write, and only meaningful while
+ * somebody is on their way — an estimate against a booking that has not
+ * started, or has already arrived, is noise a console would have to filter.
+ */
+async function handleArrivalEta(request, env, actor, intakeId) {
+  if (!hasDatabase(env)) return apiError(503, "DATABASE_REQUIRED", "D1 is required for arrival estimates.");
+  const intake = await getIntake(env, intakeId);
+  if (!intake) return apiError(404, "INTAKE_NOT_FOUND", "The intake request was not found.");
+  if (signInRequired(env) && intake.customerUserId !== actor?.userId) return apiError(403, "INTAKE_ACCESS_DENIED", "This intake belongs to another account.");
+  if (!new Set(["accepted", "en_route"]).has(intake.status)) {
+    return apiError(409, "INTAKE_NOT_EN_ROUTE", "An arrival estimate only applies while the customer is on their way.");
+  }
+
+  const body = await readJson(request).catch(() => ({}));
+  // Capped rather than merely validated. A route of more than four hours is
+  // not an arrival this clinic is waiting on, and an unbounded number here
+  // becomes a countdown showing a date.
+  const secondsRemaining = numberInRange(body?.secondsRemaining, 0, 4 * 60 * 60, null);
+  if (secondsRemaining === null) {
+    return apiError(422, "ETA_INVALID", "secondsRemaining must be a number of seconds between zero and four hours.");
+  }
+  const distanceMeters = numberInRange(body?.distanceMeters, 0, 500_000, null);
+  const reportedAt = new Date().toISOString();
+
+  await env.DB.prepare(
+    "UPDATE intake_requests SET eta_seconds_remaining = ?, eta_distance_meters = ?, eta_reported_at = ?, updated_at = ? WHERE id = ?"
+  ).bind(Math.round(secondsRemaining), distanceMeters === null ? null : Math.round(distanceMeters), reportedAt, reportedAt, intakeId).run();
+
+  return json({ eta: (await getIntake(env, intakeId))?.eta || null });
 }
 
 /**
@@ -2254,7 +2319,7 @@ async function handleAuthenticatedApi(request, env, ctx, actor, url, path, metho
     }
   }
 
-  const intakeMatch = path.match(/^\/api\/intakes\/([^/]+)(?:\/(status|payment|payment-intent|payment-status|booking-payment))?$/);
+  const intakeMatch = path.match(/^\/api\/intakes\/([^/]+)(?:\/(status|payment|payment-intent|payment-status|booking-payment|eta))?$/);
   if (intakeMatch) {
     const intakeId = decodeURIComponent(intakeMatch[1]);
     const action = intakeMatch[2] || null;
@@ -2277,6 +2342,7 @@ async function handleAuthenticatedApi(request, env, ctx, actor, url, path, metho
     if (method === "POST" && action === "payment-intent") return handlePaymentIntent(request, env, actor, intakeId);
     if (method === "GET" && action === "payment-status") return refreshPayment(env, actor, intakeId);
     if (method === "POST" && action === "booking-payment") return handleBookingPayment(request, env, actor, intakeId);
+    if (method === "POST" && action === "eta") return handleArrivalEta(request, env, actor, intakeId);
   }
 
   if (path.startsWith("/api/clinic/")) {

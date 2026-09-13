@@ -1,3 +1,4 @@
+using System;
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using System.Text.Json.Serialization;
@@ -128,7 +129,9 @@ public sealed class ClinicRequest : INotifyPropertyChanged
         UpdatedAt = latest.UpdatedAt;
         SearchTarget = latest.SearchTarget;
         ContactRevealed = latest.ContactRevealed;
-        foreach (var computed in new[] { nameof(PetLine), nameof(RequestType), nameof(PhoneLabel), nameof(TravelLabel), nameof(RequestedLabel), nameof(IsEmergency), nameof(OwnerSuppliedMedicalLine), nameof(HasOwnerSuppliedMedical) })
+        Display = latest.Display;
+        Eta = latest.Eta;
+        foreach (var computed in new[] { nameof(PetLine), nameof(RequestType), nameof(PhoneLabel), nameof(TravelLabel), nameof(RequestedLabel), nameof(IsEmergency), nameof(OwnerSuppliedMedicalLine), nameof(HasOwnerSuppliedMedical), nameof(StatusLabel), nameof(StatusTone), nameof(ArrivalLine) })
         {
             Raise(computed);
         }
@@ -197,12 +200,79 @@ public sealed class ClinicRequest : INotifyPropertyChanged
     private bool _contactRevealed = true;
     public bool ContactRevealed { get => _contactRevealed; set => Set(ref _contactRevealed, value); }
 
+    /// <summary>
+    /// What this request reads as on a console, decided by the Worker so the
+    /// Mac, Windows and web consoles cannot drift apart — see
+    /// src/console-status.js. Null against an older Worker, in which case
+    /// <see cref="StatusLabel"/> humanises the raw status instead.
+    /// </summary>
+    private ConsoleStatus? _display;
+    public ConsoleStatus? Display { get => _display; set => Set(ref _display, value); }
+
+    /// <summary>The customer's live arrival estimate while they are driving.</summary>
+    private ArrivalEta? _eta;
+    public ArrivalEta? Eta { get => _eta; set => Set(ref _eta, value); }
+
     [JsonIgnore] public string PetLine => $"{Pet.Name} · {Display(Pet.Species)}";
     [JsonIgnore] public string RequestType => SearchTarget ? "MULTI-CLINIC SEARCH" : "DIRECT INTAKE";
     [JsonIgnore] public string PhoneLabel => !ContactRevealed ? "Hidden until booked" : (string.IsNullOrWhiteSpace(Owner.Phone) ? "No phone on file" : Owner.Phone);
     [JsonIgnore] public string TravelLabel => TravelMinutes is null ? "Travel unknown" : $"{TravelMinutes} min away";
     [JsonIgnore] public string RequestedLabel => RequestedAt is null ? "Just now" : RequestedAt.Value.LocalDateTime.ToString("h:mm tt");
     [JsonIgnore] public bool IsEmergency => Urgency == "emergency" || RedFlags.Count > 0;
+
+    /// <summary>
+    /// The word a clinic reads. The Worker's if it sent one; a humanised raw
+    /// status only as a fallback for an older deployment — never the raw
+    /// string, which is the booking state machine's vocabulary and says
+    /// "accepted" for a booking nobody has paid for yet.
+    /// </summary>
+    [JsonIgnore]
+    public string StatusLabel
+    {
+        get
+        {
+            if (!string.IsNullOrWhiteSpace(Display?.Label)) return Display!.Label;
+            if (string.IsNullOrWhiteSpace(Status)) return "Unknown";
+            var spaced = Status.Replace('_', ' ');
+            return char.ToUpperInvariant(spaced[0]) + spaced.Substring(1);
+        }
+    }
+
+    /// <summary>One of positive/waiting/neutral/negative; see ConsoleStatus.</summary>
+    [JsonIgnore] public string StatusTone => ConsoleStatus.NormalizeTone(Display?.Tone);
+
+    /// <summary>
+    /// Tells WPF the countdown moved. Nothing on this object changed — the
+    /// clock did — and a binding has no way to know that on its own, so the
+    /// console's arrival timer calls this every fifteen seconds.
+    /// </summary>
+    public void RaiseArrivalLineChanged() => Raise(nameof(ArrivalLine));
+
+    /// <summary>
+    /// How long until this patient walks in.
+    /// </summary>
+    /// <remarks>
+    /// TravelLabel is the quote made when the offer was written and never
+    /// moves again, so it still reads whatever it read before the owner set
+    /// off. The live estimate comes from the phone that is driving, and
+    /// because it counts down to an absolute arrival time it keeps ticking
+    /// between polls and jumps to the truth when a missed turn lengthens the
+    /// route. A stale estimate is labelled rather than hidden — "8 min away ·
+    /// 6 min ago" tells a team something, a blank where a number was does not.
+    /// </remarks>
+    [JsonIgnore]
+    public string ArrivalLine
+    {
+        get
+        {
+            var minutes = Eta?.MinutesRemaining();
+            if (minutes is null) return TravelLabel;
+            var remaining = minutes == 0 ? "Arriving now" : $"{minutes} min away";
+            if (Eta!.IsFresh()) return remaining;
+            var age = Eta.AgeMinutes();
+            return age is null ? remaining : $"{remaining} · {age} min ago";
+        }
+    }
 
     /// <summary>
     /// Allergies and medications the owner recorded, labelled as unverified. Empty when there are none,
@@ -251,6 +321,66 @@ public sealed class OwnerSummary
     public string Name { get; set; } = "";
     public string Phone { get; set; } = "";
     public string? Email { get; set; }
+}
+
+/// <summary>
+/// A status as the Worker decided it should read, plus the tone to paint it.
+/// </summary>
+/// <remarks>
+/// Deriving this on the server rather than in each console is the point: three
+/// consoles in three languages had three copies of the rule, and all three
+/// printed the raw database status. See src/console-status.js.
+/// </remarks>
+public sealed class ConsoleStatus
+{
+    public string Key { get; set; } = "";
+    public string Label { get; set; } = "";
+    public string Tone { get; set; } = "neutral";
+
+    /// <summary>
+    /// Unknown tones fall back rather than throwing, so a Worker that adds one
+    /// does not blank a clinic's dashboard.
+    /// </summary>
+    public static string NormalizeTone(string? tone) => tone switch
+    {
+        "positive" or "waiting" or "neutral" or "negative" => tone,
+        _ => "neutral"
+    };
+}
+
+/// <summary>The customer's live arrival estimate, reported by the phone that is driving.</summary>
+public sealed class ArrivalEta
+{
+    public int? SecondsRemaining { get; set; }
+    public int? DistanceMeters { get; set; }
+    public DateTimeOffset? ReportedAt { get; set; }
+
+    /// <summary>
+    /// Absolute, so a console counts down to a moment rather than decrementing
+    /// a number it was handed: it keeps ticking between polls, and when a
+    /// fresher report lands — a missed turn, a reroute, traffic — the target
+    /// moves and the countdown corrects itself instead of drifting.
+    /// </summary>
+    public DateTimeOffset? ArrivesAt { get; set; }
+
+    /// <summary>An estimate nobody has confirmed for this long is not live any more.</summary>
+    public static readonly TimeSpan FreshnessWindow = TimeSpan.FromMinutes(3);
+
+    public bool IsFresh() => ReportedAt is not null && DateTimeOffset.UtcNow - ReportedAt.Value <= FreshnessWindow;
+
+    /// <summary>Minutes until arrival, floored at zero — never a negative countdown.</summary>
+    public int? MinutesRemaining()
+    {
+        if (ArrivesAt is null) return null;
+        var seconds = (ArrivesAt.Value - DateTimeOffset.UtcNow).TotalSeconds;
+        return Math.Max(0, (int)Math.Round(seconds / 60));
+    }
+
+    public int? AgeMinutes()
+    {
+        if (ReportedAt is null) return null;
+        return Math.Max(1, (int)Math.Round((DateTimeOffset.UtcNow - ReportedAt.Value).TotalMinutes));
+    }
 }
 
 public sealed class ClinicMetrics

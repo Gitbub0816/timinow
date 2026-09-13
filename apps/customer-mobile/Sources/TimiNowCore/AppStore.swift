@@ -50,6 +50,9 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
     public var navigationDestination: NavigationDestination?
     public var currentNavigationStep: NavigationStepModel?
     public var currentRouteSummary: RouteSummary?
+    /// When the clinic was last told this arrival's estimate. See
+    /// `reportArrivalEtaIfDue`.
+    var lastEtaReportAt: Date?
     public var navigationPreferences: NavigationPreferences {
         didSet { persistNavigationPreferences() }
     }
@@ -980,6 +983,9 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
     public func resetCareFlow() {
         currentSearch = nil; currentIntake = nil; route = .home; selectedTab = 0
         navigationDestination = nil; currentNavigationStep = nil; currentRouteSummary = nil
+        // So the next drive reports immediately rather than waiting out the
+        // throttle left over from the last one.
+        lastEtaReportAt = nil
         // Explicitly finishing or cancelling is the one thing that forgets an
         // active flow — a relaunch must not resurrect what somebody just left.
         persistCareFlow()
@@ -1209,6 +1215,46 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
     public func updateNavigationProgress(step: NavigationStepModel?, summary: RouteSummary?) {
         currentNavigationStep = step
         currentRouteSummary = summary
+        reportArrivalEtaIfDue(summary)
+    }
+
+    /// How often the clinic is told where this arrival stands.
+    ///
+    /// Mapbox reports progress several times a second and the navigation
+    /// session already throttles the mirror to 1 Hz; neither rate is a rate to
+    /// make network calls at. Thirty seconds is well inside the console's own
+    /// three-minute freshness window, so the countdown there never goes stale
+    /// between reports, and a missed turn — which changes the estimate by
+    /// minutes, not seconds — is reflected within half a minute.
+    static let etaReportInterval: TimeInterval = 30
+
+    /// Tells the clinic how long until this patient arrives.
+    ///
+    /// Sent from the phone because the phone is the only thing that knows: it
+    /// holds the live route, and gets a new estimate every time Mapbox
+    /// recalculates one, including after a wrong turn. The server could only
+    /// guess from a straight line.
+    ///
+    /// An estimate, never a position. Nothing about where somebody is or the
+    /// way they came is sent, stored or shown — the clinic is told when the
+    /// patient will walk in, which is what lets them have a room ready, and
+    /// nothing else.
+    ///
+    /// Failures are silent on purpose. This is a courtesy to the clinic laid
+    /// on top of a drive; a customer being navigated to urgent care must never
+    /// see an error because a background report did not land, and the next one
+    /// is thirty seconds away regardless.
+    func reportArrivalEtaIfDue(_ summary: RouteSummary?) {
+        guard let summary, let intakeId = currentIntake?.id else { return }
+        guard ["accepted", "en_route"].contains(currentIntake?.status ?? "") else { return }
+        let now = Date()
+        if let last = lastEtaReportAt, now.timeIntervalSince(last) < Self.etaReportInterval { return }
+        lastEtaReportAt = now
+        let seconds = Int(summary.expectedTravelSeconds.rounded())
+        let meters = Int(summary.distanceMeters.rounded())
+        Task { [gateway] in
+            await gateway.reportArrivalEta(intakeId: intakeId, secondsRemaining: seconds, distanceMeters: meters)
+        }
     }
 
     public func beginNavigation(to destination: NavigationDestination) {

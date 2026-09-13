@@ -1,7 +1,9 @@
+using System;
 using System.Collections.ObjectModel;
 using System.IO;
 using System.Net.NetworkInformation;
 using System.Threading;
+using System.Windows.Threading;
 using TimiVet.Models;
 using TimiVet.Services;
 
@@ -71,6 +73,22 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             Raise(nameof(HasMoreWaiting));
             Raise(nameof(MoreWaitingLabel));
         };
+        // The arrival countdown's clock.
+        //
+        // ArrivalLine is computed from an absolute arrival time, so the minutes
+        // on screen have to be recomputed from the wall clock rather than from
+        // the last poll — otherwise the number sits still for a whole polling
+        // interval and then jumps. Fifteen seconds is the coarsest tick that
+        // keeps a minute-resolution countdown honest, and a console left open
+        // all shift should not redraw once a second for it. Runs on the UI
+        // dispatcher and dies with the window, so nothing outlives the console.
+        _arrivalClock = new DispatcherTimer { Interval = TimeSpan.FromSeconds(15) };
+        _arrivalClock.Tick += (_, _) =>
+        {
+            foreach (var request in ActiveArrivalRequests) request.RaiseArrivalLineChanged();
+        };
+        _arrivalClock.Start();
+
         RefreshCommand = new AsyncCommand(() => RefreshAsync(false), () => !IsBusy);
         ReconnectCommand = new AsyncCommand(ReconnectNowAsync, () => !IsBusy);
         PublishCommand = new AsyncCommand(PublishAsync, () => !IsBusy);
@@ -143,6 +161,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public AppSettings Settings { get; }
     /// Says whether the thing you just pressed worked, where you pressed it.
     public ToastCenter Toasts { get; } = new(System.Windows.Application.Current?.Dispatcher ?? System.Windows.Threading.Dispatcher.CurrentDispatcher);
+    private readonly DispatcherTimer _arrivalClock;
     public ObservableCollection<ClinicRequest> Requests { get; } = [];
     public ObservableCollection<ClinicRequest> PendingRequests { get; } = [];
 

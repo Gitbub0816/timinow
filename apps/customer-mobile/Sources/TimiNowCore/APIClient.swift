@@ -168,6 +168,23 @@ public final class TimiGateway: @unchecked Sendable {
         return intake
     }
 
+    /// Tell the clinic how long until this patient arrives.
+    ///
+    /// Sent from here because this is the only device that knows: it holds the
+    /// live Mapbox route and gets a fresh estimate every time the route is
+    /// recalculated, including after a wrong turn. An estimate and never a
+    /// position — where somebody is driving is not the clinic's business, and
+    /// when they will arrive is exactly what lets a team have a room ready.
+    ///
+    /// Returns nothing and throws nothing. This is a courtesy laid on top of a
+    /// drive to urgent care; a failed background report must never surface to
+    /// somebody at the wheel, and the next one is half a minute away.
+    public func reportArrivalEta(intakeId: String, secondsRemaining: Int, distanceMeters: Int) async {
+        guard let baseURL else { return }
+        let payload = ArrivalEtaPayload(secondsRemaining: secondsRemaining, distanceMeters: distanceMeters)
+        let _: ArrivalEtaEnvelope? = try? await send(baseURL.appendingPathComponent("api/intakes/\(intakeId)/eta"), method: "POST", body: payload)
+    }
+
     public func updateIntake(_ id: String, status: String) async throws -> CareIntake {
         guard let baseURL else { throw TimiAPIError.invalidConfiguration(configuredAddress) }
         let envelope: IntakeEnvelope = try await send(baseURL.appendingPathComponent("api/intakes/\(id)/status"), method: "POST", body: StatusPayload(status: status))
@@ -331,6 +348,25 @@ public final class TimiGateway: @unchecked Sendable {
     /// reports worth having most are from somebody who could not sign in, and
     /// a reporter that can itself fail visibly would just be a second thing
     /// to go wrong on a screen that has already gone wrong.
+    struct ArrivalEtaPayload: Encodable, Sendable {
+        let secondsRemaining: Int
+        let distanceMeters: Int
+    }
+
+    /// The Worker echoes the stored estimate back. Nothing here reads it — the
+    /// clinic's console is the audience — but decoding something is simpler
+    /// than teaching `send` to expect no body.
+    struct ArrivalEtaEnvelope: Decodable, Sendable {
+        let eta: StoredArrivalEta?
+
+        struct StoredArrivalEta: Decodable, Sendable {
+            let secondsRemaining: Int?
+            let distanceMeters: Int?
+            let reportedAt: String?
+            let arrivesAt: String?
+        }
+    }
+
     public func reportFailure(_ report: ClientErrorReport) async {
         guard let baseURL else { return }
         guard let body = try? encoder.encode(report) else { return }

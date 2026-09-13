@@ -132,6 +132,20 @@
           </section>
         </div>
 
+        <!-- Parity with the Mac and Windows consoles, which have listed active
+             arrivals since they were built. This console could only ever show
+             the review queue — requests awaiting a decision — so a patient
+             vanished from the screen the moment it was answered, and the live
+             arrival estimate the customer's app reports had nowhere to land. -->
+        <section class="card arrivals-card" style="margin-top:20px">
+          <div class="queue-head">
+            <div><p class="eyebrow" style="margin-bottom:2px">ACTIVE ARRIVALS</p><h2>On the way to you</h2></div>
+          </div>
+          <div class="arrivals-list" data-arrivals-list>
+            <div class="queue-empty">No active arrivals right now.</div>
+          </div>
+        </section>
+
         <!-- Per-device alert/floating-console preferences, kept here too
              (not only on Facility settings → Desktop alerts): a workstation
              session (front-desk computer, no individual sign-in) can never

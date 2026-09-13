@@ -48,6 +48,17 @@ enum TimiVetColor {
     /// "Published", "On the way") and the connection dot.
     static let green = hex(0x12845D)
     static let greenSoft = hex(0xE9F7F1)
+    /// Green *on* greenSoft, which `green` itself does not survive: that pair
+    /// measures 4.25:1, under WCAG 1.4.3's 4.5 minimum, and it has been on
+    /// every status chip in this console. Same hue and saturation, dropped in
+    /// value only until it clears — 4.65:1 — so the chips read as the same
+    /// colour rather than a new one. The `coralDark`/`coralSoft` pair above
+    /// exists for exactly this reason.
+    static let greenDeep = hex(0x117D58)
+    /// Amber on goldSoft, for the same reason: `gold` on `goldSoft` is 1.38:1,
+    /// which is not a colour pair, it is an invisible one. Gold's own hue at
+    /// full saturation, darkened to 4.59:1.
+    static let amberDeep = hex(0x8C6600)
     /// The mockup's `--navy`, i.e. the sidebar/rail background specifically.
     /// Kept distinct from `ink` (now a *text* tone) so retuning body text
     /// never also retunes the sidebar, and vice versa.

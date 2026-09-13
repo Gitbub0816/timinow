@@ -104,3 +104,36 @@ public sealed class InitialsConverter : IValueConverter
 
     public object ConvertBack(object? value, Type targetType, object parameter, CultureInfo culture) => throw new NotSupportedException();
 }
+
+/// <summary>
+/// Paints a status chip from the tone the Worker sent.
+/// </summary>
+/// <remarks>
+/// The Worker decides which tone a request carries (src/console-status.js);
+/// this decides what that tone looks like, and nothing else in the console
+/// picks a status colour by hand. Every pair clears WCAG 1.4.3's 4.5:1 — see
+/// the notes on GreenDeepColor and AmberDeepColor in Theme.xaml, both of which
+/// exist because the obvious pairing did not.
+///
+/// Pass "background" as the converter parameter for the fill; foreground is
+/// the default, since that is the one a TextBlock asks for.
+/// </remarks>
+public sealed class StatusToneToBrushConverter : IValueConverter
+{
+    private static SolidColorBrush Brush(string resource, Color fallback)
+        => Application.Current?.TryFindResource(resource) as SolidColorBrush ?? new SolidColorBrush(fallback);
+
+    public object Convert(object? value, Type targetType, object parameter, CultureInfo culture)
+    {
+        var wantsBackground = string.Equals(parameter as string, "background", StringComparison.OrdinalIgnoreCase);
+        return (value as string) switch
+        {
+            "positive" => wantsBackground ? Brush("GreenSoft", Color.FromRgb(0xE9, 0xF7, 0xF1)) : Brush("GreenDeep", Color.FromRgb(0x11, 0x7D, 0x58)),
+            "waiting" => wantsBackground ? Brush("GoldSoft", Color.FromRgb(0xFF, 0xF0, 0xB9)) : Brush("AmberDeep", Color.FromRgb(0x8C, 0x66, 0x00)),
+            "negative" => wantsBackground ? Brush("CoralSoft", Color.FromRgb(0xFF, 0xF0, 0xED)) : Brush("CoralDark", Color.FromRgb(0xBD, 0x3E, 0x31)),
+            _ => wantsBackground ? Brush("Canvas", Color.FromRgb(0xF3, 0xF5, 0xFB)) : Brush("Muted", Color.FromRgb(0x57, 0x5D, 0x71))
+        };
+    }
+
+    public object ConvertBack(object? value, Type targetType, object parameter, CultureInfo culture) => throw new NotSupportedException();
+}

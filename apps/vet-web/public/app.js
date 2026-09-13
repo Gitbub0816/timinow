@@ -207,6 +207,98 @@ function travelLabel(request) {
 }
 
 /**
+ * What the clinic reads for a request's state.
+ *
+ * The Worker decides it (src/console-status.js) so the Mac, Windows and web
+ * consoles cannot say different things about the same booking. The fallback is
+ * for an older Worker only — never the raw status, which is the booking state
+ * machine's vocabulary and calls an unpaid booking "accepted".
+ */
+function statusLabel(request) {
+  if (request?.display?.label) return request.display.label;
+  const raw = String(request?.status || "");
+  return raw ? raw.replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase()) : "Unknown";
+}
+
+function statusTone(request) {
+  const tone = request?.display?.tone;
+  return ["positive", "waiting", "neutral", "negative"].includes(tone) ? tone : "neutral";
+}
+
+/** An estimate nobody has confirmed for three minutes is not live any more. */
+const ETA_FRESHNESS_MS = 3 * 60 * 1000;
+
+/**
+ * Redraws the arrival countdown between dashboard polls.
+ *
+ * The ETA is an absolute arrival time, so the minutes on screen come from the
+ * clock and not from the last response — without this the number would sit
+ * still for a whole poll interval and then jump. Fifteen seconds is the
+ * coarsest tick that keeps a minute-resolution countdown honest, and a console
+ * left open all shift should not redraw every second for it.
+ */
+function startArrivalClock() {
+  if (startArrivalClock.started) return;
+  startArrivalClock.started = true;
+  setInterval(() => {
+    if (!state.dashboard?.requests) return;
+    renderArrivals(state.dashboard.requests);
+  }, 15000);
+}
+
+/**
+ * How long until this patient walks in.
+ *
+ * `travelMinutes` is the quote made when the offer was written and never moves
+ * again, so it is still saying whatever it said before the owner set off. The
+ * live estimate comes from the phone that is driving, and because it counts
+ * down to an absolute arrival time it keeps ticking between polls and jumps to
+ * the truth when a missed turn makes the route longer.
+ *
+ * A stale estimate is labelled rather than hidden: "8 min away · 6 min ago"
+ * tells a team something, and a blank where a number used to be reads as a
+ * fault.
+ */
+function arrivalLine(request, now = Date.now()) {
+  const eta = request?.eta;
+  if (!eta?.arrivesAt) return travelLabel(request);
+  const target = Date.parse(eta.arrivesAt);
+  if (!Number.isFinite(target)) return travelLabel(request);
+  const minutes = Math.max(0, Math.round((target - now) / 60000));
+  const remaining = minutes === 0 ? "Arriving now" : `${minutes} min away`;
+  const reported = Date.parse(eta.reportedAt || "");
+  if (!Number.isFinite(reported)) return remaining;
+  if (now - reported <= ETA_FRESHNESS_MS) return remaining;
+  return `${remaining} · ${Math.max(1, Math.round((now - reported) / 60000))} min ago`;
+}
+
+/**
+ * Everyone still on their way, newest arrival estimate first.
+ *
+ * This console could only ever show the review queue, so a patient disappeared
+ * from the screen the moment it was answered — the Mac and Windows consoles
+ * have listed active arrivals since they were built.
+ */
+function renderArrivals(requests) {
+  const list = $("[data-arrivals-list]");
+  if (!list) return;
+  const active = (requests || []).filter((request) => ["accepted", "en_route", "arrived", "triaged"].includes(request.status));
+  if (!active.length) {
+    list.innerHTML = `<div class="queue-empty">No active arrivals right now.</div>`;
+    return;
+  }
+  list.innerHTML = active.map((request) => `
+    <div class="arrival-row">
+      <span class="arrival-avatar" aria-hidden="true">${escapeHtml(initials(request.pet?.name))}</span>
+      <span class="arrival-main">
+        <h3>${escapeHtml(petLine(request))}</h3>
+        <p>${escapeHtml(arrivalLine(request))}</p>
+      </span>
+      <span class="arrival-status tone-${escapeHtml(statusTone(request))}">${escapeHtml(statusLabel(request))}</span>
+    </div>`).join("");
+}
+
+/**
  * Allergies and medications the owner recorded, labelled for what they are.
  *
  * Optional, unverified, and never a substitute for the clinic's own
@@ -784,6 +876,8 @@ async function refreshDashboard(initial) {
     }
 
     renderQueue(dashboard.requests);
+    renderArrivals(dashboard.requests);
+    startArrivalClock();
     renderDecisionWorkspace();
     renderMiniWindow();
     renderPill();
@@ -910,7 +1004,7 @@ function renderQueue(requests) {
       <span class="queue-meta">
         ${escapeHtml(formatClock(request.requestedAt))}
         <span class="travel">${escapeHtml(travelLabel(request))}</span>
-        <span class="status">${escapeHtml(request.status)}</span>
+        <span class="status">${escapeHtml(statusLabel(request))}</span>
       </span>
     </button>`).join("");
   $$("[data-request]", list).forEach((button) => button.addEventListener("click", () => {

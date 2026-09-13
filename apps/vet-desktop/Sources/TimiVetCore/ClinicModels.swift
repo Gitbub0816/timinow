@@ -165,16 +165,24 @@ public struct ClinicRequest: Identifiable, Codable, Hashable, Sendable {
     public var requestExpiresAt: String?
     public var updatedAt: String?
     public var searchTarget: Bool
+    /// What this request reads as on a console, decided by the Worker so the
+    /// Mac, Windows and web consoles cannot drift apart — see
+    /// `src/console-status.js`. Optional so an older Worker still decodes;
+    /// `statusLabel` below falls back to the raw status when it is absent.
+    public var display: ConsoleStatus?
+    /// The customer's live arrival estimate while they are driving, or nil.
+    public var eta: ArrivalEta?
     /// False for every search target until the owner books with this clinic
     /// specifically — see `src/db.js`'s `normalizeClinicSearchTarget`. Always
     /// true for a direct intake, which never masks contact info.
     public var contactRevealed: Bool
 
-    public init(id: String = "", searchId: String? = nil, publicCode: String? = nil, locationId: String = "", tenantId: String = "", pet: PetSummary = PetSummary(), owner: OwnerSummary = OwnerSummary(), concernSummary: String = "", urgency: String = "urgent", redFlags: [String] = [], travelMinutes: Int? = nil, status: String = "pending", requestedAt: String? = nil, requestExpiresAt: String? = nil, updatedAt: String? = nil, searchTarget: Bool = false, contactRevealed: Bool = true) {
+    public init(id: String = "", searchId: String? = nil, publicCode: String? = nil, locationId: String = "", tenantId: String = "", pet: PetSummary = PetSummary(), owner: OwnerSummary = OwnerSummary(), concernSummary: String = "", urgency: String = "urgent", redFlags: [String] = [], travelMinutes: Int? = nil, status: String = "pending", requestedAt: String? = nil, requestExpiresAt: String? = nil, updatedAt: String? = nil, searchTarget: Bool = false, display: ConsoleStatus? = nil, eta: ArrivalEta? = nil, contactRevealed: Bool = true) {
         self.id = id; self.searchId = searchId; self.publicCode = publicCode; self.locationId = locationId; self.tenantId = tenantId
         self.pet = pet; self.owner = owner; self.concernSummary = concernSummary; self.urgency = urgency; self.redFlags = redFlags
         self.travelMinutes = travelMinutes; self.status = status; self.requestedAt = requestedAt; self.requestExpiresAt = requestExpiresAt
-        self.updatedAt = updatedAt; self.searchTarget = searchTarget; self.contactRevealed = contactRevealed
+        self.updatedAt = updatedAt; self.searchTarget = searchTarget; self.display = display; self.eta = eta
+        self.contactRevealed = contactRevealed
     }
 
     /// A direct intake's JSON (`normalizeIntakeRow` in `src/db.js`) carries
@@ -185,7 +193,7 @@ public struct ClinicRequest: Identifiable, Codable, Hashable, Sendable {
     /// field being wrong. Everything else still decodes as a required field,
     /// so a genuinely malformed request still surfaces as `invalidResponse`.
     private enum CodingKeys: String, CodingKey {
-        case id, searchId, publicCode, locationId, tenantId, pet, owner, concernSummary, urgency, redFlags, travelMinutes, status, requestedAt, requestExpiresAt, updatedAt, searchTarget, contactRevealed
+        case id, searchId, publicCode, locationId, tenantId, pet, owner, concernSummary, urgency, redFlags, travelMinutes, status, requestedAt, requestExpiresAt, updatedAt, searchTarget, display, eta, contactRevealed
     }
 
     public init(from decoder: Decoder) throws {
@@ -206,11 +214,25 @@ public struct ClinicRequest: Identifiable, Codable, Hashable, Sendable {
         requestExpiresAt = try container.decodeIfPresent(String.self, forKey: .requestExpiresAt)
         updatedAt = try container.decodeIfPresent(String.self, forKey: .updatedAt)
         searchTarget = try container.decodeIfPresent(Bool.self, forKey: .searchTarget) ?? false
+        display = try container.decodeIfPresent(ConsoleStatus.self, forKey: .display)
+        eta = try container.decodeIfPresent(ArrivalEta.self, forKey: .eta)
         contactRevealed = try container.decodeIfPresent(Bool.self, forKey: .contactRevealed) ?? true
     }
 
+    /// The word a clinic reads. The Worker's if it sent one, and a humanised
+    /// raw status only as a fallback for an older deployment — never the raw
+    /// string itself, which is the booking state machine's vocabulary and says
+    /// "Accepted" for a booking nobody has paid for yet.
+    public var statusLabel: String {
+        display?.label ?? status.replacingOccurrences(of: "_", with: " ").capitalized
+    }
+    public var statusTone: ConsoleStatus.Tone { display?.toneValue ?? .neutral }
+
     public var petLine: String { "\(pet.name) · \(Self.display(pet.species))" }
     public var requestType: String { searchTarget ? "MULTI-CLINIC SEARCH" : "DIRECT INTAKE" }
+    /// The quote made when the offer was written. Static by nature — it is
+    /// what someone was told before they set off — so `liveEtaLabel` below
+    /// takes over once the customer is actually driving.
     public var travelLabel: String { travelMinutes.map { "\($0) min away" } ?? "Travel unknown" }
     public var requestedLabel: String {
         guard let requestedAt, let date = ClinicDateFormat.parse(requestedAt) else { return "Just now" }
@@ -219,6 +241,61 @@ public struct ClinicRequest: Identifiable, Codable, Hashable, Sendable {
     public var isEmergency: Bool { urgency == "emergency" || !redFlags.isEmpty }
 
     private static func display(_ value: String) -> String { value.replacingOccurrences(of: "_", with: " ").uppercased() }
+}
+
+/// A status as the Worker decided it should read, plus the tone to paint it.
+///
+/// Deriving this on the server rather than in each console is the whole point:
+/// three consoles in three languages had three copies of the rule and all
+/// three printed the raw database status. See `src/console-status.js`.
+public struct ConsoleStatus: Codable, Hashable, Sendable {
+    public enum Tone: String, Codable, Sendable { case positive, waiting, neutral, negative }
+
+    public var key: String
+    public var label: String
+    public var tone: String
+
+    public init(key: String = "", label: String = "", tone: String = "neutral") {
+        self.key = key; self.label = label; self.tone = tone
+    }
+
+    /// Unknown tones fall back rather than failing the decode, so a Worker that
+    /// adds one does not blank a clinic's dashboard.
+    public var toneValue: Tone { Tone(rawValue: tone) ?? .neutral }
+}
+
+/// The customer's live arrival estimate, reported by the phone that is driving.
+public struct ArrivalEta: Codable, Hashable, Sendable {
+    public var secondsRemaining: Int?
+    public var distanceMeters: Int?
+    public var reportedAt: String?
+    /// Absolute, so a console counts down to a moment rather than decrementing
+    /// a number it was handed. Between polls it keeps ticking on its own; when
+    /// a fresher report lands — a missed turn, a reroute, traffic — the target
+    /// moves and the countdown corrects itself instead of drifting.
+    public var arrivesAt: String?
+
+    public init(secondsRemaining: Int? = nil, distanceMeters: Int? = nil, reportedAt: String? = nil, arrivesAt: String? = nil) {
+        self.secondsRemaining = secondsRemaining; self.distanceMeters = distanceMeters
+        self.reportedAt = reportedAt; self.arrivesAt = arrivesAt
+    }
+
+    /// An estimate nobody has confirmed for this long is not live any more.
+    /// Shown as stale rather than hidden: "5 min away, as of 12 minutes ago"
+    /// is honest, and a blank where a countdown used to be reads as an error.
+    public static let freshnessWindow: TimeInterval = 3 * 60
+
+    public func isFresh(now: Date = Date()) -> Bool {
+        guard let reportedAt, let reported = ClinicDateFormat.parse(reportedAt) else { return false }
+        return now.timeIntervalSince(reported) <= Self.freshnessWindow
+    }
+
+    /// Minutes from `now` until arrival, floored at zero — a countdown that has
+    /// run out says "Arriving now", never a negative number.
+    public func minutesRemaining(now: Date = Date()) -> Int? {
+        guard let arrivesAt, let target = ClinicDateFormat.parse(arrivesAt) else { return nil }
+        return max(0, Int((target.timeIntervalSince(now) / 60).rounded()))
+    }
 }
 
 public struct ClinicMetrics: Codable, Hashable, Sendable {

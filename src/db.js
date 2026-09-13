@@ -621,6 +621,34 @@ export function normalizeIntakeRow(row) {
     refundAmountCents: row.refund_amount_cents ?? null,
     stripeTransferId: row.stripe_transfer_id || null,
     transferGroup: row.transfer_group || null,
+    /**
+     * The customer's live arrival estimate while they are driving, or null.
+     *
+     * `arrivesAt` is absolute on purpose. A console that counts down to a
+     * timestamp keeps ticking between polls and corrects itself the moment a
+     * fresher report lands — which is exactly what a missed turn looks like:
+     * the phone's route gets longer, the next report pushes `arrivesAt` out,
+     * and the clinic's countdown jumps rather than drifting quietly wrong.
+     * `reportedAt` travels with it so a surface can tell a live estimate from
+     * one nobody has confirmed in ten minutes.
+     */
+    eta: row.eta_reported_at
+      ? {
+          secondsRemaining: row.eta_seconds_remaining == null ? null : Number(row.eta_seconds_remaining),
+          distanceMeters: row.eta_distance_meters == null ? null : Number(row.eta_distance_meters),
+          reportedAt: row.eta_reported_at,
+          arrivesAt: row.eta_seconds_remaining == null
+            ? null
+            : new Date(new Date(row.eta_reported_at).getTime() + Number(row.eta_seconds_remaining) * 1000).toISOString()
+        }
+      : null,
+    /**
+     * Whether the booking fee has actually been collected for this intake.
+     * Only selected by the clinic-facing query, so it is undefined elsewhere
+     * — and undefined is correctly falsy for consoleStatusFor, which treats
+     * "not known to be paid" as still only offered.
+     */
+    bookingPaid: row.booking_paid === undefined ? undefined : Boolean(Number(row.booking_paid)),
     sourceSearchId: row.source_search_id || null,
     selectedOfferId: row.selected_offer_id || null,
     createdAt: row.created_at,
@@ -670,11 +698,21 @@ export async function listClinicIntakes(env, tenantId, limit = 50) {
       demo: true
     }].slice(0, limit);
   }
+  // `booking_paid` is what separates a booking that is really made from one
+  // that is only offered: an `accepted` intake with no PAID booking order is
+  // provisional by the system's own definition, since the sweep in
+  // src/index.js expires exactly that row fifteen minutes later. The console
+  // has to be able to tell them apart — see src/console-status.js.
   const result = await env.DB.prepare(`
-    SELECT * FROM intake_requests
-    WHERE tenant_id = ?
-    ORDER BY CASE status WHEN 'pending' THEN 0 WHEN 'accepted' THEN 1 WHEN 'en_route' THEN 2 WHEN 'arrived' THEN 3 ELSE 4 END,
-             requested_at DESC
+    SELECT ir.*,
+      EXISTS (
+        SELECT 1 FROM payment_orders po
+        WHERE po.intake_id = ir.id AND po.purpose = 'BOOKING' AND po.status = 'PAID'
+      ) AS booking_paid
+    FROM intake_requests ir
+    WHERE ir.tenant_id = ?
+    ORDER BY CASE ir.status WHEN 'pending' THEN 0 WHEN 'accepted' THEN 1 WHEN 'en_route' THEN 2 WHEN 'arrived' THEN 3 ELSE 4 END,
+             ir.requested_at DESC
     LIMIT ?
   `).bind(tenantId, limit).all();
   return result.results.map(normalizeIntakeRow);
