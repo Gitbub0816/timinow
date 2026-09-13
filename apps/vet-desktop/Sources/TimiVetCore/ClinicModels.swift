@@ -296,6 +296,17 @@ public struct ArrivalEta: Codable, Hashable, Sendable {
         guard let arrivesAt, let target = ClinicDateFormat.parse(arrivesAt) else { return nil }
         return max(0, Int((target.timeIntervalSince(now) / 60).rounded()))
     }
+
+    /// How long ago this estimate was reported, for labelling a stale one.
+    ///
+    /// Lives here rather than in the view because ClinicDateFormat is internal
+    /// to TimiVetCore and the console's views are a different module — and
+    /// because the Windows model carries the same method, which is the point
+    /// of these two staying in step.
+    public func ageMinutes(now: Date = Date()) -> Int? {
+        guard let reportedAt, let reported = ClinicDateFormat.parse(reportedAt) else { return nil }
+        return max(1, Int((now.timeIntervalSince(reported) / 60).rounded()))
+    }
 }
 
 public struct ClinicMetrics: Codable, Hashable, Sendable {

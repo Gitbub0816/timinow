@@ -129,7 +129,7 @@ public sealed class ClinicRequest : INotifyPropertyChanged
         UpdatedAt = latest.UpdatedAt;
         SearchTarget = latest.SearchTarget;
         ContactRevealed = latest.ContactRevealed;
-        Display = latest.Display;
+        DisplayStatus = latest.DisplayStatus;
         Eta = latest.Eta;
         foreach (var computed in new[] { nameof(PetLine), nameof(RequestType), nameof(PhoneLabel), nameof(TravelLabel), nameof(RequestedLabel), nameof(IsEmergency), nameof(OwnerSuppliedMedicalLine), nameof(HasOwnerSuppliedMedical), nameof(StatusLabel), nameof(StatusTone), nameof(ArrivalLine) })
         {
@@ -206,8 +206,13 @@ public sealed class ClinicRequest : INotifyPropertyChanged
     /// src/console-status.js. Null against an older Worker, in which case
     /// <see cref="StatusLabel"/> humanises the raw status instead.
     /// </summary>
+    /// Named DisplayStatus rather than Display because ClinicRequest already
+    /// has a private static Display(string) that PetLine formats species with,
+    /// and C# will not let a property and a method share a name. The JSON key
+    /// is unchanged.
     private ConsoleStatus? _display;
-    public ConsoleStatus? Display { get => _display; set => Set(ref _display, value); }
+    [JsonPropertyName("display")]
+    public ConsoleStatus? DisplayStatus { get => _display; set => Set(ref _display, value); }
 
     /// <summary>The customer's live arrival estimate while they are driving.</summary>
     private ArrivalEta? _eta;
@@ -231,7 +236,7 @@ public sealed class ClinicRequest : INotifyPropertyChanged
     {
         get
         {
-            if (!string.IsNullOrWhiteSpace(Display?.Label)) return Display!.Label;
+            if (!string.IsNullOrWhiteSpace(DisplayStatus?.Label)) return DisplayStatus!.Label;
             if (string.IsNullOrWhiteSpace(Status)) return "Unknown";
             var spaced = Status.Replace('_', ' ');
             return char.ToUpperInvariant(spaced[0]) + spaced.Substring(1);
@@ -239,7 +244,7 @@ public sealed class ClinicRequest : INotifyPropertyChanged
     }
 
     /// <summary>One of positive/waiting/neutral/negative; see ConsoleStatus.</summary>
-    [JsonIgnore] public string StatusTone => ConsoleStatus.NormalizeTone(Display?.Tone);
+    [JsonIgnore] public string StatusTone => ConsoleStatus.NormalizeTone(DisplayStatus?.Tone);
 
     /// <summary>
     /// Tells WPF the countdown moved. Nothing on this object changed — the

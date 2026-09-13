@@ -188,7 +188,7 @@ if (!wranglerLocalExample.includes('"d1_databases"') || !wranglerLocalExample.in
     ["Windows console", "apps/vet-windows/src/TimiVet/Models/ClinicModels.cs"]
   ]) {
     const source = await readFile(path, "utf8");
-    if (!/display\?\.[Ll]abel|Display\?\.Label/.test(source)) {
+    if (!/display\?\.label|DisplayStatus\?\.Label/.test(source)) {
       throw new Error(`${label} (${path}) no longer reads the Worker's display label, so it is deriving a status of its own.`);
     }
   }

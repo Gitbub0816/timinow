@@ -957,8 +957,7 @@ public struct ConsoleView: View {
         guard let eta = request.eta, let minutes = eta.minutesRemaining(now: tick) else { return request.travelLabel }
         let remaining = minutes == 0 ? "Arriving now" : "\(minutes) min away"
         if eta.isFresh(now: tick) { return remaining }
-        guard let reportedAt = eta.reportedAt, let reported = ClinicDateFormat.parse(reportedAt) else { return request.travelLabel }
-        let age = max(1, Int((tick.timeIntervalSince(reported) / 60).rounded()))
+        guard let age = eta.ageMinutes(now: tick) else { return remaining }
         return "\(remaining) · \(age) min ago"
     }
 
