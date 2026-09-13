@@ -246,7 +246,31 @@ export async function chargeBookingOrder(env, paymentOrderId) {
   } catch (error) {
     if (error instanceof StripeError) {
       console.warn(JSON.stringify({ event: "booking_charge_failed", paymentOrderId, message: error.message }));
-      return { ok: false, code: "PAYMENT_PROVIDER_ERROR", message: "The payment provider could not start this charge. Please try again." };
+      /**
+       * The customer gets the same plain sentence either way — Stripe's own
+       * wording is for whoever has to fix it, not for somebody holding a sick
+       * animal. But it has to reach them: this path used to drop `error.code`
+       * and `error.stripeType` entirely, so a booking charge that Stripe
+       * refused arrived in the error log as "The payment provider could not
+       * start this charge" and nothing else, while the deposit route right
+       * next to it returned the provider's reason. That asymmetry is the
+       * reason a key-mode mismatch took days to name.
+       *
+       * Never the request body, though — a PaymentIntent body echoed into an
+       * error response is a client secret in somebody's logs.
+       */
+      const detail = [
+        error.stripeType && `type=${error.stripeType}`,
+        error.code && `code=${error.code}`,
+        error.stripeError?.param && `param=${error.stripeError.param}`,
+        error.message && `stripe=${error.message}`
+      ].filter(Boolean);
+      return {
+        ok: false,
+        code: "PAYMENT_PROVIDER_ERROR",
+        message: "The payment provider could not start this charge. Please try again.",
+        detail
+      };
     }
     throw error;
   }

@@ -1759,7 +1759,7 @@ async function handleBookingPayment(request, env, actor, intakeId) {
 
   try {
     const result = await ensureBookingPaymentOrder(env, { intake, contributionCents });
-    if (!result.ok) return apiError(result.code === "DATABASE_REQUIRED" ? 503 : 422, result.code, result.message);
+    if (!result.ok) return apiError(result.code === "DATABASE_REQUIRED" ? 503 : 422, result.code, result.message, result.detail);
     return json({
       mode: result.mode,
       clientSecret: result.clientSecret || null,
