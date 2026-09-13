@@ -45,18 +45,49 @@ async function api(path, options = {}) {
  * wait on an auth SDK, and most visits never sign in at all.
  */
 let clerk = null;
-/** Why Clerk could not load, for the message on screen. */
+/**
+ * Which step failed, from which host, and what it said — not just a message.
+ *
+ * This used to hold the raw error, and one line of it reached the screen. That
+ * was not enough to diagnose anything: "could not load Clerk" is true of a
+ * blocked CDN, a mistyped key, an origin Clerk does not recognise and a build
+ * whose exports moved, and those have four different fixes. What the reader
+ * can report is now the step and the host.
+ */
 let clerkFailure = null;
+
+/** Just the host, for a message that has to fit on a phone. */
+function hostOf(url) {
+  try { return new URL(url).host; } catch { return String(url || "").slice(0, 60); }
+}
+
 async function loadClerk() {
   if (clerk !== null) return clerk;
   const key = state.config?.clerkPublishableKey;
-  if (!key) { clerk = false; return clerk; }
+  const url = state.config?.clerkJsUrl;
+  if (!key || !url) {
+    // Remember "there is no Clerk here" only once the config has actually
+    // arrived. api() asks for a session token on every call — including the
+    // very first one, which is the call that fetches the config — so the
+    // first question is always asked before the answer exists. Caching that
+    // answer is what made sign-in impossible on this page for the whole life
+    // of the tab: the button opened a form, the form could never reach
+    // Clerk, and starting a thread or leaving a comment failed the same way.
+    // No CSP, CDN or Clerk setting could have fixed it.
+    if (state.config) clerk = false;
+    return false;
+  }
+  // Named steps rather than a single try: see clerkFailure above.
+  let step = "download";
   try {
-    const module = await import(/* @vite-ignore */ state.config.clerkJsUrl);
-    // Same resolution as every other surface: the jsDelivr +esm build has moved
-    // its export shape between versions, and a bare `module.Clerk` is how this
+    const module = await import(/* @vite-ignore */ url);
+    step = "read";
+    // Same resolution as every other surface: the +esm build has moved its
+    // export shape between versions, and a bare `module.Clerk` is how this
     // silently became undefined.
     const Clerk = module.Clerk || module.default?.Clerk || module.default;
+    if (typeof Clerk !== "function") throw new Error("no Clerk constructor in the module");
+    step = "start";
     clerk = new Clerk(key);
     await clerk.load();
     // Re-render on sign-in and sign-out, so the page stops saying "sign in to
@@ -65,12 +96,10 @@ async function loadClerk() {
     return clerk;
   } catch (error) {
     // Logged AND kept, rather than swallowed. Silence here is what made an
-    // unusable page look like a working one; a generic "unavailable" on screen
-    // is the same failure one step later, because nobody diagnoses a sign-in
-    // problem from a phone with no console. The reason is shown — see
-    // signInUnavailableText.
-    console.error("Clerk initialisation failed", error);
-    clerkFailure = error;
+    // unusable page look like a working one, and nobody diagnoses a sign-in
+    // problem from a phone with no console.
+    console.error(`Clerk failed at step "${step}" loading ${url}`, error);
+    clerkFailure = { step, host: hostOf(url), error };
     clerk = false;
     return clerk;
   }
@@ -92,6 +121,9 @@ function syncActor() {
 }
 
 async function sessionToken() {
+  // Reading the blog needs no token, and nothing can be signed before the
+  // config that names the Clerk instance has loaded — see loadClerk().
+  if (!state.config) return null;
   const instance = await loadClerk();
   if (!instance || !instance.session) return null;
   try {
@@ -348,9 +380,15 @@ function showSignIn(afterPath = window.location.pathname) {
  * instance, a network it could not reach.
  */
 function signInUnavailableText() {
-  const reason = clerkFailure?.message || (clerkFailure ? String(clerkFailure) : "");
-  const base = "Sign-in could not start on this page.";
-  return reason ? `${base} (${reason.slice(0, 200)})` : `${base} Try again in a moment.`;
+  if (!clerkFailure) return "Sign-in is not configured on this deployment.";
+  const { step, host, error } = clerkFailure;
+  const detail = (error?.message || String(error) || "").slice(0, 160);
+  const what = {
+    download: `the browser could not fetch the sign-in code from ${host}`,
+    read: `${host} answered with something that is not the sign-in code`,
+    start: `the sign-in code loaded from ${host} but would not start`
+  }[step] || `sign-in failed at ${host}`;
+  return `Sign-in could not start: ${what}. ${detail}`;
 }
 
 function signInMessage(error) {
@@ -560,10 +598,10 @@ function wire() {
     });
   });
 
-  $("[data-action='sign-in']").addEventListener("click", async () => {
-    const instance = await loadClerk();
-    if (instance) instance.openSignIn({ afterSignInUrl: window.location.pathname });
-  });
+  // No sign-in handler here: wireSignIn() owns that button. This one called
+  // clerk.openSignIn(), which the headless build does not define — it was
+  // left behind when the one-time-code form replaced Clerk's hosted modal,
+  // and every click ran both handlers.
 }
 
 async function start() {

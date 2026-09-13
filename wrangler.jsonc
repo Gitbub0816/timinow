@@ -19,8 +19,10 @@
     "SIGN_IN_REQUIRED": "true",
     "DEMO_MODE": "false",
     "SURFACE": "customer",
-    "CLERK_JS_URL": "https://cdn.jsdelivr.net/npm/@clerk/clerk-js@5/headless/+esm",
     "CLERK_PUBLISHABLE_KEY": "pk_live_Y2xlcmsudGltaW5vdy5wZXQk",
+    // Also where the browser loads clerk-js from: Clerk proxies the same
+    // build at <issuer>/npm/@clerk/clerk-js@5/headless/+esm, so the SDK and
+    // the session API share one host. See defaultClerkJsUrl in src/config.js.
     "CLERK_ISSUER": "https://clerk.timinow.pet",
     "CLERK_JWKS_URL": "https://clerk.timinow.pet/.well-known/jwks.json",
     "CLERK_TOKEN_TEMPLATE": "timinow",

@@ -17,8 +17,35 @@ export const DEFAULT_MAP_STYLE = "mapbox://styles/calebowen2019/cmt3nci25004d01s
  * Clerk's headless browser build. It ships no UI components at all, which is
  * what keeps a prebuilt Clerk modal from ever rendering — the guarantee is
  * structural rather than a matter of remembering not to call `mountSignIn`.
+ *
+ * The `@5` float rather than an exact pin is the one documented exception in
+ * docs/DEPENDENCY-CURRENCY.md: Clerk ships auth fixes inside a major and this
+ * is the version range Clerk's own documentation tells you to load.
  */
-export const DEFAULT_CLERK_JS_URL = "https://cdn.jsdelivr.net/npm/@clerk/clerk-js@5/headless/+esm";
+export const CLERK_JS_PATH = "/npm/@clerk/clerk-js@5/headless/+esm";
+
+/** Where that build is fetched from when a Worker does not name a URL itself. */
+export const CLERK_JS_CDN_ORIGIN = "https://cdn.jsdelivr.net";
+
+/**
+ * Serve the auth SDK from Clerk's own Frontend API domain, not from a CDN.
+ *
+ * Clerk proxies the same jsDelivr artifact at `<frontend-api>/npm/...`, byte
+ * for byte, and the Frontend API is a host sign-in already cannot work
+ * without — every session call goes there. Loading the SDK from a *second*
+ * host only adds a way for sign-in to break while auth itself is perfectly
+ * healthy, and that is a failure with no symptom a reader can act on: a CDN
+ * that a content blocker, a DNS filter, a corporate proxy, or a bad edge
+ * cache entry makes unreachable takes the sign-in button down on a page whose
+ * every other request succeeds.
+ *
+ * Falls back to the CDN only when no issuer is configured, which in practice
+ * means local development against a Clerk development instance.
+ */
+export function defaultClerkJsUrl(env) {
+  const issuer = String(env?.CLERK_ISSUER || "").replace(/\/+$/, "");
+  return (issuer || CLERK_JS_CDN_ORIGIN) + CLERK_JS_PATH;
+}
 
 const APP_NAMES = {
   customer: "Tími NOW",
@@ -42,7 +69,7 @@ export async function publicConfig(env) {
     surface,
     signInRequired: authenticated,
     clerkPublishableKey: authenticated ? (env.CLERK_PUBLISHABLE_KEY || null) : null,
-    clerkJsUrl: authenticated ? (env.CLERK_JS_URL || DEFAULT_CLERK_JS_URL) : null,
+    clerkJsUrl: authenticated ? (env.CLERK_JS_URL || defaultClerkJsUrl(env)) : null,
     /** The JWT template the Workers read tenant claims from. */
     clerkTokenTemplate: env.CLERK_TOKEN_TEMPLATE || "timinow",
     stripePublishableKey: env.STRIPE_PUBLISHABLE_KEY || null,

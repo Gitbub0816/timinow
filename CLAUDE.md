@@ -164,7 +164,9 @@ a new CDN-hosted script:
   is to float (Stripe.js's `js.stripe.com/v3` is the one deliberate
   exception in this codebase — it's Stripe's own PCI SAQ-A requirement,
   don't "fix" it by pinning or self-hosting it).
-- A floating major-version CDN tag (like Clerk's `@5` via jsdelivr) is an
+- A floating major-version tag (like Clerk's `@5`, served from Clerk's own
+  Frontend API rather than a CDN — see `defaultClerkJsUrl` in `src/config.js`,
+  and prefer a vendor's own host to a CDN for anything in the auth path) is an
   acceptable middle ground for a well-audited vendor SDK, but a bare,
   version-less URL (what `@didit-protocol/sdk-web` was before this pass) is
   a real supply-chain gap, not just staleness — it means whatever the

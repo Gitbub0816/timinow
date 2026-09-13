@@ -92,18 +92,24 @@ const JSON_HEADERS = { "content-type": "application/json; charset=utf-8", "cache
 // this policy; scripts/check-subprocessors.mjs fails CI if they drift apart.
 const CONTENT_SECURITY_POLICY = [
   "default-src 'self'",
-    // clerk.timinow.pet is in script-src because the headless clerk-js loaded
-  // from jsDelivr is only a loader: it injects a <script> for the real bundle,
-  // served from the Frontend API domain
-  // (https://clerk.timinow.pet/npm/@clerk/clerk-js@5.x/dist/clerk.browser.js,
-  // which answers 200). Without it clerk.load() fails with "Unable to load
-  // Clerk" and nobody can sign in.
+  // clerk.timinow.pet is in script-src because the browser now loads clerk-js
+  // *from* the Frontend API domain: Clerk proxies the same build a CDN would
+  // serve at <issuer>/npm/@clerk/clerk-js@5/headless/+esm, and it is the one
+  // host sign-in cannot work without anyway. It is in connect-src for the
+  // session calls that follow. See defaultClerkJsUrl in src/config.js.
   //
-  // This was missing from every Worker and did not matter for as long as no
-  // page had a CSP at all — `run_worker_first: ["/api/*"]` meant the policy
-  // only ever reached /api/* responses. Enforcing it on pages (the _headers
-  // fix) is what surfaced it, on all four surfaces at once.
-  "script-src 'self' https://clerk.timinow.pet https://js.stripe.com https://cdn.jsdelivr.net https://unpkg.com https://api.mapbox.com",
+  // The comment that stood here said the headless build was "only a loader"
+  // that injects a second <script> from this host. That was wrong, and it was
+  // wrong because it was reasoned out from a bug report instead of watched:
+  // driving this exact policy in a browser shows the headless build is the
+  // whole SDK, and that it starts its session worker from a blob: URL, which
+  // is what worker-src is really for.
+  //
+  // The policy reached no page at all for as long as
+  // `run_worker_first: ["/api/*"]` meant this Worker never ran for one;
+  // enforcing it (the _headers fix) is what surfaced the missing host, on all
+  // four surfaces at once.
+  "script-src 'self' https://clerk.timinow.pet https://js.stripe.com https://unpkg.com https://api.mapbox.com",
   "style-src 'self' 'unsafe-inline' https://api.mapbox.com",
   "img-src 'self' data: blob: https://api.mapbox.com https://*.tiles.mapbox.com",
   "font-src 'self' data:",
