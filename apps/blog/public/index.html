@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>TímiNOW · Notes and community</title>
+  <meta name="description" content="Writing from TímiNOW, from the clinics on it, and a place for pet owners to talk.">
+  <meta name="theme-color" content="#101b3d">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <header class="site-head">
+    <div class="head-inner">
+      <a class="wordmark" href="/">Tími<span>NOW</span></a>
+      <nav class="site-nav" aria-label="Sections">
+        <a href="/" data-nav="posts">Notes</a>
+        <a href="/forum" data-nav="forum">Community</a>
+      </nav>
+      <div class="head-actions">
+        <span class="who" data-who hidden></span>
+        <button class="button" type="button" data-action="sign-in" hidden>Sign in</button>
+        <a class="button button-primary" href="https://timinow.pet">Find care</a>
+      </div>
+    </div>
+  </header>
+
+  <!-- The notice every page carries. Not a footnote: the person reading an
+       article about a sick animal is frequently deciding whether to go in
+       tonight, and nothing here is a substitute for that decision. -->
+  <p class="advice-strip" data-not-advice role="note"></p>
+
+  <main id="main">
+
+    <!-- ===================================================== post listing -->
+    <section class="view" data-view="posts">
+      <div class="masthead">
+        <h1>Notes</h1>
+        <p>Writing from TímiNOW, and from the clinics on it.</p>
+      </div>
+      <div class="post-list" data-post-list>
+        <p class="empty">Loading…</p>
+      </div>
+
+      <section class="subscribe-card" aria-labelledby="subscribe-title">
+        <h2 id="subscribe-title">Get new posts by email</h2>
+        <p>One email when something is published. Confirm from the link we send, and leave in one click whenever you like.</p>
+        <form data-subscribe-form>
+          <label class="field" for="subscribe-email">Email address
+            <input id="subscribe-email" name="email" type="email" autocomplete="email" required placeholder="you@example.com">
+          </label>
+          <button class="button button-primary" type="submit">Subscribe</button>
+        </form>
+        <p class="form-note" data-subscribe-note role="status"></p>
+      </section>
+    </section>
+
+    <!-- ======================================================= single post -->
+    <section class="view" data-view="post" hidden>
+      <article class="post" aria-labelledby="post-title">
+        <p class="eyebrow" data-post-byline></p>
+        <h1 id="post-title" data-post-title></h1>
+        <p class="post-meta" data-post-meta></p>
+        <p class="provider-notice" data-post-notice hidden></p>
+        <div class="prose" data-post-body></div>
+      </article>
+
+      <section class="comments" aria-labelledby="comments-title">
+        <h2 id="comments-title">Comments</h2>
+        <form class="comment-form" data-comment-form hidden>
+          <label class="field" for="comment-body">Add a comment
+            <textarea id="comment-body" name="body" rows="3" required placeholder="Say something useful."></textarea>
+          </label>
+          <button class="button button-primary" type="submit">Post comment</button>
+        </form>
+        <p class="form-note" data-comment-signin hidden>Sign in to comment.</p>
+        <ol class="comment-list" data-comment-list></ol>
+      </section>
+    </section>
+
+    <!-- ============================================================= forum -->
+    <section class="view" data-view="forum" hidden>
+      <div class="masthead">
+        <h1>Community</h1>
+        <p>Talk to other owners, or ask the clinics on TímiNOW a question.</p>
+      </div>
+
+      <div class="forum-bar">
+        <div class="filter-row" role="group" aria-label="Filter threads">
+          <button class="chip is-on" type="button" data-filter="">Everything</button>
+          <button class="chip" type="button" data-filter="discussion">Discussions</button>
+          <button class="chip" type="button" data-filter="question">Questions</button>
+        </div>
+        <button class="button button-primary" type="button" data-action="new-thread">Start a thread</button>
+      </div>
+
+      <form class="thread-form" data-thread-form hidden>
+        <fieldset>
+          <legend>Start a thread</legend>
+          <label class="field" for="thread-kind">Kind
+            <select id="thread-kind" name="kind">
+              <option value="discussion">Discussion — talking with other owners</option>
+              <option value="question">Question — hoping a clinic answers</option>
+            </select>
+          </label>
+          <label class="field" for="thread-title">Title
+            <input id="thread-title" name="title" type="text" required maxlength="160">
+          </label>
+          <label class="field" for="thread-body">What's on your mind
+            <textarea id="thread-body" name="body" rows="5" required></textarea>
+          </label>
+          <div class="form-actions">
+            <button class="button button-primary" type="submit">Post thread</button>
+            <button class="button" type="button" data-action="cancel-thread">Cancel</button>
+          </div>
+        </fieldset>
+      </form>
+      <p class="form-note" data-forum-signin hidden>Sign in to start a thread.</p>
+
+      <div class="thread-list" data-thread-list><p class="empty">Loading…</p></div>
+    </section>
+
+    <!-- ======================================================= one thread -->
+    <section class="view" data-view="thread" hidden>
+      <article class="thread" aria-labelledby="thread-title">
+        <p class="eyebrow" data-thread-kind></p>
+        <h1 id="thread-title" data-thread-title></h1>
+        <p class="post-meta" data-thread-meta></p>
+        <div class="prose" data-thread-body></div>
+      </article>
+      <ol class="reply-list" data-reply-list></ol>
+      <form class="comment-form" data-reply-form hidden>
+        <label class="field" for="reply-body">Reply
+          <textarea id="reply-body" name="body" rows="3" required></textarea>
+        </label>
+        <button class="button button-primary" type="submit">Post reply</button>
+      </form>
+      <p class="form-note" data-reply-signin hidden>Sign in to reply.</p>
+    </section>
+
+    <!-- ================================================ subscribe outcome -->
+    <section class="view" data-view="message" hidden>
+      <div class="message-card">
+        <h1 data-message-title></h1>
+        <p data-message-body></p>
+        <a class="button button-primary" href="/">Back to the blog</a>
+      </div>
+    </section>
+
+  </main>
+
+  <footer class="site-foot">
+    <p>© <span data-year></span> Clearkey Solutions LLC · TímiNOW</p>
+    <p><a href="https://timinow.pet/#legal">Legal centre</a> · <a href="mailto:blog@timinow.pet">blog@timinow.pet</a></p>
+  </footer>
+
+  <script src="/app.js" type="module"></script>
+</body>
+</html>

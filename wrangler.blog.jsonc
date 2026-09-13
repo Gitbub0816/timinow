@@ -1,0 +1,69 @@
+{
+  // Blog and community forum — timinow-blog, at blog.timinow.pet.
+  //
+  // Its own Worker and its own origin, for the same reason the veterinary and
+  // admin consoles are: this is the one surface that renders words written by
+  // clinics and by the public, and an XSS here must not be an XSS on the page
+  // where somebody enters a card number. Separate origin, separate cookies,
+  // separate CSP — see apps/blog/src/index.js.
+  //
+  // Deploy: npx wrangler deploy --config wrangler.blog.jsonc
+  //
+  // Required secrets:
+  //   CLERK_SECRET_KEY     Verifies session tokens. Comments and forum posts
+  //                        need a signed-in reader; reading needs nothing.
+  //   BLOG_EMAIL_API_KEY   MailerSend, for subscription confirmations and
+  //                        post announcements. Deliberately its own key rather
+  //                        than sharing ALERT_EMAIL_API_KEY: a marketing list
+  //                        and an incident alert should not share a credential,
+  //                        because the list is the one that gets exported or
+  //                        handed to a vendor and the alerting key is the one
+  //                        that has to work at 3am. Falls back to the alerting
+  //                        key when unset — see src/blog-subscriptions.js.
+  //
+  // No `triggers` block: the customer Worker's cron owns every sweep against
+  // this same D1 database.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "timinow-blog",
+  "main": "apps/blog/src/index.js",
+  "compatibility_date": "2026-09-12",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "routes": [
+    { "pattern": "blog.timinow.pet", "custom_domain": true }
+  ],
+  "vars": {
+    "SIGN_IN_REQUIRED": "true",
+    "DEMO_MODE": "false",
+    "SURFACE": "blog",
+    "CLERK_JS_URL": "https://cdn.jsdelivr.net/npm/@clerk/clerk-js@5/headless/+esm",
+    "CLERK_PUBLISHABLE_KEY": "pk_live_Y2xlcmsudGltaW5vdy5wZXQk",
+    "CLERK_ISSUER": "https://clerk.timinow.pet",
+    "CLERK_JWKS_URL": "https://clerk.timinow.pet/.well-known/jwks.json",
+    "CLERK_TOKEN_TEMPLATE": "timinow",
+    "AUTHORIZED_PARTIES": "https://blog.timinow.pet,https://providers.timinow.pet,https://app.timinow.pet,https://timinow.pet,https://www.timinow.pet,https://admin.timinow.pet",
+    "CUSTOMER_APP_URL": "https://timinow.pet",
+    "VET_APP_URL": "https://providers.timinow.pet",
+    // The address subscription mail is sent from. Public by nature; the API
+    // key beside it is the secret.
+    "BLOG_EMAIL_FROM": "blog@timinow.pet"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "timinow",
+      "database_id": "eae5bd15-686f-4827-9354-e99973daa803",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "assets": {
+    "directory": "./apps/blog/public",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
+  },
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  }
+}

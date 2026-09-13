@@ -1,0 +1,207 @@
+/*
+ * The blog, in the product's own visual language.
+ *
+ * Same tokens as every other surface (see CLAUDE.md §7): paper and canvas as
+ * the two grounds, ink for text and 2px borders, coral for action, blue for
+ * links, gold for warning, green for success. Hard 2px ink borders with a
+ * zero-blur offset shadow are this product's signature — no soft shadows, no
+ * glassmorphism, no gradients.
+ *
+ * Reading is the whole job here, so the one thing this surface adds is a
+ * measure: body text is capped near 68 characters, which is where a line
+ * stops being comfortable and a reader starts losing their place.
+ */
+
+:root {
+  --paper: #fffaf0;
+  --canvas: #f3f5fb;
+  --ink: #111b3b;
+  --ink-soft: #3f4862;
+  --muted: #575d71;
+  --line: #d7dce7;
+  --coral: #f25f4c;
+  --coral-dark: #bd3e31;
+  --coral-soft: #fff0ed;
+  --blue: #2357d9;
+  --blue-soft: #e8efff;
+  --gold: #f7c84b;
+  --gold-soft: #fff0b9;
+  /* Amber that survives gold-soft: gold on gold-soft is 1.38:1, which is not
+     a low-contrast pair but an invisible one. Same hue, darkened to 4.59:1. */
+  --amber-deep: #8c6600;
+  --green: #12845d;
+  --green-soft: #e9f7f1;
+  --measure: 68ch;
+  --sans: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --serif: "Iowan Old Style", "Palatino Linotype", Georgia, serif;
+}
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  margin: 0;
+  background: var(--canvas);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 16px;
+  line-height: 1.6;
+}
+button, input, select, textarea { font: inherit; color: inherit; }
+button { cursor: pointer; }
+a { color: var(--blue); }
+h1, h2, h3, p, ul, ol { margin-top: 0; }
+[hidden] { display: none !important; }
+:focus-visible { outline: 3px solid var(--gold); outline-offset: 3px; }
+
+.skip-link { position: fixed; z-index: 99; left: 1rem; top: -5rem; background: var(--ink); color: #fff; padding: .8rem 1rem; border-radius: 8px; }
+.skip-link:focus { top: 1rem; }
+
+/* ───────────────────────────────────────────────────────────────── chrome ── */
+
+.site-head { border-bottom: 2px solid var(--ink); background: var(--paper); }
+.head-inner { max-width: 1040px; margin: 0 auto; padding: 14px 20px; display: flex; align-items: center; gap: 20px; flex-wrap: wrap; }
+.wordmark { font-weight: 900; font-size: 1.2rem; letter-spacing: -.02em; color: var(--ink); text-decoration: none; }
+.wordmark span { color: var(--coral); }
+.site-nav { display: flex; gap: 16px; margin-right: auto; }
+.site-nav a { color: var(--ink-soft); text-decoration: none; font-weight: 700; font-size: .86rem; padding: 4px 0; border-bottom: 2px solid transparent; }
+.site-nav a.is-on { color: var(--ink); border-bottom-color: var(--coral); }
+.head-actions { display: flex; align-items: center; gap: 10px; }
+.who { font-size: .78rem; color: var(--muted); font-weight: 600; }
+
+.button {
+  border: 2px solid var(--ink); border-radius: 10px; background: #fff; color: var(--ink);
+  padding: .5rem .9rem; font-weight: 800; font-size: .8rem; text-decoration: none;
+  box-shadow: 2px 2px 0 var(--ink); display: inline-flex; align-items: center; gap: .4rem;
+}
+.button:active { transform: translate(2px, 2px); box-shadow: none; }
+.button-primary { background: var(--coral); color: #fff; }
+.link-button { background: none; border: 0; padding: 0; color: var(--muted); font-size: .72rem; font-weight: 700; text-decoration: underline; }
+
+/* The advice notice. Gold ground, amber-deep text — 4.59:1, and the one
+   element on the page deliberately hard to skim past. */
+.advice-strip {
+  margin: 0; padding: 10px 20px; background: var(--gold-soft); color: var(--amber-deep);
+  border-bottom: 2px solid var(--ink); font-size: .78rem; font-weight: 600; text-align: center;
+}
+
+main { max-width: 1040px; margin: 0 auto; padding: 28px 20px 64px; }
+
+.masthead { margin-bottom: 24px; }
+.masthead h1 { font-family: var(--serif); font-size: clamp(2rem, 5vw, 2.9rem); margin-bottom: 4px; letter-spacing: -.02em; }
+.masthead p { color: var(--muted); margin: 0; }
+
+.eyebrow { font-size: .68rem; font-weight: 800; letter-spacing: .09em; text-transform: uppercase; color: var(--blue); margin-bottom: 6px; }
+/* A clinic's post is the clinic's, and the byline says so in a different
+   colour from ours — the distinction is the point, not decoration. */
+.eyebrow.is-provider { color: var(--amber-deep); }
+
+.empty { color: var(--muted); font-size: .88rem; }
+
+/* ───────────────────────────────────────────────────────────────── listing ── */
+
+.post-list { display: grid; gap: 16px; }
+.post-card {
+  display: block; text-decoration: none; color: inherit; background: var(--paper);
+  border: 2px solid var(--ink); border-radius: 16px; padding: 20px; box-shadow: 4px 4px 0 var(--ink);
+}
+.post-card:hover { transform: translate(-1px, -1px); box-shadow: 5px 5px 0 var(--ink); }
+.post-card h2 { font-family: var(--serif); font-size: 1.4rem; margin-bottom: 6px; letter-spacing: -.01em; }
+.excerpt { color: var(--ink-soft); margin-bottom: 8px; max-width: var(--measure); }
+.post-meta { color: var(--muted); font-size: .76rem; margin: 0; }
+
+/* ──────────────────────────────────────────────────────────────────── post ── */
+
+.post { background: var(--paper); border: 2px solid var(--ink); border-radius: 18px; padding: 28px; box-shadow: 4px 4px 0 var(--ink); }
+.post h1 { font-family: var(--serif); font-size: clamp(1.8rem, 4.5vw, 2.6rem); letter-spacing: -.02em; margin-bottom: 6px; max-width: var(--measure); }
+.provider-notice {
+  margin: 14px 0 0; padding: 10px 12px; background: var(--gold-soft); color: var(--amber-deep);
+  border: 2px solid var(--ink); border-radius: 10px; font-size: .78rem; font-weight: 600; max-width: var(--measure);
+}
+.prose { margin-top: 20px; max-width: var(--measure); font-size: 1.03rem; }
+.prose h2 { font-family: var(--serif); font-size: 1.45rem; margin-top: 28px; }
+.prose h3 { font-size: 1.1rem; margin-top: 22px; }
+.prose p { margin-bottom: 1rem; }
+.prose ul, .prose ol { margin-bottom: 1rem; padding-left: 1.3rem; }
+.prose li { margin-bottom: .35rem; }
+.prose blockquote { margin: 0 0 1rem; padding: .6rem 1rem; border-left: 4px solid var(--coral); background: var(--coral-soft); border-radius: 0 10px 10px 0; }
+.prose blockquote p { margin: 0; }
+.prose code { background: var(--canvas); border: 1px solid var(--line); border-radius: 5px; padding: .1em .35em; font-size: .9em; }
+.prose pre { background: var(--ink); color: #f4f6ff; padding: 14px 16px; border-radius: 12px; overflow-x: auto; }
+.prose pre code { background: none; border: 0; color: inherit; padding: 0; }
+.prose hr { border: 0; border-top: 2px solid var(--line); margin: 26px 0; }
+.prose a { text-decoration: underline; }
+
+/* ────────────────────────────────────────────────────────────── discussion ── */
+
+.comments, .subscribe-card { margin-top: 28px; background: var(--paper); border: 2px solid var(--ink); border-radius: 18px; padding: 24px; box-shadow: 4px 4px 0 var(--ink); }
+.comments h2, .subscribe-card h2 { font-family: var(--serif); font-size: 1.4rem; margin-bottom: 12px; }
+.subscribe-card p { color: var(--ink-soft); max-width: var(--measure); }
+.subscribe-card form, .form-actions { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; }
+
+.field { display: block; font-size: .76rem; font-weight: 800; color: var(--ink-soft); margin-bottom: 12px; }
+.field input, .field textarea, .field select {
+  display: block; width: 100%; margin-top: 5px; padding: .6rem .7rem; font-weight: 500;
+  border: 2px solid var(--ink); border-radius: 10px; background: #fff; color: var(--ink);
+}
+.field textarea { resize: vertical; }
+.form-note { color: var(--muted); font-size: .8rem; }
+
+.comment-list, .reply-list { list-style: none; padding: 0; margin: 16px 0 0; display: grid; gap: 14px; }
+.comment { border-top: 2px solid var(--line); padding-top: 12px; }
+.comment-head { font-size: .74rem; font-weight: 800; color: var(--muted); margin-bottom: 4px; }
+.comment-head.is-provider { color: var(--amber-deep); }
+.comment-body { margin-bottom: 4px; white-space: pre-wrap; max-width: var(--measure); }
+
+/* ─────────────────────────────────────────────────────────────────── forum ── */
+
+.forum-bar { display: flex; justify-content: space-between; align-items: center; gap: 14px; flex-wrap: wrap; margin-bottom: 18px; }
+.filter-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.chip { border: 2px solid var(--ink); border-radius: 999px; background: #fff; padding: .35rem .8rem; font-size: .76rem; font-weight: 800; }
+.chip.is-on { background: var(--ink); color: #fff; }
+
+.thread-form { background: var(--paper); border: 2px solid var(--ink); border-radius: 18px; padding: 22px; box-shadow: 4px 4px 0 var(--ink); margin-bottom: 20px; }
+.thread-form fieldset { border: 0; margin: 0; padding: 0; }
+.thread-form legend { font-family: var(--serif); font-size: 1.3rem; font-weight: 700; margin-bottom: 12px; }
+
+.thread-list { display: grid; gap: 12px; }
+.thread-card { display: block; text-decoration: none; color: inherit; background: var(--paper); border: 2px solid var(--ink); border-radius: 14px; padding: 16px 18px; box-shadow: 3px 3px 0 var(--ink); }
+.thread-card:hover { transform: translate(-1px, -1px); box-shadow: 4px 4px 0 var(--ink); }
+.thread-card h2 { font-size: 1.08rem; margin: 6px 0 4px; }
+.kind { display: inline-block; font-size: .64rem; font-weight: 900; letter-spacing: .08em; text-transform: uppercase; padding: 3px 8px; border-radius: 999px; }
+.kind-discussion { background: var(--blue-soft); color: var(--blue); }
+.kind-question { background: var(--green-soft); color: var(--green); }
+
+.thread { background: var(--paper); border: 2px solid var(--ink); border-radius: 18px; padding: 26px; box-shadow: 4px 4px 0 var(--ink); }
+.thread h1 { font-family: var(--serif); font-size: clamp(1.5rem, 4vw, 2.1rem); margin-bottom: 6px; max-width: var(--measure); }
+.reply-list { margin-top: 22px; }
+.comment-form { margin-top: 20px; }
+
+.message-card { background: var(--paper); border: 2px solid var(--ink); border-radius: 18px; padding: 32px; box-shadow: 4px 4px 0 var(--ink); max-width: 560px; }
+.message-card h1 { font-family: var(--serif); font-size: 1.8rem; margin-bottom: 8px; }
+
+.site-foot { border-top: 2px solid var(--ink); background: var(--paper); padding: 20px; text-align: center; font-size: .78rem; color: var(--muted); }
+.site-foot p { margin: 0 0 4px; }
+
+/* ─────────────────────────────────────────────────────────── adaptations ── */
+
+@media (max-width: 620px) {
+  .head-inner { gap: 12px; }
+  .site-nav { width: 100%; order: 3; margin-right: 0; }
+  .post, .thread, .comments, .subscribe-card { padding: 20px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  * { transition: none !important; animation: none !important; }
+  .post-card:hover, .thread-card:hover { transform: none; }
+}
+
+/* Dark: the cards stay light on purpose. This is a reading surface and the
+   article itself is a sheet of paper in both themes; what changes is the
+   ground it sits on, so a dark-mode reader is not staring into a lit page. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) { --canvas: #0d1226; --line: #2a3358; }
+  :root:not([data-theme="light"]) body { color: var(--ink); }
+  :root:not([data-theme="light"]) .site-foot { color: var(--muted); }
+}
+:root[data-theme="dark"] { --canvas: #0d1226; --line: #2a3358; }

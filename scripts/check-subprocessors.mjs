@@ -17,7 +17,8 @@ const WORKER_FILES = [
   "apps/vet-web/src/index.js",
   "apps/admin-console/src/index.js",
   "apps/voice-gateway/src/index.js",
-  "apps/widget-demo/src/index.js"
+  "apps/widget-demo/src/index.js",
+  "apps/blog/src/index.js"
 ];
 
 const HOST_PATTERN = /https:\/\/[A-Za-z0-9.*-]+/g;
