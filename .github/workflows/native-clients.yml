@@ -38,7 +38,7 @@ jobs:
       run:
         working-directory: apps/customer-mobile
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - name: Install Skip Fuse Android toolchain
         uses: skiptools/actions/setup-skip@v1
         with:
@@ -168,7 +168,7 @@ jobs:
       run:
         working-directory: apps/customer-mobile
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - name: Install Skip Fuse Android toolchain
         uses: skiptools/actions/setup-skip@v1
         with:
@@ -207,7 +207,7 @@ jobs:
       run:
         working-directory: apps/vet-desktop
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - name: Install XcodeGen
         run: brew install xcodegen
       - name: Generate Xcode project
@@ -256,7 +256,7 @@ jobs:
       run:
         working-directory: apps/vet-windows
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: actions/setup-dotnet@v5
         with:
           # Tracks apps/vet-windows/src/TimiVet/TimiVet.csproj's TargetFramework. A build against an older
