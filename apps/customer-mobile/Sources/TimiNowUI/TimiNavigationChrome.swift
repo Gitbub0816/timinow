@@ -16,16 +16,45 @@ import TimiNowCore
 
 // MARK: - Palette
 
-/// Navigation-only color pairs. Light mode uses the app's standard tokens;
-/// dark mode is its own tuned set, not an inversion — navy surfaces get one
-/// step lighter so borders and the map still separate, text goes cream.
-private enum NavPalette {
-    static let inkRaised = Color(red: 0.10, green: 0.15, blue: 0.31)
+/// The navigation asset system's own palette.
+///
+/// Navigation is the one surface that does not use `TimiColor` directly. The
+/// asset system ships its own tokens and they are close to, but not the same
+/// as, the app's (ink `#0F1E3D` against the app's `#111B3B`, cobalt `#1B5CF0`
+/// against blue `#2357D9`, amber `#F5B32C` against gold `#F7C84B`). Mixing the
+/// two would read as two greys fighting, so this screen commits to the asset
+/// set; every other surface keeps CLAUDE.md §7.
+///
+/// The roles are the system's, not invented here: ink is structure and
+/// outlines, amber is the signal head — the maneuver and the lane to take —
+/// cobalt is the route ribbon, and **coral is load-bearing for warnings,
+/// closures and ending navigation and is used nowhere else**.
+enum NavPalette {
+    static let ink = Color(red: 0.059, green: 0.118, blue: 0.239)        // #0F1E3D
+    static let inkRaised = Color(red: 0.106, green: 0.173, blue: 0.318)  // #1B2C51
+    static let cobalt = Color(red: 0.106, green: 0.361, blue: 0.941)     // #1B5CF0
+    static let amber = Color(red: 0.961, green: 0.702, blue: 0.173)      // #F5B32C
+    static let coral = Color(red: 0.937, green: 0.357, blue: 0.271)      // #EF5B45
+    static let cream = Color(red: 0.965, green: 0.949, blue: 0.910)      // #F6F2E8
+    static let contextRoad = Color(red: 0.765, green: 0.800, blue: 0.863) // #C3CCDC
+    static let paleBlue = Color(red: 0.894, green: 0.918, blue: 0.992)   // #E4EAFD
+    static let paleYellow = Color(red: 0.984, green: 0.937, blue: 0.765) // #FBEFC3
+
+    /// Alert grounds. Coral's soft form carries off-route and errors; the
+    /// green pair is the one state the asset system has no token for — a
+    /// reroute that landed — and is kept quiet so it never competes with
+    /// coral, which is the only colour allowed to mean "act now".
+    static let coralSoft = Color(red: 0.984, green: 0.886, blue: 0.871)
+    static let coralDark = Color(red: 0.690, green: 0.263, blue: 0.200)  // #B04333 — 4.6:1 on coralSoft
+    static let successSoft = Color(red: 0.910, green: 0.970, blue: 0.950)
+    static let successDark = Color(red: 0.060, green: 0.420, blue: 0.270)
 
     static func card(_ scheme: ColorScheme) -> Color { scheme == .dark ? inkRaised : .white }
-    static func cardText(_ scheme: ColorScheme) -> Color { scheme == .dark ? TimiColor.paper : TimiColor.ink }
-    static func cardBorder(_ scheme: ColorScheme) -> Color { scheme == .dark ? TimiColor.paper.opacity(0.85) : TimiColor.ink }
-    static func mutedText(_ scheme: ColorScheme) -> Color { scheme == .dark ? TimiColor.paper.opacity(0.72) : TimiColor.muted }
+    static func cardText(_ scheme: ColorScheme) -> Color { scheme == .dark ? cream : ink }
+    static func cardBorder(_ scheme: ColorScheme) -> Color { scheme == .dark ? cream.opacity(0.85) : ink }
+    static func mutedText(_ scheme: ColorScheme) -> Color {
+        scheme == .dark ? cream.opacity(0.72) : Color(red: 0.361, green: 0.424, blue: 0.573) // #5C6C92
+    }
 }
 
 /// The one shadow used over the map: the app's hard offset shadow at reduced
@@ -39,7 +68,7 @@ private struct NavCard: ViewModifier {
         content
             .background(fill ?? NavPalette.card(scheme), in: RoundedRectangle(cornerRadius: radius))
             .overlay(RoundedRectangle(cornerRadius: radius).stroke(NavPalette.cardBorder(scheme), lineWidth: 2))
-            .shadow(color: TimiColor.ink.opacity(scheme == .dark ? Double(0.55) : Double(0.35)), radius: 0, x: 3, y: 3)
+            .shadow(color: NavPalette.ink.opacity(scheme == .dark ? Double(0.55) : Double(0.35)), radius: 0, x: 3, y: 3)
     }
 }
 
@@ -56,7 +85,7 @@ struct TimiManeuverBanner: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .center, spacing: 14) {
-                TimiManeuverGlyph(kind: maneuver.kind, roundaboutExitDegrees: maneuver.roundaboutExitDegrees, color: TimiColor.gold)
+                TimiManeuverGlyph(kind: maneuver.kind, roundaboutExitDegrees: maneuver.roundaboutExitDegrees, color: NavPalette.amber)
                     .frame(width: 58, height: 58)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(TimiNavFormat.distance(meters: maneuver.distanceMeters, units: units))
@@ -67,13 +96,13 @@ struct TimiManeuverBanner: View {
                         .minimumScaleFactor(0.7)
                     Text(maneuver.primaryText)
                         .font(.system(size: 20, weight: .bold))
-                        .foregroundStyle(TimiColor.paper)
+                        .foregroundStyle(NavPalette.cream)
                         .lineLimit(2)
                         .minimumScaleFactor(0.75)
                     if let secondary = maneuver.secondaryText {
                         Text(secondary)
                             .font(.system(size: 14, weight: .semibold))
-                            .foregroundStyle(TimiColor.paper.opacity(0.72))
+                            .foregroundStyle(NavPalette.cream.opacity(0.72))
                             .lineLimit(1)
                     }
                 }
@@ -87,7 +116,7 @@ struct TimiManeuverBanner: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .modifier(NavCard(fill: TimiColor.ink))
+        .modifier(NavCard(fill: NavPalette.ink))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("In \(TimiNavFormat.distance(meters: maneuver.distanceMeters, units: units)), \(spokenKind). \(maneuver.primaryText)")
         .overlay(alignment: .bottomLeading) {
@@ -135,8 +164,8 @@ struct TimiLaneGuidanceRow: View {
             ForEach(lanes) { lane in
                 TimiLaneGlyph(
                     lane: lane,
-                    activeColor: lane.active != nil ? TimiColor.gold : TimiColor.paper.opacity(0.85),
-                    inactiveColor: TimiColor.paper.opacity(lane.isUsable ? Double(0.55) : Double(0.24))
+                    activeColor: lane.active != nil ? NavPalette.amber : NavPalette.cream.opacity(0.85),
+                    inactiveColor: NavPalette.cream.opacity(lane.isUsable ? Double(0.55) : Double(0.24))
                 )
                 .frame(width: 30, height: 30)
             }
@@ -159,18 +188,18 @@ struct TimiNextManeuverChip: View {
         HStack(spacing: 7) {
             Text("then")
                 .font(.system(size: 13, weight: .heavy))
-                .foregroundStyle(TimiColor.paper.opacity(0.8))
-            TimiManeuverGlyph(kind: next.kind, roundaboutExitDegrees: nil, color: TimiColor.gold)
+                .foregroundStyle(NavPalette.cream.opacity(0.8))
+            TimiManeuverGlyph(kind: next.kind, roundaboutExitDegrees: nil, color: NavPalette.amber)
                 .frame(width: 20, height: 20)
             Text(next.text)
                 .font(.system(size: 13, weight: .bold))
-                .foregroundStyle(TimiColor.paper)
+                .foregroundStyle(NavPalette.cream)
                 .lineLimit(1)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 7)
         .background(NavPalette.inkRaised, in: Capsule())
-        .overlay(Capsule().stroke(TimiColor.gold.faded(0.7), lineWidth: 1.5))
+        .overlay(Capsule().stroke(NavPalette.amber.faded(0.7), lineWidth: 1.5))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Then \(next.text)")
     }
@@ -192,7 +221,7 @@ struct TimiNavAlertBanner: View {
                 Text("Off route — finding a way back")
                     .font(.system(size: 15, weight: .heavy))
             case .rerouting:
-                ProgressView().tint(TimiColor.ink)
+                ProgressView().tint(NavPalette.ink)
                 Text("Finding another route…")
                     .font(.system(size: 15, weight: .heavy))
             case .rerouted:
@@ -223,18 +252,18 @@ struct TimiNavAlertBanner: View {
 
     private var fill: Color {
         switch alert {
-        case .offRoute, .error: return TimiColor.coralSoft
-        case .rerouting, .gpsUncertain: return TimiColor.goldSoft
-        case .rerouted: return Color(red: 0.91, green: 0.97, blue: 0.95)
-        case .fasterRouteAvailable: return TimiColor.blueSoft
+        case .offRoute, .error: return NavPalette.coralSoft
+        case .rerouting, .gpsUncertain: return NavPalette.paleYellow
+        case .rerouted: return NavPalette.successSoft
+        case .fasterRouteAvailable: return NavPalette.paleBlue
         }
     }
 
     private var foreground: Color {
         switch alert {
-        case .offRoute, .error: return Color(red: 0.74, green: 0.24, blue: 0.19)
-        case .rerouted: return Color(red: 0.06, green: 0.42, blue: 0.27)
-        default: return TimiColor.ink
+        case .offRoute, .error: return NavPalette.coralDark
+        case .rerouted: return NavPalette.successDark
+        default: return NavPalette.ink
         }
     }
 }
@@ -260,7 +289,7 @@ struct TimiTripStatusCard: View {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Almost there")
                         .font(.system(size: 12, weight: .heavy))
-                        .foregroundStyle(TimiColor.coral)
+                        .foregroundStyle(NavPalette.coral)
                         .textCase(.uppercase)
                     Text(destination.name)
                         .font(.system(size: 19, weight: .heavy))
@@ -280,7 +309,7 @@ struct TimiTripStatusCard: View {
                         Image(systemName: "phone.fill")
                             .font(.system(size: 19, weight: .bold))
                             .frame(width: 52, height: 52)
-                            .background(TimiColor.blue, in: Circle())
+                            .background(NavPalette.cobalt, in: Circle())
                             .foregroundStyle(.white)
                             .overlay(Circle().stroke(NavPalette.cardBorder(scheme), lineWidth: 2))
                     }
@@ -309,7 +338,7 @@ struct TimiTripStatusCard: View {
                     .font(.system(size: 16, weight: .heavy))
                     .padding(.horizontal, 18)
                     .frame(minHeight: 48)
-                    .background(TimiColor.coral, in: Capsule())
+                    .background(NavPalette.coral, in: Capsule())
                     .foregroundStyle(.white)
                     .overlay(Capsule().stroke(NavPalette.cardBorder(scheme), lineWidth: 2))
             }
@@ -355,7 +384,7 @@ struct TimiArrivalCard: View {
                     Label("Call \(destination.name)", systemImage: "phone.fill")
                         .font(.system(size: 16, weight: .heavy))
                         .frame(maxWidth: .infinity, minHeight: 50)
-                        .background(TimiColor.blue, in: RoundedRectangle(cornerRadius: 14))
+                        .background(NavPalette.cobalt, in: RoundedRectangle(cornerRadius: 14))
                         .foregroundStyle(.white)
                         .overlay(RoundedRectangle(cornerRadius: 14).stroke(NavPalette.cardBorder(scheme), lineWidth: 2))
                 }
@@ -367,7 +396,7 @@ struct TimiArrivalCard: View {
                     Text("Tell the clinic I'm here")
                         .font(.system(size: 16, weight: .heavy))
                         .frame(maxWidth: .infinity, minHeight: 50)
-                        .background(TimiColor.coral, in: RoundedRectangle(cornerRadius: 14))
+                        .background(NavPalette.coral, in: RoundedRectangle(cornerRadius: 14))
                         .foregroundStyle(.white)
                         .overlay(RoundedRectangle(cornerRadius: 14).stroke(NavPalette.cardBorder(scheme), lineWidth: 2))
                 }
@@ -419,7 +448,7 @@ struct TimiMapControls: View {
                 .background(NavPalette.card(scheme), in: Circle())
                 .foregroundStyle(NavPalette.cardText(scheme))
                 .overlay(Circle().stroke(NavPalette.cardBorder(scheme), lineWidth: 2))
-                .shadow(color: TimiColor.ink.opacity(0.3), radius: 0, x: 2, y: 2)
+                .shadow(color: NavPalette.ink.opacity(0.3), radius: 0, x: 2, y: 2)
         }
         .accessibilityLabel(label)
     }
@@ -445,9 +474,9 @@ struct TimiSpeedView: View {
                     .foregroundStyle(overLimit ? .white.opacity(0.85) : NavPalette.mutedText(scheme))
             }
             .frame(width: 56, height: 56)
-            .background(overLimit ? TimiColor.coral : NavPalette.card(scheme), in: Circle())
+            .background(overLimit ? NavPalette.coral : NavPalette.card(scheme), in: Circle())
             .overlay(Circle().stroke(NavPalette.cardBorder(scheme), lineWidth: 2))
-            .shadow(color: TimiColor.ink.opacity(0.3), radius: 0, x: 2, y: 2)
+            .shadow(color: NavPalette.ink.opacity(0.3), radius: 0, x: 2, y: 2)
 
             if let limit = speed.limitMetersPerSecond {
                 limitSign(TimiNavFormat.speed(metersPerSecond: limit, units: units))
@@ -505,12 +534,12 @@ struct TimiRoadNamePill: View {
     var body: some View {
         Text(name)
             .font(.system(size: 14, weight: .bold))
-            .foregroundStyle(TimiColor.paper)
+            .foregroundStyle(NavPalette.cream)
             .lineLimit(1)
             .padding(.horizontal, 14)
             .padding(.vertical, 7)
-            .background(TimiColor.ink.faded(0.88), in: Capsule())
-            .overlay(Capsule().stroke(TimiColor.gold.faded(0.75), lineWidth: 1.5))
+            .background(NavPalette.ink.faded(0.88), in: Capsule())
+            .overlay(Capsule().stroke(NavPalette.amber.faded(0.75), lineWidth: 1.5))
             .accessibilityLabel("On \(name)")
     }
 }

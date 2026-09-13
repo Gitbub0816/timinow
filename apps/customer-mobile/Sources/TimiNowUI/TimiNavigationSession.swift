@@ -641,14 +641,20 @@ struct TimiNavigationMapView: UIViewRepresentable {
 /// properties are UIKit and converting through SwiftUI `Color` resolves
 /// against a trait collection the map does not carry.
 enum TimiNavMapPalette {
-    static let ink = UIColor(red: 17 / 255, green: 27 / 255, blue: 59 / 255, alpha: 1)
-    static let blue = UIColor(red: 35 / 255, green: 87 / 255, blue: 217 / 255, alpha: 1)
-    static let gold = UIColor(red: 224 / 255, green: 168 / 255, blue: 22 / 255, alpha: 1)
-    static let coral = UIColor(red: 242 / 255, green: 95 / 255, blue: 76 / 255, alpha: 1)
-    static let coralDark = UIColor(red: 193 / 255, green: 54 / 255, blue: 36 / 255, alpha: 1)
-    static let altGray = UIColor(red: 138 / 255, green: 148 / 255, blue: 178 / 255, alpha: 1)
-    static let altGrayHeavy = UIColor(red: 108 / 255, green: 116 / 255, blue: 142 / 255, alpha: 1)
-    static let traversed = UIColor(red: 176 / 255, green: 182 / 255, blue: 198 / 255, alpha: 0.75)
+    /// The asset system's tokens, as UIKit colours. Kept numerically in step
+    /// with `NavPalette` in TimiNavigationChrome.swift — the map and the chrome
+    /// are one surface and a half-shade between them would read as a mistake.
+    static let ink = UIColor(red: 0x0F / 255, green: 0x1E / 255, blue: 0x3D / 255, alpha: 1)
+    /// Cobalt is the route ribbon, and the system reserves it for the map.
+    static let blue = UIColor(red: 0x1B / 255, green: 0x5C / 255, blue: 0xF0 / 255, alpha: 1)
+    static let gold = UIColor(red: 0xF5 / 255, green: 0xB3 / 255, blue: 0x2C / 255, alpha: 1)
+    static let coral = UIColor(red: 0xEF / 255, green: 0x5B / 255, blue: 0x45 / 255, alpha: 1)
+    static let coralDark = UIColor(red: 0xC1 / 255, green: 0x36 / 255, blue: 0x24 / 255, alpha: 1)
+    /// "Context road" — the roads you are not taking. The alternative route
+    /// borrows it so the chosen line is never ambiguous.
+    static let altGray = UIColor(red: 0xC3 / 255, green: 0xCC / 255, blue: 0xDC / 255, alpha: 1)
+    static let altGrayHeavy = UIColor(red: 0x8D / 255, green: 0x9C / 255, blue: 0xBD / 255, alpha: 1)
+    static let traversed = UIColor(red: 0xA9 / 255, green: 0xB6 / 255, blue: 0xD2 / 255, alpha: 0.75)
 
     /// A transparent 1×1 for the puck's non-rotating layer, standing in for
     /// the SDK's internal `UIColor.clear.image(_:)` helper.
