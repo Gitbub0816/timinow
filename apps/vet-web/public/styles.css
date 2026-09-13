@@ -588,3 +588,9 @@ details.advanced-settings[open] > summary::before { content: "▾ "; }
   .arrival-row { grid-template-columns: 30px 1fr; }
   .arrival-status { grid-column: 2; justify-self: start; margin-top: 4px; }
 }
+
+/* The People table's blog-posting toggle. Inline so the checkbox and its
+   words stay one hit target — a 13px checkbox alone is not one. */
+.checkbox-inline { display: inline-flex; align-items: center; gap: .4rem; font-size: .76rem; font-weight: 700; color: var(--ink); cursor: pointer; }
+.checkbox-inline input { width: 16px; height: 16px; accent-color: var(--blue); cursor: pointer; }
+.people-note { font-size: .74rem; color: var(--muted); margin-top: .75rem; max-width: 62ch; }

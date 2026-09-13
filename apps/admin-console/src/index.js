@@ -100,6 +100,22 @@ import {
   updateReadinessConfig
 } from "../../../src/markets.js";
 import { checkAlerts, getAlertThresholds, getMetrics, updateAlertThresholds } from "../../../src/metrics.js";
+import {
+  GRANTABLE_PERMISSIONS,
+  adminAnnouncePost,
+  adminCreatePost,
+  adminDismissReport,
+  adminListPosts,
+  adminListReports,
+  adminRemoveContent,
+  adminUpdatePost,
+  grantContributor,
+  grantOperatorRole,
+  listContributors,
+  listOperatorRoles,
+  revokeContributor,
+  revokeOperatorRole
+} from "../../../src/content-admin.js";
 
 const JSON_HEADERS = { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" };
 // Kept in step with docs/SUBPROCESSORS.md by scripts/check-subprocessors.mjs
@@ -219,6 +235,18 @@ async function handleBootstrap(env, actor) {
     env.DB.prepare("SELECT COUNT(*) AS total FROM tenants").first()
   ]);
   return json({ ...base, adminCount: Number(adminRow?.total || 0), tenantCount: Number(tenantRow?.total || 0) });
+}
+
+/**
+ * Content results carry their own HTTP status, because "you are not a
+ * compliance admin" and "that post does not exist" are different answers and
+ * an operator who is told only "failed" opens a support ticket.
+ */
+function contentRespond(result, okStatus = 200) {
+  if (!result?.ok) {
+    return apiError(result?.status || 422, result?.code || "REQUEST_FAILED", result?.message || "That did not work.");
+  }
+  return json(result, { status: okStatus });
 }
 
 async function listPlatformAdminsRoute(env) {
@@ -1178,6 +1206,54 @@ async function handleApi(request, env) {
     if (!platformAdmin) return apiError(403, "PLATFORM_ADMIN_REQUIRED", "Only a platform operator may use this API.");
 
     if (path.startsWith("/api/tenant/")) return handleMountedTenantRoutes(request, env, actor, url, path, method);
+
+    /* ── the blog: writing, who may write, and moderation ── */
+
+    if (method === "GET" && path === "/api/admin/content/permissions") {
+      return json({ permissions: GRANTABLE_PERMISSIONS });
+    }
+    if (method === "GET" && path === "/api/admin/content/contributors") {
+      return json({ contributors: await listContributors(env), roles: await listOperatorRoles(env) });
+    }
+    if (method === "POST" && path === "/api/admin/content/contributors") {
+      return contentRespond(await grantContributor(env, actor, await readJson(request).catch(() => ({}))));
+    }
+    const contributorMatch = path.match(/^\/api\/admin\/content\/contributors\/([^/]+)$/);
+    if (method === "DELETE" && contributorMatch) {
+      return contentRespond(await revokeContributor(env, actor, decodeURIComponent(contributorMatch[1])));
+    }
+    if (method === "POST" && path === "/api/admin/content/roles") {
+      return contentRespond(await grantOperatorRole(env, actor, await readJson(request).catch(() => ({}))));
+    }
+    if (method === "DELETE" && path === "/api/admin/content/roles") {
+      return contentRespond(await revokeOperatorRole(env, actor, await readJson(request).catch(() => ({}))));
+    }
+    if (method === "GET" && path === "/api/admin/content/posts") {
+      return contentRespond(await adminListPosts(env));
+    }
+    if (method === "POST" && path === "/api/admin/content/posts") {
+      return contentRespond(await adminCreatePost(env, actor, await readJson(request).catch(() => ({}))), 201);
+    }
+    const adminPostMatch = path.match(/^\/api\/admin\/content\/posts\/([^/]+)$/);
+    if (method === "PATCH" && adminPostMatch) {
+      return contentRespond(await adminUpdatePost(env, actor, decodeURIComponent(adminPostMatch[1]), await readJson(request).catch(() => ({}))));
+    }
+    const announceMatch = path.match(/^\/api\/admin\/content\/posts\/([^/]+)\/announce$/);
+    if (method === "POST" && announceMatch) {
+      return contentRespond(await adminAnnouncePost(env, actor, decodeURIComponent(announceMatch[1]), {
+        blogOrigin: env.BLOG_APP_URL || "https://blog.timinow.pet"
+      }));
+    }
+    if (method === "GET" && path === "/api/admin/content/reports") {
+      return contentRespond(await adminListReports(env));
+    }
+    if (method === "POST" && path === "/api/admin/content/remove") {
+      return contentRespond(await adminRemoveContent(env, actor, await readJson(request).catch(() => ({}))));
+    }
+    const dismissMatch = path.match(/^\/api\/admin\/content\/reports\/([^/]+)\/dismiss$/);
+    if (method === "POST" && dismissMatch) {
+      return contentRespond(await adminDismissReport(env, actor, decodeURIComponent(dismissMatch[1])));
+    }
 
     if (method === "GET" && path === "/api/admin/tenants") return json({ tenants: await listTenants(env) });
     if (method === "POST" && path === "/api/admin/tenants") return createTenant(request, env, actor);

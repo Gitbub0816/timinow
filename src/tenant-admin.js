@@ -29,6 +29,7 @@ import {
   setInvitationStatus,
   upsertTenantMember
 } from "./tenancy.js";
+import { hasDatabase } from "./db.js";
 
 const VALID_ROLES = new Set(["org:admin", "org:member"]);
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
@@ -72,6 +73,20 @@ export async function listMembers(env, actor, tenantId) {
       displayName: member.name,
       role: normalizeRole(member.role) || "org:member"
     });
+  }
+
+  // Who may publish on the blog for this practice. Read after the upsert
+  // above, so a member seated this very moment already has a row to read.
+  // Administrators always may — they are the people who would otherwise be
+  // granting themselves the flag; see providerAuthorFor in src/content.js.
+  if (hasDatabase(env)) {
+    const flags = await env.DB.prepare(
+      "SELECT clerk_user_id, can_publish_posts FROM tenant_members WHERE tenant_id = ? AND status = 'active'"
+    ).bind(tenantId).all().catch(() => ({ results: [] }));
+    const byUser = new Map(flags.results.map((row) => [row.clerk_user_id, Number(row.can_publish_posts) === 1]));
+    for (const member of members) {
+      member.canPublishPosts = member.role === "org:admin" || byUser.get(member.clerkUserId) === true;
+    }
   }
 
   const clerkInvitations = await listOrganizationInvitations(env, actor.clerkOrgId).catch(() => []);

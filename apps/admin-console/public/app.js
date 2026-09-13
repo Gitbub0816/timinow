@@ -154,6 +154,7 @@ function parseHash() {
   if (raw === "tenants/new") return { screen: "tenants-new" };
   const detailMatch = raw.match(/^tenants\/([^/]+)$/);
   if (detailMatch) return { screen: "tenant-detail", id: decodeURIComponent(detailMatch[1]) };
+  if (raw === "blog") return { screen: "blog" };
   if (raw === "operators") return { screen: "operators" };
   if (raw === "audit") return { screen: "audit" };
   if (raw === "errors") return { screen: "errors" };
@@ -175,7 +176,7 @@ function parseHash() {
 }
 
 function updateNavActive() {
-  const top = ["operators", "audit", "errors", "ledger", "analytics", "applications", "metrics", "clinic-applications", "clinic-contracts", "pif"].includes(state.route.screen)
+  const top = ["blog", "operators", "audit", "errors", "ledger", "analytics", "applications", "metrics", "clinic-applications", "clinic-contracts", "pif"].includes(state.route.screen)
     ? state.route.screen
     : ["markets", "market-detail"].includes(state.route.screen) ? "markets"
     : state.route.screen === "clinic-contract-detail" ? "clinic-contracts"
@@ -236,6 +237,12 @@ async function renderRoute() {
     await loadTenantDetail(state.route.id);
     return;
   }
+  if (state.route.screen === "blog") {
+    showScreen("blog");
+    await loadBlog();
+    return;
+  }
+
   if (state.route.screen === "operators") {
     showScreen("operators");
     await loadOperators();
@@ -661,23 +668,217 @@ function tenantLabel(tenantId) {
   return (state.tenantNames && state.tenantNames[tenantId]) || tenantId;
 }
 
+/* ----------------------------------------------------------------- blog --- */
+
+/**
+ * The console's side of blog.timinow.pet.
+ *
+ * Three things in one screen because they are one job: write something, see
+ * what has been reported, and take down whatever should not be up. Clinics
+ * publish without our review — that is the product decision — and this screen
+ * is what makes it a decision rather than a risk.
+ */
+async function loadBlog() {
+  await Promise.all([loadBlogComposer(), loadReports(), loadPosts()]);
+}
+
+async function loadBlogComposer() {
+  const select = document.querySelector("[data-post-byline-select]");
+  if (!select) return;
+  try {
+    const { contributors = [] } = await apiFetch("/api/admin/content/contributors");
+    // Re-built rather than appended to, so re-entering the screen does not
+    // stack a second copy of every contributor.
+    select.innerHTML = '<option value="">TímiNOW post by you</option>';
+    for (const contributor of contributors) {
+      const option = document.createElement("option");
+      option.value = contributor.clerkUserId;
+      option.textContent = `TímiNOW post by contributor ${contributor.displayName}`;
+      select.append(option);
+    }
+  } catch {
+    // A composer that cannot list contributors still writes a TímiNOW post.
+  }
+  wireComposer();
+}
+
+let composerWired = false;
+function wireComposer() {
+  if (composerWired) return;
+  composerWired = true;
+  const form = document.querySelector('form[data-form="new-post"]');
+  if (!form) return;
+  // Which button was pressed decides draft versus publish; a form has one
+  // submit handler and two meanings.
+  let publishIntent = false;
+  form.querySelectorAll("button[data-publish]").forEach((button) => {
+    button.addEventListener("click", () => { publishIntent = button.dataset.publish === "true"; });
+  });
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const errors = form.querySelector("[data-form-errors]");
+    errors.hidden = true;
+    const data = new FormData(form);
+    try {
+      await apiFetch("/api/admin/content/posts", {
+        method: "POST",
+        body: JSON.stringify({
+          title: data.get("title"),
+          excerpt: data.get("excerpt"),
+          bodyMarkdown: data.get("bodyMarkdown"),
+          onBehalfOf: data.get("onBehalfOf") || undefined,
+          publish: publishIntent
+        })
+      });
+      form.reset();
+      toast(publishIntent ? "Published." : "Saved as a draft.");
+      await loadPosts();
+    } catch (error) {
+      errors.textContent = error.message;
+      errors.hidden = false;
+    }
+  });
+}
+
+async function loadReports() {
+  const mount = document.querySelector("[data-reports-body]");
+  if (!mount) return;
+  try {
+    const { reports = [] } = await apiFetch("/api/admin/content/reports");
+    if (!reports.length) {
+      mount.innerHTML = '<div class="empty-state"><p>Nothing reported.</p></div>';
+      return;
+    }
+    mount.innerHTML = reports.map((report) => `<div class="member-row">
+      <div class="who">
+        <strong>${escapeHtml(report.subjectType)} · ${escapeHtml(report.reason)}</strong>
+        <small>${escapeHtml(report.detail || report.subjectId)}</small>
+      </div>
+      <div class="member-actions">
+        <button class="button button-small button-danger" type="button" data-remove-content="${escapeAttr(report.subjectType)}" data-subject="${escapeAttr(report.subjectId)}">Take down</button>
+        <button class="button button-small" type="button" data-dismiss-report="${escapeAttr(report.id)}">Dismiss</button>
+      </div>
+    </div>`).join("");
+    wireReportActions();
+  } catch (error) {
+    mount.innerHTML = `<div class="empty-state"><p>${escapeHtml(error.message)}</p></div>`;
+  }
+}
+
+function wireReportActions() {
+  document.querySelectorAll("[data-remove-content]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const reason = window.prompt("Why is it coming down? This is recorded.");
+      if (!reason) return;
+      try {
+        await apiFetch("/api/admin/content/remove", {
+          method: "POST",
+          body: JSON.stringify({ subjectType: button.dataset.removeContent, subjectId: button.dataset.subject, reason })
+        });
+        toast("Taken down.");
+        await Promise.all([loadReports(), loadPosts()]);
+      } catch (error) { toast(error.message); }
+    });
+  });
+  document.querySelectorAll("[data-dismiss-report]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      try {
+        await apiFetch(`/api/admin/content/reports/${encodeURIComponent(button.dataset.dismissReport)}/dismiss`, { method: "POST" });
+        await loadReports();
+      } catch (error) { toast(error.message); }
+    });
+  });
+}
+
+async function loadPosts() {
+  const mount = document.querySelector("[data-posts-body]");
+  if (!mount) return;
+  try {
+    const { posts = [] } = await apiFetch("/api/admin/content/posts");
+    if (!posts.length) {
+      mount.innerHTML = '<div class="empty-state"><p>Nothing written yet.</p></div>';
+      return;
+    }
+    mount.innerHTML = posts.map((post) => `<div class="member-row">
+      <div class="who">
+        <strong>${escapeHtml(post.title)}</strong>
+        <small>${escapeHtml(post.byline.line)} · ${escapeHtml(post.status)}</small>
+      </div>
+      <div class="member-actions">
+        ${post.status === "published"
+          ? `<button class="button button-small" type="button" data-announce="${escapeAttr(post.id)}">Email subscribers</button>
+             <button class="button button-small" type="button" data-withdraw="${escapeAttr(post.id)}">Withdraw</button>`
+          : post.status === "removed"
+            ? '<span class="hint">Removed</span>'
+            : `<button class="button button-small button-primary" type="button" data-publish-post="${escapeAttr(post.id)}">Publish</button>`}
+        <button class="button button-small button-danger" type="button" data-remove-content="post" data-subject="${escapeAttr(post.id)}">Take down</button>
+      </div>
+    </div>`).join("");
+    wirePostActions();
+    wireReportActions();
+  } catch (error) {
+    mount.innerHTML = `<div class="empty-state"><p>${escapeHtml(error.message)}</p></div>`;
+  }
+}
+
+function wirePostActions() {
+  document.querySelectorAll("[data-publish-post]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      try {
+        await apiFetch(`/api/admin/content/posts/${encodeURIComponent(button.dataset.publishPost)}`, { method: "PATCH", body: JSON.stringify({ publish: true }) });
+        toast("Published.");
+        await loadPosts();
+      } catch (error) { toast(error.message); }
+    });
+  });
+  document.querySelectorAll("[data-withdraw]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      try {
+        await apiFetch(`/api/admin/content/posts/${encodeURIComponent(button.dataset.withdraw)}`, { method: "PATCH", body: JSON.stringify({ publish: false }) });
+        toast("Withdrawn.");
+        await loadPosts();
+      } catch (error) { toast(error.message); }
+    });
+  });
+  document.querySelectorAll("[data-announce]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      // A separate, deliberate press. Publishing is reversible in a minute;
+      // five thousand emails are not.
+      if (!window.confirm("Email this to every confirmed subscriber?")) return;
+      try {
+        const result = await apiFetch(`/api/admin/content/posts/${encodeURIComponent(button.dataset.announce)}/announce`, { method: "POST" });
+        toast(result.skipped ? "Email is not configured on this deployment." : `Sent to ${result.sent}.`);
+      } catch (error) { toast(error.message); }
+    });
+  });
+}
+
 /* ------------------------------------------------------------ operators --- */
 
 async function loadOperators() {
   const mount = document.querySelector("[data-operators-body]");
   mount.innerHTML = '<div class="loading-state"><span class="spinner" aria-hidden="true"></span><p>Loading operators…</p></div>';
   try {
-    const { admins = [] } = await apiFetch("/api/admin/platform-admins");
-    renderOperators(admins);
+    // Three lists, because there are three different things a person can hold
+    // here and the old screen showed only one of them.
+    const [{ admins = [] }, permissions, people] = await Promise.all([
+      apiFetch("/api/admin/platform-admins"),
+      apiFetch("/api/admin/content/permissions").catch(() => ({ permissions: [] })),
+      apiFetch("/api/admin/content/contributors").catch(() => ({ contributors: [], roles: [] }))
+    ]);
+    renderOperators(admins, permissions.permissions || [], people);
   } catch (error) {
     mount.innerHTML = `<div class="empty-state"><p>${escapeHtml(error.message)}</p></div>`;
   }
 }
 
-function operatorRow(admin) {
+function operatorRow(admin, held = []) {
   const isSelf = state.bootstrap?.actor?.id === admin.clerkUserId;
+  // Which authority somebody holds was previously not shown anywhere in this
+  // console — it lived only in a table nobody could read without a SQL client.
+  const heldLabel = held.length ? held.join(", ") : "Support operator (default)";
   return `<div class="member-row">
-    <div class="who"><strong>${escapeHtml(admin.label || admin.email || admin.clerkUserId)}</strong><small>${escapeHtml(admin.email || admin.clerkUserId)}</small></div>
+    <div class="who"><strong>${escapeHtml(admin.label || admin.email || admin.clerkUserId)}</strong><small>${escapeHtml(admin.email || admin.clerkUserId)} · ${escapeHtml(heldLabel)}</small></div>
     <div class="member-actions">
       ${isSelf
         ? '<span class="hint">This is you</span>'
@@ -686,18 +887,40 @@ function operatorRow(admin) {
   </div>`;
 }
 
-function renderOperators(admins) {
+function renderOperators(admins, permissions, people) {
   const mount = document.querySelector("[data-operators-body]");
+  const roles = permissions.filter((permission) => permission.kind === "operator");
+  const contributors = people?.contributors || [];
+  const heldRoles = people?.roles || [];
+
+  const rolesFor = (userId) => heldRoles.filter((row) => row.clerkUserId === userId).map((row) => row.role);
+
   mount.innerHTML = `
     <form class="form-grid two-col" data-form="add-operator" style="margin-bottom:1.25rem;">
       <label class="field"><span>Email</span><input type="email" name="email" required placeholder="name@clinic.com"></label>
-      <label class="field"><span>Label (optional)</span><input type="text" name="label" placeholder="How you'll recognize them"></label>
-      <div class="form-actions"><button class="button" type="submit">Add operator</button></div>
+      <label class="field"><span>Name shown</span><input type="text" name="label" placeholder="How you'll recognize them — and the byline, for a contributor"></label>
+      <label class="field field-wide"><span>What are you granting?</span>
+        <select name="permission" data-permission-select>
+          ${permissions.map((permission) => `<option value="${escapeAttr(permission.key)}" data-kind="${escapeAttr(permission.kind)}">${escapeHtml(permission.label)} — ${escapeHtml(permission.note)}</option>`).join("")}
+        </select>
+      </label>
+      <p class="hint">An operator role needs the person to already be a platform operator; granting one to anybody else does nothing until they are. A blog contributor is not an operator and never sees this console.</p>
+      <div class="form-actions"><button class="button" type="submit">Grant</button></div>
       <p class="hint" data-form-errors hidden></p>
     </form>
+
+    <div class="panel" style="margin-bottom:1.25rem">
+      <h2 class="panel-title">Blog contributors</h2>
+      ${contributors.length
+        ? contributors.map((contributor) => `<div class="member-row">
+            <div class="who"><strong>${escapeHtml(contributor.displayName)}</strong><small>Writes as "TímiNOW post by contributor ${escapeHtml(contributor.displayName)}"</small></div>
+            <div class="member-actions"><button class="button button-small button-danger" type="button" data-revoke-contributor="${escapeAttr(contributor.clerkUserId)}">Revoke</button></div>
+          </div>`).join("")
+        : '<div class="empty-state"><p>Nobody outside the team writes for TímiNOW yet.</p></div>'}
+    </div>
     <div class="panel">
       ${admins.length
-        ? admins.map(operatorRow).join("")
+        ? admins.map((admin) => operatorRow(admin, rolesFor(admin.clerkUserId))).join("")
         : '<div class="empty-state"><p>No operators recorded in the database yet. Anyone named in this Worker’s PLATFORM_ADMIN_USER_IDS or PLATFORM_ADMIN_EMAILS variables also has access, but is not listed here — that allowlist only changes with a redeploy.</p></div>'}
     </div>
   `;
@@ -712,17 +935,51 @@ function wireOperatorEvents() {
     errorsBox.hidden = true;
     const email = form.email.value.trim();
     const label = form.label.value.trim();
+    const select = form.querySelector("[data-permission-select]");
+    const permission = select?.value || "SUPPORT_ADMIN";
+    const kind = select?.selectedOptions?.[0]?.dataset.kind || "operator";
     const submitButton = form.querySelector('button[type="submit"]');
     submitButton.disabled = true;
     try {
-      await apiFetch("/api/admin/platform-admins", { method: "POST", body: JSON.stringify({ email, label }) });
-      toast(`${email} can now sign in as a platform operator.`);
+      if (kind === "contributor") {
+        // Not a platform administrator. The whole reason this option exists is
+        // that writing for TímiNOW should not require console access — see
+        // src/content-admin.js.
+        await apiFetch("/api/admin/content/contributors", { method: "POST", body: JSON.stringify({ email, displayName: label || email }) });
+        toast(`${email} can now write posts. They do not get console access.`);
+      } else {
+        // Console access first, then the role: rolesFor() ignores a role row
+        // for somebody who is not a platform operator, so the reverse order
+        // would grant an authority that quietly does nothing.
+        const created = await apiFetch("/api/admin/platform-admins", { method: "POST", body: JSON.stringify({ email, label }) });
+        const clerkUserId = created?.admin?.clerkUserId || created?.clerkUserId;
+        if (clerkUserId && permission !== "SUPPORT_ADMIN") {
+          await apiFetch("/api/admin/content/roles", { method: "POST", body: JSON.stringify({ clerkUserId, role: permission }) });
+        }
+        toast(`${email} can now sign in as a platform operator.`);
+      }
+      form.reset();
       await loadOperators();
     } catch (error) {
       errorsBox.textContent = error.message;
       errorsBox.hidden = false;
       submitButton.disabled = false;
     }
+  });
+
+  document.querySelectorAll("[data-revoke-contributor]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      if (!window.confirm("Stop this person writing for TímiNOW? Posts they already wrote keep their byline.")) return;
+      button.disabled = true;
+      try {
+        await apiFetch(`/api/admin/content/contributors/${encodeURIComponent(button.dataset.revokeContributor)}`, { method: "DELETE" });
+        toast("Contributor revoked.");
+        await loadOperators();
+      } catch (error) {
+        toast(error.message, true);
+        button.disabled = false;
+      }
+    });
   });
 
   document.querySelectorAll("[data-remove-operator]").forEach((button) => {

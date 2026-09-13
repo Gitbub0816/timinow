@@ -57,6 +57,19 @@ export const ACTION_ROLES = Object.freeze({
   "fund.reconciliation.resolve": ["FINANCE_ADMIN", "SUPER_ADMIN"],
   "deposit_guarantee.override": ["FINANCE_ADMIN", "SUPER_ADMIN"],
 
+  // The blog and the forum. Publishing a post is open to any operator — it
+  // is writing, and everything published is attributed and removable. Taking
+  // somebody else's words down, and deciding who may write on TímiNOW's
+  // behalf, are not: both are judgements about other people's speech on this
+  // platform, which is the compliance role's business.
+  "content.contributor.grant": ["COMPLIANCE_ADMIN", "SUPER_ADMIN"],
+  "content.moderate": ["COMPLIANCE_ADMIN", "SUPER_ADMIN"],
+  // Granting an operator role at all. Previously there was no endpoint for
+  // this and roles were set by hand in the database; an authority that can
+  // only be granted by someone with a SQL console is an authority nobody
+  // audits.
+  "operator.role.grant": ["SUPER_ADMIN"],
+
   // Program integrity.
   "program.suspend": ["COMPLIANCE_ADMIN", "SUPER_ADMIN"],
   "hardship.appeal.decide": ["COMPLIANCE_ADMIN", "SUPER_ADMIN"],

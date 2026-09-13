@@ -35,6 +35,7 @@
       <a href="#clinic-contracts" data-nav="clinic-contracts">Clinic contracts</a>
       <a href="#pif" data-nav="pif">Paw It Forward</a>
       <a href="#analytics" data-nav="analytics">Analytics</a>
+      <a href="#blog" data-nav="blog">Blog</a>
       <a href="#operators" data-nav="operators">Operators</a>
       <a href="#audit" data-nav="audit">Audit log</a>
       <a href="#ledger" data-nav="ledger">Ledger</a>
@@ -414,6 +415,48 @@
       </div>
     </section>
 
+
+    <!-- ------------------------------------------------------------ blog --- -->
+    <section class="screen" data-screen="blog" aria-labelledby="blog-title">
+      <div class="shell">
+        <div class="page-head">
+          <div>
+            <p class="eyebrow">blog.timinow.pet</p>
+            <h1 class="page-title" id="blog-title">Blog and community</h1>
+            <p class="page-lede">Write a post as TímiNOW or on a contributor's behalf, and work the moderation queue. Clinics publish their own posts without review — this is where one comes down if it needs to.</p>
+          </div>
+        </div>
+
+        <div class="panel" style="margin-bottom:1.25rem">
+          <h2 class="panel-title">Write a post</h2>
+          <form class="form-grid" data-form="new-post">
+            <label class="field"><span>Title</span><input type="text" name="title" required maxlength="160"></label>
+            <label class="field"><span>Byline</span>
+              <select name="onBehalfOf" data-post-byline-select>
+                <option value="">TímiNOW post by you</option>
+              </select>
+            </label>
+            <label class="field"><span>Excerpt (optional)</span><input type="text" name="excerpt" maxlength="400" placeholder="One line for the listing."></label>
+            <label class="field field-wide"><span>Body (Markdown)</span><textarea name="bodyMarkdown" rows="10" required placeholder="## A heading&#10;&#10;Body text. **Bold**, *italic*, [links](https://example.com), lists and quotes."></textarea></label>
+            <div class="form-actions">
+              <button class="button" type="submit" data-publish="false">Save draft</button>
+              <button class="button button-primary" type="submit" data-publish="true">Publish</button>
+            </div>
+            <p class="hint" data-form-errors hidden></p>
+          </form>
+        </div>
+
+        <div class="panel" style="margin-bottom:1.25rem">
+          <h2 class="panel-title">Reported content</h2>
+          <div data-reports-body><p class="hint">Loading…</p></div>
+        </div>
+
+        <div class="panel">
+          <h2 class="panel-title">Every post</h2>
+          <div data-posts-body><p class="hint">Loading…</p></div>
+        </div>
+      </div>
+    </section>
     <!-- ------------------------------------------------------- operators --- -->
     <section class="screen" data-screen="operators" aria-labelledby="operators-title">
       <div class="shell">
@@ -421,7 +464,7 @@
           <div>
             <p class="eyebrow">Platform-wide</p>
             <h1 class="page-title" id="operators-title">Platform operators</h1>
-            <p class="page-lede">Everyone with full access to this console. Add someone by the email on their Tími account — they need to have signed in at least once before you can add them.</p>
+            <p class="page-lede">Everyone who holds a permission on this platform. Add someone by the email on their Tími account — they need to have signed in at least once before you can add them. Choose what you are granting: an operator role is authority over the platform, a blog contributor may only write posts and never sees this console.</p>
           </div>
         </div>
         <div data-operators-body></div>

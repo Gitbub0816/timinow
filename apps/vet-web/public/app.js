@@ -758,12 +758,117 @@ async function renderRoute() {
   if (route === "payouts") await enterPayouts();
   if (route === "overflow") await enterOverflow();
   if (route === "studio") await enterStudio();
+  if (route === "posts") await enterPosts();
   if (route === "people") await enterPeople();
   if (route === "settings") await enterSettings();
   if (route === "legal") {
     const section = routeQuery().get("section") || "clinics";
     requestAnimationFrame(() => document.getElementById(section)?.scrollIntoView({ block: "start" }));
   }
+}
+
+/* ---------------------------------------------------------- blog posts --- */
+
+/**
+ * This practice's writing on blog.timinow.pet.
+ *
+ * Posts go live with no review from TímiNOW, which is why the form says so
+ * and the byline names the practice. Whether this person may publish at all is
+ * decided by their own practice's administrator, not by us — the server
+ * answers that question and this screen only reflects it, so a member who
+ * hides the banner in dev tools still cannot post.
+ */
+async function enterPosts() {
+  const list = $("[data-post-list]");
+  list.innerHTML = '<p class="hint">Loading…</p>';
+  let payload;
+  try {
+    payload = await api("/api/clinic/posts");
+  } catch (error) {
+    list.innerHTML = `<p class="hint">${escapeHtml(error.message)}</p>`;
+    return;
+  }
+
+  const canPublish = Boolean(payload.author?.canPublish);
+  $("[data-post-form]").hidden = !canPublish;
+  $("[data-posts-denied]").hidden = canPublish;
+  if (payload.author?.byline) {
+    $("[data-posts-byline]").textContent = `Your posts appear as "${payload.author.byline}".`;
+  }
+
+  renderProviderPosts(payload.posts || []);
+  wirePostForm();
+}
+
+function renderProviderPosts(posts) {
+  const list = $("[data-post-list]");
+  if (!posts.length) {
+    list.innerHTML = '<p class="hint">You have not written anything yet.</p>';
+    return;
+  }
+  list.innerHTML = posts.map((post) => `<div class="queue-item" style="cursor:default">
+    <span class="queue-main">
+      <h3>${escapeHtml(post.title)}</h3>
+      <p>${escapeHtml(post.byline.line)}</p>
+    </span>
+    <span class="queue-meta">
+      <span class="status">${escapeHtml(post.status)}</span>
+      ${post.status === "removed"
+        ? '<span class="travel">Removed by TímiNOW</span>'
+        : `<button class="button button-small" type="button" data-toggle-post="${escapeHtml(post.id)}" data-next="${post.status === "published" ? "false" : "true"}">${post.status === "published" ? "Withdraw" : "Publish"}</button>`}
+    </span>
+  </div>`).join("");
+
+  $$("[data-toggle-post]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      button.disabled = true;
+      try {
+        await api(`/api/clinic/posts/${encodeURIComponent(button.dataset.togglePost)}`, {
+          method: "PATCH",
+          body: JSON.stringify({ publish: button.dataset.next === "true" })
+        });
+        await enterPosts();
+      } catch (error) {
+        showToast(error.message);
+        button.disabled = false;
+      }
+    });
+  });
+}
+
+let postFormWired = false;
+function wirePostForm() {
+  if (postFormWired) return;
+  postFormWired = true;
+  const form = $("[data-post-form]");
+  if (!form) return;
+  // Which button was pressed decides draft versus publish.
+  let publishIntent = false;
+  form.querySelectorAll("button[data-publish]").forEach((button) => {
+    button.addEventListener("click", () => { publishIntent = button.dataset.publish === "true"; });
+  });
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const note = $("[data-post-error]");
+    note.textContent = "";
+    const data = new FormData(form);
+    try {
+      await api("/api/clinic/posts", {
+        method: "POST",
+        body: JSON.stringify({
+          title: data.get("title"),
+          excerpt: data.get("excerpt"),
+          bodyMarkdown: data.get("bodyMarkdown"),
+          publish: publishIntent
+        })
+      });
+      form.reset();
+      showToast(publishIntent ? "Published to the TímiNOW blog." : "Saved as a draft.");
+      await enterPosts();
+    } catch (error) {
+      note.textContent = error.message;
+    }
+  });
 }
 
 /* -------------------------------------------------------------- console --- */
@@ -2008,7 +2113,7 @@ function renderPeople() {
       <button class="button button-primary" type="button" data-add-submit>Add person</button>
     </div>` : ""}
     <table class="people-table">
-      <thead><tr><th scope="col">Name</th><th scope="col">Email</th><th scope="col">Role</th><th scope="col"></th></tr></thead>
+      <thead><tr><th scope="col">Name</th><th scope="col">Email</th><th scope="col">Role</th><th scope="col">Blog</th><th scope="col"></th></tr></thead>
       <tbody>${members.map((member) => `
         <tr data-member="${escapeHtml(member.clerkUserId)}">
           <td>${escapeHtml(member.name)}${member.isSelf ? " (you)" : ""}</td>
@@ -2017,10 +2122,17 @@ function renderPeople() {
             ? `<select data-role-select><option value="org:member" ${member.role === "org:member" ? "selected" : ""}>Member</option><option value="org:admin" ${member.role === "org:admin" ? "selected" : ""}>Administrator</option></select>`
             : `<span class="pill-role ${member.role === "org:admin" ? "is-admin" : ""}">${escapeHtml(humanize(member.role.replace("org:", "")))}</span>`}
           </td>
+          <td>${member.role === "org:admin"
+            ? '<span class="pill-role is-admin">Always</span>'
+            : canManage
+              ? `<label class="checkbox-inline"><input type="checkbox" data-posting-toggle ${member.canPublishPosts ? "checked" : ""}> <span>May publish</span></label>`
+              : `<span class="pill-role">${member.canPublishPosts ? "May publish" : "No"}</span>`}
+          </td>
           <td class="row-actions">${canManage && !member.isSelf ? `<button type="button" data-remove>Remove</button>` : ""}</td>
-        </tr>`).join("") || `<tr><td colspan="4">No members yet.</td></tr>`}
+        </tr>`).join("") || `<tr><td colspan="5">No members yet.</td></tr>`}
       </tbody>
     </table>
+    <p class="people-note">"Blog" is who may publish on blog.timinow.pet under this practice's name. Posts go live with no review from TímiNOW and carry your practice's byline, so grant it to the people who speak for you. Administrators always may.</p>
     ${invitations.length ? `
     <div class="section-heading"><h2>Pending invitations</h2></div>
     <table class="people-table">
@@ -2058,6 +2170,21 @@ function renderPeople() {
         showToast("Role updated.");
         await enterPeople();
       } catch (error) { showToast(error.message); await enterPeople(); }
+    });
+    row.querySelector("[data-posting-toggle]")?.addEventListener("change", async (event) => {
+      const allowed = event.target.checked;
+      try {
+        await api(`/api/clinic/posts/permissions/${encodeURIComponent(memberId)}`, {
+          method: "PUT",
+          body: JSON.stringify({ canPublish: allowed })
+        });
+        showToast(allowed ? "They can publish for your practice." : "Publishing turned off.");
+      } catch (error) {
+        // Put the checkbox back: a control that stays flipped after the write
+        // failed tells an administrator they granted something they did not.
+        event.target.checked = !allowed;
+        showToast(error.message);
+      }
     });
     row.querySelector("[data-remove]")?.addEventListener("click", async () => {
       if (!confirm("Remove this person from the workspace?")) return;

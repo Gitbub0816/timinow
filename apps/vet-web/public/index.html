@@ -62,6 +62,7 @@
           <a href="#payouts" data-nav="payouts">Payouts</a>
           <a href="#overflow" data-nav="overflow">Overflow tools</a>
           <a href="#studio" data-nav="studio">Widget studio</a>
+          <a href="#posts" data-nav="posts">Blog posts</a>
           <a href="#people" data-nav="people"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>People</a>
           <a href="#settings" data-nav="settings"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1a1.7 1.7 0 0 0 1.9.3 1.7 1.7 0 0 0 1-1.6v-.2h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1Z"/></svg>Facility settings</a>
           <a href="#legal?section=clinics" data-nav="legal">Legal</a>
@@ -602,6 +603,66 @@
     </section>
 
     <!-- ============================================================== studio -->
+
+    <!-- ====================================================== blog posts -->
+    <!-- A practice writing on blog.timinow.pet. Published straight to the
+         live site with no review from TímiNOW, so the byline says plainly
+         whose post it is and TímiNOW can take one down. See
+         src/content-provider.js. -->
+    <section class="screen" data-screen="posts" aria-labelledby="posts-title">
+      <aside class="vet-rail">
+        <div>
+          <img class="brand-mark" src="/assets/brand/timinow-wordmark.svg" alt="Tími NOW">
+          <p class="rail-kicker">VETERINARY OPERATIONS</p>
+        </div>
+        <nav class="rail-nav" style="margin-top:42px" aria-label="Clinic console navigation">
+          <a href="#console" data-nav="console">Operations</a>
+          <a href="#overflow" data-nav="overflow">Overflow tools</a>
+          <a href="#studio" data-nav="studio">Widget studio</a>
+          <a href="#posts" data-nav="posts">Blog posts</a>
+          <a href="#people" data-nav="people">People</a>
+          <a href="#legal?section=clinics" data-nav="legal">Legal</a>
+        </nav>
+      </aside>
+      <div class="vet-main">
+        <header class="screen-head">
+          <div>
+            <p class="eyebrow">BLOG.TIMINOW.PET</p>
+            <h1 id="posts-title">Your practice on the blog</h1>
+            <p class="lede" data-posts-byline>Posts you publish appear on the TímiNOW blog under your practice's name.</p>
+          </div>
+        </header>
+
+        <div class="card" data-posts-denied hidden>
+          <h2>Posting isn't switched on for your account</h2>
+          <p>An administrator at your practice can turn it on for you from the People screen. Administrators can always publish.</p>
+        </div>
+
+        <form class="card" data-post-form hidden>
+          <h2>Write a post</h2>
+          <p class="hint">Published immediately, with no review from TímiNOW. It carries your practice's name and a line saying TímiNOW hosts it rather than endorses it — so write it as your practice's own.</p>
+          <label class="field">Title
+            <input type="text" name="title" required maxlength="160">
+          </label>
+          <label class="field">One-line summary (optional)
+            <input type="text" name="excerpt" maxlength="400">
+          </label>
+          <label class="field">Body (Markdown)
+            <textarea name="bodyMarkdown" rows="10" required placeholder="## A heading&#10;&#10;Body text. **Bold**, *italic*, [links](https://example.com), lists and quotes."></textarea>
+          </label>
+          <div class="form-actions">
+            <button class="button" type="submit" data-publish="false">Save draft</button>
+            <button class="button button-primary" type="submit" data-publish="true">Publish</button>
+          </div>
+          <p class="form-note" data-post-error role="status"></p>
+        </form>
+
+        <section class="card">
+          <h2>Your posts</h2>
+          <div data-post-list><p class="hint">Loading…</p></div>
+        </section>
+      </div>
+    </section>
     <section class="screen studio-screen" data-screen="studio" aria-labelledby="studio-title">
       <aside class="vet-rail">
         <div>

@@ -61,6 +61,13 @@ import {
   handleUpdateWidgetPackage
 } from "../../../src/widget.js";
 import { getOrCreateReferralLink } from "../../../src/referrals.js";
+import {
+  createProviderPost,
+  describeProviderAuthor,
+  listProviderPosts,
+  setMemberPosting,
+  updateProviderPost
+} from "../../../src/content-provider.js";
 
 const JSON_HEADERS = { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" };
 // Kept in step with docs/SUBPROCESSORS.md by scripts/check-subprocessors.mjs
@@ -129,6 +136,48 @@ async function handleConfig(env) {
  * shares one implementation with the customer and admin Workers. Creating a
  * tenant is deliberately absent; that is platform-operator only.
  */
+/**
+ * The practice's own posts on blog.timinow.pet.
+ *
+ * Tenant-scoped throughout: the tenant comes from the session, never from the
+ * request, so a clinic can only ever see and edit its own writing. Turning
+ * posting on for a colleague is administrator-only, and is the practice's
+ * decision rather than TímiNOW's — see src/content-provider.js.
+ */
+async function handleClinicPosts(request, env, actor, path, method) {
+  const tenantId = actor?.tenantId || (actor?.clerkOrgId ? await tenantIdForClerkOrg(env, actor.clerkOrgId) : null);
+  if (!tenantId) return apiError(403, "CLINIC_ACCESS_REQUIRED", "Clinic organization access is required.");
+
+  const answer = (result, okStatus = 200) => (result?.ok
+    ? json(result, { status: okStatus })
+    : apiError(result?.status || 422, result?.code || "REQUEST_FAILED", result?.message || "That did not work."));
+
+  if (method === "GET" && path === "/api/clinic/posts") {
+    const [posts, author] = await Promise.all([
+      listProviderPosts(env, tenantId),
+      describeProviderAuthor(env, actor, tenantId)
+    ]);
+    return json({ ...posts, author });
+  }
+  if (method === "POST" && path === "/api/clinic/posts") {
+    return answer(await createProviderPost(env, actor, tenantId, await readJson(request).catch(() => ({}))), 201);
+  }
+  const postMatch = path.match(/^\/api\/clinic\/posts\/([^/]+)$/);
+  if (method === "PATCH" && postMatch) {
+    return answer(await updateProviderPost(env, actor, tenantId, decodeURIComponent(postMatch[1]), await readJson(request).catch(() => ({}))));
+  }
+  const permissionMatch = path.match(/^\/api\/clinic\/posts\/permissions\/([^/]+)$/);
+  if (method === "PUT" && permissionMatch) {
+    // Administrator-only, same guard as every other member-administration
+    // route here.
+    const guard = requireTenantAdmin(actor, tenantId);
+    if (guard) return apiError(guard.status, guard.code, guard.message);
+    const body = await readJson(request).catch(() => ({}));
+    return answer(await setMemberPosting(env, tenantId, decodeURIComponent(permissionMatch[1]), body?.canPublish === true));
+  }
+  return apiError(404, "NOT_FOUND", "No such endpoint.");
+}
+
 async function handleTenantAdmin(request, env, actor, path, method) {
   const tenantId = actor?.tenantId || (actor?.clerkOrgId ? await tenantIdForClerkOrg(env, actor.clerkOrgId) : null);
   const guard = requireTenantAdmin(actor, tenantId);
@@ -205,6 +254,14 @@ async function handleApi(request, env) {
     }
     if (method === "DELETE" && path === "/api/clinic/workstations/session") {
       return json({ signedOut: true }, { headers: { "set-cookie": await endWorkstationSession(request, env) } });
+    }
+
+    // Writing for the blog is an individually signed-in member's act, never a
+    // shared front-desk workstation's: a post carries a named author, and a
+    // workstation session has no person behind it to name.
+    if (path.startsWith("/api/clinic/posts")) {
+      if (!actor?.userId) return authRequiredResponse();
+      return handleClinicPosts(request, env, actor, path, method);
     }
 
     // Creating, listing, and revoking workstations stays an individually
