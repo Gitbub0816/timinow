@@ -3,6 +3,13 @@ using System.Windows;
 using System.Windows.Data;
 using System.Windows.Media;
 
+// The project is UseWPF *and* UseWindowsForms, so System.Drawing.Color and
+// System.Windows.Forms.Application are in scope here too and make a bare
+// `Color` or `Application` ambiguous. Aliased once rather than qualified at
+// every use, which is how this file read before the collision existed.
+using WpfApplication = System.Windows.Application;
+using WpfColor = System.Windows.Media.Color;
+
 namespace TimiVet.Views;
 
 /// <summary>
@@ -74,7 +81,7 @@ public sealed class ConnectionHealthToBrushConverter : IValueConverter
 
     private static SolidColorBrush Frozen(byte red, byte green, byte blue)
     {
-        var brush = new SolidColorBrush(System.Windows.Media.System.Windows.Media.Color.FromRgb(red, green, blue));
+        var brush = new SolidColorBrush(WpfColor.FromRgb(red, green, blue));
         brush.Freeze();
         return brush;
     }
@@ -120,20 +127,18 @@ public sealed class InitialsConverter : IValueConverter
 /// </remarks>
 public sealed class StatusToneToBrushConverter : IValueConverter
 {
-    // Fully qualified: System.Drawing.Color is also in scope here, and an
-    // unqualified Color is ambiguous between the two.
-    private static SolidColorBrush Brush(string resource, System.Windows.Media.Color fallback)
-        => Application.Current?.TryFindResource(resource) as SolidColorBrush ?? new SolidColorBrush(fallback);
+    private static SolidColorBrush Brush(string resource, WpfColor fallback)
+        => WpfApplication.Current?.TryFindResource(resource) as SolidColorBrush ?? new SolidColorBrush(fallback);
 
     public object Convert(object? value, Type targetType, object parameter, CultureInfo culture)
     {
         var wantsBackground = string.Equals(parameter as string, "background", StringComparison.OrdinalIgnoreCase);
         return (value as string) switch
         {
-            "positive" => wantsBackground ? Brush("GreenSoft", System.Windows.Media.Color.FromRgb(0xE9, 0xF7, 0xF1)) : Brush("GreenDeep", System.Windows.Media.Color.FromRgb(0x11, 0x7D, 0x58)),
-            "waiting" => wantsBackground ? Brush("GoldSoft", System.Windows.Media.Color.FromRgb(0xFF, 0xF0, 0xB9)) : Brush("AmberDeep", System.Windows.Media.Color.FromRgb(0x8C, 0x66, 0x00)),
-            "negative" => wantsBackground ? Brush("CoralSoft", System.Windows.Media.Color.FromRgb(0xFF, 0xF0, 0xED)) : Brush("CoralDark", System.Windows.Media.Color.FromRgb(0xBD, 0x3E, 0x31)),
-            _ => wantsBackground ? Brush("Canvas", System.Windows.Media.Color.FromRgb(0xF3, 0xF5, 0xFB)) : Brush("Muted", System.Windows.Media.Color.FromRgb(0x57, 0x5D, 0x71))
+            "positive" => wantsBackground ? Brush("GreenSoft", WpfColor.FromRgb(0xE9, 0xF7, 0xF1)) : Brush("GreenDeep", WpfColor.FromRgb(0x11, 0x7D, 0x58)),
+            "waiting" => wantsBackground ? Brush("GoldSoft", WpfColor.FromRgb(0xFF, 0xF0, 0xB9)) : Brush("AmberDeep", WpfColor.FromRgb(0x8C, 0x66, 0x00)),
+            "negative" => wantsBackground ? Brush("CoralSoft", WpfColor.FromRgb(0xFF, 0xF0, 0xED)) : Brush("CoralDark", WpfColor.FromRgb(0xBD, 0x3E, 0x31)),
+            _ => wantsBackground ? Brush("Canvas", WpfColor.FromRgb(0xF3, 0xF5, 0xFB)) : Brush("Muted", WpfColor.FromRgb(0x57, 0x5D, 0x71))
         };
     }
 
