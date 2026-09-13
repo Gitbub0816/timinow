@@ -395,7 +395,6 @@ function parseSvg(source) {
   // Everything outside <defs>, in document order.
   const body = source.replace(/<defs[\s\S]*?<\/defs>/g, "");
   const shapes = [];
-  let skippedText = false;
 
   const tagPattern = /<(path|circle|rect|polygon|text)\b([^>]*)>/g;
   let match;
@@ -404,9 +403,26 @@ function parseSvg(source) {
     const tag = `<${element}${rawAttributes}>`;
 
     if (element === "text") {
-      // The design system is explicit that text is never baked into artwork —
-      // these are the shield's number slots, filled by the renderer.
-      skippedText = true;
+      // Kept, not skipped. The system's rule that text is never baked into
+      // artwork is about *data* — a route number, a road name, a distance.
+      // The lettering on a state plate is the marker's own design, the way
+      // CALIFORNIA is printed on a real California state route shield, and
+      // dropping it leaves a green blob. The route number is still the
+      // renderer's to supply.
+      const content = body.slice(tagPattern.lastIndex).match(/^([^<]*)/);
+      const label = (content ? content[1] : "").trim();
+      if (!label) continue;
+      shapes.push({
+        type: "text",
+        text: label,
+        x: round(Number(attribute(tag, "x") || 0)),
+        y: round(Number(attribute(tag, "y") || 0)),
+        size: Number(attribute(tag, "font-size") || 10),
+        weight: Number(attribute(tag, "font-weight") || 400),
+        anchor: attribute(tag, "text-anchor") || "start",
+        tracking: Number(attribute(tag, "letter-spacing") || 0),
+        color: attribute(tag, "fill") || "currentColor"
+      });
       continue;
     }
 
@@ -472,7 +488,7 @@ function parseSvg(source) {
     }
   }
 
-  return { viewBox: [viewBox[2] || 120, viewBox[3] || 120], shapes, skippedText };
+  return { viewBox: [viewBox[2] || 120, viewBox[3] || 120], shapes };
 }
 
 /* ────────────────────────────────────────────────────── build ───── */
@@ -481,6 +497,12 @@ function parseSvg(source) {
 function contentBounds(shapes) {
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
   for (const shape of shapes) {
+    if (shape.type === "text") {
+      // Approximate: lettering sits inside the plate it labels, so it never
+      // sets the bounds. Counting a guessed text box would only shrink the
+      // artwork around it.
+      continue;
+    }
     // Half the stroke width spills either side of the centre line.
     const pad = shape.type === "stroke" ? (shape.width || 0) / 2 : 0;
     for (const [, ...args] of shape.commands) {

@@ -122,14 +122,35 @@ designer's artwork:
   the union of the declared viewBox and what the asset actually draws, and the
   renderer fits that, so a primitive is always whole.
 
+### Route shields
+
+Wired. Mapbox reports a structured `ShieldRepresentation` on the image
+components of a visual instruction — a `name` identifying the marker design,
+the `text` to print, and a text colour — and
+`TimiManeuverMapping.plate(for:)` maps that name onto one of the asset
+system's plates. Interstate, US highway, forest and county markers resolve
+directly; a two-letter state code (`us-ca`) uses that state's own drawn plate
+when one exists, and anything unrecognised falls through the generic plate
+rather than drawing the wrong state's silhouette. Signed exit numbers ride
+beside the shield as an amber badge.
+
+The number is never part of the artwork — one California plate serves CA-1 and
+CA-101 — so `TimiRouteShieldView` lays it over the plate. `validate-native.mjs`
+checks that every plate `plate(for:)` can return exists in the generated
+resource, and that the by-state set still covers all 50 states plus D.C.
+
+Note the one place the system's "text is never baked" rule is narrower than it
+sounds: the *state name* printed on a state plate (CALIFORNIA on a California
+marker) is part of the marker's design, exactly as on the real sign, and is
+kept. Only the route number is data.
+
 ### Not yet wired
 
-`Junctions` (58) and `RouteShields` (94) are imported and available but not yet
-drawn. They are not a rendering problem — it is that the data behind them does
-not exist in the app yet: the junction diagrams need per-branch road class and
-active-route flags, and the shields need `RoadShield` and exit numbers off the
-visual instruction. Both are real features rather than asset work, and building
-half of either would put artwork on screen that does not match the road.
+`Junctions` (58) is imported and available but not drawn. It is not a rendering
+problem — the junction diagrams need per-branch road class and active-route
+flags that the app does not extract from Mapbox yet. That is a real feature
+rather than asset work, and building half of it would put artwork on screen
+that does not match the road.
 
 **The driving camera is configured, not defaulted.** `TimiNavigationMapView`
 sets `MobileViewportDataSource.options.followingCameraOptions` explicitly,

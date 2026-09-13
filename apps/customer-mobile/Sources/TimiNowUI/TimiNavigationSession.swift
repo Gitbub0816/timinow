@@ -296,6 +296,8 @@ final class TimiNavigationSession {
             distanceMeters: maneuver?.distanceMeters ?? banner.distanceAlongStep,
             primaryText: primary.text ?? "",
             secondaryText: banner.secondaryInstruction?.text,
+            shield: TimiManeuverMapping.shield(in: primary) ?? TimiManeuverMapping.shield(in: banner.secondaryInstruction),
+            exitCode: TimiManeuverMapping.exitCode(in: primary) ?? TimiManeuverMapping.exitCode(in: banner.secondaryInstruction),
             roundaboutExitDegrees: primary.finalHeading,
             lanes: TimiManeuverMapping.lanes(from: banner.quaternaryInstruction)
         )
@@ -433,6 +435,65 @@ enum TimiManeuverMapping {
         case .left, .slightLeft, .sharpLeft: return true
         default: return false
         }
+    }
+
+    /// The route marker named by an instruction, if any.
+    ///
+    /// Mapbox reports a structured `ShieldRepresentation` on image components:
+    /// a `name` identifying the marker design, the `text` to print, and a text
+    /// colour. The name is mapped to one of the asset system's plates rather
+    /// than fetching Mapbox's own shield sprite — the whole point of the plate
+    /// set is that these read as Tími's signage and work offline.
+    static func shield(in instruction: VisualInstruction?) -> TimiRouteShield? {
+        guard let instruction else { return nil }
+        for component in instruction.components {
+            guard case .image(let image, _) = component, let shield = image.shield else { continue }
+            let text = shield.text.trimmingCharacters(in: .whitespaces)
+            guard !text.isEmpty else { continue }
+            return TimiRouteShield(
+                assetName: plate(for: shield.name),
+                text: text,
+                // Mapbox reports the colour as a name ("white", "black"); any
+                // light value means the plate is dark behind it.
+                prefersLightText: shield.textColor.lowercased() != "black"
+            )
+        }
+        return nil
+    }
+
+    /// Maps Mapbox's shield name onto a plate in `assets/navigation/RouteShields`.
+    ///
+    /// Names look like `us-interstate`, `us-highway`, `us-state`, and for many
+    /// states a two-letter form (`us-ca`). The by-state plates are drawn to
+    /// each state's real marker, so a recognised code uses its own; anything
+    /// unrecognised falls back through the generic plate rather than drawing
+    /// the wrong state's silhouette.
+    static func plate(for name: String) -> String {
+        let key = name.lowercased()
+        if key.contains("interstate") { return "RouteShields/shield-interstate" }
+        if key.contains("us-highway") || key.hasSuffix("-us") { return "RouteShields/shield-us-highway" }
+        if key.contains("forest") { return "RouteShields/forest-route" }
+        // The pentagon is the county marker used across most states.
+        if key.contains("county") { return "RouteShields/County/county-pentagon_ALL" }
+        // `us-ca`, `us-tx`, … — the state's own plate when one is drawn.
+        if let code = key.split(separator: "-").last, code.count == 2 {
+            let candidate = "RouteShields/State/by-state/\(code.uppercased())"
+            if TimiNavArt.has(candidate) { return candidate }
+        }
+        if key.contains("state") { return "RouteShields/shield-state-route" }
+        return "RouteShields/shield-generic"
+    }
+
+    /// A signed exit number from an instruction, where one is given.
+    static func exitCode(in instruction: VisualInstruction?) -> String? {
+        guard let instruction else { return nil }
+        for component in instruction.components {
+            if case .exitCode(let text) = component {
+                let code = text.text.trimmingCharacters(in: .whitespaces)
+                if !code.isEmpty { return code }
+            }
+        }
+        return nil
     }
 
     /// Lane guidance from the banner's quaternary instruction. Empty when the

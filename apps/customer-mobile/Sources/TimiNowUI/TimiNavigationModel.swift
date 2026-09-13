@@ -46,6 +46,22 @@ struct TimiLane: Equatable, Sendable, Identifiable {
     var active: TimiManeuverKind?
 }
 
+/// A highway route marker: which plate to draw, and the number to print on it.
+///
+/// The plate is artwork and the number is data — the design system is explicit
+/// that a route number is never baked in, which is what lets one California
+/// plate serve CA-1 and CA-101 without a second file.
+struct TimiRouteShield: Equatable, Sendable {
+    /// The primitive that draws the plate.
+    var assetName: String
+    /// The route reference as it should be printed — "880", "101", "I-5".
+    var text: String
+    /// Whether the plate wants light lettering. Reported by the navigator per
+    /// shield, because a green California plate and a white US-highway plate
+    /// disagree.
+    var prefersLightText: Bool
+}
+
 /// The maneuver the banner shows right now.
 struct TimiManeuver: Equatable, Sendable {
     var kind: TimiManeuverKind
@@ -54,6 +70,13 @@ struct TimiManeuver: Equatable, Sendable {
     var primaryText: String
     /// A second line where the SDK supplies one — "Toward San Jose".
     var secondaryText: String?
+    /// The route marker for the road being joined, when the instruction names
+    /// a numbered highway. nil collapses the slot — the design system's rule
+    /// is that a missing shield never leaves a gap, the destination line just
+    /// takes the space.
+    var shield: TimiRouteShield?
+    /// A signed exit number — "425B-C" — printed as a badge beside the shield.
+    var exitCode: String?
     /// Exit heading for roundabouts, in degrees clockwise from entry (so the
     /// glyph can rotate its exit arrow); nil for everything else.
     var roundaboutExitDegrees: Double?

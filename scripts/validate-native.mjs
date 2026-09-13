@@ -842,6 +842,23 @@ for (const path of await collectFiles("apps/customer-mobile/Sources/TimiNowUI", 
     }
   }
 
+  // Every plate TimiManeuverMapping.plate(for:) can return must exist too.
+  // A shield that resolves to nothing is the same silent hole as a missing
+  // maneuver, on the one component that names a highway by number.
+  const session = await read("apps/customer-mobile/Sources/TimiNowUI/TimiNavigationSession.swift");
+  const plateBody = session.slice(session.indexOf("static func plate(for name: String)"));
+  for (const [, name] of plateBody.slice(0, plateBody.indexOf("\n    }")).matchAll(/"(RouteShields\/[A-Za-z0-9_\/-]+)"/g)) {
+    if (!generated.assets[name]) {
+      throw new Error(`apps/customer-mobile/Sources/TimiNowUI/TimiNavigationSession.swift: plate(for:) can return "${name}", which is not in nav-assets.json.`);
+    }
+  }
+  // The by-state lookup is guarded by TimiNavArt.has, but the set it guards
+  // has to be complete or a whole state silently loses its marker.
+  const states = Object.keys(generated.assets).filter((k) => k.startsWith("RouteShields/State/by-state/"));
+  if (states.length < 51) {
+    throw new Error(`nav-assets.json has only ${states.length} by-state route plates; the set should cover all 50 states plus D.C.`);
+  }
+
   // The controls the chrome names must exist too — same failure mode, and the
   // names are string literals nothing else checks.
   const chrome = await read("apps/customer-mobile/Sources/TimiNowUI/TimiNavigationChrome.swift");

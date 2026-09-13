@@ -28,9 +28,23 @@ enum TimiNavCommand: Equatable, Sendable {
 /// One painted layer of a primitive: a filled region, or a stroked centre line
 /// with the cap/join the asset asked for.
 struct TimiNavLayer: Sendable {
+    /// Lettering that belongs to the artwork rather than to the data — the
+    /// state name printed on a state route plate, which is part of the marker
+    /// the way it is on the real sign. Route numbers are never this; they are
+    /// supplied by the renderer.
+    struct Lettering: Equatable, Sendable {
+        var text: String
+        var origin: CGPoint
+        var size: CGFloat
+        var weight: Double
+        var centered: Bool
+        var tracking: CGFloat
+    }
+
     enum Paint: Equatable, Sendable {
         case fill
         case stroke(width: CGFloat, round: Bool)
+        case text(Lettering)
     }
 
     var commands: [TimiNavCommand]
@@ -74,12 +88,34 @@ enum TimiNavArt {
 
             var layers: [TimiNavLayer] = []
             for shape in shapes {
+                if (shape["type"] as? String) == "text" {
+                    guard let text = shape["text"] as? String, !text.isEmpty else { continue }
+                    layers.append(TimiNavLayer(
+                        commands: [],
+                        paint: .text(TimiNavLayer.Lettering(
+                            text: text,
+                            origin: CGPoint(
+                                x: (shape["x"] as? Double) ?? 0,
+                                y: (shape["y"] as? Double) ?? 0
+                            ),
+                            size: CGFloat((shape["size"] as? Double) ?? 10),
+                            weight: (shape["weight"] as? Double) ?? 400,
+                            centered: (shape["anchor"] as? String) == "middle",
+                            tracking: CGFloat((shape["tracking"] as? Double) ?? 0)
+                        )),
+                        color: color(from: shape["color"] as? String),
+                        opacity: (shape["opacity"] as? Double) ?? 1
+                    ))
+                    continue
+                }
                 guard let raw = shape["commands"] as? [[Any]] else { continue }
                 let commands = decode(raw)
                 guard !commands.isEmpty else { continue }
 
                 let paint: TimiNavLayer.Paint
-                if (shape["type"] as? String) == "stroke" {
+                if (shape["type"] as? String) == "text" {
+                    continue
+                } else if (shape["type"] as? String) == "stroke" {
                     let width = (shape["width"] as? Double) ?? 1
                     let round = (shape["cap"] as? String) == "round"
                     paint = .stroke(width: CGFloat(width), round: round)
@@ -167,6 +203,8 @@ struct TimiNavLayerShape: Shape {
             }
         }
 
+        if case .text = layer.paint { return Path() }
+
         if case .stroke(let width, let round) = layer.paint {
             path = path.strokedPath(StrokeStyle(
                 lineWidth: width,
@@ -196,12 +234,37 @@ struct TimiNavArtView: View {
 
     var body: some View {
         if let primitive = TimiNavArt.primitive(name) {
-            ZStack {
-                ForEach(Array(primitive.layers.enumerated()), id: \.offset) { _, layer in
-                    TimiNavLayerShape(layer: layer, box: primitive.box)
-                        .fill(layer.color ?? tint)
-                        .opacity(layer.opacity)
+            GeometryReader { proxy in
+                let scale = min(proxy.size.width / primitive.box.width, proxy.size.height / primitive.box.height)
+                let originX = (proxy.size.width - primitive.box.width * scale) / 2 - primitive.box.minX * scale
+                let originY = (proxy.size.height - primitive.box.height * scale) / 2 - primitive.box.minY * scale
+
+                ZStack(alignment: .topLeading) {
+                    ForEach(Array(primitive.layers.enumerated()), id: \.offset) { _, layer in
+                        if case .text(let lettering) = layer.paint {
+                            Text(lettering.text)
+                                .font(.system(size: lettering.size * scale, weight: lettering.weight >= 700 ? .bold : .regular))
+                                .tracking(lettering.tracking * scale)
+                                .foregroundStyle(layer.color ?? tint)
+                                .fixedSize()
+                                // SVG places text on its baseline; SwiftUI centres
+                                // it. Lifting by ~0.36 of the size puts the cap
+                                // height where the baseline asked for it, which is
+                                // close enough for plate lettering and avoids
+                                // measuring glyphs at draw time.
+                                .position(
+                                    x: originX + lettering.origin.x * scale,
+                                    y: originY + (lettering.origin.y - lettering.size * 0.36) * scale
+                                )
+                                .opacity(layer.opacity)
+                        } else {
+                            TimiNavLayerShape(layer: layer, box: primitive.box)
+                                .fill(layer.color ?? tint)
+                                .opacity(layer.opacity)
+                        }
+                    }
                 }
+                .frame(width: proxy.size.width, height: proxy.size.height)
             }
             .opacity(opacity)
             .accessibilityHidden(true)

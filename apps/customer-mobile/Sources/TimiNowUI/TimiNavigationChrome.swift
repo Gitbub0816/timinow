@@ -88,6 +88,22 @@ struct TimiManeuverBanner: View {
                 TimiManeuverGlyph(kind: maneuver.kind, roundaboutExitDegrees: maneuver.roundaboutExitDegrees, color: NavPalette.amber)
                     .frame(width: 58, height: 58)
                 VStack(alignment: .leading, spacing: 2) {
+                    if maneuver.shield != nil || maneuver.exitCode != nil {
+                        HStack(spacing: 7) {
+                            if let shield = maneuver.shield {
+                                TimiRouteShieldView(shield: shield).frame(height: 26)
+                            }
+                            if let exitCode = maneuver.exitCode {
+                                Text("EXIT \(exitCode)")
+                                    .font(.system(size: 12, weight: .heavy))
+                                    .foregroundStyle(NavPalette.ink)
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 3)
+                                    .background(NavPalette.amber, in: RoundedRectangle(cornerRadius: 5))
+                            }
+                        }
+                        .padding(.bottom, 2)
+                    }
                     Text(TimiNavFormat.distance(meters: maneuver.distanceMeters, units: units))
                         .font(.system(size: 34, weight: .heavy, design: .rounded))
                         .foregroundStyle(.white)
@@ -150,6 +166,38 @@ struct TimiManeuverBanner: View {
         case .roundabout, .roundaboutLeft, .roundaboutRight, .roundaboutStraight: return "take the roundabout"
         case .arrive, .arriveLeft, .arriveRight: return "arrive at your destination"
         }
+    }
+}
+
+/// A highway route marker: the plate primitive with its route number printed
+/// on top.
+///
+/// The number is never part of the artwork — one California plate serves CA-1
+/// and CA-101 — so it is laid over the plate here, sized to the plate and
+/// shrunk only as far as a three-digit route needs. `prefersLightText` comes
+/// from the navigator per shield, because a green state plate and a white US
+/// highway plate disagree about what is readable on them.
+struct TimiRouteShieldView: View {
+    var shield: TimiRouteShield
+
+    var body: some View {
+        TimiNavArtView(name: shield.assetName, tint: NavPalette.ink)
+            // The plates are drawn on a 62×54 box; keeping that ratio stops a
+            // long route number stretching the marker out of shape.
+            .aspectRatio(62.0 / 54.0, contentMode: .fit)
+            .overlay {
+                Text(shield.text)
+                    .font(.system(size: 15, weight: .heavy))
+                    .foregroundStyle(shield.prefersLightText ? Color.white : NavPalette.ink)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.5)
+                    .padding(.horizontal, 3)
+                    // The lettering on a plate that has a state name sits in
+                    // the upper band, so the number rides a little low.
+                    .offset(y: 3)
+            }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Route \(shield.text)")
     }
 }
 
