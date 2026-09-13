@@ -139,7 +139,7 @@ jobs:
           tail -80 "$RUNNER_TEMP/timi-swift-test.log"
       - name: Upload Swift test log on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: swift-test-log
           path: ${{ runner.temp }}/timi-swift-test.log
@@ -229,7 +229,7 @@ jobs:
           tail -60 "$RUNNER_TEMP/timi-vet-test.log"
       - name: Upload test log on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: vet-macos-test-log
           path: ${{ runner.temp }}/timi-vet-test.log
