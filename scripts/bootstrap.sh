@@ -588,9 +588,6 @@ set_var CLERK_TOKEN_TEMPLATE   "$CUSTOMER" "$VET" "$ADMIN"
 set_var AUTHORIZED_PARTIES     "$CUSTOMER" "$VET" "$ADMIN"
 set_var MAPBOX_STYLE_URL       "$CUSTOMER" "$VET" "$ADMIN" "$VOICE"
 set_var MAPBOX_NAVIGATION_STYLE_URL "$CUSTOMER" "$VET" "$ADMIN"
-# The admin console needs the publishable key too: it initializes ConnectJS to
-# render Stripe's embedded onboarding component inside the workspace page.
-set_var STRIPE_PUBLISHABLE_KEY "$CUSTOMER" "$ADMIN"
 set_var STRIPE_ACCOUNTS_API    "$ADMIN"
 set_var TWILIO_FROM_NUMBER     "$VOICE"
 set_var TWILIO_MESSAGING_FROM  "$VOICE"
@@ -822,6 +819,18 @@ check_secret_shape() { # check_secret_shape KEY VALUE
         whsec_*) die "  STRIPE_SECRET_KEY starts \"whsec_\", which is a webhook signing secret. That belongs in STRIPE_WEBHOOK_SECRET." ;;
         *) die "  STRIPE_SECRET_KEY does not look like a Stripe secret key. It starts sk_live_, sk_test_, or rk_ for a restricted key." ;;
       esac ;;
+    STRIPE_PUBLISHABLE_KEY)
+      case "$2" in
+        pk_live_*|pk_test_*) : ;;
+        sk_*|rk_*) die "  STRIPE_PUBLISHABLE_KEY starts \"${2%%_*}_\", which is a SECRET key.
+
+  This is the dangerous direction of the two. The publishable key is served to
+  every browser by /api/config and returned with every PaymentIntent, so a
+  secret key here is not a misconfiguration, it is a disclosure — and it would
+  be live within a minute of the deploy. Take the one shown in the clear on the
+  dashboard, not the one behind \"Reveal\". Nothing was changed." ;;
+        *) die "  STRIPE_PUBLISHABLE_KEY does not look like a Stripe publishable key. It starts pk_live_ or pk_test_." ;;
+      esac ;;
     STRIPE_WEBHOOK_SECRET)
       case "$2" in
         whsec_*) : ;;
@@ -975,6 +984,16 @@ put_secret SEARCH_LINK_SECRET    "$CUSTOMER"
 # never talks to Stripe, so there is no reason to put a key that can move
 # money on it.
 put_secret STRIPE_SECRET_KEY     "$CUSTOMER" "$ADMIN"
+# Public by design, and a Worker secret anyway — same reasoning as
+# MAPBOX_PUBLIC_TOKEN above. As a var it was rewritten from the wrangler config
+# on every deploy, so a literal left in that file outranked whatever the
+# account had really been set to, and pinned live against a test secret key it
+# produced "No such payment_intent" on the customer's device with every
+# server-side step reporting success. The secret store is the one place a
+# deploy does not overwrite, which is what keeps the two keys in the same mode.
+# The admin console needs it too: it initializes ConnectJS to render Stripe's
+# embedded onboarding component inside the workspace page.
+put_secret STRIPE_PUBLISHABLE_KEY "$CUSTOMER" "$ADMIN"
 # Only the Worker that serves /api/stripe/webhook.
 put_secret STRIPE_WEBHOOK_SECRET "$CUSTOMER"
 # Guest checkout only happens on the customer Worker.

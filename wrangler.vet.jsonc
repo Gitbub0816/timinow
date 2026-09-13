@@ -42,8 +42,7 @@
     "CUSTOMER_APP_URL": "https://timinow.pet",
     "AUTHORIZED_PARTIES": "https://providers.timinow.pet,https://app.timinow.pet,https://timinow.pet,https://www.admin.timinow.pet,https://www.timinow.pet,https://admin.timinow.pet",
     "MAPBOX_STYLE_URL": "mapbox://styles/calebowen2019/cmt3nci25004d01sya8qxcb4u",
-    "MAPBOX_NAVIGATION_STYLE_URL": "",
-    "STRIPE_PUBLISHABLE_KEY": ""
+    "MAPBOX_NAVIGATION_STYLE_URL": ""
   },
   "d1_databases": [
     {

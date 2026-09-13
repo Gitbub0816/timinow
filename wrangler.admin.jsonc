@@ -43,7 +43,8 @@
     "AUTHORIZED_PARTIES": "https://providers.timinow.pet,https://app.timinow.pet,https://timinow.pet,https://www.admin.timinow.pet,https://www.timinow.pet,https://admin.timinow.pet",
     "MAPBOX_STYLE_URL": "mapbox://styles/calebowen2019/cmt3nci25004d01sya8qxcb4u",
     "MAPBOX_NAVIGATION_STYLE_URL": "",
-    "STRIPE_PUBLISHABLE_KEY": "",
+    // STRIPE_PUBLISHABLE_KEY is a Worker secret, not a var — see wrangler.jsonc
+    // for why. An empty var here would shadow that secret on this Worker.
     // Which Accounts API new clinics are created with: "v1" (controller
     // properties, generally available) or "v2" (configuration.recipient, still
     // a preview). Only affects accounts created from here on — an existing
