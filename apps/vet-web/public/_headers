@@ -7,7 +7,7 @@
 # in `npm run check` fails if this file and the Worker disagree.
 
 /*
-  content-security-policy: default-src 'self'; script-src 'self' https://cdn.jsdelivr.net https://timinow.pet; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' https://clerk.timinow.pet https://timinow.pet; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'
+  content-security-policy: default-src 'self'; script-src 'self' https://clerk.timinow.pet https://cdn.jsdelivr.net https://timinow.pet; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' https://clerk.timinow.pet https://timinow.pet; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'
   permissions-policy: camera=(), microphone=(), payment=(self), geolocation=(self)
   referrer-policy: strict-origin-when-cross-origin
   x-content-type-options: nosniff

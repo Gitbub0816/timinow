@@ -55,7 +55,7 @@ which `src/index.js` (or `apps/*/src/index.js`) declares it.
 | `https://api.mapbox.com` | script-src, style-src, img-src, connect-src | Mapbox GL JS, tiles, geocoding, directions | customer, admin |
 | `https://*.tiles.mapbox.com` | img-src | Mapbox raster/vector tiles | customer, admin |
 | `https://events.mapbox.com` | connect-src | Mapbox GL JS telemetry | customer, admin |
-| `https://clerk.timinow.pet` | connect-src | Clerk's custom Frontend API domain (`CLERK_ISSUER`) | customer, vet, admin, blog |
+| `https://clerk.timinow.pet` | script-src, connect-src | Clerk's custom Frontend API domain (`CLERK_ISSUER`). **script-src too**: the headless build loaded from jsDelivr is only a loader and injects a `<script>` for the real bundle, served from here — without it `clerk.load()` fails with "Unable to load Clerk" | customer, vet, admin, blog |
 | `https://img.clerk.com` | img-src | Avatars Clerk serves for a signed-in account | blog |
 | `https://timinow.pet` | script-src, connect-src | The customer Worker's own `/widget.js` and `/api/widget/:token/status`, embedded from the vet console's Widget Studio preview and the widget-demo gallery | vet, widget-demo |
 

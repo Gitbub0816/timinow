@@ -56,7 +56,18 @@ const JSON_HEADERS = { "content-type": "application/json; charset=utf-8", "cache
 // a symptom.
 const CONTENT_SECURITY_POLICY = [
   "default-src 'self'",
-  "script-src 'self' https://cdn.jsdelivr.net",
+    // clerk.timinow.pet is in script-src because the headless clerk-js loaded
+  // from jsDelivr is only a loader: it injects a <script> for the real bundle,
+  // served from the Frontend API domain
+  // (https://clerk.timinow.pet/npm/@clerk/clerk-js@5.x/dist/clerk.browser.js,
+  // which answers 200). Without it clerk.load() fails with "Unable to load
+  // Clerk" and nobody can sign in.
+  //
+  // This was missing from every Worker and did not matter for as long as no
+  // page had a CSP at all — `run_worker_first: ["/api/*"]` meant the policy
+  // only ever reached /api/* responses. Enforcing it on pages (the _headers
+  // fix) is what surfaced it, on all four surfaces at once.
+  "script-src 'self' https://clerk.timinow.pet https://cdn.jsdelivr.net",
   "style-src 'self' 'unsafe-inline'",
   // blob: and img.clerk.com because Clerk renders avatars from both. This
   // surface shows none today, but it is the one Clerk-bearing CSP that

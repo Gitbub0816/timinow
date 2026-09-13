@@ -92,7 +92,18 @@ const JSON_HEADERS = { "content-type": "application/json; charset=utf-8", "cache
 // this policy; scripts/check-subprocessors.mjs fails CI if they drift apart.
 const CONTENT_SECURITY_POLICY = [
   "default-src 'self'",
-  "script-src 'self' https://js.stripe.com https://cdn.jsdelivr.net https://unpkg.com https://api.mapbox.com",
+    // clerk.timinow.pet is in script-src because the headless clerk-js loaded
+  // from jsDelivr is only a loader: it injects a <script> for the real bundle,
+  // served from the Frontend API domain
+  // (https://clerk.timinow.pet/npm/@clerk/clerk-js@5.x/dist/clerk.browser.js,
+  // which answers 200). Without it clerk.load() fails with "Unable to load
+  // Clerk" and nobody can sign in.
+  //
+  // This was missing from every Worker and did not matter for as long as no
+  // page had a CSP at all — `run_worker_first: ["/api/*"]` meant the policy
+  // only ever reached /api/* responses. Enforcing it on pages (the _headers
+  // fix) is what surfaced it, on all four surfaces at once.
+  "script-src 'self' https://clerk.timinow.pet https://js.stripe.com https://cdn.jsdelivr.net https://unpkg.com https://api.mapbox.com",
   "style-src 'self' 'unsafe-inline' https://api.mapbox.com",
   "img-src 'self' data: blob: https://api.mapbox.com https://*.tiles.mapbox.com",
   "font-src 'self' data:",
