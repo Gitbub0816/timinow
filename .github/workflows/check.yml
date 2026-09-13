@@ -18,4 +18,14 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+          cache: npm
+      # This workflow ran for months without installing anything, because
+      # every check script used only Node built-ins and so nothing noticed.
+      # The first script to import a package (scripts/syntax.mjs, which uses
+      # esbuild to catch duplicate object keys) turned the gate red, and it
+      # stayed red for ten commits while `npm run check` kept passing locally
+      # — where the package resolved as a Wrangler transitive dependency that
+      # a fresh checkout does not have. A gate that cannot install what it
+      # needs is not a gate.
+      - run: npm ci
       - run: npm run check
