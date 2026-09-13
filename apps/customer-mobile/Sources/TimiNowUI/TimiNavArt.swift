@@ -314,17 +314,41 @@ extension TimiNavArt {
                 cg.saveGState()
                 cg.setAlpha(CGFloat(layer.opacity))
                 let color = layer.color.map { UIColor($0) } ?? tint
-                cg.addPath(path)
                 switch layer.paint {
                 case .fill:
+                    cg.addPath(path)
                     cg.setFillColor(color.cgColor)
                     cg.fillPath()
                 case .stroke(let width, let round):
+                    cg.addPath(path)
                     cg.setStrokeColor(color.cgColor)
                     cg.setLineWidth(width)
                     cg.setLineCap(round ? .round : .butt)
                     cg.setLineJoin(round ? .round : .miter)
                     cg.strokePath()
+                case .text(let lettering):
+                    // Plate lettering — the state name on a state route
+                    // marker. Drawn rather than skipped so a shield rendered to
+                    // an image (CarPlay's symbolImage) carries the same
+                    // lettering the SwiftUI view does.
+                    let attributes: [NSAttributedString.Key: Any] = [
+                        .font: UIFont.systemFont(
+                            ofSize: lettering.size,
+                            weight: lettering.weight >= 700 ? .bold : .regular
+                        ),
+                        .foregroundColor: color,
+                        .kern: lettering.tracking
+                    ]
+                    let line = NSAttributedString(string: lettering.text, attributes: attributes)
+                    let measured = line.size()
+                    // SVG anchors text on its baseline; UIKit draws from the
+                    // top-left, so the origin moves up by the ascender.
+                    let originX = lettering.centered
+                        ? lettering.origin.x - measured.width / 2
+                        : lettering.origin.x
+                    let font = attributes[.font] as? UIFont
+                    let originY = lettering.origin.y - (font?.ascender ?? lettering.size)
+                    line.draw(at: CGPoint(x: originX, y: originY))
                 }
                 cg.restoreGState()
             }
