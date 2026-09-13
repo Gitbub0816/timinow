@@ -126,6 +126,25 @@ if (!wrangler.includes('"SIGN_IN_REQUIRED": "true"')) throw new Error("SIGN_IN_R
 if (!wrangler.includes('"DEMO_MODE": "false"')) throw new Error("DEMO_MODE must be the exact string false in production");
 if (!wrangler.includes('"d1_databases"')) throw new Error("The production deployment must bind the D1 database");
 if (wrangler.includes("REPLACE_WITH_YOUR_D1_DATABASE_ID")) throw new Error("wrangler.jsonc still contains the placeholder D1 database id");
+
+// Every served assets directory needs a .assetsignore that excludes .DS_Store.
+//
+// Wrangler builds the upload list from disk, not from git, so .gitignore has no
+// say: a .DS_Store sitting in public/ was uploaded and served at /.DS_Store —
+// 6 KB listing every filename in the directory, to anyone who asked. It had
+// been scrolling past in the deploy output as "+ /.DS_Store" for who knows how
+// long. .assetsignore is the only exclusion list `wrangler deploy` reads.
+for (const directory of ["public", "apps/admin-console/public", "apps/vet-web/public", "apps/voice-gateway/public"]) {
+  let ignore;
+  try {
+    ignore = await readFile(`${directory}/.assetsignore`, "utf8");
+  } catch {
+    throw new Error(`${directory} is served as public assets but has no .assetsignore. Wrangler uploads what is on disk, not what git tracks, so a .DS_Store here becomes a public directory listing.`);
+  }
+  if (!/^\s*\.DS_Store\s*$/m.test(ignore)) {
+    throw new Error(`${directory}/.assetsignore does not exclude .DS_Store, which is the one that actually gets uploaded and served.`);
+  }
+}
 if (!wranglerLocalExample.includes('"d1_databases"') || !wranglerLocalExample.includes("REPLACE_WITH_YOUR_D1_DATABASE_ID")) throw new Error("The local development configuration template is incomplete");
 
 // No Stripe key may be pinned in a committed Wrangler config, in either mode.

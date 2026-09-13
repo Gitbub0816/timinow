@@ -324,8 +324,6 @@ function normalizeOfferRow(row, location, search, { revealLocation = true, alias
     id: row.id,
     searchId: row.search_id,
     targetId: row.target_id,
-    locationId: row.location_id,
-    tenantId: row.tenant_id,
     responseType: row.response_type,
     status: row.status,
     availableAt: row.available_at,

@@ -1,0 +1,13 @@
+# Files in this directory that must never be uploaded as public assets.
+#
+# Wrangler reads assets from disk, not from git, so .gitignore does not apply:
+# a macOS .DS_Store sitting here was uploaded and served at /.DS_Store — a
+# public listing of every filename in the directory, including any that were
+# never meant to be linked. Ignored here instead, which is the only list
+# `wrangler deploy` actually consults.
+.DS_Store
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+desktop.ini
