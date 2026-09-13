@@ -96,7 +96,7 @@ jobs:
       # which is the one thing the automatic trigger is supposed to prevent.
       # `head_sha` is the commit that actually passed; it is empty on a manual
       # dispatch, where the ref is whatever was chosen.
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           ref: ${{ github.event.workflow_run.head_sha || github.ref }}
       - uses: actions/setup-node@v4
