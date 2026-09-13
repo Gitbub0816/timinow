@@ -145,6 +145,24 @@ for (const directory of ["public", "apps/admin-console/public", "apps/vet-web/pu
     throw new Error(`${directory}/.assetsignore does not exclude .DS_Store, which is the one that actually gets uploaded and served.`);
   }
 }
+
+// ...and a deploy must not depend on that file being honoured.
+//
+// `.assetsignore` is only read by newer Wrangler. A deploy run with 4.125
+// uploaded public/.DS_Store anyway, and it was served at /.DS_Store — so the
+// declaration above is the correct thing to ship and not the thing that can be
+// relied on. scripts/clean-assets.mjs deletes the files instead, which no tool
+// version can decline to do, and every deploy script runs it first.
+{
+  const scripts = JSON.parse(await readFile("package.json", "utf8")).scripts || {};
+  for (const [name, command] of Object.entries(scripts)) {
+    if (!/^deploy(:|$)/.test(name) || !/wrangler deploy/.test(command)) continue;
+    const pre = scripts[`pre${name}`];
+    if (!pre || !/clean-assets/.test(pre)) {
+      throw new Error(`npm script "${name}" deploys without a "pre${name}" that runs scripts/clean-assets.mjs, so a .DS_Store on somebody's Mac can reach production as a public file listing.`);
+    }
+  }
+}
 if (!wranglerLocalExample.includes('"d1_databases"') || !wranglerLocalExample.includes("REPLACE_WITH_YOUR_D1_DATABASE_ID")) throw new Error("The local development configuration template is incomplete");
 
 // No Stripe key may be pinned in a committed Wrangler config, in either mode.
