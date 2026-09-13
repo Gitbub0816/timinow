@@ -18,7 +18,7 @@ import { readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 
 /** Every directory named as an assets `directory` in a wrangler config. */
-const roots = ["public", "apps/admin-console/public", "apps/vet-web/public", "apps/voice-gateway/public"];
+const roots = ["public", "apps/admin-console/public", "apps/vet-web/public", "apps/voice-gateway/public", "apps/blog/public"];
 
 /** Junk only. Nothing here is ever a real asset. */
 const junk = [/^\.DS_Store$/, /^\._/, /^\.Spotlight-V100$/, /^\.Trashes$/, /^Thumbs\.db$/i, /^desktop\.ini$/i];

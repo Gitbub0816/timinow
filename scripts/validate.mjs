@@ -134,7 +134,7 @@ if (wrangler.includes("REPLACE_WITH_YOUR_D1_DATABASE_ID")) throw new Error("wran
 // 6 KB listing every filename in the directory, to anyone who asked. It had
 // been scrolling past in the deploy output as "+ /.DS_Store" for who knows how
 // long. .assetsignore is the only exclusion list `wrangler deploy` reads.
-for (const directory of ["public", "apps/admin-console/public", "apps/vet-web/public", "apps/voice-gateway/public"]) {
+for (const directory of ["public", "apps/admin-console/public", "apps/vet-web/public", "apps/voice-gateway/public", "apps/blog/public"]) {
   let ignore;
   try {
     ignore = await readFile(`${directory}/.assetsignore`, "utf8");

@@ -31,7 +31,7 @@ on:
         required: true
         default: all
         type: choice
-        options: [all, customer, vet, admin, voice, widget-demo]
+        options: [all, customer, vet, admin, blog, voice, widget-demo]
       migrate:
         description: Apply pending D1 migrations first
         required: true
@@ -98,10 +98,11 @@ jobs:
           GIT_SHA: ${{ github.sha }}
         run: |
           case "${{ inputs.target }}" in
-            all)      npm run deploy && npm run deploy:vet && npm run deploy:admin && npm run deploy:voice && npm run deploy:widget-demo ;;
+            all)      npm run deploy && npm run deploy:vet && npm run deploy:admin && npm run deploy:blog && npm run deploy:voice && npm run deploy:widget-demo ;;
             customer) npm run deploy ;;
             vet)      npm run deploy:vet ;;
             admin)    npm run deploy:admin ;;
+            blog)     npm run deploy:blog ;;
             voice)    npm run deploy:voice ;;
             widget-demo) npm run deploy:widget-demo ;;
           esac
@@ -109,7 +110,7 @@ jobs:
       - name: Health
         run: |
           status=0
-          for host in timinow.pet providers.timinow.pet admin.timinow.pet voice.timinow.pet widget-demo.timinow.pet; do
+          for host in timinow.pet providers.timinow.pet admin.timinow.pet blog.timinow.pet voice.timinow.pet widget-demo.timinow.pet; do
             printf '%-24s ' "$host"
             if curl -fsS --max-time 15 "https://$host/api/health"; then echo; else echo "no response"; status=1; fi
           done

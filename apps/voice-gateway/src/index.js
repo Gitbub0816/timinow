@@ -175,7 +175,7 @@ function cleanVoiceName(value) {
 
 const JSON_HEADERS = { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" };
 const TWIML_HEADERS = { "content-type": "text/xml; charset=utf-8", "cache-control": "no-store" };
-const SECURITY_HEADERS = {
+export const SECURITY_HEADERS = {
   "referrer-policy": "strict-origin-when-cross-origin",
   "x-content-type-options": "nosniff",
   "x-frame-options": "DENY",

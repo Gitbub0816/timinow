@@ -135,7 +135,7 @@ const CONTENT_SECURITY_POLICY = [
   "frame-ancestors 'none'"
 ].join("; ");
 
-const SECURITY_HEADERS = {
+export const SECURITY_HEADERS = {
   "referrer-policy": "strict-origin-when-cross-origin",
   "x-content-type-options": "nosniff",
   "x-frame-options": "DENY",
