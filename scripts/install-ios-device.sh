@@ -109,6 +109,12 @@ fi
 bold "3. iPhone"
 DEVICES_JSON="$(mktemp)"
 xcrun devicectl list devices --json-output "$DEVICES_JSON" >/dev/null 2>&1 || true
+# Two lines out of this: the chosen device on stdout, and — when nothing is
+# chosen — one line per device that was seen and rejected, on stderr. A device
+# that is present but filtered out used to produce output identical to no
+# device at all, which sent you looking at the cable when the answer was on
+# screen the whole time.
+REJECTED="$(mktemp)"
 SELECTED="$(DEVICE_NAME="$DEVICE" python3 -c '
 import json, os, sys
 
@@ -118,22 +124,44 @@ try:
 except Exception:
     devices = []
 
-def usable(device):
+def describe(device):
+    properties = device.get("deviceProperties", {})
     hardware = device.get("hardwareProperties", {})
     connection = device.get("connectionProperties", {})
-    if hardware.get("platform") != "iOS":
-        return False
-    return connection.get("pairingState") == "paired"
+    return (properties.get("name") or hardware.get("marketingName") or "(unnamed)",
+            hardware.get("platform") or "unknown platform",
+            connection.get("pairingState") or "pairing state not reported",
+            connection.get("transportType") or "transport not reported")
 
-candidates = [d for d in devices if usable(d)]
-if wanted:
-    candidates = [d for d in candidates
-                  if wanted.lower() in d.get("deviceProperties", {}).get("name", "").lower()
-                  or wanted == d.get("identifier")]
-# A cable beats Wi-Fi: a wired device is present now, where a network one may
-# be in another room and asleep.
-candidates.sort(key=lambda d: d.get("connectionProperties", {}).get("transportType") != "wired")
+def why_not(device):
+    """The reason this device cannot be installed to, or None."""
+    name, platform, pairing, _ = describe(device)
+    if platform not in ("iOS", "iPadOS"):
+        return f"{platform}, not an iPhone or iPad"
+    # Only an explicit "unpaired" disqualifies. Some devicectl versions omit
+    # the key entirely for a device that installs perfectly well, and dropping
+    # those silently is how a connected phone reads as no phone at all.
+    if pairing.lower() == "unpaired":
+        return "not paired — unlock it and answer Trust"
+    if wanted and wanted.lower() not in name.lower() and wanted != device.get("identifier"):
+        return f"does not match --device {wanted}"
+    return None
+
+candidates = [d for d in devices if why_not(d) is None]
+# An iPhone beats an iPad, since this build targets the phone and an iPad only
+# runs it in compatibility mode — a wired iPad is not a better answer than the
+# phone the build is for. Within a platform, a cable beats Wi-Fi: a wired
+# device is present now, where a network one may be in another room and
+# asleep. --device overrides both.
+candidates.sort(key=lambda d: (
+    d.get("hardwareProperties", {}).get("platform") != "iOS",
+    d.get("connectionProperties", {}).get("transportType") != "wired",
+))
 if not candidates:
+    with open(sys.argv[2], "w") as report:
+        for device in devices:
+            name, platform, pairing, transport = describe(device)
+            report.write(f"    {name} — {platform}, {pairing}, {transport}: {why_not(device)}\n")
     raise SystemExit
 best = candidates[0]
 print("\t".join([
@@ -141,20 +169,35 @@ print("\t".join([
     best.get("deviceProperties", {}).get("name", "iPhone"),
     best.get("connectionProperties", {}).get("transportType", "unknown"),
     best.get("deviceProperties", {}).get("osVersionNumber", "?"),
-]))' "$DEVICES_JSON")"
+]))' "$DEVICES_JSON" "$REJECTED")"
 rm -f "$DEVICES_JSON"
 
 if [ -z "$SELECTED" ]; then
-  die "  No paired iPhone found.
+  if [ -s "$REJECTED" ]; then
+    SEEN="$(cat "$REJECTED")"
+    rm -f "$REJECTED"
+    die "  None of the devices this Mac can see can take this build:
+
+$SEEN
+  Pass --device with part of a name to pick one explicitly, or fix the reason
+  beside it. \"not paired\" means: unlock the phone, plug it in, answer
+  \"Trust This Computer?\", and turn on Settings -> Privacy & Security ->
+  Developer Mode (that toggle only appears after a Mac has tried to install
+  something, so run this once and look again)."
+  fi
+  rm -f "$REJECTED"
+  die "  No iPhone found at all — xcrun devicectl reported no devices.
 
   Plug it in with the USB-C cable, unlock it, and answer \"Trust\" if it asks.
-  Then check what the Mac can see:
+  Then check what the Mac can see for itself:
 
     xcrun devicectl list devices
 
-  A phone that appears there but not here is either not paired or not an
-  iPhone — pass --device with part of its name to be explicit."
+  If it appears there and not here, send me that output. If it appears
+  nowhere, the cable is the first suspect: a charge-only USB-C cable carries
+  no data and looks identical to one that does."
 fi
+rm -f "$REJECTED"
 DEVICE_ID="$(printf '%s' "$SELECTED" | cut -f1)"
 DEVICE_NAME="$(printf '%s' "$SELECTED" | cut -f2)"
 DEVICE_LINK="$(printf '%s' "$SELECTED" | cut -f3)"
