@@ -70,6 +70,9 @@ bold "2. Simulator"
 # later with a wall of destination syntax, which says nothing about the one
 # thing that was wrong. Substring, case-insensitive, and on no match it prints
 # the list — including any simulator you have renamed yourself.
+# Kept, because the resolution below overwrites DEVICE and step 2b needs to
+# know what was originally asked for.
+WANTED="$DEVICE"
 AVAILABLE="$(mktemp)"
 DEVICE="$(xcrun simctl list devices available --json \
   | DEVICE_NAME="$DEVICE" python3 -c '
@@ -110,6 +113,63 @@ if booted:
 iphones = [d["name"] for _, d in ios if d["name"].startswith("iPhone")]
 print(iphones[-1] if iphones else "")' "$AVAILABLE")"
 
+# A model can be supported by the installed runtimes and still have no
+# simulator, because Xcode only creates a default handful — every other one is
+# a `simctl create` away. Not knowing that reads as "this iPhone does not
+# exist" when the truth is "nobody has made one yet", so rather than print a
+# list that omits the answer, make it.
+if [ -z "$DEVICE" ] && [ -n "$WANTED" ]; then
+  RUNTIMES="$(mktemp)"
+  xcrun simctl list runtimes --json > "$RUNTIMES" 2>/dev/null || echo '{"runtimes":[]}' > "$RUNTIMES"
+  CREATE="$(xcrun simctl list devicetypes --json 2>/dev/null \
+    | DEVICE_NAME="$WANTED" python3 -c '
+import json, os, sys
+
+wanted = os.environ["DEVICE_NAME"].strip().lower()
+try:
+    types = json.load(sys.stdin)["devicetypes"]
+    runtimes = json.load(open(sys.argv[1]))["runtimes"]
+except Exception:
+    raise SystemExit
+
+def version(runtime):
+    parts = (runtime.get("version") or "0").split(".")
+    return tuple(int(p) if p.isdigit() else 0 for p in parts)
+
+matches = [t for t in types if wanted in t["name"].lower()]
+exact = [t for t in matches if t["name"].lower() == wanted]
+matches = exact or matches
+
+best = None
+for device_type in matches:
+    for runtime in runtimes:
+        if not runtime.get("isAvailable"):
+            continue
+        if "SimRuntime.iOS-" not in (runtime.get("identifier") or ""):
+            continue
+        supported = runtime.get("supportedDeviceTypes") or []
+        if not any(s.get("identifier") == device_type["identifier"] for s in supported):
+            continue
+        if best is None or version(runtime) > best[0]:
+            best = (version(runtime), device_type, runtime)
+
+if best is None:
+    raise SystemExit
+_, device_type, runtime = best
+print("\t".join([device_type["name"], device_type["identifier"], runtime["identifier"]]))' "$RUNTIMES")"
+  rm -f "$RUNTIMES"
+  if [ -n "$CREATE" ]; then
+    NEW_NAME="$(printf '%s' "$CREATE" | cut -f1)"
+    NEW_TYPE="$(printf '%s' "$CREATE" | cut -f2)"
+    NEW_RUNTIME="$(printf '%s' "$CREATE" | cut -f3)"
+    if xcrun simctl create "$NEW_NAME" "$NEW_TYPE" "$NEW_RUNTIME" >/dev/null 2>&1; then
+      DEVICE="$NEW_NAME"
+      echo "  no $NEW_NAME simulator existed — created one"
+      dim "  Remove it later with: xcrun simctl delete '\''$NEW_NAME'\''"
+    fi
+  fi
+fi
+
 if [ -z "$DEVICE" ]; then
   LISTING="$(cat "$AVAILABLE")"
   rm -f "$AVAILABLE"
@@ -118,7 +178,11 @@ if [ -z "$DEVICE" ]; then
 
 $LISTING
   Pass --device with part of one of those names. Simulators you have renamed
-  in Xcode appear under the name you gave them."
+  in Xcode appear under the name you gave them.
+
+  A model missing from that list and from what this could create is one whose
+  runtime is not installed: Xcode -> Settings -> Components, download the iOS
+  version it shipped with, then run this again."
   fi
   die "  No simulator is installed at all. Add one in Xcode -> Settings -> Components."
 fi
