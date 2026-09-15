@@ -64,20 +64,65 @@ bold "1c. Identity verification"
 select_didit
 
 bold "2. Simulator"
-if [ -z "$DEVICE" ]; then
-  # Newest booted simulator if there is one, otherwise the newest available
-  # iPhone. Picking by name rather than by udid keeps the message readable.
-  DEVICE="$(xcrun simctl list devices available --json \
-    | python3 -c '
-import json, sys
-data = json.load(sys.stdin)["devices"]
-booted = [d["name"] for runtime in data for d in data[runtime] if d.get("state") == "Booted"]
+# --device is matched against the simulators that actually exist rather than
+# passed to xcodebuild verbatim. A name that is close but not exact used to
+# reach xcodebuild as an unresolvable -destination and fail several lines
+# later with a wall of destination syntax, which says nothing about the one
+# thing that was wrong. Substring, case-insensitive, and on no match it prints
+# the list — including any simulator you have renamed yourself.
+AVAILABLE="$(mktemp)"
+DEVICE="$(xcrun simctl list devices available --json \
+  | DEVICE_NAME="$DEVICE" python3 -c '
+import json, os, sys
+
+wanted = (os.environ.get("DEVICE_NAME") or "").strip().lower()
+runtimes = json.load(sys.stdin)["devices"]
+# Runtime keys sort oldest-first, so the last match is the newest OS.
+devices = [(runtime, d) for runtime in sorted(runtimes) for d in runtimes[runtime]]
+
+with open(sys.argv[1], "w") as listing:
+    for runtime, d in devices:
+        state = " (booted)" if d.get("state") == "Booted" else ""
+        name = d["name"]
+        os_name = runtime.rsplit(".", 1)[-1].replace("-", " ")
+        listing.write("    " + name + " - " + os_name + state + "\n")
+
+# The destination below is an iOS Simulator, so only iOS runtimes can be
+# chosen — a watchOS simulator matched by name would be handed to xcodebuild
+# as an iOS destination and fail. They stay in the listing above so a name
+# that matched only a watch is visibly accounted for.
+ios = [(runtime, d) for runtime, d in devices if ".iOS-" in runtime]
+
+if wanted:
+    matches = [d for _, d in ios if wanted in d["name"].lower()]
+    # An exact name wins outright — "iPhone 17" should not land on
+    # "iPhone 17 Pro" just because that one happens to be booted. Failing
+    # that, a booted match is the one already on screen, then the newest.
+    exact = [d for d in matches if d["name"].lower() == wanted]
+    booted = [d for d in matches if d.get("state") == "Booted"]
+    chosen = exact or booted or matches
+    print(chosen[-1]["name"] if chosen else "")
+    raise SystemExit
+
+booted = [d["name"] for _, d in ios if d.get("state") == "Booted"]
 if booted:
     print(booted[0]); raise SystemExit
-iphones = [d["name"] for runtime in sorted(data) for d in data[runtime] if d["name"].startswith("iPhone")]
-print(iphones[-1] if iphones else "")')"
+iphones = [d["name"] for _, d in ios if d["name"].startswith("iPhone")]
+print(iphones[-1] if iphones else "")' "$AVAILABLE")"
+
+if [ -z "$DEVICE" ]; then
+  LISTING="$(cat "$AVAILABLE")"
+  rm -f "$AVAILABLE"
+  if [ -n "$LISTING" ]; then
+    die "  No simulator matched. These exist:
+
+$LISTING
+  Pass --device with part of one of those names. Simulators you have renamed
+  in Xcode appear under the name you gave them."
+  fi
+  die "  No simulator is installed at all. Add one in Xcode -> Settings -> Components."
 fi
-[ -n "$DEVICE" ] || die "  No iPhone simulator available. Install one in Xcode -> Settings -> Components."
+rm -f "$AVAILABLE"
 echo "  $DEVICE"
 
 bold "3. Xcode project"
