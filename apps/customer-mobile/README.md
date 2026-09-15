@@ -29,9 +29,26 @@ cd ..
 open Project.xcworkspace
 ```
 
+`xcodegen generate` is not optional and not a one-time step: `Darwin/TimiNow.xcodeproj` is generated from `Darwin/project.yml` and is git-ignored, so a fresh clone has a workspace pointing at a project that does not exist yet. Opening `Project.xcworkspace` before generating gives an empty window, not an error that explains itself.
+
 Run `skip checkup` after installing Skip, then select the `TimiNow` scheme in Xcode. The checked-in Swift package, build plugins, and per-module `skip.yml` files keep the customer codebase Skip Fuse-ready. This repository deliberately does not check in an Android launcher because this deliverable is customer iOS; generate the official Skip Android host on macOS before shipping an Android binary.
 
-The app starts in interactive demo mode. Save the production Worker HTTPS URL under Settings → Connection to use the live API. Never place Clerk or Stripe secret keys in this client.
+## Run it without opening Xcode
+
+Two scripts do the whole thing, including the `xcodegen generate` above:
+
+```bash
+./scripts/build-ios-app.sh                      # newest booted simulator, or the newest iPhone
+./scripts/build-ios-app.sh --device 'iPhone 17 Pro'
+./scripts/install-ios-device.sh                 # an iPhone plugged in over USB-C
+./scripts/install-ios-device.sh --device 'Duo'  # when more than one is attached
+```
+
+A simulator build needs no Apple account and no signing at all. A device build needs an Apple ID in Xcode → Settings → Accounts and Developer Mode on the phone; `install-ios-device.sh` explains both if either is missing, and strips the restricted CarPlay entitlement so signing succeeds without Apple's separate CarPlay approval.
+
+Without an `api.mapbox.com` entry in `~/.netrc`, both scripts build the non-Mapbox fallback — a ranked clinic list, no live map, no turn-by-turn — and say so as they start. `./scripts/bootstrap.sh <env-file>` writes that entry.
+
+The app points at `https://timinow.pet` on first launch (`TimiEnvironment.defaultAPIBaseURL`), so a simulator or device build talks to production without being configured. Settings → Connection overrides it. Saving an empty address drops the gateway to fixture mode for the rest of that session and reverts to the default on the next launch — `AppStore.validBaseURL` rejects the empty string, while the loader substitutes the default for an empty stored value. Never place Clerk or Stripe secret keys in this client.
 
 ## Production checklist
 
