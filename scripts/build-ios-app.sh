@@ -181,8 +181,15 @@ $LISTING
   in Xcode appear under the name you gave them.
 
   A model missing from that list and from what this could create is one whose
-  runtime is not installed: Xcode -> Settings -> Components, download the iOS
-  version it shipped with, then run this again."
+  runtime is not installed — a new iPhone usually needs the iOS version it
+  shipped with, not merely the newest one you happen to have. Xcode ->
+  Settings -> Components, or from here:
+
+    xcodebuild -downloadPlatform iOS                  # newest
+    xcodebuild -downloadPlatform iOS -buildVersion 27.1
+
+  It is a several-gigabyte download. Run this again once it finishes and the
+  simulator will be created for you."
   fi
   die "  No simulator is installed at all. Add one in Xcode -> Settings -> Components."
 fi
