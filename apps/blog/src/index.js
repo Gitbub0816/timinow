@@ -73,7 +73,15 @@ const CONTENT_SECURITY_POLICY = [
   // `run_worker_first: ["/api/*"]` meant this Worker never ran for one;
   // enforcing it (the _headers fix) is what surfaced the missing host, on all
   // four surfaces at once.
-  "script-src 'self' https://clerk.timinow.pet",
+  // Cloudflare Web Analytics. The beacon is injected at the edge by the
+  // zone's own Web Analytics setting, not by any markup in this repository —
+  // so leaving it out of the policy did not stop it being added, it only made
+  // every page log a CSP refusal and the analytics silently not work. It is
+  // cookieless, carries no personal data, and goes to Cloudflare, which
+  // already serves and stores everything here. To stop it, turn Web Analytics
+  // off for the zone in the Cloudflare dashboard and delete these two hosts
+  // (docs/SUBPROCESSORS.md moves with them — see rule 3).
+  "script-src 'self' https://clerk.timinow.pet https://static.cloudflareinsights.com",
   "style-src 'self' 'unsafe-inline'",
   // blob: and img.clerk.com because Clerk renders avatars from both. This
   // surface shows none today, but it is the one Clerk-bearing CSP that
@@ -82,7 +90,7 @@ const CONTENT_SECURITY_POLICY = [
   // about any of these directives.
   "img-src 'self' data: blob: https://img.clerk.com",
   "font-src 'self' data:",
-  "connect-src 'self' https://clerk.timinow.pet",
+  "connect-src 'self' https://clerk.timinow.pet https://cloudflareinsights.com",
   // clerk-js keeps a session alive from a Worker built out of a blob URL.
   // Chromium allowed it under this CSP when I tested the mechanism directly,
   // so this is parity with the working surfaces rather than the fix for the

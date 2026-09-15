@@ -41,6 +41,12 @@ export const CLERK_JS_CDN_ORIGIN = "https://cdn.jsdelivr.net";
  *
  * Falls back to the CDN only when no issuer is configured, which in practice
  * means local development against a Clerk development instance.
+ *
+ * One cosmetic consequence, so nobody chases it: the bundle's own
+ * `sourceMappingURL` is `/sm/<hash>.map`, which resolves against whichever
+ * host served it. jsDelivr serves that path; the Frontend API does not, so a
+ * browser with devtools open logs one 404 for the source map. Nothing fetches
+ * it otherwise and nothing depends on it.
  */
 export function defaultClerkJsUrl(env) {
   const issuer = String(env?.CLERK_ISSUER || "").replace(/\/+$/, "");

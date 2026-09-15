@@ -74,6 +74,10 @@ const state = {
   isBusy: false,
   statusMessage: "Connecting to Tími…",
   pollTimer: null,
+  /** Whether the dashboard poll should keep rescheduling itself. */
+  polling: false,
+  /** Consecutive failed polls, which is what the backoff is measured in. */
+  pollFailures: 0,
   pillExpanded: false,
   pillWasStale: false,
   signIn: { stage: "identifier", identifier: "", attempt: null, factor: null, error: null, busy: false },
@@ -718,6 +722,10 @@ async function renderRoute() {
     people: "People · Tími Vet", settings: "Facility settings · Tími Vet", legal: "Legal · Tími Vet"
   })[route] || "Tími Vet";
 
+  // Whatever sent us here — an expired session, a sign-out in another tab, a
+  // workspace that is no longer chosen — neither screen has a tenant to poll
+  // for. See stopDashboardPolling().
+  if (route === "sign-in" || route === "workspace") stopDashboardPolling();
   if (route === "sign-in") { renderSignIn(); return; }
   if (route === "workspace") { renderWorkspace(); return; }
   if (!signedIn) return;
@@ -891,8 +899,68 @@ function setStatus(message) {
  * starts a second interval or loses the one already running.
  */
 function ensureDashboardPolling() {
-  if (state.pollTimer) return;
-  state.pollTimer = window.setInterval(() => refreshDashboard(false), Math.max(3, Math.min(60, state.settings.pollSeconds)) * 1000);
+  if (state.polling) return;
+  state.polling = true;
+  state.pollFailures = 0;
+  scheduleNextPoll();
+}
+
+/**
+ * Widening gaps once the console stops being answered, matching the two
+ * native consoles.
+ *
+ * A fixed six-second interval is right while things work and wrong the moment
+ * they stop: hammering an unreachable Worker every six seconds does not bring
+ * it back sooner, and it fills a clinic's connection — and its console — with
+ * retries. vet-windows has had this (MainViewModel.BackoffSeconds) and
+ * vet-desktop reconnects on the same shape; the web console was the one
+ * retrying at full speed forever.
+ */
+const POLL_BACKOFF_SECONDS = [5, 10, 20, 40, 60];
+
+function nextPollSeconds() {
+  const configured = Math.max(3, Math.min(60, state.settings.pollSeconds));
+  if (!state.pollFailures) return configured;
+  return POLL_BACKOFF_SECONDS[Math.min(state.pollFailures - 1, POLL_BACKOFF_SECONDS.length - 1)];
+}
+
+/**
+ * One timer that re-arms itself, rather than a free-running interval.
+ *
+ * An interval cannot back off, and — more to the point — it keeps firing
+ * through whatever happens inside it, which is how a console with no session
+ * left went on asking for a dashboard every six seconds for the life of the
+ * tab. Each poll now schedules the next one only if polling is still wanted.
+ */
+function scheduleNextPoll() {
+  window.clearTimeout(state.pollTimer);
+  state.pollTimer = null;
+  if (!state.polling) return;
+  state.pollTimer = window.setTimeout(async () => {
+    state.pollTimer = null;
+    await refreshDashboard(false);
+    scheduleNextPoll();
+  }, nextPollSeconds() * 1000);
+}
+
+/**
+ * The counterpart to ensureDashboardPolling, and the thing that was missing.
+ *
+ * The poll used to be cleared in exactly two places: an explicit Sign out
+ * click, and a workstation discovering mid-shift that its access was revoked.
+ * A Clerk session that simply *ends* — expired, signed out in another tab,
+ * revoked in the dashboard — went through neither. Clerk's listener fires,
+ * renderRoute() sends the screen to sign-in and returns early, and the
+ * six-second interval it never knew about keeps running for as long as the
+ * tab is open: one 403 every six seconds, forever, against an endpoint that
+ * will never answer again. That is what a clinic's console was doing to this
+ * API, and the only place it showed up was a developer console nobody had
+ * open.
+ */
+function stopDashboardPolling() {
+  state.polling = false;
+  window.clearTimeout(state.pollTimer);
+  state.pollTimer = null;
 }
 
 async function enterConsole() {
@@ -993,23 +1061,38 @@ async function refreshDashboard(initial) {
 
     for (const request of newArrivals) await onNewPendingRequest(request);
 
-    setStatus(`Updated ${new Intl.DateTimeFormat("en-US", { hour: "numeric", minute: "2-digit", second: "2-digit" }).format(new Date())} · next check in ${Math.max(3, Math.min(60, state.settings.pollSeconds))} sec`);
+    state.pollFailures = 0;
+    setStatus(`Updated ${new Intl.DateTimeFormat("en-US", { hour: "numeric", minute: "2-digit", second: "2-digit" }).format(new Date())} · next check in ${nextPollSeconds()} sec`);
   } catch (error) {
-    // A workstation whose access was revoked mid-session (or expired) reads
-    // as this same error on its very next poll — there is no separate
-    // "your session ended" push, so the poll is what notices.
-    if (isWorkstationOnly() && error.code === "CLINIC_ACCESS_REQUIRED") {
-      window.clearInterval(state.pollTimer);
-      clearWorkstationLocal();
-      state.workstation = null;
-      showToast("This workstation's access was revoked. Enter a new code to continue.");
+    // Access that has gone away is not a "connection issue", and retrying it
+    // every six seconds is not a recovery strategy. There is no push that
+    // says a session ended, so the poll is what notices — for a workstation
+    // whose code was revoked mid-shift, and equally for a member whose Clerk
+    // session expired or was signed out in another tab.
+    const accessGone = error.code === "CLINIC_ACCESS_REQUIRED" || error.code === "AUTHENTICATION_REQUIRED";
+    if (accessGone) {
+      stopDashboardPolling();
+      if (isWorkstationOnly()) {
+        clearWorkstationLocal();
+        state.workstation = null;
+        showToast("This workstation's access was revoked. Enter a new code to continue.");
+      } else {
+        state.dashboard = null;
+        state.dashboardInitialized = false;
+        showToast("Your session ended. Sign in again to see the queue.");
+      }
       location.hash = "sign-in";
       await renderRoute();
       return;
     }
+    // Not being answered, as opposed to being refused above. Say how long the
+    // wait is and which attempt this is, the way both native consoles do —
+    // "Connection issue" alone tells a front desk nothing about whether the
+    // numbers on screen are five seconds or five minutes stale.
+    state.pollFailures += 1;
     $$("[data-rail-status-chip]").forEach((chip) => chip.classList.add("is-offline"));
     $$("[data-rail-status-text]").forEach((el) => { el.textContent = "Connection issue"; });
-    setStatus(`Connection issue · ${error.message}`);
+    setStatus(`Connection issue · ${error.message} Trying again in ${nextPollSeconds()} sec (attempt ${state.pollFailures}).`);
   } finally {
     setBusy(false);
   }
@@ -1647,10 +1730,10 @@ function wireSettingsForm() {
       const value = input.type === "checkbox" ? input.checked : Math.max(3, Math.min(60, Number(input.value) || DEFAULT_SETTINGS.pollSeconds));
       state.settings[key] = value;
       saveSettings();
-      if (key === "pollSeconds") {
-        window.clearInterval(state.pollTimer);
-        state.pollTimer = window.setInterval(() => refreshDashboard(false), value * 1000);
-      }
+      // Re-arm at the new interval. This used to clear the timer and start a
+      // fresh setInterval directly, which quietly resurrected polling on a
+      // screen that had deliberately stopped it.
+      if (key === "pollSeconds" && state.polling) scheduleNextPoll();
     });
   });
   $$('[data-action="request-notifications"]').forEach((button) => button.addEventListener("click", async () => {
@@ -2710,12 +2793,18 @@ function renderStudio() {
 
 function wireGlobalActions() {
   $$('[data-route]').forEach((el) => el.addEventListener("click", () => setRoute(el.dataset.route)));
-  $$('[data-action="refresh-now"]').forEach((el) => el.addEventListener("click", () => refreshDashboard(true)));
+  $$('[data-action="refresh-now"]').forEach((el) => el.addEventListener("click", async () => {
+    // Asking now also ends the backoff: a person pressing this has new
+    // information (the wifi is back) that the failure count does not.
+    state.pollFailures = 0;
+    await refreshDashboard(true);
+    if (state.polling) scheduleNextPoll();
+  }));
   $$('[data-action="open-mini"]').forEach((el) => el.addEventListener("click", () => openMiniWindow(true)));
   $('[data-workstation-toggle]')?.addEventListener("click", toggleWorkstationEntry);
   $$('[data-action="sign-out"]').forEach((button) => button.addEventListener("click", async () => {
     closeMiniWindow();
-    window.clearInterval(state.pollTimer);
+    stopDashboardPolling();
     if (isWorkstationOnly()) { await endWorkstation(); return; }
     try { await state.clerk?.signOut(); } catch { /* already signed out */ }
     location.hash = "sign-in";

@@ -109,11 +109,19 @@ const CONTENT_SECURITY_POLICY = [
   // `run_worker_first: ["/api/*"]` meant this Worker never ran for one;
   // enforcing it (the _headers fix) is what surfaced the missing host, on all
   // four surfaces at once.
-  "script-src 'self' https://clerk.timinow.pet https://js.stripe.com https://unpkg.com https://api.mapbox.com",
+  // Cloudflare Web Analytics. The beacon is injected at the edge by the
+  // zone's own Web Analytics setting, not by any markup in this repository —
+  // so leaving it out of the policy did not stop it being added, it only made
+  // every page log a CSP refusal and the analytics silently not work. It is
+  // cookieless, carries no personal data, and goes to Cloudflare, which
+  // already serves and stores everything here. To stop it, turn Web Analytics
+  // off for the zone in the Cloudflare dashboard and delete these two hosts
+  // (docs/SUBPROCESSORS.md moves with them — see rule 3).
+  "script-src 'self' https://clerk.timinow.pet https://js.stripe.com https://unpkg.com https://api.mapbox.com https://static.cloudflareinsights.com",
   "style-src 'self' 'unsafe-inline' https://api.mapbox.com",
   "img-src 'self' data: blob: https://api.mapbox.com https://*.tiles.mapbox.com",
   "font-src 'self' data:",
-  "connect-src 'self' https://clerk.timinow.pet https://api.stripe.com https://api.mapbox.com https://events.mapbox.com https://verification.didit.me",
+  "connect-src 'self' https://clerk.timinow.pet https://api.stripe.com https://api.mapbox.com https://events.mapbox.com https://verification.didit.me https://cloudflareinsights.com",
   "frame-src https://js.stripe.com https://hooks.stripe.com https://verification.didit.me",
   "worker-src 'self' blob:",
   "object-src 'none'",

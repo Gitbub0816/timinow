@@ -7,7 +7,7 @@
 # in `npm run check` fails if this file and the Worker disagree.
 
 /*
-  content-security-policy: default-src 'self'; script-src 'self' https://clerk.timinow.pet https://js.stripe.com https://unpkg.com https://api.mapbox.com; style-src 'self' 'unsafe-inline' https://api.mapbox.com; img-src 'self' data: blob: https://api.mapbox.com https://*.tiles.mapbox.com; font-src 'self' data:; connect-src 'self' https://clerk.timinow.pet https://api.stripe.com https://api.mapbox.com https://events.mapbox.com https://verification.didit.me; frame-src https://js.stripe.com https://hooks.stripe.com https://verification.didit.me; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'
+  content-security-policy: default-src 'self'; script-src 'self' https://clerk.timinow.pet https://js.stripe.com https://unpkg.com https://api.mapbox.com https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline' https://api.mapbox.com; img-src 'self' data: blob: https://api.mapbox.com https://*.tiles.mapbox.com; font-src 'self' data:; connect-src 'self' https://clerk.timinow.pet https://api.stripe.com https://api.mapbox.com https://events.mapbox.com https://verification.didit.me https://cloudflareinsights.com; frame-src https://js.stripe.com https://hooks.stripe.com https://verification.didit.me; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'
   permissions-policy: camera=(), microphone=(), payment=(self), geolocation=(self)
   referrer-policy: strict-origin-when-cross-origin
   x-content-type-options: nosniff

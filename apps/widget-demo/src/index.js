@@ -49,11 +49,19 @@ const HTML_HEADERS = { "content-type": "text/html; charset=utf-8", "cache-contro
 // gallery only ever loads the customer Worker's own widget.js.
 const CONTENT_SECURITY_POLICY = [
   "default-src 'self'",
-  "script-src 'self' https://timinow.pet",
+  // Cloudflare Web Analytics. The beacon is injected at the edge by the
+  // zone's own Web Analytics setting, not by any markup in this repository —
+  // so leaving it out of the policy did not stop it being added, it only made
+  // every page log a CSP refusal and the analytics silently not work. It is
+  // cookieless, carries no personal data, and goes to Cloudflare, which
+  // already serves and stores everything here. To stop it, turn Web Analytics
+  // off for the zone in the Cloudflare dashboard and delete these two hosts
+  // (docs/SUBPROCESSORS.md moves with them — see rule 3).
+  "script-src 'self' https://timinow.pet https://static.cloudflareinsights.com",
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data:",
   "font-src 'self' data:",
-  "connect-src 'self' https://timinow.pet",
+  "connect-src 'self' https://timinow.pet https://cloudflareinsights.com",
   "object-src 'none'",
   "base-uri 'self'",
   "form-action 'self'",

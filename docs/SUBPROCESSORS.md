@@ -58,6 +58,8 @@ which `src/index.js` (or `apps/*/src/index.js`) declares it.
 | `https://clerk.timinow.pet` | script-src, connect-src | Clerk's custom Frontend API domain (`CLERK_ISSUER`). **script-src too**: the browser loads clerk-js itself from here — Clerk proxies the same build at `/npm/@clerk/clerk-js@5/headless/+esm` — rather than from a CDN, so the SDK and the session calls share the one host sign-in already cannot work without | customer, vet, admin, blog |
 | `https://img.clerk.com` | img-src | Avatars Clerk serves for a signed-in account | blog |
 | `https://timinow.pet` | script-src, connect-src | The customer Worker's own `/widget.js` and `/api/widget/:token/status`, embedded from the vet console's Widget Studio preview and the widget-demo gallery | vet, widget-demo |
+| `https://static.cloudflareinsights.com` | script-src | Cloudflare Web Analytics beacon, injected at the edge by the zone setting rather than by any markup here — cookieless, no personal data | customer, vet, admin, blog, widget-demo |
+| `https://cloudflareinsights.com` | connect-src | Where that beacon reports to (`/cdn-cgi/rum`) | customer, vet, admin, blog, widget-demo |
 
 Not in any CSP because it is never loaded by a browser page (server-to-server
 only, called from Worker code, never from `public/*.js` or `apps/*/public/*.js`):
