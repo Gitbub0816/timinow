@@ -1,6 +1,7 @@
 import { actorForRequest, isOrgAdmin, roleAllows, signInRequired } from "./auth.js";
 import { publicConfig } from "./config.js";
 import { LANDING_PAGES, renderLandingPage, renderNotFoundPage } from "./landing.js";
+import { indexNowKey, indexNowKeyPath } from "./indexnow.js";
 import {
   SITE,
   canonicalUrl,
@@ -1639,8 +1640,17 @@ export async function updateClinicLocationSettings(request, env, actor, tenantId
  * sample clears a floor, so a quiet night never renders as "1 of 1 searches
  * got an offer" or "1 participating clinic".
  */
-async function publicStats(env) {
-  if (!hasDatabase(env)) return json({ generatedAt: new Date().toISOString(), windowDays: 30, stats: {} });
+/**
+ * The same numbers the landing pages quote, separated from the Response so
+ * they can be read by something other than a fetch.
+ *
+ * Every figure here is gated on sample size — see the thresholds below — and a
+ * figure that has not earned its way past one is simply absent rather than
+ * estimated. A page that quotes it therefore either has a real number or says
+ * nothing, which is the only version of this worth publishing.
+ */
+async function publicStatsPayload(env) {
+  if (!hasDatabase(env)) return { generatedAt: new Date().toISOString(), windowDays: 30, stats: {} };
   const windowStart = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
   const [clinicRow, searchRows] = await Promise.all([
     env.DB.prepare("SELECT COUNT(DISTINCT tenant_id) AS n FROM locations WHERE active = 1").first(),
@@ -1671,7 +1681,11 @@ async function publicStats(env) {
       stats.medianFirstOfferSeconds = Math.round(medianSeconds);
     }
   }
-  return json({ generatedAt: new Date().toISOString(), windowDays: 30, stats });
+  return { generatedAt: new Date().toISOString(), windowDays: 30, stats };
+}
+
+async function publicStats(env) {
+  return json(await publicStatsPayload(env));
 }
 
 export async function setClinicAvailability(request, env, actor, tenantId) {
@@ -2548,6 +2562,12 @@ async function handleCrawlable(request, env, url) {
   if (request.method !== "GET" && request.method !== "HEAD") return null;
   const path = url.pathname.replace(/\/+$/, "") || "/";
 
+  // IndexNow's ownership proof: the key, as a text file, at the path the
+  // submission points back at. Public by design — see src/indexnow.js.
+  if (indexNowKeyPath(env) && path === indexNowKeyPath(env)) {
+    return new Response(indexNowKey(env), { headers: { ...SEO_TEXT_HEADERS, ...SECURITY_HEADERS } });
+  }
+
   if (path === "/robots.txt") {
     return new Response(robotsTxt({
       sitemaps: [`${SITE.customerOrigin}/sitemap.xml`, `${SITE.blogBase}/sitemap.xml`],
@@ -2604,9 +2624,14 @@ async function handleCrawlable(request, env, url) {
     }), { headers: { ...SEO_TEXT_HEADERS, ...SECURITY_HEADERS } });
   }
 
-  const landing = renderLandingPage(path);
-  if (landing) {
-    return new Response(landing, { headers: { ...SEO_HTML_HEADERS, ...SECURITY_HEADERS } });
+  if (LANDING_PAGES[path]) {
+    // Read per render rather than baked in at deploy: the whole claim is that
+    // these are current. Failure is silent and the page simply omits them —
+    // a marketing page must not 500 because a statistics query did.
+    const payload = await publicStatsPayload(env).catch(() => null);
+    return new Response(renderLandingPage(path, { stats: payload?.stats || {} }), {
+      headers: { ...SEO_HTML_HEADERS, ...SECURITY_HEADERS }
+    });
   }
 
   if (path === "/" && env.ASSETS) {

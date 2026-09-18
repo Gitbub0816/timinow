@@ -16,6 +16,7 @@
  */
 
 import { hasDatabase } from "./db.js";
+import { postUrl, submitToIndexNow } from "./indexnow.js";
 import { bylineFor, slugify } from "./content.js";
 
 function newId(prefix) {
@@ -129,7 +130,13 @@ export async function createPost(env, author, { title, excerpt, bodyMarkdown, pu
   ).run();
 
   const row = await env.DB.prepare("SELECT * FROM blog_posts WHERE id = ? LIMIT 1").bind(id).first();
-  return { ok: true, post: normalizePost(row, { includeBody: true }) };
+  const post = normalizePost(row, { includeBody: true });
+  // Announced here rather than by the caller, because there are two callers —
+  // an operator in the admin console and a clinic in the veterinary console —
+  // and a post that is announced from one path and not the other is the kind
+  // of gap nobody notices until they wonder why half the posts index slowly.
+  if (post.status === "published") await submitToIndexNow(env, [postUrl(post.slug)]);
+  return { ok: true, post };
 }
 
 /**
@@ -168,7 +175,12 @@ export async function updatePost(env, postId, { title, excerpt, bodyMarkdown, pu
     "UPDATE blog_posts SET title = ?, excerpt = ?, body_markdown = ?, status = ?, published_at = ?, updated_at = ? WHERE id = ?"
   ).bind(nextTitle, nextExcerpt, nextBody, status, publishedAt, now, postId).run();
   const row = await env.DB.prepare("SELECT * FROM blog_posts WHERE id = ? LIMIT 1").bind(postId).first();
-  return { ok: true, post: normalizePost(row, { includeBody: true }) };
+  const updated = normalizePost(row, { includeBody: true });
+  // On every edit of a live post, not only on first publish: a correction is
+  // a change to a URL a search engine already holds, and telling it so is the
+  // difference between the fix being visible today and next week.
+  if (updated.status === "published") await submitToIndexNow(env, [postUrl(updated.slug)]);
+  return { ok: true, post: updated };
 }
 
 /**

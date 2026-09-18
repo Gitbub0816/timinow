@@ -44,6 +44,9 @@
     "CLERK_JWKS_URL": "https://clerk.timinow.pet/.well-known/jwks.json",
     "CLERK_TOKEN_TEMPLATE": "timinow",
     "AUTHORIZED_PARTIES": "https://blog.timinow.pet,https://providers.timinow.pet,https://app.timinow.pet,https://timinow.pet,https://www.timinow.pet,https://admin.timinow.pet",
+    // IndexNow, so a post announces itself the moment it is published from
+    // this console. Public by design — see src/indexnow.js.
+    "INDEXNOW_KEY": "17d3f8d93651178e78c5e7d2229195e5",
     "CUSTOMER_APP_URL": "https://timinow.pet",
     "VET_APP_URL": "https://providers.timinow.pet",
     // The address subscription mail is sent from. Public by nature; the API

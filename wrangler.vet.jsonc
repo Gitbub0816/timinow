@@ -41,6 +41,9 @@
     // Where an invited staff member lands after accepting a Clerk invitation.
     "VET_APP_URL": "https://providers.timinow.pet",
     // The customer app's own origin — see src/config.js customerAppUrl.
+    // IndexNow, so a post announces itself the moment it is published from
+    // this console. Public by design — see src/indexnow.js.
+    "INDEXNOW_KEY": "17d3f8d93651178e78c5e7d2229195e5",
     "CUSTOMER_APP_URL": "https://timinow.pet",
     "AUTHORIZED_PARTIES": "https://providers.timinow.pet,https://app.timinow.pet,https://timinow.pet,https://www.admin.timinow.pet,https://www.timinow.pet,https://admin.timinow.pet",
     "MAPBOX_STYLE_URL": "mapbox://styles/calebowen2019/cmt3nci25004d01sya8qxcb4u",

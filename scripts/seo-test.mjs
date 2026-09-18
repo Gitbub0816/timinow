@@ -757,3 +757,68 @@ console.log("SEO one domain: /blog forwards to the blog Worker with its prefix s
 }
 
 console.log("SEO redirect: blog.timinow.pet answers 301 to the same path under timinow.pet/blog, and forwarded requests are served rather than looping.");
+
+/* ───────────────────────────────── measured claims, and IndexNow ── */
+
+/**
+ * The network figures are quoted only when they exist.
+ *
+ * src/index.js withholds each one until its sample is large enough to mean
+ * anything, so a page either states a measured fact or says nothing. A
+ * marketing page that invents a number when the query comes back empty is the
+ * exact failure this shape prevents.
+ */
+{
+  const { renderLandingPage } = await import("../src/landing.js");
+  const quiet = renderLandingPage("/emergency-vet");
+  assert(!quiet.includes("network-proof"), "no figures means no sentence, not a placeholder");
+
+  const loud = renderLandingPage("/emergency-vet", { stats: { searchesWithOfferPct: 71, medianFirstOfferSeconds: 10, participatingClinics: 12 } });
+  assert(loud.includes("71% of searches received at least one offer"), "the offer rate is quoted");
+  assert(loud.includes("median time to that first offer was 10 seconds"), "the median is quoted with its unit");
+  assert(loud.includes("12 veterinary practices"), "the clinic count is quoted");
+  assert(loud.includes("last 30 days"), "and the window it was measured over");
+  assert(!/over \d/i.test(loud.replace(/measured over/gi, "")), "no rounding up, no 'over'");
+
+  const partial = renderLandingPage("/pricing", { stats: { medianFirstOfferSeconds: 1 } });
+  assert(partial.includes("was 1 second."), "a single second is singular");
+  assert(!partial.includes("% of searches"), "a withheld figure is simply absent");
+}
+
+/**
+ * IndexNow: a key that is public by design, and a submission that cannot take
+ * a publish down with it.
+ */
+{
+  const { indexNowKey, indexNowKeyPath, postUrl, submitToIndexNow } = await import("../src/indexnow.js");
+  assertEqual(indexNowKey({ INDEXNOW_KEY: "abc" }), null, "a key too short to be valid is refused rather than submitted");
+  assertEqual(indexNowKey({ INDEXNOW_KEY: "zz17d3f8d93651178e78c5e7d2229195e5" }), null, "a non-hex key is refused");
+  assertEqual(indexNowKey({ INDEXNOW_KEY: "17d3f8d93651178e78c5e7d2229195e5" }), "17d3f8d93651178e78c5e7d2229195e5", "a valid key is accepted");
+  assertEqual(indexNowKeyPath({ INDEXNOW_KEY: "17d3f8d93651178e78c5e7d2229195e5" }), "/17d3f8d93651178e78c5e7d2229195e5.txt", "the key file path is derived from the key");
+  assertEqual(postUrl("a-slug"), "https://timinow.pet/blog/p/a-slug", "a submitted post URL is the canonical one");
+
+  const noKey = await submitToIndexNow({}, ["https://timinow.pet/blog/p/x"]);
+  assertEqual(noKey.submitted, false, "no key means no submission");
+
+  // The failure that must never propagate: a search engine being unreachable
+  // cannot be the reason a post fails to publish.
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => { throw new Error("network down"); };
+  try {
+    const result = await submitToIndexNow({ INDEXNOW_KEY: "17d3f8d93651178e78c5e7d2229195e5" }, ["https://timinow.pet/blog/p/x"]);
+    assertEqual(result.submitted, false, "a failed submission is reported, not thrown");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  // The key file is served, and only at its own path.
+  const { default: worker } = await import("../src/index.js");
+  const env = { SURFACE: "customer", INDEXNOW_KEY: "17d3f8d93651178e78c5e7d2229195e5", ASSETS: { fetch: async () => new Response("", { status: 404 }) } };
+  const served = await worker.fetch(new Request("https://timinow.pet/17d3f8d93651178e78c5e7d2229195e5.txt"), env, { waitUntil() {} });
+  assertEqual(served.status, 200, "the key file is served");
+  assertEqual((await served.text()).trim(), "17d3f8d93651178e78c5e7d2229195e5", "and contains exactly the key");
+  const other = await worker.fetch(new Request("https://timinow.pet/deadbeef.txt"), env, { waitUntil() {} });
+  assertEqual(other.status, 404, "and nothing else answers as a key file");
+}
+
+console.log("SEO claims and IndexNow: figures appear only when measured, and a publish announces its URL without being able to fail because of it.");

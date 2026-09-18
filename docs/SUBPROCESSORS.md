@@ -63,7 +63,9 @@ which `src/index.js` (or `apps/*/src/index.js`) declares it.
 
 Not in any CSP because it is never loaded by a browser page (server-to-server
 only, called from Worker code, never from `public/*.js` or `apps/*/public/*.js`):
-`api.clerk.com` (JWKS fetch in `src/auth.js`), `generativelanguage.googleapis.com`
+`api.indexnow.org` (told that a blog post was published or corrected, from
+`src/indexnow.js`; carries a URL and a public domain-ownership key and nothing
+else), `api.clerk.com` (JWKS fetch in `src/auth.js`), `generativelanguage.googleapis.com`
 (Gemini TTS, proxied through the voice-gateway Worker so the API key never
 reaches a browser), `api.twilio.com`, Apple's APNs hosts.
 

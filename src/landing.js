@@ -98,7 +98,38 @@ const NAV = [
  * different company, and carries the app's header and footer markup rather
  * than the app itself.
  */
-function document_({ path, title, description, h1, lede, sections, faq = [], crumbs = [], extraSchema = [] }) {
+/**
+ * The live numbers, as a sentence, or nothing at all.
+ *
+ * src/index.js gates each figure on sample size and omits anything that has
+ * not earned its way past the threshold, so this either states a measured
+ * fact or stays quiet. There is no rounding up, no "over", and no figure
+ * without the window it was measured over — a statistic on a page like this
+ * is exactly the kind of thing an assistant will quote verbatim, and it has
+ * to survive being read on its own.
+ */
+function networkProof(stats) {
+  if (!stats) return "";
+  const parts = [];
+  if (stats.searchesWithOfferPct != null) {
+    parts.push(`${stats.searchesWithOfferPct}% of searches received at least one offer from a clinic`);
+  }
+  if (stats.medianFirstOfferSeconds != null) {
+    const seconds = stats.medianFirstOfferSeconds;
+    parts.push(`the median time to that first offer was ${seconds} second${seconds === 1 ? "" : "s"}`);
+  }
+  if (stats.participatingClinics != null) {
+    parts.push(`${stats.participatingClinics} veterinary practices were reporting capacity`);
+  }
+  if (!parts.length) return "";
+  const sentence = parts.length === 1
+    ? parts[0]
+    : parts.slice(0, -1).join(", ") + " and " + parts[parts.length - 1];
+  return `<p class="network-proof"><strong>Measured, not claimed.</strong> Over the last 30 days, ${escapeHtml(sentence)}. `
+    + `These figures are recomputed from Tími's own records and are withheld entirely until the sample is large enough to mean anything.</p>`;
+}
+
+function document_({ path, title, description, h1, lede, sections, faq = [], crumbs = [], stats = null }) {
   const canonical = canonicalUrl(SITE.customerOrigin, path);
   const head = headTags({ title, description, canonical, type: "website" }) + "\n  " + graph([
     organizationSchema(),
@@ -161,6 +192,7 @@ function document_({ path, title, description, h1, lede, sections, faq = [], cru
       <h1>${escapeHtml(h1)}</h1>
       <p class="hero-lede">${escapeHtml(lede)}</p>
       <p><a class="button button-primary" href="/#find">See who can take your pet now <span aria-hidden="true">→</span></a></p>
+      ${networkProof(stats)}
       ${sections}
       ${faqMarkup}
     </article>
@@ -193,7 +225,7 @@ const HOME_CRUMB = { name: "Tími NOW", url: `${SITE.customerOrigin}/` };
  * is the honest ordering and because a page that buries it under a product
  * pitch deserves whatever happens next.
  */
-function emergencyVet() {
+function emergencyVet(stats) {
   const faq = [
     {
       question: "How do I find an emergency vet that is open right now?",
@@ -256,11 +288,12 @@ function emergencyVet() {
     lede: "Opening hours do not tell you whether a hospital is full. Clinics on Tími NOW report whether they can take another patient, and every result shows when they said it.",
     sections,
     faq,
-    crumbs: [HOME_CRUMB, { name: "Emergency care", url: `${SITE.customerOrigin}/emergency-vet` }]
+    crumbs: [HOME_CRUMB, { name: "Emergency care", url: `${SITE.customerOrigin}/emergency-vet` }],
+    stats
   });
 }
 
-function howItWorks() {
+function howItWorks(stats) {
   const faq = [
     {
       question: "How does Tími NOW work?",
@@ -322,7 +355,8 @@ function howItWorks() {
     lede: "Describe the problem once. Clinics that can actually take your pet answer, you pick one, and every other offer is released in the same moment.",
     sections,
     faq,
-    crumbs: [HOME_CRUMB, { name: "How it works", url: `${SITE.customerOrigin}/how-it-works` }]
+    crumbs: [HOME_CRUMB, { name: "How it works", url: `${SITE.customerOrigin}/how-it-works` }],
+    stats
   });
 }
 
@@ -338,7 +372,7 @@ function howItWorks() {
  * kind of mistake. So the page says what the Fund does and is explicit about
  * the much larger thing it does not do.
  */
-function helpWithVetBills() {
+function helpWithVetBills(stats) {
   const faq = [
     {
       question: "Does Paw It Forward pay my vet bill?",
@@ -390,11 +424,12 @@ function helpWithVetBills() {
     lede: "Tell the clinic before treatment starts — that is the sentence that changes the most. Here is what else is available, including what our own fund does and, more importantly, does not cover.",
     sections,
     faq,
-    crumbs: [HOME_CRUMB, { name: "Help with vet bills", url: `${SITE.customerOrigin}/help-with-vet-bills` }]
+    crumbs: [HOME_CRUMB, { name: "Help with vet bills", url: `${SITE.customerOrigin}/help-with-vet-bills` }],
+    stats
   });
 }
 
-function forVeterinarians() {
+function forVeterinarians(stats) {
   const faq = [
     {
       question: "What does Tími NOW cost a veterinary practice?",
@@ -457,11 +492,12 @@ function forVeterinarians() {
     lede: "Say what you can take, when you can take it. Requests arrive structured and answerable, and you pay only when a connection actually completes.",
     sections,
     faq,
-    crumbs: [HOME_CRUMB, { name: "For veterinary clinics", url: `${SITE.customerOrigin}/for-veterinarians` }]
+    crumbs: [HOME_CRUMB, { name: "For veterinary clinics", url: `${SITE.customerOrigin}/for-veterinarians` }],
+    stats
   });
 }
 
-function pricing() {
+function pricing(stats) {
   const faq = [
     {
       question: "Is Tími NOW free to use?",
@@ -520,7 +556,8 @@ function pricing() {
     lede: `Searching is free and needs no account. ${OWNER_FEE} is charged to a pet owner only when a booking actually completes — never for a request that is declined, expires, or is cancelled.`,
     sections,
     faq,
-    crumbs: [HOME_CRUMB, { name: "Pricing", url: `${SITE.customerOrigin}/pricing` }]
+    crumbs: [HOME_CRUMB, { name: "Pricing", url: `${SITE.customerOrigin}/pricing` }],
+    stats
   });
 }
 
@@ -574,7 +611,7 @@ export const LANDING_PAGES = {
   "/pricing": { render: pricing, changefreq: "monthly", priority: 0.7 }
 };
 
-export function renderLandingPage(path) {
+export function renderLandingPage(path, { stats = null } = {}) {
   const page = LANDING_PAGES[path];
-  return page ? page.render() : null;
+  return page ? page.render(stats) : null;
 }

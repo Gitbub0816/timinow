@@ -47,7 +47,12 @@
     "VOICE_DRAIN_TOKEN": "d82e070830e6d63266e55c609c5236f6d196345e13bd657d",
     // The origin notifyFirstOfferBySms (src/index.js) builds the customer's
     // "close the page, here's your link" SMS around — no trailing slash.
-    "PUBLIC_APP_URL": "https://app.timinow.pet"
+    "PUBLIC_APP_URL": "https://app.timinow.pet",
+    // IndexNow. Public by design: the protocol authenticates by having the
+    // site serve this same value as a text file at its root, so it proves
+    // control of the domain rather than being a credential. A var, therefore,
+    // and committed on purpose. See src/indexnow.js.
+    "INDEXNOW_KEY": "17d3f8d93651178e78c5e7d2229195e5"
   },
   // Worker-to-worker, so a fan-out can ring clinics immediately instead of
   // waiting for a scheduler. Service bindings do not traverse the public
@@ -115,6 +120,7 @@
       "/",
       "/robots.txt",
       "/sitemap.xml",
+      "/17d3f8d93651178e78c5e7d2229195e5.txt",
       "/llms.txt",
       "/emergency-vet",
       "/how-it-works",

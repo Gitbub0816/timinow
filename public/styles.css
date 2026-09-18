@@ -856,3 +856,16 @@ dialog { width: min(620px, calc(100% - 2rem)); max-height: 90svh; overflow: auto
 .global-footer nav { display: flex; flex-wrap: wrap; gap: .5rem 1.25rem; max-width: 60rem; margin: 0 auto .9rem; }
 .global-footer nav a { color: var(--blue); font-weight: 700; font-size: .92rem; }
 .global-footer p { max-width: 60rem; margin: 0 auto; color: var(--muted); font-size: .82rem; line-height: 1.5; }
+
+/* The measured figures on a landing document. Gold, because it is a claim
+   with evidence rather than a warning — see the design system's use of gold
+   for things that want to be noticed and read. */
+.landing-main .network-proof {
+  background: var(--gold-soft);
+  border: 2px solid var(--ink);
+  box-shadow: 4px 4px 0 var(--ink);
+  padding: .9rem 1.1rem;
+  margin: 1.5rem 0;
+  color: var(--ink);
+  font-size: .98rem;
+}
