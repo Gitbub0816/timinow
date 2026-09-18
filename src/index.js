@@ -1,6 +1,6 @@
 import { actorForRequest, isOrgAdmin, roleAllows, signInRequired } from "./auth.js";
 import { publicConfig } from "./config.js";
-import { LANDING_PAGES, renderLandingPage } from "./landing.js";
+import { LANDING_PAGES, renderLandingPage, renderNotFoundPage } from "./landing.js";
 import {
   SITE,
   canonicalUrl,
@@ -2619,6 +2619,20 @@ async function handleCrawlable(request, env, url) {
   return null;
 }
 
+/**
+ * Anything that is neither an asset, an API call, a referral, nor a page.
+ *
+ * Reached because `not_found_handling` is now "none": an unmatched asset
+ * request falls through to this Worker rather than being answered with the
+ * app shell and a 200.
+ */
+function notFoundPage(url) {
+  return new Response(renderNotFoundPage(url.pathname), {
+    status: 404,
+    headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", ...SECURITY_HEADERS }
+  });
+}
+
 export default {
   async fetch(request, env, ctx) {
     const requestId = request.headers.get("cf-ray") || crypto.randomUUID();
@@ -2637,10 +2651,17 @@ export default {
           // robots, sitemap, llms.txt and the landing pages, which are real
           // documents rather than screens of the app. Anything this declines
           // falls through to the assets exactly as before.
-          : (await handleCrawlable(request, env, url).catch((error) => {
-              console.error(JSON.stringify({ event: "crawlable_render_failed", path: url.pathname, message: error.message }));
-              return null;
-            })) || await env.ASSETS.fetch(request);
+          : await (async () => {
+              const crawlable = await handleCrawlable(request, env, url).catch((error) => {
+                console.error(JSON.stringify({ event: "crawlable_render_failed", path: url.pathname, message: error.message }));
+                return null;
+              });
+              if (crawlable) return crawlable;
+              const asset = await env.ASSETS.fetch(request);
+              // The asset layer no longer invents a 200 for paths that do not
+              // exist — see notFoundPage.
+              return asset.status === 404 ? notFoundPage(url) : asset;
+            })();
       const headers = new Headers(response.headers);
       Object.entries(SECURITY_HEADERS).forEach(([key, value]) => headers.set(key, value));
       headers.set("x-request-id", requestId);

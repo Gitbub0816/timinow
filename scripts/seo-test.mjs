@@ -586,3 +586,54 @@ console.log("SEO landing pages: five documents, each with unique titles, standal
 }
 
 console.log("SEO consoles: the veterinary console, the platform console and the widget gallery all refuse indexing, in robots.txt and in their markup.");
+
+/* ─────────────────────────────── the routing config, which code cannot see ── */
+
+/**
+ * Every path a Worker claims must actually reach that Worker.
+ *
+ * This is the assertion that was missing, and it cost a production bug in the
+ * same pass that wrote it: the console robots.txt handlers were correct, the
+ * unit tests passed because they stub the asset binding, and
+ * providers.timinow.pet/robots.txt served index.html to crawlers because
+ * `run_worker_first` in wrangler.vet.jsonc did not name it. A Worker's code
+ * cannot see its own routing table; this reads the table.
+ *
+ * The same mechanism has now produced three separate outages in this
+ * repository — pages with no security headers, a blog with no rendered
+ * content, and a referral link that silently did nothing. It gets a test.
+ */
+{
+  const stripComments = (text) => text.replace(/^\s*\/\/.*$/gm, "");
+  const config = (file) => JSON.parse(stripComments(readFileSync(join(root, file), "utf8")));
+
+  /** wrangler's globs: `*` matches within a path segment and across them. */
+  const matches = (glob, path) =>
+    new RegExp("^" + glob.split("*").map((part) => part.replace(/[.+?^${}()|[\]\\]/g, "\\$&")).join(".*") + "$").test(path);
+
+  const { LANDING_PAGES } = await import("../src/landing.js");
+  const surfaces = [
+    ["wrangler.jsonc", ["/", "/robots.txt", "/sitemap.xml", "/llms.txt", "/r/abc", ...Object.keys(LANDING_PAGES)]],
+    ["wrangler.blog.jsonc", ["/", "/forum", "/robots.txt", "/sitemap.xml", "/feed.xml", "/llms.txt", "/p/a-slug", "/t/a-slug", "/subscribe/confirm"]],
+    ["wrangler.vet.jsonc", ["/robots.txt"]],
+    ["wrangler.admin.jsonc", ["/robots.txt"]]
+  ];
+
+  for (const [file, claimed] of surfaces) {
+    const assets = config(file).assets;
+    const first = assets.run_worker_first || [];
+    for (const path of claimed) {
+      const reachable = first.some((glob) => matches(glob, path)) || assets.not_found_handling === "none";
+      assert(reachable, `${file}: ${path} is rendered by the Worker but the asset layer answers first`);
+    }
+  }
+
+  // And the reverse: a fallback that hands back the app shell with a 200 for
+  // an address that does not exist is an unbounded supply of soft 404s.
+  for (const file of ["wrangler.jsonc", "wrangler.blog.jsonc"]) {
+    assertEqual(config(file).assets.not_found_handling, "none",
+      `${file}: public surfaces answer unknown paths themselves, not with a 200 and the shell`);
+  }
+}
+
+console.log("SEO routing: every path each Worker renders is reachable past the asset layer, and the two public surfaces answer their own 404s.");

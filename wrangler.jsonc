@@ -84,13 +84,22 @@
   "assets": {
     "directory": "./public",
     "binding": "ASSETS",
-    "not_found_handling": "single-page-application",
+    // "none", not "single-page-application". The customer app routes entirely
+    // on the hash, so there are no client-side paths for an SPA fallback to
+    // protect — all it did was answer every unknown path, and every scanner's
+    // invented one, with the homepage and a 200. That is an unbounded supply
+    // of soft 404s, and it also swallowed /r/:slug: a clinic's referral link,
+    // which is a real product feature handed out over the phone, never
+    // reached the Worker that resolves it. Unmatched requests now fall
+    // through to the Worker, which redirects, renders, or answers a real 404.
+    "not_found_handling": "none",
     // Every path the Worker answers itself. Assets are served before the
     // Worker runs otherwise, so a path missing from this list silently gets
     // the app shell instead of the document src/landing.js renders for it.
     // "/" is here because the root's <head> is rendered too — see renderHome.
     "run_worker_first": [
       "/api/*",
+      "/r/*",
       "/",
       "/robots.txt",
       "/sitemap.xml",

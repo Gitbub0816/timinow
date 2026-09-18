@@ -511,6 +511,21 @@ export default {
     // the fallback for a deployment without the assets binding.
     if (!env.ASSETS) return new Response("Not found", { status: 404, headers: SECURITY_HEADERS });
     const response = await env.ASSETS.fetch(request);
+
+    // `not_found_handling` is "none", so an address that is not an asset and
+    // not a route arrives here as a 404 rather than as the shell with a 200.
+    // Render the real page for it, because a 404 somebody reads is still a
+    // page and should say where to go.
+    if (response.status === 404 && (request.method === "GET" || request.method === "HEAD")) {
+      const shell = await shellFor(env, url).catch(() => null);
+      if (shell) {
+        return new Response(renderNotFound(shell, { path: url.pathname }), {
+          status: 404,
+          headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", ...SECURITY_HEADERS }
+        });
+      }
+    }
+
     const headers = new Headers(response.headers);
     for (const [name, value] of Object.entries(SECURITY_HEADERS)) headers.set(name, value);
     return new Response(response.body, { status: response.status, headers });

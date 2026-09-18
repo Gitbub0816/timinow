@@ -61,7 +61,10 @@
   "assets": {
     "directory": "./apps/blog/public",
     "binding": "ASSETS",
-    "not_found_handling": "single-page-application",
+    // "none": every path this surface has is rendered by the Worker now, so
+    // the SPA fallback has nothing left to protect and its only remaining
+    // effect was answering 200 for addresses that do not exist.
+    "not_found_handling": "none",
     // Every path the Worker renders itself has to be named here. Assets are
     // served before the Worker runs otherwise — which is the same mechanism
     // that once left every page with no security headers — so a path missing

@@ -58,7 +58,11 @@
     "directory": "./apps/vet-web/public",
     "binding": "ASSETS",
     "not_found_handling": "single-page-application",
-    "run_worker_first": ["/api/*"]
+    // "/robots.txt" as well as the API: the asset layer answers before the
+    // Worker runs, so without this the Worker's robots.txt is never reached
+    // and the SPA fallback serves index.html to a crawler asking whether it
+    // may crawl. Verified in production, where exactly that happened.
+    "run_worker_first": ["/api/*", "/robots.txt"]
   },
   "observability": {
     "enabled": true,

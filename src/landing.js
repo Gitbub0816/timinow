@@ -525,6 +525,41 @@ function pricing() {
 }
 
 /**
+ * A real 404.
+ *
+ * `not_found_handling: "single-page-application"` used to answer every
+ * unknown path with the app shell and a 200. That is a soft 404, and on this
+ * site it was unlimited: the customer app routes entirely on the hash, so
+ * there are no client-side paths for that fallback to be protecting. Every
+ * typo, every stale link, every path a scanner invents was a 200 with the
+ * homepage behind it, teaching crawlers that this origin says 200 for URLs
+ * that mean nothing — which it then applies to the ones that do.
+ */
+export function renderNotFoundPage(path = "/") {
+  return document_({
+    path,
+    title: "Page not found — Tími NOW",
+    description: "There is nothing at this address.",
+    h1: "There is nothing at this address",
+    lede: "The link may be old, or mistyped. Everything on this site is one of the pages below.",
+    sections: `
+      <section>
+        <h2>Where to go instead</h2>
+        <ul>
+          <li><a href="/#find">Find a clinic that can see your pet now</a></li>
+          <li><a href="/emergency-vet">Emergency care</a></li>
+          <li><a href="/how-it-works">How Tími NOW works</a></li>
+          <li><a href="/pricing">Pricing</a></li>
+          <li><a href="/help-with-vet-bills">Help with vet bills</a></li>
+          <li><a href="/for-veterinarians">For veterinary clinics</a></li>
+        </ul>
+      </section>
+    `
+  }).replace('<meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1">',
+             '<meta name="robots" content="noindex, follow">');
+}
+
+/**
  * Every landing page, by path.
  *
  * Exported as a map so the Worker's router, the sitemap and the test all read
