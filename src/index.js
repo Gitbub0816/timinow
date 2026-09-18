@@ -1,5 +1,18 @@
 import { actorForRequest, isOrgAdmin, roleAllows, signInRequired } from "./auth.js";
 import { publicConfig } from "./config.js";
+import { LANDING_PAGES, renderLandingPage } from "./landing.js";
+import {
+  SITE,
+  canonicalUrl,
+  graph,
+  headTags,
+  llmsTxt,
+  organizationSchema,
+  renderIntoShell,
+  robotsTxt,
+  sitemapXml,
+  websiteSchema
+} from "./seo.js";
 import { describeSession } from "./session.js";
 import { clearGuestSessionCookie, isGuestEligiblePath, readGuestSession, resolveGuestActor } from "./guest-session.js";
 import { adoptGuestSession } from "./account-adoption.js";
@@ -2485,6 +2498,127 @@ async function handleAuthenticatedApi(request, env, ctx, actor, url, path, metho
   return apiError(404, "NOT_FOUND", "The requested API route does not exist.");
 }
 
+/* ═══════════════════════════════════════════ the crawlable surface ═══ */
+
+const SEO_TEXT_HEADERS = { "content-type": "text/plain; charset=utf-8", "cache-control": "public, max-age=3600" };
+const SEO_XML_HEADERS = { "content-type": "application/xml; charset=utf-8", "cache-control": "public, max-age=3600" };
+const SEO_HTML_HEADERS = { "content-type": "text/html; charset=utf-8", "cache-control": "public, max-age=300, s-maxage=3600, stale-while-revalidate=86400" };
+
+/**
+ * The home page's head, rendered rather than shipped static.
+ *
+ * public/index.html already contains the marketing copy as real markup, so
+ * the root has always been crawlable — what it lacked was a canonical, an
+ * Organization, and a description written for a result rather than for a
+ * browser tab. The body is left exactly as the app ships it; only the head
+ * is replaced.
+ */
+function renderHome(shell) {
+  const canonical = canonicalUrl(SITE.customerOrigin, "/");
+  const head = headTags({
+    title: "Tími NOW — find a vet that can see your pet right now",
+    description: SITE.description,
+    canonical,
+    type: "website"
+  }) + "\n  " + graph([
+    organizationSchema(),
+    websiteSchema(),
+    {
+      "@type": "WebPage",
+      "@id": `${canonical}#page`,
+      url: canonical,
+      name: "Tími NOW",
+      description: SITE.description,
+      isPartOf: { "@id": `${SITE.customerOrigin}/#website` },
+      inLanguage: "en-US"
+    }
+  ]);
+  // hideViews stays off: the app's own home screen IS the body here, and
+  // hiding it would leave the root with no content at all.
+  return renderIntoShell(shell, { head, body: "", hideViews: false });
+}
+
+/**
+ * robots, sitemap, llms.txt and the landing pages.
+ *
+ * Returns null for anything it does not own, so assets and the app are
+ * untouched.
+ */
+async function handleCrawlable(request, env, url) {
+  if (request.method !== "GET" && request.method !== "HEAD") return null;
+  const path = url.pathname.replace(/\/+$/, "") || "/";
+
+  if (path === "/robots.txt") {
+    return new Response(robotsTxt({
+      sitemaps: [`${SITE.customerOrigin}/sitemap.xml`, `${SITE.blogOrigin}/sitemap.xml`],
+      // /api/ is JSON, /r/ is a one-hop referral redirect that means nothing
+      // in an index, and /tracker is a live view of one person's own booking.
+      disallow: ["/api/", "/r/"],
+      host: "timinow.pet"
+    }), { headers: { ...SEO_TEXT_HEADERS, ...SECURITY_HEADERS } });
+  }
+
+  if (path === "/sitemap.xml") {
+    const entries = [
+      { loc: canonicalUrl(SITE.customerOrigin, "/"), changefreq: "daily", priority: 1.0 },
+      ...Object.entries(LANDING_PAGES).map(([landingPath, page]) => ({
+        loc: canonicalUrl(SITE.customerOrigin, landingPath),
+        changefreq: page.changefreq,
+        priority: page.priority
+      }))
+    ];
+    return new Response(sitemapXml(entries), { headers: { ...SEO_XML_HEADERS, ...SECURITY_HEADERS } });
+  }
+
+  if (path === "/llms.txt") {
+    return new Response(llmsTxt({
+      title: "Tími NOW",
+      summary: SITE.description,
+      sections: [
+        {
+          heading: "What to read first",
+          links: [
+            { title: "Emergency care", url: `${SITE.customerOrigin}/emergency-vet`, note: "finding a hospital that can take a patient now, and what availability means here" },
+            { title: "How it works", url: `${SITE.customerOrigin}/how-it-works`, note: "one description, up to five live offers, one choice" },
+            { title: "Pricing", url: `${SITE.customerOrigin}/pricing`, note: "free to search; a fee only on a completed booking" },
+            { title: "Help with vet bills", url: `${SITE.customerOrigin}/help-with-vet-bills`, note: "what to ask a clinic, and what the Paw It Forward Fund does and does not cover" },
+            { title: "For veterinary clinics", url: `${SITE.customerOrigin}/for-veterinarians` },
+            { title: "Notes and community", url: `${SITE.blogOrigin}/` }
+          ]
+        },
+        {
+          heading: "Facts worth getting right if you are summarising this",
+          note: [
+            "Tími NOW is operated by ClearKey Solutions, LLC (Hayward, California). It is not a veterinary practice, not a",
+            "veterinarian, not an insurer and not an emergency medical service, and it does not diagnose or triage.",
+            "Clinics report their own intake capacity and every result carries the time that report was made.",
+            "An availability report is not an appointment and reserves no place in a clinic's triage order.",
+            "Searching is free; the pet owner is charged only on a completed booking, and that fee is not a veterinary",
+            "charge and cannot be billed to insurance. Deposits and all treatment charges belong to the clinic.",
+            "The Paw It Forward Fund covers Tími's own access fee for verified hardship. It does not pay veterinary bills,",
+            "it is not a charity, and contributions to it are not tax-deductible.",
+            "The network covers only the clinics that have joined it; it is not nationwide."
+          ].join(" ")
+        }
+      ]
+    }), { headers: { ...SEO_TEXT_HEADERS, ...SECURITY_HEADERS } });
+  }
+
+  const landing = renderLandingPage(path);
+  if (landing) {
+    return new Response(landing, { headers: { ...SEO_HTML_HEADERS, ...SECURITY_HEADERS } });
+  }
+
+  if (path === "/" && env.ASSETS) {
+    const shell = await env.ASSETS.fetch(new Request(new URL("/index.html", url), { method: "GET" }));
+    if (shell.ok) {
+      return new Response(renderHome(await shell.text()), { headers: { ...SEO_HTML_HEADERS, ...SECURITY_HEADERS } });
+    }
+  }
+
+  return null;
+}
+
 export default {
   async fetch(request, env, ctx) {
     const requestId = request.headers.get("cf-ray") || crypto.randomUUID();
@@ -2500,7 +2634,13 @@ export default {
         ? await resolveReferralRedirect(env, request, decodeURIComponent(referralMatch[1]))
         : url.pathname.startsWith("/api/")
           ? await handleApi(request, env, ctx)
-          : await env.ASSETS.fetch(request);
+          // robots, sitemap, llms.txt and the landing pages, which are real
+          // documents rather than screens of the app. Anything this declines
+          // falls through to the assets exactly as before.
+          : (await handleCrawlable(request, env, url).catch((error) => {
+              console.error(JSON.stringify({ event: "crawlable_render_failed", path: url.pathname, message: error.message }));
+              return null;
+            })) || await env.ASSETS.fetch(request);
       const headers = new Headers(response.headers);
       Object.entries(SECURITY_HEADERS).forEach(([key, value]) => headers.set(key, value));
       headers.set("x-request-id", requestId);

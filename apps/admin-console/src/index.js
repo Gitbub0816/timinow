@@ -13,6 +13,7 @@
  */
 
 import { actorForRequest, signInRequired } from "../../../src/auth.js";
+import { robotsTxt } from "../../../src/seo.js";
 import { publicConfig } from "../../../src/config.js";
 import { handleClinicApplicationList, handleClinicApplicationDecision } from "../../../src/clinic-billing.js";
 import { handleClinicContractList, handleClinicContractProfile, handleClinicContractUpdate } from "../../../src/clinic-contracts.js";
@@ -1416,12 +1417,31 @@ async function handleApi(request, env) {
   return apiError(404, "NOT_FOUND", "The requested API route does not exist.");
 }
 
+/**
+ * This surface is a console, not a publication.
+ *
+ * Nothing here belongs in a search index: the pages are behind a sign-in, the
+ * content is one clinic's own operational data, and the marketing case for
+ * this audience is made at timinow.pet/for-veterinarians, which is a real
+ * document written for it. Two surfaces competing for the same query is one
+ * of them losing.
+ *
+ * Until this pass there was no robots.txt at all on any Tími surface, which
+ * meant a crawler's only instruction was the absence of one.
+ */
+function robots() {
+  return new Response(robotsTxt({ allowAll: false, sitemaps: [] }), {
+    headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "public, max-age=86400", ...SECURITY_HEADERS }
+  });
+}
+
 export default {
   async fetch(request, env) {
     const requestId = request.headers.get("cf-ray") || crypto.randomUUID();
     const startedAt = Date.now();
     try {
       const url = new URL(request.url);
+      if (url.pathname === "/robots.txt") return robots();
       const response = url.pathname.startsWith("/api/")
         ? await handleApi(request, env)
         : await env.ASSETS.fetch(request);

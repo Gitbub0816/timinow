@@ -784,3 +784,61 @@ dialog { width: min(620px, calc(100% - 2rem)); max-height: 90svh; overflow: auto
 .booking-receipt .order-summary { margin: .7rem 0 .5rem; }
 .assistance-identity:empty { display: none; }
 .assistance-identity { min-height: 0; margin: 1rem 0; }
+
+/* ─────────────────────────────────────────────────── landing documents ──
+   The pages at /emergency-vet, /how-it-works, /help-with-vet-bills,
+   /for-veterinarians and /pricing (src/landing.js). They are documents rather
+   than screens of the app — no app.js, no router — so they need the reading
+   rules the app's screens get from their own layout classes, and nothing
+   else. Same tokens, same 2px ink borders, same hard offset shadow: a page
+   that ranks and then looks like a different company has wasted the ranking.
+*/
+/* Canvas, per the design system — the second light background, beside paper.
+   Written literally because this stylesheet has no --canvas token to point at
+   and inventing one here would put a design decision in a landing-page rule. */
+.landing-body { background: #f3f5fa; }
+
+.landing-main {
+  max-width: 44rem;
+  margin: 0 auto;
+  padding: 2.5rem 1.25rem 4rem;
+}
+
+.landing-main h1 { font-family: var(--serif); font-size: clamp(2rem, 5vw, 3rem); line-height: 1.08; margin: 0 0 1rem; }
+.landing-main h2 { font-family: var(--serif); font-size: clamp(1.35rem, 3vw, 1.75rem); margin: 2.5rem 0 .75rem; }
+.landing-main h3 { font-size: 1.05rem; margin: 0; display: inline; }
+.landing-main p, .landing-main li { font-size: 1.05rem; line-height: 1.65; color: var(--ink-soft); }
+.landing-main .hero-lede { font-size: 1.2rem; color: var(--ink); }
+.landing-main ol, .landing-main ul { padding-left: 1.25rem; }
+.landing-main li { margin: .4rem 0; }
+/* :not(.button) matters. Without it this rule outranks .button-primary's own
+   colour — class+element beats class — and repaints the coral call-to-action's
+   label blue, which lands at 1.8:1 against coral and fails WCAG 1.4.3 outright.
+   It shipped that way in this file's first draft and a screenshot caught it. */
+.landing-main a:not(.button) { color: var(--blue); }
+
+.landing-main table {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--paper);
+  border: 2px solid var(--ink);
+  box-shadow: 4px 4px 0 var(--ink);
+  margin: 1rem 0;
+}
+.landing-main th, .landing-main td { text-align: left; padding: .6rem .75rem; border-bottom: 1px solid var(--line); font-size: .98rem; }
+.landing-main th { font-weight: 700; color: var(--ink); }
+.landing-main tr:last-child td { border-bottom: 0; }
+
+/* The FAQ is the part an answer engine lifts, so it is ordinary text in an
+   ordinary <details>: open it with a click, and it is already in the DOM for
+   anything that never clicks. */
+.landing-faq details {
+  background: var(--paper);
+  border: 2px solid var(--ink);
+  box-shadow: 4px 4px 0 var(--ink);
+  padding: .85rem 1rem;
+  margin: .75rem 0;
+}
+.landing-faq summary { cursor: pointer; font-weight: 700; color: var(--ink); }
+.landing-faq summary::marker { color: var(--coral); }
+.landing-faq details p { margin: .65rem 0 0; }

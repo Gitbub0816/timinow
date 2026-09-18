@@ -85,7 +85,22 @@
     "directory": "./public",
     "binding": "ASSETS",
     "not_found_handling": "single-page-application",
-    "run_worker_first": ["/api/*"]
+    // Every path the Worker answers itself. Assets are served before the
+    // Worker runs otherwise, so a path missing from this list silently gets
+    // the app shell instead of the document src/landing.js renders for it.
+    // "/" is here because the root's <head> is rendered too — see renderHome.
+    "run_worker_first": [
+      "/api/*",
+      "/",
+      "/robots.txt",
+      "/sitemap.xml",
+      "/llms.txt",
+      "/emergency-vet",
+      "/how-it-works",
+      "/help-with-vet-bills",
+      "/for-veterinarians",
+      "/pricing"
+    ]
   },
   "observability": {
     "enabled": true,

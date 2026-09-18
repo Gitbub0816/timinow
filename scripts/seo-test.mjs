@@ -218,14 +218,17 @@ const post = {
 };
 post.byline = bylineFor(post);
 
-function assertPageBasics(html, { canonical, label }) {
+function assertPageBasics(html, { canonical, label, ssr = true }) {
   assertEqual(countOf(html, /<title>/g), 1, `${label}: exactly one title`);
   assertEqual(countOf(html, /<link rel="canonical"/g), 1, `${label}: exactly one canonical`);
   assertEqual(countOf(html, /<meta name="description"/g), 1, `${label}: exactly one description`);
   assert(html.includes(`<link rel="canonical" href="${canonical}">`), `${label}: canonical is ${canonical}`);
   assert(html.includes('<meta property="og:title"'), `${label}: has Open Graph`);
   assert(html.includes('<meta name="twitter:card"'), `${label}: has a Twitter card`);
-  assert(html.includes("<div data-ssr>"), `${label}: server-rendered body is present`);
+  // Blog pages are injected into the app shell and carry the marker the app
+  // removes on boot; the landing documents are whole pages and have no shell
+  // to inject into. Either way the content is in the first response.
+  if (ssr) assert(html.includes("<div data-ssr>"), `${label}: server-rendered body is present`);
   const blocks = jsonLdBlocks(html);
   assert(blocks.length >= 1, `${label}: has JSON-LD`);
   for (const block of blocks) assertEqual(block["@context"], "https://schema.org", `${label}: JSON-LD declares its context`);
@@ -413,3 +416,173 @@ console.log(`SEO tests passed: ${checks} assertions across canonical URLs, descr
 }
 
 console.log("SEO integration: the blog Worker serves rendered pages, robots.txt, sitemap.xml, feed.xml and llms.txt, and answers 404 for content that does not exist.");
+
+/* ───────────────────────────────────────────── the landing documents ── */
+
+/**
+ * The five pages that exist because the app routes on the hash and a fragment
+ * is not a URL. Each has to be a complete document, say true things, and keep
+ * saying the same prices as src/pricing.js.
+ */
+{
+  const { LANDING_PAGES, renderLandingPage } = await import("../src/landing.js");
+  const { FALLBACK_PRICING } = await import("../src/pricing.js");
+
+  const paths = Object.keys(LANDING_PAGES);
+  assertEqual(paths.length, 5, "five landing pages");
+  const titles = new Set();
+  const descriptions = new Set();
+
+  for (const path of paths) {
+    const html = renderLandingPage(path);
+    const canonical = `https://timinow.pet${path}`;
+    assert(html.startsWith("<!doctype html>"), `${path}: is a whole document`);
+    assert(html.includes('<html lang="en">'), `${path}: declares its language`);
+    assertPageBasics(html, { canonical, label: path, ssr: false });
+    assertEqual(countOf(html, /<h1>/g), 1, `${path}: exactly one h1`);
+
+    // Distinct titles and descriptions, or these pages compete with each other
+    // instead of with anybody else.
+    const title = /<title>([^<]*)<\/title>/.exec(html)[1];
+    const description = /<meta name="description" content="([^"]*)"/.exec(html)[1];
+    assert(!titles.has(title), `${path}: title is unique`);
+    assert(!descriptions.has(description), `${path}: description is unique`);
+    titles.add(title);
+    descriptions.add(description);
+    assert(title.length <= 75, `${path}: title fits a result (${title.length} chars)`);
+
+    // Every page reaches the app and the other pages: an orphan ranks alone.
+    assert(html.includes('href="/#find"'), `${path}: links into the app`);
+    assert(html.includes('href="/"'), `${path}: links home`);
+    assert(html.includes("blog.timinow.pet"), `${path}: links to the blog`);
+
+    // No script at all. These are documents; a marketing page that boots a
+    // single-page app to show a paragraph fights its own router.
+    assertEqual(countOf(html, /<script(?! type="application\/ld\+json")/g), 0, `${path}: ships no JavaScript`);
+
+    const nodes = jsonLdBlocks(html)[0]["@graph"];
+    assert(nodes.some((node) => node["@type"] === "Organization"), `${path}: declares the organisation`);
+    assert(nodes.some((node) => node["@type"] === "Service"), `${path}: declares the service`);
+    const faq = nodes.find((node) => node["@type"] === "FAQPage");
+    assert(faq && faq.mainEntity.length >= 4, `${path}: carries at least four questions`);
+    for (const question of faq.mainEntity) {
+      // An answer is read without the page around it, so it has to be a
+      // sentence rather than a fragment that only makes sense in place.
+      assert(question.acceptedAnswer.text.length > 60, `${path}: "${question.name}" has a standalone answer`);
+      // Every visible question is also in the markup — FAQ structured data
+      // that does not match the page is the definition of a manual action.
+      assert(html.includes(question.name.replace(/&/g, "&amp;")), `${path}: "${question.name}" is visible on the page`);
+    }
+  }
+
+  // The prices on the page are the prices the product charges.
+  const pricingHtml = renderLandingPage("/pricing");
+  assert(pricingHtml.includes(`$${FALLBACK_PRICING.ownerFeeCents / 100}`), "the pricing page quotes the owner fee from src/pricing.js");
+  assert(pricingHtml.includes(`$${FALLBACK_PRICING.clinicFeeCents / 100}`), "the pricing page quotes the clinic fee from src/pricing.js");
+
+  // Claims this repository must never make.
+  for (const path of paths) {
+    const html = renderLandingPage(path).toLowerCase();
+    assert(!/\bnationwide\b|\banywhere in the (us|country)\b/.test(html), `${path}: makes no coverage claim the network cannot keep`);
+    assert(!/soc 2/.test(html), `${path}: does not mention an audit opinion nobody has issued`);
+    assert(!/\bseamless\b|\beffortless\b|\brevolutioni|\bgame.changer\b|\bcutting.edge\b|\bsupercharge\b|\ball-in-one\b|\bnext-generation\b|\bunleash\b/.test(html),
+      `${path}: none of the marketing words CLAUDE.md rule 8 bans`);
+  }
+
+  // A contrast regression that a test can hold: `.landing-main a` without the
+  // :not(.button) outranks .button-primary's own colour (class+element beats
+  // class) and repaints the coral call-to-action blue — 1.9:1, a plain WCAG
+  // 1.4.3 failure. It shipped that way once and a screenshot caught it.
+  const css = readFileSync(join(root, "public/styles.css"), "utf8");
+  assert(css.includes(".landing-main a:not(.button)"), "landing link colour still excludes buttons");
+  assert(!/\.landing-main a \{/.test(css), "no unqualified .landing-main a rule has crept back in");
+
+  // The page that exists for the worst moment says the right thing first.
+  const emergency = renderLandingPage("/emergency-vet");
+  assert(/If it looks bad, go now/i.test(emergency), "the emergency page leads with going, not with the product");
+  assert(emergency.includes("is not a veterinarian"), "the emergency page says what Tími is not");
+
+  // The fund page must not be readable as a charity or as a bill-payer.
+  const bills = renderLandingPage("/help-with-vet-bills");
+  assert(bills.includes("not tax-deductible") || bills.includes("not represented"), "the fund page disclaims deductibility");
+  assert(/does not pay for veterinary treatment/i.test(bills), "the fund page says what it does not cover");
+  assert(/not a (registered )?charity/i.test(bills), "the fund page says plainly that it is not a charity");
+  // "Donation" is the word the legal centre deliberately avoids: it implies a
+  // charitable gift, and this is a for-profit company's discretionary
+  // programme. Every mention on the page is a contribution.
+  assert(!/\bdonate\b|\bdonation/i.test(bills), "the fund page says contribution, never donation");
+}
+
+/* ─────────────────────────────────── the customer Worker, end to end ── */
+
+{
+  const { default: worker } = await import("../src/index.js");
+  const shell = readFileSync(join(root, "public/index.html"), "utf8");
+  const env = {
+    SURFACE: "customer",
+    ASSETS: { fetch: async (request) => new Response(new URL(request.url).pathname.endsWith(".css") ? "body{}" : shell, { headers: { "content-type": "text/html" } }) }
+  };
+  const get = (path) => worker.fetch(new Request(`https://timinow.pet${path}`), env, { waitUntil() {} });
+
+  const robots = await (await get("/robots.txt")).text();
+  assert(robots.includes("Sitemap: https://timinow.pet/sitemap.xml"), "the customer robots points at its own sitemap");
+  assert(robots.includes("Sitemap: https://blog.timinow.pet/sitemap.xml"), "and at the blog's, so one file finds both");
+
+  const map = await (await get("/sitemap.xml")).text();
+  assertWellFormedXml(map, "customer sitemap");
+  const { LANDING_PAGES } = await import("../src/landing.js");
+  for (const path of Object.keys(LANDING_PAGES)) {
+    assert(map.includes(`<loc>https://timinow.pet${path}</loc>`), `the sitemap lists ${path}`);
+    const response = await get(path);
+    assertEqual(response.status, 200, `${path} is served`);
+    assert((await response.text()).includes("<h1>"), `${path} has content`);
+  }
+
+  const home = await get("/");
+  assertEqual(home.status, 200, "the root is served");
+  const homeHtml = await home.text();
+  assert(homeHtml.includes('<link rel="canonical" href="https://timinow.pet/">'), "the root declares its canonical");
+  assertEqual(countOf(homeHtml, /<title>/g), 1, "the root has exactly one title");
+  // The app's own home screen is the root's body and must survive untouched.
+  assert(homeHtml.includes('data-screen="home"'), "the root still ships the app");
+  assert(homeHtml.includes("Who can see"), "the root still shows its own headline");
+
+  const llms = await (await get("/llms.txt")).text();
+  assert(llms.includes("not a veterinary practice"), "llms.txt tells a summariser what Tími is not");
+  assert(llms.includes("not nationwide"), "llms.txt states the coverage limit");
+}
+
+console.log("SEO landing pages: five documents, each with unique titles, standalone FAQ answers matching the visible page, prices read from the pricing module, and no claim this product cannot keep.");
+
+/* ───────────────────────────────────────────────── consoles stay out ── */
+
+/**
+ * The three surfaces that must never rank.
+ *
+ * Before this pass none of them had a robots.txt, so a crawler's only
+ * instruction was the absence of one. They are consoles and a demo gallery:
+ * indexing them competes with timinow.pet/for-veterinarians for the same
+ * readers and wins nothing.
+ */
+{
+  const consoles = [
+    ["../apps/vet-web/src/index.js", "https://providers.timinow.pet", "veterinary console"],
+    ["../apps/admin-console/src/index.js", "https://admin.timinow.pet", "platform console"],
+    ["../apps/widget-demo/src/index.js", "https://widget-demo.timinow.pet", "widget gallery"]
+  ];
+  for (const [module, origin, label] of consoles) {
+    const { default: worker } = await import(module);
+    const response = await worker.fetch(new Request(`${origin}/robots.txt`), { ASSETS: { fetch: async () => new Response("", { status: 404 }) } });
+    assertEqual(response.status, 200, `${label}: serves robots.txt`);
+    const body = await response.text();
+    assert(/User-agent: \*\n\s*Disallow: \/\n/.test(body), `${label}: tells every crawler to stay out`);
+    assert(!body.includes("Sitemap:"), `${label}: offers no sitemap`);
+  }
+
+  for (const shell of ["apps/vet-web/public/index.html", "apps/admin-console/public/index.html"]) {
+    const html = readFileSync(join(root, shell), "utf8");
+    assert(/<meta name="robots" content="noindex/.test(html), `${shell}: says noindex in the markup too`);
+  }
+}
+
+console.log("SEO consoles: the veterinary console, the platform console and the widget gallery all refuse indexing, in robots.txt and in their markup.");

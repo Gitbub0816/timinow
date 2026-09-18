@@ -46,7 +46,17 @@ export const SITE = {
    * seen the ASCII form written down has no reason to connect the two.
    */
   alternateNames: ["TímiNOW", "TimiNOW", "Timi NOW", "Timinow"],
-  legalName: "Clearkey Solutions LLC",
+  // Spelled as the legal notices spell it. An entity whose name is written
+  // two ways across its own pages is two weaker entities to anything trying
+  // to corroborate it.
+  legalName: "ClearKey Solutions, LLC",
+  /**
+   * Where the company is, which is a fact the legal centre already states.
+   * No street address: one that is not a real place of business is worse than
+   * none, and locality/region is what actually helps a machine place a
+   * California veterinary service in California.
+   */
+  address: { locality: "Hayward", region: "CA", country: "US" },
   customerOrigin: "https://timinow.pet",
   blogOrigin: "https://blog.timinow.pet",
   providerOrigin: "https://providers.timinow.pet",
@@ -196,7 +206,13 @@ export function organizationSchema() {
     url: SITE.customerOrigin,
     logo: SITE.logo,
     description: SITE.description,
-    email: SITE.email
+    email: SITE.email,
+    address: {
+      "@type": "PostalAddress",
+      addressLocality: SITE.address.locality,
+      addressRegion: SITE.address.region,
+      addressCountry: SITE.address.country
+    }
   };
   // Omitted rather than empty: an empty sameAs array is a claim that this
   // company has no presence anywhere, which is worse than saying nothing.

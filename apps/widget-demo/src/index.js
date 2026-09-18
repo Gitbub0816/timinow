@@ -26,6 +26,8 @@
  *                                      package.
  */
 
+import { robotsTxt } from "../../../src/seo.js";
+
 const CUSTOMER_ORIGIN_FALLBACK = "https://timinow.pet";
 
 const DESIGNS = ["badge", "card", "banner", "poster", "ticker", "stack", "window", "paws", "ledger", "night"];
@@ -364,6 +366,14 @@ export default {
     if (url.pathname === "/api/health") {
       return new Response(JSON.stringify({ ok: true, service: "timinow-widget-demo", build: env.GIT_SHA || null }), {
         headers: { "content-type": "application/json; charset=utf-8", ...SECURITY_HEADERS }
+      });
+    }
+    // A gallery of widget designs for clinics to look at, not a page anybody
+    // should reach from a search: it would compete with
+    // timinow.pet/for-veterinarians for the same readers and win nothing.
+    if (url.pathname === "/robots.txt") {
+      return new Response(robotsTxt({ allowAll: false, sitemaps: [] }), {
+        headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "public, max-age=86400", ...SECURITY_HEADERS }
       });
     }
     if (url.pathname === "/widget.js") return serveWidgetScript(env);

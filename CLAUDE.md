@@ -193,6 +193,47 @@ don't introduce a soft-shadow, blurred, or borderless variant as a
 one-off; if a screen needs a different treatment, it needs a design
 decision, not a local override.
 
+## 9. The crawlable surface — enforced
+
+Every Tími surface is a single-page app, and a single-page app is invisible to
+any reader that does not run JavaScript. That includes most of the crawlers
+behind assistants, which is increasingly how "where do I take a dog that ate
+grapes" gets asked. `docs/SEO.md` describes what was built; the rules that
+must hold are in `scripts/seo-test.mjs` and fail `npm run check`:
+
+- **A URL worth ranking answers with its real content in the first
+  response.** Not a shell that fetches it, not a teaser. The blog renders
+  posts, threads and their replies server-side (`apps/blog/src/pages.js`); the
+  customer site serves five standalone documents (`src/landing.js`). Showing a
+  crawler something other than a person is cloaking and is treated as such.
+- **A new page goes in one map.** `LANDING_PAGES` feeds the router, the
+  sitemap and the test together, so a page cannot exist unlisted or be listed
+  and 404. Add its path to `run_worker_first` in the wrangler config at the
+  same time — assets are served before the Worker runs, so a missing entry
+  silently serves the app shell instead of the document.
+- **Every page: one title, one canonical, one description, parsing JSON-LD.**
+  Titles and descriptions are unique across pages, or they compete with each
+  other rather than with anyone else.
+- **No claim the product cannot keep.** The test fails the build on
+  "nationwide", on any mention of SOC 2, on rule 8's banned marketing words,
+  and on a price that disagrees with `src/pricing.js`.
+- **The safety notices ship inside the rendered body.** The "not veterinary
+  advice" strip and a clinic's non-endorsement are the sentences most likely
+  to be quoted out of context by an assistant summarising a post about a sick
+  animal, so they travel with the words they qualify rather than being added
+  by script.
+- **Consoles stay out.** `providers.`, `admin.` and the widget gallery serve
+  `Disallow: /` and say `noindex` in their markup. A console competing with
+  `timinow.pet/for-veterinarians` for the same readers is one of them losing.
+- **The assistant crawlers are allowed on purpose.** GPTBot, ClaudeBot,
+  PerplexityBot, Google-Extended and the rest are named in robots.txt. Do not
+  block them to "protect the content" — the content is a directory of which
+  hospitals can see a patient tonight, and being quoted at 1am is the product
+  working.
+- **JSON-LD is escaped so it cannot end its own script element,** because
+  every field on the blog can contain words typed by a clinic or by the
+  public. There is a test that renders a hostile post and asserts it.
+
 ## 8. Avoid generic "vibe-coded" AI-app tells
 
 This product's visual identity (Section 7) exists specifically so it never
