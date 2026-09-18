@@ -3,6 +3,7 @@ import { publicConfig } from "./config.js";
 import { LANDING_PAGES, marketPagePath, marketQualifies, renderLandingPage, renderMarketPage, renderNotFoundPage } from "./landing.js";
 import { listMarkets } from "./markets.js";
 import { indexNowKey, indexNowKeyPath } from "./indexnow.js";
+import { verificationMetaTags, verificationFile } from "./verification.js";
 import {
   SITE,
   canonicalUrl,
@@ -2528,9 +2529,13 @@ const SEO_HTML_HEADERS = { "content-type": "text/html; charset=utf-8", "cache-co
  * browser tab. The body is left exactly as the app ships it; only the head
  * is replaced.
  */
-function renderHome(shell) {
+function renderHome(shell, env) {
   const canonical = canonicalUrl(SITE.customerOrigin, "/");
-  const head = headTags({
+  // Search Console and Bing verification, when their tokens are set. On the
+  // home page only: a URL-prefix property is verified at its root, and
+  // repeating the tag on every page verifies nothing extra.
+  const verification = verificationMetaTags(env);
+  const head = (verification ? verification + "\n  " : "") + headTags({
     title: "Tími NOW — find a vet that can see your pet right now",
     description: SITE.description,
     canonical,
@@ -2567,6 +2572,16 @@ async function handleCrawlable(request, env, url) {
   // submission points back at. Public by design — see src/indexnow.js.
   if (indexNowKeyPath(env) && path === indexNowKeyPath(env)) {
     return new Response(indexNowKey(env), { headers: { ...SEO_TEXT_HEADERS, ...SECURITY_HEADERS } });
+  }
+
+  // Google's and Bing's file-method ownership proofs. Same idea as the
+  // IndexNow key above, same reason they are committed vars rather than
+  // secrets: a published token is the whole mechanism. See src/verification.js.
+  const proof = verificationFile(env, path);
+  if (proof) {
+    return new Response(proof.body, {
+      headers: { "content-type": proof.type, "cache-control": "public, max-age=3600", ...SECURITY_HEADERS }
+    });
   }
 
   if (path === "/robots.txt") {
@@ -2661,7 +2676,7 @@ async function handleCrawlable(request, env, url) {
   if (path === "/" && env.ASSETS) {
     const shell = await env.ASSETS.fetch(new Request(new URL("/index.html", url), { method: "GET" }));
     if (shell.ok) {
-      return new Response(renderHome(await shell.text()), { headers: { ...SEO_HTML_HEADERS, ...SECURITY_HEADERS } });
+      return new Response(renderHome(await shell.text(), env), { headers: { ...SEO_HTML_HEADERS, ...SECURITY_HEADERS } });
     }
   }
 

@@ -52,7 +52,20 @@
     // site serve this same value as a text file at its root, so it proves
     // control of the domain rather than being a credential. A var, therefore,
     // and committed on purpose. See src/indexnow.js.
-    "INDEXNOW_KEY": "17d3f8d93651178e78c5e7d2229195e5"
+    "INDEXNOW_KEY": "17d3f8d93651178e78c5e7d2229195e5",
+    // Search Console and Bing Webmaster verification. Blank until the two
+    // properties are created and each issues its own token — neither can be
+    // invented, and a wrong one fails silently days later. Public by design,
+    // exactly like INDEXNOW_KEY: a token proves control because only someone
+    // who controls the site could publish it. Paste and deploy; no DNS record
+    // is needed for a URL-prefix property. See src/verification.js.
+    //
+    // GOOGLE_SITE_VERIFICATION takes EITHER form Google offers — the meta
+    // tag's content value, or the "google<hex>.html" filename — and serves
+    // whichever it was given.
+    "GOOGLE_SITE_VERIFICATION": "",
+    // One token, used as both Bing's meta tag and /BingSiteAuth.xml.
+    "BING_SITE_VERIFICATION": ""
   },
   // Worker-to-worker, so a fan-out can ring clinics immediately instead of
   // waiting for a scheduler. Service bindings do not traverse the public
@@ -121,6 +134,10 @@
       "/robots.txt",
       "/sitemap.xml",
       "/17d3f8d93651178e78c5e7d2229195e5.txt",
+      // The verification files, when a token is set — the Worker answers 404
+      // for them otherwise, which is also what an unverified site should say.
+      "/google*.html",
+      "/BingSiteAuth.xml",
       "/llms.txt",
       "/emergency-vet",
       "/emergency-vet/*",

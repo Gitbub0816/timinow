@@ -934,3 +934,78 @@ console.log("SEO authorship: credentials and a named reviewer are rendered and d
 }
 
 console.log("SEO markets: a city gets a page only where clinics actually report there; everything else is a 404 and stays out of the sitemap.");
+
+/**
+ * Verification: the door Search Console will not open without.
+ *
+ * The failure this guards is the one nobody notices — a token pasted into
+ * the wrong slot, or a var left blank and assumed set, produces a site that
+ * looks verified in the config and is not verified at Google, and the only
+ * symptom is a Search Console that stays empty for a fortnight while
+ * somebody assumes the data is just slow.
+ */
+{
+  const { verificationMetaTags, verificationFile } = await import("../src/verification.js");
+  const { default: worker } = await import("../src/index.js");
+
+  const shell = "<!doctype html><html><head><title>x</title></head><body></body></html>";
+  const base = {
+    SURFACE: "customer",
+    DB: { prepare: () => ({ bind: () => ({ all: async () => ({ results: [] }), first: async () => null }), all: async () => ({ results: [] }), first: async () => null }) },
+    // The asset layer holds the app shell and nothing else, which is what
+    // makes an unset token a real 404 rather than a page.
+    ASSETS: {
+      fetch: async (request) => /^\/(index\.html)?$/.test(new URL(request.url).pathname)
+        ? new Response(shell, { status: 200, headers: { "content-type": "text/html" } })
+        : new Response("", { status: 404 })
+    }
+  };
+  const get = (path, env) => worker.fetch(new Request(`https://timinow.pet${path}`), { ...base, ...env }, { waitUntil() {} });
+
+  // Nothing set: no tags, no files, and — importantly — a 404 rather than a
+  // 200 with an empty body, which some verifiers accept and then fail on.
+  assertEqual(verificationMetaTags({}), "", "no token, no tag");
+  assertEqual(verificationFile({}, "/BingSiteAuth.xml"), null, "no token, no file");
+  assertEqual((await get("/BingSiteAuth.xml", {})).status, 404, "an unset Bing token 404s");
+
+  // Google, meta-tag form.
+  const metaEnv = { GOOGLE_SITE_VERIFICATION: "aBc1-2_dEfGhIjKlMnOpQrStUv" };
+  assert(verificationMetaTags(metaEnv).includes('<meta name="google-site-verification" content="aBc1-2_dEfGhIjKlMnOpQrStUv">'), "the meta form emits a meta tag");
+  const homeWithMeta = await (await get("/", metaEnv)).text();
+  assert(homeWithMeta.includes('name="google-site-verification"'), "and the home page carries it");
+  assertEqual((homeWithMeta.match(/<title>/g) || []).length, 1, "without disturbing the single title");
+
+  // Google, file form. The two forms are different strings, so the file token
+  // must NOT also be emitted as a meta tag — that verifies nothing and looks
+  // like it should.
+  const fileEnv = { GOOGLE_SITE_VERIFICATION: "google1a2b3c4d5e6f7890.html" };
+  assertEqual(verificationMetaTags(fileEnv), "", "the file form emits no meta tag");
+  const googleFile = await get("/google1a2b3c4d5e6f7890.html", fileEnv);
+  assertEqual(googleFile.status, 200, "the file form is served");
+  assertEqual(await googleFile.text(), "google-site-verification: google1a2b3c4d5e6f7890.html", "with the body Google checks, not the bare token");
+  assertEqual((await get("/google9999999999999999.html", fileEnv)).status, 404, "and only at its own path");
+
+  // Bing: one token, both methods.
+  const bingEnv = { BING_SITE_VERIFICATION: "ABC123abc456DEF789" };
+  assert(verificationMetaTags(bingEnv).includes('<meta name="msvalidate.01" content="ABC123abc456DEF789">'), "Bing gets a meta tag");
+  const bingFile = await get("/BingSiteAuth.xml", bingEnv);
+  assertEqual(bingFile.status, 200, "and an XML file");
+  assert((await bingFile.text()).includes("<user>ABC123abc456DEF789</user>"), "carrying the same token");
+
+  // A paste accident — a whole meta tag, a quoted value, a URL — is rejected
+  // rather than published, because a malformed token fails days later with no
+  // message attached to the mistake.
+  for (const junk of ['<meta name="google-site-verification" content="abc">', '"abcdefghij"', "https://example.com/abcdefgh", "short", ""]) {
+    assertEqual(verificationMetaTags({ GOOGLE_SITE_VERIFICATION: junk }), "", `a malformed token is refused: ${JSON.stringify(junk.slice(0, 24))}`);
+  }
+
+  // The routing table has to name these paths or the asset layer answers
+  // first — the same class of bug that made /r/:slug and the consoles'
+  // robots.txt silently wrong.
+  const wrangler = readFileSync(join(root, "wrangler.jsonc"), "utf8");
+  assert(/"\/google\*\.html"/.test(wrangler), "wrangler runs the Worker first for the Google file");
+  assert(/"\/BingSiteAuth\.xml"/.test(wrangler), "and for the Bing file");
+  assert(/"GOOGLE_SITE_VERIFICATION"/.test(wrangler) && /"BING_SITE_VERIFICATION"/.test(wrangler), "and declares both vars, blank until issued");
+}
+
+console.log("SEO verification: both engines' ownership proofs are served from vars — meta tag or file, no DNS record, and a malformed token is refused rather than published.");

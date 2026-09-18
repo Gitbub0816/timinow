@@ -150,10 +150,11 @@ has, which makes it a safety surface.
 - **No clinic profile pages.** Same reasoning, plus a supply-side one: pages
   that rank for a practice's own name compete with that practice's website,
   and these are the partners the network depends on.
-- **No Search Console or Bing Webmaster verification.** Both need a DNS record
-  or a file with a token nobody has issued yet. Once verified, submit
-  `timinow.pet/sitemap.xml` and `blog.timinow.pet/sitemap.xml` and watch
-  Coverage; that is the feedback loop this pass cannot provide from code.
+- **Search Console and Bing Webmaster are not verified yet** — waiting on two
+  tokens, and on nothing else. The serving side is built: see the DNS section
+  below. Once verified, submit `timinow.pet/sitemap.xml` and
+  `timinow.pet/blog/sitemap.xml` and watch Coverage; that is the feedback loop
+  this pass cannot provide from code.
 - **No backlinks.** Nothing in a repository creates them. The realistic
   sources here are veterinary associations, local press, and the clinics
   themselves — every participating clinic that embeds the widget or links its
@@ -176,6 +177,65 @@ has, which makes it a safety surface.
   JavaScript and one stylesheet, which is the shape that passes, but nothing
   in `npm run check` measures it. Lighthouse against production is the check
   and it needs a browser this environment does not have.
+
+## DNS, and why verification does not need any
+
+`timinow.pet` is on Cloudflare. Its zone currently holds, and this is the
+whole of it:
+
+| Name | Type | Value | What it is for |
+| --- | --- | --- | --- |
+| `timinow.pet`, `www`, `app`, `blog`, `providers`, `admin`, `voice` | A | Cloudflare proxy addresses | Not hand-written records. Every one is a **Worker Custom Domain**, created and renewed by `wrangler deploy`, certificate included. A hostname that stops resolving means a Worker was not deployed — it is not a DNS problem, and editing it by hand in the dashboard is how you break it. `scripts/check-dns.sh` checks this. |
+| `clerk`, `accounts` (and Clerk's other CNAMEs) | CNAME | `*.clerk.services` | Sign-in, on every surface. **These must stay DNS-only — grey cloud, not orange.** Proxying one breaks authentication quietly: the browser gets a Cloudflare certificate for a host Clerk expects to terminate itself, and the failure looks like an SDK bug rather than a DNS change. |
+| `timinow.pet` | TXT | `v=spf1 include:_spf.mailersend.net ~all` | Authorises MailerSend to send as this domain. Subscription confirmations and every transactional email go through it. |
+| `_dmarc.timinow.pet` | TXT | `v=DMARC1; p=none; rua=…; ruf=…; fo=1; adkim=r; aspf=r; pct=100` | Reporting only. `p=none` asks receivers to report failures and enforce nothing — the right setting while sending volume is still low and alignment is unproven. Tighten to `p=quarantine` once the reports are clean for a few weeks. |
+| `timinow.pet` | MX | `0 .` | A **null MX** (RFC 7505): this domain accepts no inbound mail, stated explicitly rather than left ambiguous. It is a deliberate anti-spam posture, not an oversight — but note that `blog@timinow.pet` in the footer is therefore send-only, and a reply to it bounces. |
+
+Two records that are **not** there and arguably should be:
+
+- **DKIM.** No selector is published (`mlsend._domainkey` and
+  `mlsend2._domainkey` both resolve to nothing). Mail is SPF-authenticated
+  but not signed, which costs deliverability with every large mailbox
+  provider and leaves DMARC aligned on SPF alone. MailerSend prints the exact
+  selector and public key in its dashboard under the domain's settings — they
+  cannot be derived from here, because the key pair is generated on their
+  side. This is the same blocker as verifying `blog@timinow.pet` as a sender.
+- **A `p=quarantine` DMARC policy**, once the `rua` reports have been clean
+  for long enough to trust. Not yet.
+
+### Search-engine verification
+
+Neither Google nor Bing needs a DNS record here, and this is the reason:
+
+A **domain property** in Search Console (every subdomain, every scheme) can
+only be verified by DNS TXT. A **URL-prefix property** rooted at
+`https://timinow.pet` can be verified by a meta tag or a file — and since the
+blog moved under `timinow.pet/blog`, a URL-prefix property at that root now
+covers the entire crawlable surface. So the prefix property is enough, and it
+is verified by something this repository can serve.
+
+`src/verification.js` does exactly that, from two committed `vars` in
+`wrangler.jsonc`, both blank until the properties are created:
+
+- **`GOOGLE_SITE_VERIFICATION`** accepts either form Google offers and tells
+  them apart on its own. A `google<hex>.html` filename is served at that path
+  with the body Google checks; anything else is emitted as
+  `<meta name="google-site-verification">` in the home page's head. It is
+  never both — the two tokens are different strings, and pasting one into the
+  other's slot verifies nothing while looking like it should.
+- **`BING_SITE_VERIFICATION`** is one token used twice: the
+  `msvalidate.01` meta tag and `/BingSiteAuth.xml`. Bing can also simply
+  import a verified Search Console property, which is less work than either;
+  this exists so that import is a choice rather than a dependency.
+
+Neither token is a secret — publishing it *is* the mechanism, exactly as with
+`INDEXNOW_KEY`. Paste, run `npm run check`, deploy. A malformed token (a
+pasted whole meta tag, a quoted value, a URL) is refused rather than
+published, because the alternative is a Search Console that stays empty for a
+fortnight with nothing to attribute it to.
+
+If a domain-wide property is wanted later — to see `providers.` and `admin.`
+traffic in the same view — that is the DNS TXT route, and it is additive.
 
 ## Announcing changes
 
