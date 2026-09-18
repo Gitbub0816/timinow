@@ -191,17 +191,35 @@ whole of it:
 | `_dmarc.timinow.pet` | TXT | `v=DMARC1; p=none; rua=…; ruf=…; fo=1; adkim=r; aspf=r; pct=100` | Reporting only. `p=none` asks receivers to report failures and enforce nothing — the right setting while sending volume is still low and alignment is unproven. Tighten to `p=quarantine` once the reports are clean for a few weeks. |
 | `timinow.pet` | MX | `0 .` | A **null MX** (RFC 7505): this domain accepts no inbound mail, stated explicitly rather than left ambiguous. It is a deliberate anti-spam posture, not an oversight — but note that `blog@timinow.pet` in the footer is therefore send-only, and a reply to it bounces. |
 
-Two records that are **not** there and arguably should be:
+Three records are **not** there and should be. Each needs a value a vendor
+generates on their side, so none can be derived from this repository — but the
+writing of them is automated: `scripts/dns-records.mjs` validates the shape,
+creates the record DNS-only, replaces its own record rather than the SPF next
+to it, and resolves the result back through a public resolver afterwards.
 
-- **DKIM.** No selector is published (`mlsend._domainkey` and
-  `mlsend2._domainkey` both resolve to nothing). Mail is SPF-authenticated
-  but not signed, which costs deliverability with every large mailbox
-  provider and leaves DMARC aligned on SPF alone. MailerSend prints the exact
-  selector and public key in its dashboard under the domain's settings — they
-  cannot be derived from here, because the key pair is generated on their
-  side. This is the same blocker as verifying `blog@timinow.pet` as a sender.
-- **A `p=quarantine` DMARC policy**, once the `rua` reports have been clean
-  for long enough to trust. Not yet.
+```bash
+export CLOUDFLARE_API_TOKEN=…    # Zone → DNS → Edit, a wider scope than deploy needs
+npm run dns:records -- --dry-run --google=… --bing=… \
+  --dkim-name=mlsend2._domainkey --dkim-value="k=rsa; p=…"
+```
+
+- **DKIM** (`<selector>._domainkey`, from MailerSend → Domains → DNS records).
+  Mail is SPF-authenticated but unsigned, which costs deliverability with every
+  large mailbox provider and leaves DMARC aligned on SPF alone. Same blocker as
+  verifying `blog@timinow.pet` as a sender.
+- **Google** (`TXT` at the apex, from Search Console). Buys a *domain*
+  property. Not needed for a URL-prefix property — see below.
+- **Bing** (`CNAME <token>` → `verify.bing.com`). Least necessary of the three:
+  Bing can import a verified Search Console property, and `/BingSiteAuth.xml`
+  works without DNS.
+
+And one change rather than an addition: **a `p=quarantine` DMARC policy**, once
+the `rua` reports have been clean for long enough to trust. Not yet.
+
+`./scripts/check-dns.sh` (`npm run dns`) reports all three as `??` until they
+exist — warnings, not failures, because none of them stops the product working.
+It falls back to DNS-over-HTTPS when `dig` and `nslookup` are absent, so it runs
+in a container and in CI rather than only on a Mac.
 
 ### Search-engine verification
 

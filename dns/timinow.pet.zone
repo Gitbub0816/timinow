@@ -64,16 +64,37 @@ accounts                300  IN  CNAME  accounts.clerk.services.
 
 ;; ══════════════════════════════════════════════════════════ Email ══
 ;;
-;; Nothing sends mail from the apex today — the app's own addresses are on
-;; clearkey.solutions, and Clerk sends from the clkmail subdomain above, which
-;; Clerk's own records authenticate.
+;; This file once published `v=spf1 -all` — a hard fail, correct at the time,
+;; because nothing sent from the apex. That changed when the blog's subscription
+;; confirmations started going out through MailerSend, and the record below is
+;; what the zone actually carries now. If you re-import an older copy of this
+;; file you will silently un-authorise every email the product sends.
 ;;
-;; So the apex publishes a hard SPF fail. On a domain nobody sends from, that is
-;; free anti-spoofing: it stops someone forging billing@timinow.pet at a clinic.
-;; If you later add Google Workspace or another sender, replace this line — see
-;; dns/README.md.
+;; `~all` rather than `-all`: soft fail while MailerSend is the only sender and
+;; DKIM is not yet published. Tighten to `-all` once the DMARC reports are
+;; clean and the DKIM record below exists.
 
-@                       300  IN  TXT    "v=spf1 -all"
+@                       300  IN  TXT    "v=spf1 include:_spf.mailersend.net ~all"
+
+;; ── DKIM ────────────────────────────────────────────────────────────────
+;;
+;; NOT YET PUBLISHED. SPF says a host is allowed to send as this domain; DKIM
+;; signs the message itself, and it is the signal large mailbox providers
+;; actually weigh. Without it the mail still arrives — with one fewer reason to
+;; be believed, and with DMARC able to align on SPF alone.
+;;
+;; Commented out for the same reason as Clerk's three above: the value is a
+;; public key MailerSend generates on their side, and importing a placeholder
+;; would create a broken record that looks present. MailerSend prints the exact
+;; selector and value under Domains -> DNS records. The selector is usually
+;; mlsend2._domainkey; some accounts get a CNAME instead of a TXT.
+;;
+;; Add it with the exact values rather than by hand:
+;;
+;;     node scripts/dns-records.mjs \
+;;       --dkim-name=mlsend2._domainkey --dkim-value="k=rsa; p=<public key>"
+;;
+;; mlsend2._domainkey   300  IN  TXT    "k=rsa; p=<public key from MailerSend>"
 
 ;; DMARC starts at p=none deliberately. Jumping straight to reject without ever
 ;; reading a report is how legitimate mail silently disappears. Watch the
@@ -83,6 +104,29 @@ _dmarc                  300  IN  TXT    "v=DMARC1; p=none; rua=mailto:1morecruis
 ;; No inbound mail. Delete this and add MX records if you ever want a mailbox
 ;; at timinow.pet; the null MX is what tells senders not to bother trying.
 @                       300  IN  MX     0 .
+
+;; ═════════════════════════════════════════ Search-engine verification ══
+;;
+;; NOT YET PUBLISHED, and not required — the site is verifiable without either
+;; of these. src/verification.js serves Google's meta tag or file and Bing's
+;; meta tag and /BingSiteAuth.xml straight from the Worker, which is enough for
+;; a URL-prefix property at https://timinow.pet, and that prefix covers the
+;; whole crawlable surface now that the blog lives at timinow.pet/blog.
+;;
+;; The records below buy one extra thing: a DOMAIN property, which is the only
+;; kind Google will verify by DNS and the only kind that reports on every
+;; subdomain and scheme at once — providers., admin. and app. in the same view.
+;; Worth having eventually; not worth blocking on.
+;;
+;; Both tokens are issued per-property to an authenticated account and cannot
+;; be derived from anything in this repository. Google's DNS token is also a
+;; DIFFERENT string from its meta-tag token — swapping them verifies nothing
+;; while looking entirely correct.
+;;
+;;     node scripts/dns-records.mjs --google=<token> --bing=<token>
+;;
+;; @                    300  IN  TXT    "google-site-verification=<token>"
+;; <token>              300  IN  CNAME  verify.bing.com.
 
 ;; ═══════════════════════════════════════════════ Certificate authority ══
 ;;

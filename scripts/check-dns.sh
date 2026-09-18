@@ -24,13 +24,33 @@ red()   { printf '  \033[31mFAIL\033[0m    %s\n' "$*"; FAILURES=$((FAILURES + 1)
 warn()  { printf '  \033[33m??\033[0m      %s\n' "$*"; }
 head2() { printf '\n\033[1m%s\033[0m\n' "$*"; }
 
-# dig ships with macOS; nslookup is the fallback for a stripped-down Linux box.
+# dig ships with macOS; nslookup is the fallback for a stripped-down Linux box;
+# DNS-over-HTTPS through node is the fallback for a container that has neither,
+# which is most of them — and this script is worth being able to run in CI.
 if command -v dig >/dev/null 2>&1; then
   lookup() { dig +short "$2" "$1" @1.1.1.1 2>/dev/null; }
 elif command -v nslookup >/dev/null 2>&1; then
   lookup() { nslookup -type="$2" "$1" 1.1.1.1 2>/dev/null | awk '/=/ {print $NF}'; }
+elif command -v node >/dev/null 2>&1; then
+  lookup() {
+    node -e '
+      const [name, type] = process.argv.slice(1);
+      const codes = { A: 1, NS: 2, CNAME: 5, MX: 15, TXT: 16, AAAA: 28, CAA: 257 };
+      fetch(`https://cloudflare-dns.com/dns-query?name=${encodeURIComponent(name)}&type=${type}`,
+            { headers: { accept: "application/dns-json" } })
+        .then((response) => response.json())
+        .then((body) => {
+          for (const answer of body.Answer || []) {
+            if (answer.type !== codes[type]) continue;
+            // Match dig +short: quotes kept on TXT, trailing dot kept on CNAME.
+            console.log(String(answer.data));
+          }
+        })
+        .catch(() => {});
+    ' "$1" "$2" 2>/dev/null
+  }
 else
-  echo "Needs dig or nslookup. On macOS dig is already installed." >&2
+  echo "Needs dig, nslookup, or node. On macOS dig is already installed." >&2
   exit 1
 fi
 
@@ -79,6 +99,39 @@ spf="$(lookup "$DOMAIN" TXT | tr -d '"' | grep '^v=spf1' | head -1)"
 [ -n "$spf" ] && green "SPF: $spf" || red "no SPF record — the domain can be spoofed"
 dmarc="$(lookup "_dmarc.$DOMAIN" TXT | tr -d '"' | grep '^v=DMARC1' | head -1)"
 [ -n "$dmarc" ] && green "DMARC: $dmarc" || red "no DMARC record"
+
+head2 "DKIM"
+# SPF says a host may send as this domain. DKIM signs the message, and it is
+# what a large mailbox provider actually weighs — and what DMARC can align on
+# when the envelope sender does not match. Missing, mail still arrives; it
+# just arrives with one fewer reason to be believed.
+dkim_found=0
+for selector in mlsend mlsend2 mlsend3; do
+  value="$(lookup "$selector._domainkey.$DOMAIN" TXT; lookup "$selector._domainkey.$DOMAIN" CNAME)"
+  if [ -n "$value" ]; then green "MailerSend DKIM at $selector._domainkey"; dkim_found=1; fi
+done
+[ "$dkim_found" -eq 1 ] || warn "no MailerSend DKIM selector published — mail is SPF-authenticated but unsigned. MailerSend's dashboard prints the selector and value; add them with: node scripts/dns-records.mjs --dkim-name=... --dkim-value=..."
+clerk_dkim="$(lookup "clk._domainkey.$DOMAIN" CNAME)"
+[ -n "$clerk_dkim" ] && green "Clerk DKIM at clk._domainkey" || warn "no Clerk DKIM — sign-in codes send unsigned"
+
+head2 "Search-engine verification"
+# Neither is required for the site to work, and neither can be invented here:
+# each is a token issued to an authenticated account. Absent is a warning, not
+# a failure — but an unverified property is a Search Console with no data in
+# it, which is the one feedback loop the SEO work cannot provide from code.
+gsv="$(lookup "$DOMAIN" TXT | tr -d '"' | grep '^google-site-verification=' | head -1)"
+[ -n "$gsv" ] && green "Search Console (domain property) verified by TXT" \
+  || warn "no google-site-verification TXT — a URL-prefix property may still be verified by the meta tag served from src/verification.js"
+# Bing's DNS method is a CNAME at <token>.<domain>, so there is no fixed name
+# to probe. The meta tag and /BingSiteAuth.xml are checked against the live
+# site instead, which covers whichever method was used.
+if curl -fsS --max-time 10 "https://$DOMAIN/BingSiteAuth.xml" >/dev/null 2>&1; then
+  green "Bing verified by /BingSiteAuth.xml"
+elif curl -fsS --max-time 10 "https://$DOMAIN/" 2>/dev/null | grep -q 'msvalidate.01'; then
+  green "Bing verified by meta tag"
+else
+  warn "Bing not verified — set BING_SITE_VERIFICATION in wrangler.jsonc and deploy, or add its CNAME with: node scripts/dns-records.mjs --bing=<token>"
+fi
 
 head2 "Certificate authority"
 caa="$(lookup "$DOMAIN" CAA)"

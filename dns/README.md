@@ -29,6 +29,30 @@ npm run deploy:all
 ./scripts/check-dns.sh
 ```
 
+## The three records that are still missing
+
+Each needs a value only a vendor's dashboard can give you. `scripts/dns-records.mjs`
+writes them correctly once you have them — it validates the shape first, creates
+them DNS-only, replaces its own record rather than the SPF next to it, and
+resolves the result back through a public resolver to prove it took.
+
+```bash
+export CLOUDFLARE_API_TOKEN=…        # Zone -> DNS -> Edit, not the deploy token
+node scripts/dns-records.mjs --dry-run --google=… --bing=… \
+  --dkim-name=mlsend2._domainkey --dkim-value="k=rsa; p=…"
+```
+
+Drop `--dry-run` to apply. Pass only the flags you have; each is independent.
+
+| Record | Where the value comes from | What it buys |
+| --- | --- | --- |
+| **DKIM** `<selector>._domainkey` | MailerSend → Domains → DNS records | Signed mail. Today the domain has SPF but no signature, which costs deliverability with every large mailbox provider and leaves DMARC aligned on SPF alone. This is also what gates verifying `blog@timinow.pet` as a sender. |
+| **Google** `TXT` at the apex | Search Console, after adding a *domain* property | A domain property — every subdomain and scheme in one view. A URL-prefix property needs no DNS at all: `src/verification.js` serves the meta tag or file. Note the DNS token is a **different string** from the meta-tag token. |
+| **Bing** `CNAME <token>` → `verify.bing.com` | Bing Webmaster Tools | Same, for Bing. Bing can also import a verified Search Console property, and `/BingSiteAuth.xml` works without DNS — so this one is the least necessary of the three. |
+
+`./scripts/check-dns.sh` reports all three as `??` until they exist. They are
+warnings rather than failures on purpose: none of them stops the product working.
+
 ## Proxy status
 
 Only the Clerk records need a decision, and they must stay **DNS-only** (grey
