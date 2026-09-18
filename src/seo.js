@@ -282,7 +282,7 @@ export function faqSchema(entries) {
   };
 }
 
-export function articleSchema({ url, headline, description, published, modified, authorName, image }) {
+export function articleSchema({ url, headline, description, published, modified, authorName, authorCredentials = null, reviewer = null, image }) {
   const article = {
     "@type": "BlogPosting",
     "@id": `${url}#post`,
@@ -296,7 +296,26 @@ export function articleSchema({ url, headline, description, published, modified,
   };
   if (published) article.datePublished = published;
   article.dateModified = modified || published || undefined;
-  if (authorName) article.author = { "@type": "Person", name: authorName };
+  if (authorName) {
+    article.author = { "@type": "Person", name: authorName };
+    // honorificSuffix is where a credential belongs: "Ana Rivera, DVM" as a
+    // name is a string, while the suffix is a fact a consumer can read.
+    if (authorCredentials) article.author.honorificSuffix = authorCredentials;
+  }
+  /**
+   * reviewedBy, for a health topic.
+   *
+   * This is the field that distinguishes a page somebody wrote from a page a
+   * veterinarian stands behind, and on YMYL subjects that distinction is most
+   * of the quality signal available. Emitted only from stored values — there
+   * is no default and no inference, because a fabricated reviewer is a false
+   * statement about a real, licensed person.
+   */
+  if (reviewer?.name) {
+    article.reviewedBy = { "@type": "Person", name: reviewer.name };
+    if (reviewer.credentials) article.reviewedBy.honorificSuffix = reviewer.credentials;
+    if (reviewer.reviewedAt) article.lastReviewed = reviewer.reviewedAt;
+  }
   if (image) article.image = image;
   return article;
 }

@@ -177,6 +177,23 @@ function commentList(comments) {
   return `<section class="comments">\n  <h2>Comments</h2>\n  <ol class="comment-list">\n${items}\n  </ol>\n</section>`;
 }
 
+/**
+ * "Reviewed by Dr. Ana Rivera, DVM, on 12 September 2026", or nothing.
+ *
+ * Rendered from stored fields only — never inferred, never defaulted. This
+ * one line is a statement that a named, licensed person read a page about a
+ * sick animal and stands behind it, and there is no version of inventing it
+ * that is acceptable.
+ */
+function reviewLine(post) {
+  if (!post?.reviewer?.name) return "";
+  const who = post.reviewer.credentials
+    ? `${post.reviewer.name}, ${post.reviewer.credentials}`
+    : post.reviewer.name;
+  const when = post.reviewer.reviewedAt ? ` on ${formatDate(post.reviewer.reviewedAt)}` : "";
+  return `  <p class="review-line">Reviewed by ${escapeHtml(who)}${escapeHtml(when)}.</p>`;
+}
+
 export function renderPost(shell, post, { html, comments = [] }) {
   const canonical = canonicalUrl(BLOG, `/p/${post.slug}`);
   const byline = post.byline?.line || "";
@@ -195,6 +212,7 @@ export function renderPost(shell, post, { html, comments = [] }) {
     // would leave the quotable version of the page making a claim in Tími's
     // name that the page itself does not make.
     post.byline?.notice ? `  <p class="provider-notice">${escapeHtml(post.byline.notice)}</p>` : "",
+    reviewLine(post),
     adviceNotice(),
     `  <div class="prose">${html}</div>`,
     `</article>`,
@@ -219,6 +237,10 @@ export function renderPost(shell, post, { html, comments = [] }) {
       published,
       modified,
       authorName: post.authorName || (post.authorKind === "provider" ? post.providerName : SITE.name),
+      authorCredentials: post.authorCredentials,
+      // Normalised here, like every other date on the page: D1 stores
+      // "2026-09-12 09:00:00" and schema.org wants a date a parser accepts.
+      reviewer: post.reviewer ? { ...post.reviewer, reviewedAt: isoDate(post.reviewer.reviewedAt) } : null,
       image: SITE.image
     }),
     breadcrumbSchema([

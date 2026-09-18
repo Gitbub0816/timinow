@@ -48,7 +48,14 @@ export function normalizePost(row, { includeBody = false } = {}) {
     publishedAt: row.published_at || null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
-    commentCount: row.comment_count == null ? undefined : Number(row.comment_count)
+    commentCount: row.comment_count == null ? undefined : Number(row.comment_count),
+    // Null on almost every post, and deliberately never inferred — see
+    // migration 0033. A review line that appears because something defaulted
+    // is a false statement about a named veterinarian.
+    authorCredentials: row.author_credentials || null,
+    reviewer: row.reviewer_name
+      ? { name: row.reviewer_name, credentials: row.reviewer_credentials || null, reviewedAt: row.reviewed_at || null }
+      : null
   };
   // The byline is attached server-side for the same reason the console's
   // status label is: four surfaces would otherwise each format it, and the
@@ -106,7 +113,19 @@ export async function listAllPosts(env, { limit = 100 } = {}) {
  * src/content.js — never from the request. It carries the kind, which decides
  * the byline, and the tenant for a provider post.
  */
-export async function createPost(env, author, { title, excerpt, bodyMarkdown, publish = false }) {
+export async function createPost(env, author, {
+  title,
+  excerpt,
+  bodyMarkdown,
+  publish = false,
+  // Optional, null on almost every post, and never defaulted — see migration
+  // 0033. reviewedAt is set from the clock here rather than accepted from the
+  // caller: a review date somebody can type is a review date somebody can
+  // backdate.
+  authorCredentials = null,
+  reviewerName = null,
+  reviewerCredentials = null
+}) {
   if (!hasDatabase(env)) return { ok: false, code: "DATABASE_REQUIRED", message: "D1 is required to publish." };
   if (!author?.kind) return { ok: false, code: "NOT_AUTHORIZED", message: "You are not set up to publish posts." };
 
@@ -120,13 +139,18 @@ export async function createPost(env, author, { title, excerpt, bodyMarkdown, pu
   await env.DB.prepare(`
     INSERT INTO blog_posts (
       id, slug, author_kind, tenant_id, author_user_id, author_name, provider_name,
-      title, excerpt, body_markdown, status, published_at, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      title, excerpt, body_markdown, status, published_at, created_at, updated_at,
+      author_credentials, reviewer_name, reviewer_credentials, reviewed_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).bind(
     id, slugify(cleanTitle), author.kind, author.tenantId || null, author.userId,
     author.name || null, author.providerName || null,
     cleanTitle, clean(excerpt, 400) || null, body,
-    publish ? "published" : "draft", publish ? now : null, now, now
+    publish ? "published" : "draft", publish ? now : null, now, now,
+    clean(authorCredentials, 60) || null,
+    clean(reviewerName, 120) || null,
+    clean(reviewerCredentials, 60) || null,
+    reviewerName ? now : null
   ).run();
 
   const row = await env.DB.prepare("SELECT * FROM blog_posts WHERE id = ? LIMIT 1").bind(id).first();
@@ -147,7 +171,15 @@ export async function createPost(env, author, { title, excerpt, bodyMarkdown, pu
  * a 404 and not somebody else's article. An operator passes null and may touch
  * any of them.
  */
-export async function updatePost(env, postId, { title, excerpt, bodyMarkdown, publish }, { tenantScope = null } = {}) {
+export async function updatePost(env, postId, {
+  title,
+  excerpt,
+  bodyMarkdown,
+  publish,
+  authorCredentials,
+  reviewerName,
+  reviewerCredentials
+}, { tenantScope = null } = {}) {
   if (!hasDatabase(env)) return { ok: false, code: "DATABASE_REQUIRED", message: "D1 is required." };
   const existing = tenantScope
     ? await env.DB.prepare("SELECT * FROM blog_posts WHERE id = ? AND tenant_id = ? LIMIT 1").bind(postId, tenantScope).first()
@@ -171,9 +203,30 @@ export async function updatePost(env, postId, { title, excerpt, bodyMarkdown, pu
     status = "withdrawn";
   }
 
-  await env.DB.prepare(
-    "UPDATE blog_posts SET title = ?, excerpt = ?, body_markdown = ?, status = ?, published_at = ?, updated_at = ? WHERE id = ?"
-  ).bind(nextTitle, nextExcerpt, nextBody, status, publishedAt, now, postId).run();
+  const nextAuthorCredentials = authorCredentials === undefined
+    ? existing.author_credentials
+    : (clean(authorCredentials, 60) || null);
+  const nextReviewer = reviewerName === undefined ? existing.reviewer_name : (clean(reviewerName, 120) || null);
+  const nextReviewerCredentials = reviewerCredentials === undefined
+    ? existing.reviewer_credentials
+    : (clean(reviewerCredentials, 60) || null);
+  // Re-dated when the reviewer changes, cleared when the reviewer is removed,
+  // untouched otherwise. A review date that survives the reviewer being
+  // replaced is a claim that the new person read it on a day they did not.
+  const nextReviewedAt = !nextReviewer ? null
+    : nextReviewer === existing.reviewer_name ? existing.reviewed_at
+      : now;
+
+  await env.DB.prepare(`
+    UPDATE blog_posts
+    SET title = ?, excerpt = ?, body_markdown = ?, status = ?, published_at = ?, updated_at = ?,
+        author_credentials = ?, reviewer_name = ?, reviewer_credentials = ?, reviewed_at = ?
+    WHERE id = ?
+  `).bind(
+    nextTitle, nextExcerpt, nextBody, status, publishedAt, now,
+    nextAuthorCredentials, nextReviewer, nextReviewerCredentials, nextReviewedAt,
+    postId
+  ).run();
   const row = await env.DB.prepare("SELECT * FROM blog_posts WHERE id = ? LIMIT 1").bind(postId).first();
   const updated = normalizePost(row, { includeBody: true });
   // On every edit of a live post, not only on first publish: a correction is

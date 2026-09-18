@@ -437,6 +437,14 @@
               </select>
             </label>
             <label class="field"><span>Excerpt (optional)</span><input type="text" name="excerpt" maxlength="400" placeholder="One line for the listing."></label>
+            <!-- Leave all three blank for anything non-clinical, which is most
+                 posts. Fill them in for anything that touches an animal's
+                 health: a named veterinarian standing behind a page is the
+                 largest quality signal available on this subject, and it is
+                 published verbatim, so it must be true. -->
+            <label class="field"><span>Author credentials (optional)</span><input type="text" name="authorCredentials" maxlength="60" placeholder="DVM, RVT — leave blank if not clinical"></label>
+            <label class="field"><span>Reviewed by (optional)</span><input type="text" name="reviewerName" maxlength="120" placeholder="Dr. Ana Rivera"></label>
+            <label class="field"><span>Reviewer credentials</span><input type="text" name="reviewerCredentials" maxlength="60" placeholder="DVM"></label>
             <label class="field field-wide"><span>Body (Markdown)</span><textarea name="bodyMarkdown" rows="10" required placeholder="## A heading&#10;&#10;Body text. **Bold**, *italic*, [links](https://example.com), lists and quotes."></textarea></label>
             <div class="form-actions">
               <button class="button" type="submit" data-publish="false">Save draft</button>

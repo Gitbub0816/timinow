@@ -188,7 +188,13 @@ export async function adminCreatePost(env, actor, body) {
     title: body?.title,
     excerpt: body?.excerpt,
     bodyMarkdown: body?.bodyMarkdown,
-    publish: body?.publish === true
+    publish: body?.publish === true,
+    // Optional and unset on most posts. Anything clinical should carry them —
+    // see migration 0033 on why a named veterinarian is the largest quality
+    // lever available to a blog on this subject.
+    authorCredentials: body?.authorCredentials,
+    reviewerName: body?.reviewerName,
+    reviewerCredentials: body?.reviewerCredentials
   });
   return result;
 }

@@ -223,3 +223,19 @@ main { max-width: 1040px; width: 100%; margin: 0 auto; padding: 28px 20px 64px; 
 [data-view="sign-in"] .message-card form { margin-top: 18px; }
 [data-view="sign-in"] .message-card .button { margin-right: 8px; }
 [data-view="sign-in"] .field input { max-width: 320px; }
+
+/* "Reviewed by Dr. Ana Rivera, DVM, on 12 September 2026" — present only when
+   a named veterinarian actually reviewed the post. Green, because in this
+   design system green is the colour for something verified rather than
+   something warned about. */
+.review-line {
+  display: inline-block;
+  background: var(--green-soft, #e9f7f1);
+  border: 2px solid var(--ink, #111b3b);
+  box-shadow: 3px 3px 0 var(--ink, #111b3b);
+  padding: .45rem .75rem;
+  margin: .5rem 0 1rem;
+  font-size: .9rem;
+  font-weight: 700;
+  color: var(--green, #12845d);
+}

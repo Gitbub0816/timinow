@@ -727,6 +727,13 @@ function wireComposer() {
           excerpt: data.get("excerpt"),
           bodyMarkdown: data.get("bodyMarkdown"),
           onBehalfOf: data.get("onBehalfOf") || undefined,
+          // Blank on anything non-clinical, which is most posts. These are
+          // published verbatim on the page and in its structured data, so an
+          // empty string must reach the server as nothing rather than as a
+          // credential nobody holds.
+          authorCredentials: data.get("authorCredentials") || undefined,
+          reviewerName: data.get("reviewerName") || undefined,
+          reviewerCredentials: data.get("reviewerCredentials") || undefined,
           publish: publishIntent
         })
       });

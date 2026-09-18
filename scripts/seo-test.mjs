@@ -822,3 +822,53 @@ console.log("SEO redirect: blog.timinow.pet answers 301 to the same path under t
 }
 
 console.log("SEO claims and IndexNow: figures appear only when measured, and a publish announces its URL without being able to fail because of it.");
+
+/* ────────────────────────────── who wrote it, and who checked it ── */
+
+/**
+ * Veterinary content is YMYL, and a named veterinarian standing behind a page
+ * is the largest quality signal available on the subject. The rule that makes
+ * it safe is that none of it is ever inferred: a review line appears only
+ * when a reviewer was actually recorded, because the alternative is a false
+ * statement about a real, licensed person.
+ */
+{
+  const base = {
+    id: "post_2", slug: "clinical-post", title: "A clinical post", excerpt: "Excerpt.",
+    authorKind: "platform", authorName: "Dr. Ana Rivera", providerName: null,
+    publishedAt: "2026-09-10 12:00:00", updatedAt: "2026-09-10 12:00:00",
+    bodyMarkdown: "Body."
+  };
+
+  const plain = { ...base, authorCredentials: null, reviewer: null };
+  plain.byline = bylineFor(plain);
+  const plainHtml = renderPost(BLOG_SHELL, plain, { html: "<p>Body.</p>", comments: [] });
+  assert(!plainHtml.includes("Reviewed by"), "a post with no reviewer claims no review");
+  const plainArticle = jsonLdBlocks(plainHtml)[0]["@graph"].find((n) => n["@type"] === "BlogPosting");
+  assert(!plainArticle.reviewedBy, "and emits no reviewedBy");
+  assert(!plainArticle.author.honorificSuffix, "and no credential it was not given");
+
+  const reviewed = {
+    ...base,
+    authorCredentials: "DVM",
+    reviewer: { name: "Dr. Sam Okafor", credentials: "DVM, DACVECC", reviewedAt: "2026-09-12 09:00:00" }
+  };
+  reviewed.byline = bylineFor(reviewed);
+  const html = renderPost(BLOG_SHELL, reviewed, { html: "<p>Body.</p>", comments: [] });
+  assert(html.includes("Reviewed by Dr. Sam Okafor, DVM, DACVECC"), "the reviewer is named on the page");
+  assert(/Reviewed by[^<]*on September 12, 2026/.test(html), "with the date they reviewed it");
+  const article = jsonLdBlocks(html)[0]["@graph"].find((n) => n["@type"] === "BlogPosting");
+  assertEqual(article.author.honorificSuffix, "DVM", "the author's credential is a field, not part of the name");
+  assertEqual(article.reviewedBy.name, "Dr. Sam Okafor", "reviewedBy names the reviewer");
+  assertEqual(article.reviewedBy.honorificSuffix, "DVM, DACVECC", "with their letters");
+  assertEqual(article.lastReviewed, "2026-09-12T09:00:00.000Z", "and lastReviewed carries the date");
+
+  // The reviewer's name comes from the same content pipeline as everything
+  // else on this surface and is escaped like everything else.
+  const hostile = { ...reviewed, reviewer: { name: '</script><script>alert(1)</script>', credentials: null, reviewedAt: null } };
+  hostile.byline = bylineFor(hostile);
+  const hostileHtml = renderPost(BLOG_SHELL, hostile, { html: "<p>Body.</p>", comments: [] });
+  assertEqual(countOf(hostileHtml, /<script>alert\(/g), 0, "a hostile reviewer name cannot inject a script");
+}
+
+console.log("SEO authorship: credentials and a named reviewer are rendered and declared when recorded, and never invented when not.");
