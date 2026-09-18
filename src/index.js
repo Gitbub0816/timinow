@@ -1,6 +1,7 @@
 import { actorForRequest, isOrgAdmin, roleAllows, signInRequired } from "./auth.js";
 import { publicConfig } from "./config.js";
-import { LANDING_PAGES, renderLandingPage, renderNotFoundPage } from "./landing.js";
+import { LANDING_PAGES, marketPagePath, marketQualifies, renderLandingPage, renderMarketPage, renderNotFoundPage } from "./landing.js";
+import { listMarkets } from "./markets.js";
 import { indexNowKey, indexNowKeyPath } from "./indexnow.js";
 import {
   SITE,
@@ -2578,6 +2579,20 @@ async function handleCrawlable(request, env, url) {
     }), { headers: { ...SEO_TEXT_HEADERS, ...SECURITY_HEADERS } });
   }
 
+  // A page per market, where there is a market to write one about. The gate
+  // is in src/landing.js and it currently produces nothing, which is correct:
+  // a page about a city with one clinic in it is a page about an empty
+  // search. They appear as markets fill.
+  const marketMatch = path.match(/^\/emergency-vet\/([a-z0-9-]{2,60})$/);
+  if (marketMatch) {
+    const market = (await listMarkets(env).catch(() => [])).find((candidate) => candidate.slug === marketMatch[1]);
+    if (!marketQualifies(market)) return notFoundPage(url);
+    const payload = await publicStatsPayload(env).catch(() => null);
+    return new Response(renderMarketPage(market, { stats: payload?.stats || {} }), {
+      headers: { ...SEO_HTML_HEADERS, ...SECURITY_HEADERS }
+    });
+  }
+
   if (path === "/sitemap.xml") {
     const entries = [
       { loc: canonicalUrl(SITE.customerOrigin, "/"), changefreq: "daily", priority: 1.0 },
@@ -2585,7 +2600,16 @@ async function handleCrawlable(request, env, url) {
         loc: canonicalUrl(SITE.customerOrigin, landingPath),
         changefreq: page.changefreq,
         priority: page.priority
-      }))
+      })),
+      // Only the markets that have a page. Listing a URL that answers 404 is
+      // the fastest way to teach a crawler to distrust the whole file.
+      ...(await listMarkets(env).catch(() => []))
+        .filter(marketQualifies)
+        .map((market) => ({
+          loc: canonicalUrl(SITE.customerOrigin, marketPagePath(market)),
+          changefreq: "weekly",
+          priority: 0.8
+        }))
     ];
     return new Response(sitemapXml(entries), { headers: { ...SEO_XML_HEADERS, ...SECURITY_HEADERS } });
   }

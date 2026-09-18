@@ -872,3 +872,65 @@ console.log("SEO claims and IndexNow: figures appear only when measured, and a p
 }
 
 console.log("SEO authorship: credentials and a named reviewer are rendered and declared when recorded, and never invented when not.");
+
+/* ────────────────────────────────── a page per market, when there is one ── */
+
+/**
+ * The gate is the feature.
+ *
+ * A page per city is the obvious next move in local search and the single
+ * easiest way to do damage: generated pages about cities with nothing behind
+ * them are thin content, and worse than any ranking consequence, they send
+ * somebody driving toward a search that comes back empty. So the page exists
+ * only where the answer does — and at the network's current size that means
+ * no pages at all, which is the correct output.
+ */
+{
+  const { marketQualifies, marketPagePath, renderMarketPage, MIN_CLINICS_FOR_A_MARKET_PAGE } = await import("../src/landing.js");
+  const market = { name: "Hayward", state: "CA", slug: "hayward", activation: "active_marketing", locationCount: 6 };
+
+  assert(marketQualifies(market), "a market with clinics gets a page");
+  assert(!marketQualifies({ ...market, locationCount: MIN_CLINICS_FOR_A_MARKET_PAGE - 1 }), "a thin market does not");
+  assert(!marketQualifies({ ...market, activation: "inactive" }), "nor an inactive one");
+  assert(!marketQualifies({ ...market, slug: "../../etc/passwd" }), "nor one whose slug is not a slug");
+  assert(!marketQualifies(null), "nor a market that does not exist");
+  assertEqual(marketPagePath(market), "/emergency-vet/hayward", "the path is under the emergency page");
+
+  const html = renderMarketPage(market, { stats: {} });
+  assertPageBasics(html, { canonical: "https://timinow.pet/emergency-vet/hayward", label: "market page", ssr: false });
+  assert(html.includes("6 veterinary practices"), "the page states the real count");
+  assert(html.includes("Hayward, CA"), "and names the place");
+  assert(/If it looks bad, go now/.test(html), "and still leads with going");
+  const crumbs = jsonLdBlocks(html)[0]["@graph"].find((node) => node["@type"] === "BreadcrumbList");
+  assertEqual(crumbs.itemListElement.length, 3, "a market page sits under the emergency page");
+
+  // The one thing a page like this must not do is publish a directory that is
+  // wrong by the time it is read — and clinic details stay masked until a
+  // request is matched anyway.
+  assert(!/Animal Hospital|Veterinary Clinic|Pet Emergency/i.test(html), "no clinic is named on a market page");
+
+  // Routing: a market that does not qualify is a 404, not a thin page.
+  const { default: worker } = await import("../src/index.js");
+  const markets = [market, { ...market, name: "Thin", slug: "thin", locationCount: 1 }];
+  const env = {
+    SURFACE: "customer",
+    DB: {
+      prepare: () => ({
+        bind: () => ({ all: async () => ({ results: [] }), first: async () => null }),
+        all: async () => ({ results: markets.map((m) => ({ id: m.slug, name: m.name, slug: m.slug, state: m.state, activation: m.activation, location_count: m.locationCount })) }),
+        first: async () => null
+      })
+    },
+    ASSETS: { fetch: async () => new Response("", { status: 404 }) }
+  };
+  const get = (path) => worker.fetch(new Request(`https://timinow.pet${path}`), env, { waitUntil() {} });
+  assertEqual((await get("/emergency-vet/hayward")).status, 200, "a qualifying market is served");
+  assertEqual((await get("/emergency-vet/thin")).status, 404, "a thin market is a 404, not a thin page");
+  assertEqual((await get("/emergency-vet/nowhere")).status, 404, "an invented market is a 404");
+
+  const map = await (await get("/sitemap.xml")).text();
+  assert(map.includes("<loc>https://timinow.pet/emergency-vet/hayward</loc>"), "the sitemap lists the market that has a page");
+  assert(!map.includes("/emergency-vet/thin"), "and not the one that does not — a listed URL that 404s teaches a crawler to distrust the file");
+}
+
+console.log("SEO markets: a city gets a page only where clinics actually report there; everything else is a 404 and stays out of the sitemap.");

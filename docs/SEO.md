@@ -133,13 +133,23 @@ has, which makes it a safety surface.
 
 ## What is not done, and why
 
-- **No city or clinic landing pages.** The obvious next move is a page per
-  market — "emergency vet in Hayward" — and it is genuinely the highest-value
-  remaining work. It is not here because those pages are only worth having
-  where there are real clinics behind them; generated at today's network size
-  they would be thin pages about empty searches, which is worse than nothing
-  and is what Google's helpful-content work exists to demote. Build them from
-  `src/markets.js` when a market has clinics, not before.
+- **City pages exist but none are published yet, on purpose.**
+  `/emergency-vet/:market` renders from `src/markets.js` for any market with
+  at least `MIN_CLINICS_FOR_A_MARKET_PAGE` (3) active clinics that is not
+  marked inactive. Below that it is a 404 and stays out of the sitemap. At the
+  network's current size that produces zero pages, which is the correct
+  output: generated pages about cities with nothing behind them are thin
+  content, and worse than any ranking consequence, they send somebody driving
+  toward a search that comes back empty. They appear as markets fill, with no
+  further work.
+
+  They deliberately do not name clinics. Which practice can take a patient
+  changes by the hour, and a published directory is wrong by the time it is
+  read — the failure happening in a parking lot rather than on the page.
+
+- **No clinic profile pages.** Same reasoning, plus a supply-side one: pages
+  that rank for a practice's own name compete with that practice's website,
+  and these are the partners the network depends on.
 - **No Search Console or Bing Webmaster verification.** Both need a DNS record
   or a file with a token nobody has issued yet. Once verified, submit
   `timinow.pet/sitemap.xml` and `blog.timinow.pet/sitemap.xml` and watch
@@ -166,6 +176,35 @@ has, which makes it a safety surface.
   JavaScript and one stylesheet, which is the shape that passes, but nothing
   in `npm run check` measures it. Lighthouse against production is the check
   and it needs a browser this environment does not have.
+
+## Announcing changes
+
+`src/indexnow.js` submits a post's URL to IndexNow the moment it is published
+or corrected — Bing, Yandex, Seznam and Naver share the submission. Google
+does not participate. Bing is the one that matters most here beyond its search
+share, because several assistants read its index, so "indexed within minutes"
+is the difference between a post being quotable tonight and next week.
+
+The key is public by design: IndexNow authenticates by having the site serve
+the same value at its root, so it proves domain control rather than being a
+credential. It is a `var`, committed, and served at `/<key>.txt`.
+
+Submission is hooked into `content-store.js` rather than a caller, because
+posts are created from two consoles and a post announced from one path and not
+the other is a gap nobody notices. It cannot throw and times out in three
+seconds: a search engine being slow must never be why a publish fails.
+
+## Authorship, for a YMYL subject
+
+Veterinary content is held to a higher bar than most, and a named
+veterinarian behind a page is the largest quality signal available. Migration
+0033 stores author credentials, a reviewer, their credentials and the review
+date; the post page renders them and the JSON-LD carries `reviewedBy`,
+`lastReviewed` and `honorificSuffix`.
+
+None of it is ever inferred. No defaults, no deriving a reviewer from an
+author. A review line is a statement that a named, licensed person read a page
+about a sick animal and stands behind it.
 
 ## If you are adding a page
 

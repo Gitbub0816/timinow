@@ -123,6 +123,7 @@
       "/17d3f8d93651178e78c5e7d2229195e5.txt",
       "/llms.txt",
       "/emergency-vet",
+      "/emergency-vet/*",
       "/how-it-works",
       "/help-with-vet-bills",
       "/for-veterinarians",

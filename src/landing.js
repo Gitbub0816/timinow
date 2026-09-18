@@ -596,6 +596,114 @@ export function renderNotFoundPage(path = "/") {
              '<meta name="robots" content="noindex, follow">');
 }
 
+/* ──────────────────────────────────────────────────────── market pages ── */
+
+/**
+ * How many clinics a market needs before it gets a page of its own.
+ *
+ * This is the whole design. A page per city is the obvious next move in
+ * local search and it is also the single easiest way to do real damage: a
+ * hundred generated pages saying "emergency vets in <city>" with nothing
+ * behind them is the thin-content pattern Google's helpful-content work
+ * exists to demote, and — worse than any ranking consequence — it sends
+ * somebody driving toward a search that will come back empty.
+ *
+ * So the page exists only where the answer exists. Three is not a magic
+ * number; it is the point below which "clinics near you report capacity here"
+ * stops being a true description of a market and starts being a hope.
+ *
+ * At the network's current size this produces zero pages, which is the
+ * correct output and not a bug. They appear as markets fill.
+ */
+export const MIN_CLINICS_FOR_A_MARKET_PAGE = 3;
+
+export function marketQualifies(market) {
+  return Boolean(market)
+    && market.activation !== "inactive"
+    && Number(market.locationCount || 0) >= MIN_CLINICS_FOR_A_MARKET_PAGE
+    && typeof market.slug === "string"
+    && /^[a-z0-9-]{2,60}$/.test(market.slug);
+}
+
+export function marketPagePath(market) {
+  return `/emergency-vet/${market.slug}`;
+}
+
+/**
+ * One market's page.
+ *
+ * Deliberately does not name the clinics. Which practice is on Tími, and
+ * whether it can take a patient, is answered by a search at the moment
+ * somebody searches — publishing a static list would be a directory that is
+ * wrong by the time it is read, and clinic details stay masked until a
+ * request is actually matched anyway.
+ *
+ * What it can say truthfully is the count, the place, and how the thing
+ * works, which is what the query is actually asking.
+ */
+export function renderMarketPage(market, { stats = null } = {}) {
+  const place = market.state ? `${market.name}, ${market.state}` : market.name;
+  const clinics = Number(market.locationCount || 0);
+  const faq = [
+    {
+      question: `How do I find an emergency vet in ${place} that is open now?`,
+      answer: `Search Tími NOW from wherever you are in ${place}. ${clinics} veterinary practices here report whether they can take another patient, and each result shows the time that practice last reported it, so you can tell a live answer from a stale one. Searching is free and needs no account.`
+    },
+    {
+      question: `Which clinics in ${place} are on Tími NOW?`,
+      answer: `The list is answered by a search rather than published, because it changes by the hour — a practice that could take a patient at eight may be full by ten. Searching shows you the ones that can take a patient at the moment you ask, with the distance and the time each one reported.`
+    },
+    {
+      question: "Is an availability report the same as an appointment?",
+      answer: "No. It is a practice saying it can take another patient at that moment. Emergency hospitals triage every arrival independently and will always see the most critical patient first, including ahead of somebody who arrived earlier."
+    },
+    {
+      question: `What does it cost to use Tími NOW in ${place}?`,
+      answer: `Searching and comparing clinics is free. ${OWNER_FEE} is charged to the pet owner only when a booking completes, and it is a platform fee rather than a veterinary charge — it is never billed to insurance. Any deposit and all veterinary charges are the clinic's own and are disclosed before you pay.`
+    }
+  ];
+
+  const sections = `
+    <section>
+      <h2>If it looks bad, go now</h2>
+      <p>Trouble breathing, collapse, a seizure that will not stop, a hard swollen belly, bleeding that will not clot, straining to urinate with nothing coming out, a suspected toxin, or anything after a car — those are reasons to be in a car. Call the nearest emergency hospital on the way so they know what is arriving. Tími is not a veterinarian and does not decide how urgent your pet is.</p>
+    </section>
+
+    <section>
+      <h2>What Tími knows about ${escapeHtml(place)}</h2>
+      <p><strong>${clinics} veterinary practices</strong> in this area report their intake capacity through Tími — whether they can take another patient right now, roughly what a stable patient is waiting, and whether they are taking critical cases.</p>
+      <p>We do not publish which ones. That list changes by the hour, and a directory that is wrong by the time you read it is worse than no directory: the failure does not happen while you are reading, it happens in a parking lot forty minutes later. A search answers it at the moment you ask.</p>
+    </section>
+
+    <section>
+      <h2>Why opening hours are not the answer</h2>
+      <p>A twenty-four hour hospital has a fixed number of tables and an entirely unfixed number of animals. By ten at night a hospital that opened the evening empty can be four hours deep, and none of that changes the hours on the door or the pin on the map. Capacity is the thing worth knowing, and it is only knowable from inside the building — which is why clinics report it themselves.</p>
+      <p>Every result carries the time it was reported. If a practice stops updating, it stops being shown as available rather than being presented as though it had.</p>
+    </section>
+
+    <section>
+      <h2>If your practice is in ${escapeHtml(place)}</h2>
+      <p>Reporting capacity costs nothing, declining a request costs nothing, and you pay only on a connection that actually completes. <a href="/for-veterinarians">How it works for clinics</a>.</p>
+    </section>
+  `;
+
+  return document_({
+    path: marketPagePath(market),
+    title: `Emergency vet in ${place} — who can take a patient now | Tími NOW`,
+    description: `${clinics} veterinary practices in ${place} report whether they can take another patient right now, each with the time they reported it. Free to search.`,
+    h1: `Emergency veterinary care in ${place}`,
+    lede: `Opening hours do not tell you whether a hospital is full. ${clinics} practices in ${place} report their capacity to Tími, and every result shows when they said it.`,
+    sections,
+    faq,
+    crumbs: [
+      HOME_CRUMB,
+      { name: "Emergency care", url: `${SITE.customerOrigin}/emergency-vet` },
+      { name: place, url: `${SITE.customerOrigin}${marketPagePath(market)}` }
+    ],
+    stats
+  });
+}
+
 /**
  * Every landing page, by path.
  *
