@@ -605,6 +605,11 @@ function wire() {
 }
 
 async function start() {
+  // The server rendered this page's content before sending it — see
+  // apps/blog/src/pages.js. That block exists for crawlers, for assistants
+  // that never run this file, and for the first paint; from here the app owns
+  // the DOM, so it goes.
+  document.querySelector("[data-ssr]")?.remove();
   $("[data-year]").textContent = String(new Date().getFullYear());
   state.config = await api("/api/config").catch(() => ({}));
   $("[data-not-advice]").textContent = state.config.notAdvice || "";

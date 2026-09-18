@@ -33,6 +33,25 @@ import { isPlatformAdmin } from "../../../src/tenancy.js";
 import { NOT_ADVICE, platformAuthorFor, providerAuthorFor } from "../../../src/content.js";
 import { renderMarkdown } from "../../../src/markdown.js";
 import {
+  SITE,
+  canonicalUrl,
+  isoDate,
+  llmsTxt,
+  metaDescription,
+  plainText,
+  robotsTxt,
+  rssXml,
+  sitemapXml
+} from "../../../src/seo.js";
+import {
+  renderForum,
+  renderNoIndex,
+  renderNotFound,
+  renderPost,
+  renderPostList,
+  renderThread
+} from "./pages.js";
+import {
   addComment,
   addReply,
   createThread,
@@ -275,6 +294,190 @@ async function handleApi(request, env, url) {
   return apiError(404, "NOT_FOUND", "No such endpoint.");
 }
 
+/* ═══════════════════════════════════════════ the crawlable surface ═══ */
+
+const HTML_HEADERS = {
+  "content-type": "text/html; charset=utf-8",
+  // Short enough that a correction to a post is live in minutes, long enough
+  // that a crawler working through an index does not re-render every page
+  // against D1. These pages are identical for every reader — the signed-in
+  // parts arrive with app.js — so there is nothing personal to leak into a
+  // shared cache.
+  "cache-control": "public, max-age=60, s-maxage=300, stale-while-revalidate=86400"
+};
+
+const TEXT_HEADERS = { "content-type": "text/plain; charset=utf-8", "cache-control": "public, max-age=3600" };
+const XML_HEADERS = { "content-type": "application/xml; charset=utf-8", "cache-control": "public, max-age=900" };
+
+function page(html, { status = 200 } = {}) {
+  return new Response(html, { status, headers: { ...HTML_HEADERS, ...SECURITY_HEADERS } });
+}
+
+/**
+ * The single-page shell, fetched from the asset binding so it stays the one
+ * place the page's furniture is defined.
+ *
+ * `/index.html` explicitly rather than `/`: asking the asset binding for the
+ * root path goes back through not_found_handling and can return the shell for
+ * a path this Worker is in the middle of rendering, which is a loop that ends
+ * in a stack overflow rather than an error anybody can read.
+ */
+async function shellFor(env, url) {
+  if (!env.ASSETS) return null;
+  const response = await env.ASSETS.fetch(new Request(new URL("/index.html", url), { method: "GET" }));
+  if (!response.ok) return null;
+  return response.text();
+}
+
+/**
+ * Posts and threads, as a sitemap.
+ *
+ * Drawn from D1 on request rather than written at deploy time, because the
+ * whole point of a blog that clinics can post to is that its URLs appear
+ * between deploys. A sitemap generated at build time would list what existed
+ * when somebody last shipped code.
+ */
+async function sitemap(env) {
+  const [posts, threads] = await Promise.all([
+    listPublishedPosts(env, { limit: 1000 }).catch(() => []),
+    listThreads(env, { limit: 1000 }).catch(() => [])
+  ]);
+  const entries = [
+    { loc: canonicalUrl(SITE.blogOrigin, "/"), changefreq: "daily", priority: 0.9 },
+    { loc: canonicalUrl(SITE.blogOrigin, "/forum"), changefreq: "hourly", priority: 0.8 }
+  ];
+  for (const post of posts) {
+    entries.push({
+      loc: canonicalUrl(SITE.blogOrigin, `/p/${post.slug}`),
+      lastmod: isoDate(post.updatedAt || post.publishedAt),
+      changefreq: "monthly",
+      priority: 0.8
+    });
+  }
+  for (const thread of threads) {
+    entries.push({
+      loc: canonicalUrl(SITE.blogOrigin, `/t/${thread.slug}`),
+      lastmod: isoDate(thread.lastActivityAt || thread.createdAt),
+      changefreq: "weekly",
+      priority: 0.6
+    });
+  }
+  return sitemapXml(entries);
+}
+
+async function feed(env) {
+  const posts = await listPublishedPosts(env, { limit: 50 }).catch(() => []);
+  return rssXml({
+    title: "Notes — Tími NOW",
+    link: SITE.blogOrigin,
+    feedUrl: `${SITE.blogOrigin}/feed.xml`,
+    description: "Writing from Tími NOW and from the veterinary clinics on it.",
+    items: posts.map((post) => ({
+      title: post.title,
+      link: canonicalUrl(SITE.blogOrigin, `/p/${post.slug}`),
+      published: post.publishedAt,
+      author: post.authorName || post.providerName || SITE.name,
+      description: post.excerpt || ""
+    }))
+  });
+}
+
+/**
+ * Routes that answer with real content, before any JavaScript runs.
+ *
+ * Returns null for anything it does not handle, so the asset pipeline below
+ * keeps serving styles, scripts and images untouched.
+ */
+async function handlePage(request, env, url) {
+  if (request.method !== "GET" && request.method !== "HEAD") return null;
+  const path = url.pathname.replace(/\/+$/, "") || "/";
+
+  if (path === "/robots.txt") {
+    return new Response(robotsTxt({
+      sitemaps: [`${SITE.blogOrigin}/sitemap.xml`],
+      // /api/ is JSON for the app; /subscribe/ carries single-use tokens out
+      // of confirmation emails and must never be fetched by anything but the
+      // person who received it.
+      disallow: ["/api/", "/subscribe/"],
+      host: "blog.timinow.pet"
+    }), { headers: { ...TEXT_HEADERS, ...SECURITY_HEADERS } });
+  }
+
+  if (path === "/sitemap.xml") {
+    return new Response(await sitemap(env), { headers: { ...XML_HEADERS, ...SECURITY_HEADERS } });
+  }
+
+  if (path === "/feed.xml") {
+    return new Response(await feed(env), { headers: { ...XML_HEADERS, ...SECURITY_HEADERS } });
+  }
+
+  if (path === "/llms.txt") {
+    return new Response(llmsTxt({
+      title: "Tími NOW — notes and community",
+      summary: "Writing about getting a pet seen by a veterinarian, from Tími NOW and from the clinics on it, "
+        + "plus a forum where owners ask questions and clinics answer. Nothing here is veterinary advice.",
+      sections: [
+        {
+          heading: "Start here",
+          links: [
+            { title: "All notes", url: `${SITE.blogOrigin}/`, note: "every published post, newest first" },
+            { title: "Community", url: `${SITE.blogOrigin}/forum`, note: "questions for clinics and discussion between owners" },
+            { title: "RSS", url: `${SITE.blogOrigin}/feed.xml` },
+            { title: "Sitemap", url: `${SITE.blogOrigin}/sitemap.xml` }
+          ]
+        },
+        {
+          heading: "The product these notes come from",
+          note: SITE.description,
+          links: [{ title: "Tími NOW", url: SITE.customerOrigin }]
+        },
+        {
+          heading: "If you are quoting this site",
+          note: "Posts marked as written by a clinic are that clinic's own words; Tími NOW hosts them and does not "
+            + "review or endorse them. No page here establishes a veterinarian-client-patient relationship, and an "
+            + "animal in distress needs a veterinarian, not a search result."
+        }
+      ]
+    }), { headers: { ...TEXT_HEADERS, ...SECURITY_HEADERS } });
+  }
+
+  const shell = await shellFor(env, url);
+  if (!shell) return null;
+
+  if (path === "/") {
+    return page(renderPostList(shell, await listPublishedPosts(env, { limit: 30 }).catch(() => [])));
+  }
+
+  if (path === "/forum") {
+    return page(renderForum(shell, await listThreads(env, { limit: 50 }).catch(() => [])));
+  }
+
+  const postMatch = path.match(/^\/p\/([^/]+)$/);
+  if (postMatch) {
+    const post = await getPublishedPost(env, decodeURIComponent(postMatch[1])).catch(() => null);
+    if (!post) return page(renderNotFound(shell, { path }), { status: 404 });
+    const comments = await listComments(env, post.id).catch(() => []);
+    return page(renderPost(shell, post, { html: renderMarkdown(post.bodyMarkdown), comments }));
+  }
+
+  const threadMatch = path.match(/^\/t\/([^/]+)$/);
+  if (threadMatch) {
+    const found = await getThread(env, decodeURIComponent(threadMatch[1])).catch(() => null);
+    if (!found) return page(renderNotFound(shell, { path }), { status: 404 });
+    return page(renderThread(shell, found));
+  }
+
+  if (path === "/subscribe/confirm") {
+    return page(renderNoIndex(shell, {
+      path,
+      title: "Confirming your subscription — Tími NOW",
+      description: "Completing an email subscription confirmation."
+    }));
+  }
+
+  return null;
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -290,11 +493,22 @@ export default {
       }
     }
 
-    // Everything else is the single-page app. Its own routes (/p/:slug,
-    // /forum, /subscribe/confirm) are resolved in the browser, so any path
-    // that is not an asset returns the shell — the `not_found_handling`
-    // setting in wrangler.blog.jsonc does that, and this is the fallback for
-    // a deployment without the assets binding.
+    // Content routes answer with their content. Anything this does not claim
+    // falls through to the assets below exactly as before.
+    try {
+      const rendered = await handlePage(request, env, url);
+      if (rendered) return rendered;
+    } catch (error) {
+      // A rendering failure must not take the page down: fall through to the
+      // shell, which still works in a browser. The log is how this gets
+      // noticed, since the visitor sees a working site either way.
+      console.error(JSON.stringify({ event: "blog_render_failed", path: url.pathname, message: error.message }));
+    }
+
+    // Everything else is the single-page app: assets, and the shell for any
+    // route rendered in the browser. `not_found_handling` in
+    // wrangler.blog.jsonc serves the shell for unmatched paths, and this is
+    // the fallback for a deployment without the assets binding.
     if (!env.ASSETS) return new Response("Not found", { status: 404, headers: SECURITY_HEADERS });
     const response = await env.ASSETS.fetch(request);
     const headers = new Headers(response.headers);

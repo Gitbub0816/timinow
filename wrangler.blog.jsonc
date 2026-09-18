@@ -62,7 +62,23 @@
     "directory": "./apps/blog/public",
     "binding": "ASSETS",
     "not_found_handling": "single-page-application",
-    "run_worker_first": ["/api/*"]
+    // Every path the Worker renders itself has to be named here. Assets are
+    // served before the Worker runs otherwise — which is the same mechanism
+    // that once left every page with no security headers — so a path missing
+    // from this list gets the empty shell no matter what apps/blog/src/pages.js
+    // would have rendered for it.
+    "run_worker_first": [
+      "/api/*",
+      "/",
+      "/p/*",
+      "/t/*",
+      "/forum",
+      "/robots.txt",
+      "/sitemap.xml",
+      "/feed.xml",
+      "/llms.txt",
+      "/subscribe/*"
+    ]
   },
   "observability": {
     "enabled": true,
