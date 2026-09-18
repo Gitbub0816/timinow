@@ -636,4 +636,20 @@ console.log("SEO consoles: the veterinary console, the platform console and the 
   }
 }
 
-console.log("SEO routing: every path each Worker renders is reachable past the asset layer, and the two public surfaces answer their own 404s.");
+/**
+ * The homepage links to the documents.
+ *
+ * A sitemap tells a crawler a URL exists. A link from the site's own homepage
+ * is what says it matters, and is how the homepage's standing reaches it. A
+ * page reachable only from a sitemap is an orphan, and orphans rank alone.
+ */
+{
+  const home = readFileSync(join(root, "public/index.html"), "utf8");
+  const { LANDING_PAGES } = await import("../src/landing.js");
+  for (const path of Object.keys(LANDING_PAGES)) {
+    assert(home.includes(`href="${path}"`), `the homepage links to ${path}`);
+  }
+  assert(home.includes('href="https://blog.timinow.pet/"'), "the homepage links to the blog");
+}
+
+console.log("SEO routing: every path each Worker renders is reachable past the asset layer, the two public surfaces answer their own 404s, and the homepage links to every document.");

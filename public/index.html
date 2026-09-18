@@ -394,6 +394,26 @@
     </section>
   </main>
 
+  <!-- Real paths, not hash routes, and the reason is discovery rather than
+       navigation. The pages at these addresses are documents this Worker
+       renders (src/landing.js); a sitemap alone tells a crawler they exist,
+       while a link from the site's own homepage is what says they matter and
+       is how the page's standing reaches them. Every screen of this app is
+       one URL — these are the other ones. -->
+  <footer class="global-footer">
+    <nav aria-label="More from Tími NOW">
+      <a href="/emergency-vet">Emergency vet care</a>
+      <a href="/how-it-works">How Tími NOW works</a>
+      <a href="/pricing">Pricing</a>
+      <a href="/help-with-vet-bills">Help with vet bills</a>
+      <a href="/for-veterinarians">For veterinary clinics</a>
+      <a href="https://blog.timinow.pet/">Notes</a>
+      <a href="https://blog.timinow.pet/forum">Community</a>
+      <a href="#legal">Legal centre</a>
+    </nav>
+    <p>Tími NOW is operated by ClearKey Solutions, LLC, Hayward, California. It is not a veterinary practice and does not provide veterinary advice.</p>
+  </footer>
+
   <dialog class="hospital-dialog" data-hospital-dialog aria-labelledby="hospital-dialog-title">
     <form method="dialog"><button class="dialog-close" value="cancel" aria-label="Close">×</button><div data-hospital-dialog-content></div></form>
   </dialog>

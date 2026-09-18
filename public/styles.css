@@ -842,3 +842,17 @@ dialog { width: min(620px, calc(100% - 2rem)); max-height: 90svh; overflow: auto
 .landing-faq summary { cursor: pointer; font-weight: 700; color: var(--ink); }
 .landing-faq summary::marker { color: var(--coral); }
 .landing-faq details p { margin: .65rem 0 0; }
+
+/* The site-wide footer, which exists so the documents at /emergency-vet and
+   its siblings are linked from the homepage rather than only listed in a
+   sitemap. Quiet by design: it is the last thing on a page whose job is to
+   get somebody to a clinic. */
+.global-footer {
+  border-top: 2px solid var(--ink);
+  background: var(--paper);
+  padding: 2rem 1.25rem 2.5rem;
+  margin-top: 3rem;
+}
+.global-footer nav { display: flex; flex-wrap: wrap; gap: .5rem 1.25rem; max-width: 60rem; margin: 0 auto .9rem; }
+.global-footer nav a { color: var(--blue); font-weight: 700; font-size: .92rem; }
+.global-footer p { max-width: 60rem; margin: 0 auto; color: var(--muted); font-size: .82rem; line-height: 1.5; }
