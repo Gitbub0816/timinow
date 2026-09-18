@@ -58,6 +58,22 @@ export const SITE = {
    */
   address: { locality: "Hayward", region: "CA", country: "US" },
   customerOrigin: "https://timinow.pet",
+  /**
+   * The blog lives at timinow.pet/blog, not on its own subdomain.
+   *
+   * Subdomains are separate sites to a search engine. Everything a post earns
+   * — links, citations, the standing that comes from being quoted — accrues
+   * to blog.timinow.pet and reaches timinow.pet only weakly, and the reverse
+   * is just as true: the main site's standing does not help a new post rank.
+   * One domain, one pool. It is worth doing now and unpleasant to do later,
+   * which is the whole argument for doing it with one post published rather
+   * than fifty.
+   *
+   * blogOrigin is kept because the old host still exists and redirects to the
+   * new one; nothing should build a link from it.
+   */
+  blogBase: "https://timinow.pet/blog",
+  blogPath: "/blog",
   blogOrigin: "https://blog.timinow.pet",
   providerOrigin: "https://providers.timinow.pet",
   /**

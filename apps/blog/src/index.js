@@ -322,11 +322,18 @@ function page(html, { status = 200 } = {}) {
  * a path this Worker is in the middle of rendering, which is a loop that ends
  * in a stack overflow rather than an error anybody can read.
  */
-async function shellFor(env, url) {
+async function shellFor(env, url, { basePath = "" } = {}) {
   if (!env.ASSETS) return null;
   const response = await env.ASSETS.fetch(new Request(new URL("/index.html", url), { method: "GET" }));
   if (!response.ok) return null;
-  return response.text();
+  const shell = await response.text();
+  if (!basePath) return shell;
+  // Under timinow.pet/blog the shell's own `/styles.css` and `/app.js` would
+  // resolve to the CUSTOMER site's files, which are different files. Rewrite
+  // the root-relative references to sit under the base. Done here rather than
+  // in the HTML so the old host keeps working unchanged during the move.
+  return shell
+    .replace(/(href|src)="\/(styles\.css|app\.js|assets\/)/g, `$1="${basePath}/$2`);
 }
 
 /**
@@ -343,12 +350,12 @@ async function sitemap(env) {
     listThreads(env, { limit: 1000 }).catch(() => [])
   ]);
   const entries = [
-    { loc: canonicalUrl(SITE.blogOrigin, "/"), changefreq: "daily", priority: 0.9 },
-    { loc: canonicalUrl(SITE.blogOrigin, "/forum"), changefreq: "hourly", priority: 0.8 }
+    { loc: canonicalUrl(SITE.blogBase, "/"), changefreq: "daily", priority: 0.9 },
+    { loc: canonicalUrl(SITE.blogBase, "/forum"), changefreq: "hourly", priority: 0.8 }
   ];
   for (const post of posts) {
     entries.push({
-      loc: canonicalUrl(SITE.blogOrigin, `/p/${post.slug}`),
+      loc: canonicalUrl(SITE.blogBase, `/p/${post.slug}`),
       lastmod: isoDate(post.updatedAt || post.publishedAt),
       changefreq: "monthly",
       priority: 0.8
@@ -356,7 +363,7 @@ async function sitemap(env) {
   }
   for (const thread of threads) {
     entries.push({
-      loc: canonicalUrl(SITE.blogOrigin, `/t/${thread.slug}`),
+      loc: canonicalUrl(SITE.blogBase, `/t/${thread.slug}`),
       lastmod: isoDate(thread.lastActivityAt || thread.createdAt),
       changefreq: "weekly",
       priority: 0.6
@@ -369,12 +376,12 @@ async function feed(env) {
   const posts = await listPublishedPosts(env, { limit: 50 }).catch(() => []);
   return rssXml({
     title: "Notes — Tími NOW",
-    link: SITE.blogOrigin,
-    feedUrl: `${SITE.blogOrigin}/feed.xml`,
+    link: SITE.blogBase,
+    feedUrl: `${SITE.blogBase}/feed.xml`,
     description: "Writing from Tími NOW and from the veterinary clinics on it.",
     items: posts.map((post) => ({
       title: post.title,
-      link: canonicalUrl(SITE.blogOrigin, `/p/${post.slug}`),
+      link: canonicalUrl(SITE.blogBase, `/p/${post.slug}`),
       published: post.publishedAt,
       author: post.authorName || post.providerName || SITE.name,
       description: post.excerpt || ""
@@ -391,15 +398,18 @@ async function feed(env) {
 async function handlePage(request, env, url) {
   if (request.method !== "GET" && request.method !== "HEAD") return null;
   const path = url.pathname.replace(/\/+$/, "") || "/";
+  // Set by the customer Worker when it forwards a /blog request. Absent when
+  // this Worker is reached directly on the legacy host.
+  const basePath = request.headers.get("x-timi-blog-base") || "";
 
   if (path === "/robots.txt") {
     return new Response(robotsTxt({
-      sitemaps: [`${SITE.blogOrigin}/sitemap.xml`],
+      sitemaps: [`${SITE.blogBase}/sitemap.xml`],
       // /api/ is JSON for the app; /subscribe/ carries single-use tokens out
       // of confirmation emails and must never be fetched by anything but the
       // person who received it.
       disallow: ["/api/", "/subscribe/"],
-      host: "blog.timinow.pet"
+      host: "timinow.pet"
     }), { headers: { ...TEXT_HEADERS, ...SECURITY_HEADERS } });
   }
 
@@ -420,10 +430,10 @@ async function handlePage(request, env, url) {
         {
           heading: "Start here",
           links: [
-            { title: "All notes", url: `${SITE.blogOrigin}/`, note: "every published post, newest first" },
-            { title: "Community", url: `${SITE.blogOrigin}/forum`, note: "questions for clinics and discussion between owners" },
-            { title: "RSS", url: `${SITE.blogOrigin}/feed.xml` },
-            { title: "Sitemap", url: `${SITE.blogOrigin}/sitemap.xml` }
+            { title: "All notes", url: `${SITE.blogBase}/`, note: "every published post, newest first" },
+            { title: "Community", url: `${SITE.blogBase}/forum`, note: "questions for clinics and discussion between owners" },
+            { title: "RSS", url: `${SITE.blogBase}/feed.xml` },
+            { title: "Sitemap", url: `${SITE.blogBase}/sitemap.xml` }
           ]
         },
         {
@@ -441,7 +451,7 @@ async function handlePage(request, env, url) {
     }), { headers: { ...TEXT_HEADERS, ...SECURITY_HEADERS } });
   }
 
-  const shell = await shellFor(env, url);
+  const shell = await shellFor(env, url, { basePath });
   if (!shell) return null;
 
   if (path === "/") {
@@ -517,7 +527,7 @@ export default {
     // Render the real page for it, because a 404 somebody reads is still a
     // page and should say where to go.
     if (response.status === 404 && (request.method === "GET" || request.method === "HEAD")) {
-      const shell = await shellFor(env, url).catch(() => null);
+      const shell = await shellFor(env, url, { basePath: request.headers.get("x-timi-blog-base") || "" }).catch(() => null);
       if (shell) {
         return new Response(renderNotFound(shell, { path: url.pathname }), {
           status: 404,

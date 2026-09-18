@@ -41,10 +41,10 @@ marketing site.
 | `timinow.pet/help-with-vet-bills` | Standalone document |
 | `timinow.pet/for-veterinarians` | Standalone document |
 | `timinow.pet/pricing` | Standalone document |
-| `blog.timinow.pet/` | Rendered post index (`apps/blog/src/pages.js`) |
-| `blog.timinow.pet/p/:slug` | The whole post, its comments, its notices |
-| `blog.timinow.pet/forum` | Rendered thread index |
-| `blog.timinow.pet/t/:slug` | The thread **and its replies** |
+| `timinow.pet/blog/` | Rendered post index (`apps/blog/src/pages.js`), forwarded to the blog Worker over a service binding |
+| `timinow.pet/blog/p/:slug` | The whole post, its comments, its notices |
+| `timinow.pet/blog/forum` | Rendered thread index |
+| `timinow.pet/blog/t/:slug` | The thread **and its replies** |
 
 The landing documents deliberately do not load `app.js`. A marketing page that
 boots a single-page application in order to show a paragraph is slower,
@@ -148,6 +148,16 @@ has, which makes it a safety surface.
   sources here are veterinary associations, local press, and the clinics
   themselves — every participating clinic that embeds the widget or links its
   own "book with us" page is a relevant link from a veterinary domain.
+- **One domain, not two.** The blog moved from `blog.timinow.pet` to
+  `timinow.pet/blog`. Subdomains are separate sites to a search engine:
+  everything a post earned accrued to the subdomain and reached the main site
+  only weakly, and the main site's standing did not help a new post rank.
+  `timinow.pet` is bound as a *custom domain*, which captures the whole
+  hostname, so no route can hand `/blog` to another Worker — the customer
+  Worker forwards it over a service binding instead, stripping the prefix and
+  telling the blog Worker where it is mounted so the links it writes point
+  back to the same place. The old host still answers and will redirect.
+
 - **`/#legal` is still a fragment.** The legal centre is eight articles under
   one hash route. They are each worth a URL and none of them is worth ranking
   for, so this stayed where it was.

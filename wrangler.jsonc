@@ -15,6 +15,13 @@
     { "pattern": "www.timinow.pet", "custom_domain": true },
     { "pattern": "app.timinow.pet", "custom_domain": true }
   ],
+  // The blog Worker, called internally for timinow.pet/blog/*. A custom domain
+  // captures the whole hostname, so a route cannot hand that path to another
+  // Worker — a service binding can, without a second trip over the network.
+  // See handleBlog in src/index.js.
+  "services": [
+    { "binding": "BLOG", "service": "timinow-blog" }
+  ],
   "vars": {
     "SIGN_IN_REQUIRED": "true",
     "DEMO_MODE": "false",
@@ -100,6 +107,8 @@
     "run_worker_first": [
       "/api/*",
       "/r/*",
+      "/blog",
+      "/blog/*",
       "/",
       "/robots.txt",
       "/sitemap.xml",

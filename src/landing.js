@@ -171,8 +171,8 @@ function document_({ path, title, description, h1, lede, sections, faq = [], cru
     <nav aria-label="More">
       <a href="/">Home</a>
       ${NAV.map((item) => `<a href="${item.href}">${escapeHtml(item.label)}</a>`).join("\n      ")}
-      <a href="https://blog.timinow.pet/">Notes</a>
-      <a href="https://blog.timinow.pet/forum">Community</a>
+      <a href="/blog/">Notes</a>
+      <a href="/blog/forum">Community</a>
       <a href="/#legal">Legal centre</a>
     </nav>
   </footer>

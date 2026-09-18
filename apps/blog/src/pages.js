@@ -46,7 +46,13 @@ import {
   websiteSchema
 } from "../../../src/seo.js";
 
-const BLOG = SITE.blogOrigin;
+/**
+ * Canonical base for every blog URL. Absolute for canonicals and schema,
+ * `SITE.blogPath` for in-page hrefs — the two must agree or a crawler follows
+ * a link to one address and is told the page lives at another.
+ */
+const BLOG = SITE.blogBase;
+const P = SITE.blogPath;
 
 /** Human dates, in the one format the rest of the site uses. */
 function formatDate(value) {
@@ -96,11 +102,11 @@ function postCard(post) {
   const excerpt = post.excerpt || "";
   return [
     `<article class="post-card">`,
-    `  <h2><a href="/p/${escapeHtml(post.slug)}">${escapeHtml(post.title)}</a></h2>`,
+    `  <h2><a href="${P}/p/${escapeHtml(post.slug)}">${escapeHtml(post.title)}</a></h2>`,
     byline ? `  <p class="eyebrow">${escapeHtml(byline)}</p>` : "",
     post.publishedAt ? `  <p class="post-meta">${timeTag(post.publishedAt)}</p>` : "",
     excerpt ? `  <p>${escapeHtml(excerpt)}</p>` : "",
-    `  <p><a href="/p/${escapeHtml(post.slug)}">Read ${escapeHtml(post.title)}</a></p>`,
+    `  <p><a href="${P}/p/${escapeHtml(post.slug)}">Read ${escapeHtml(post.title)}</a></p>`,
     `</article>`,
     // The absolute URL appears nowhere a reader sees it; it is here so the
     // itemListElement below and the visible link cannot drift apart.
@@ -124,8 +130,8 @@ export function renderPostList(shell, posts) {
     posts.length
       ? `<div class="post-list">\n${posts.map(postCard).join("\n")}\n</div>`
       : `<p class="empty">No posts published yet.</p>`,
-    `<p><a href="/forum">Community — questions for clinics, and talk between owners</a></p>`,
-    `<p><a href="/feed.xml">Subscribe by RSS</a> · <a href="${escapeHtml(SITE.customerOrigin)}">Find veterinary care that is open now</a></p>`
+    `<p><a href="${P}/forum">Community — questions for clinics, and talk between owners</a></p>`,
+    `<p><a href="${P}/feed.xml">Subscribe by RSS</a> · <a href="${escapeHtml(SITE.customerOrigin)}">Find veterinary care that is open now</a></p>`
   ].join("\n");
 
   const head = headTags({
@@ -179,7 +185,7 @@ export function renderPost(shell, post, { html, comments = [] }) {
   const modified = isoDate(post.updatedAt);
 
   const body = [
-    `<nav class="breadcrumb" aria-label="Breadcrumb"><a href="/">Notes</a> › <span>${escapeHtml(post.title)}</span></nav>`,
+    `<nav class="breadcrumb" aria-label="Breadcrumb"><a href="${P}/">Notes</a> › <span>${escapeHtml(post.title)}</span></nav>`,
     `<article class="post">`,
     byline ? `  <p class="eyebrow">${escapeHtml(byline)}</p>` : "",
     `  <h1>${escapeHtml(post.title)}</h1>`,
@@ -193,7 +199,7 @@ export function renderPost(shell, post, { html, comments = [] }) {
     `  <div class="prose">${html}</div>`,
     `</article>`,
     commentList(comments),
-    `<p><a href="/">More notes</a> · <a href="${escapeHtml(SITE.customerOrigin)}">Find a clinic that can see your pet now</a></p>`
+    `<p><a href="${P}/">More notes</a> · <a href="${escapeHtml(SITE.customerOrigin)}">Find a clinic that can see your pet now</a></p>`
   ].filter(Boolean).join("\n");
 
   const head = headTags({
@@ -232,7 +238,7 @@ function threadCard(thread) {
   return [
     `<article class="thread-card">`,
     `  <p class="eyebrow">${escapeHtml(KIND_LABEL[thread.kind] || "Discussion")}</p>`,
-    `  <h2><a href="/t/${escapeHtml(thread.slug)}">${escapeHtml(thread.title)}</a></h2>`,
+    `  <h2><a href="${P}/t/${escapeHtml(thread.slug)}">${escapeHtml(thread.title)}</a></h2>`,
     `  <p class="post-meta">${escapeHtml(thread.authorName || "Member")}`,
     thread.createdAt ? ` · ${timeTag(thread.createdAt)}` : "",
     ` · ${thread.replyCount} ${thread.replyCount === 1 ? "reply" : "replies"}</p>`,
@@ -248,7 +254,7 @@ export function renderForum(shell, threads) {
     + "Reading is open to everyone; posting needs an account so a name sits behind every answer.";
 
   const body = [
-    `<nav class="breadcrumb" aria-label="Breadcrumb"><a href="/">Notes</a> › <span>Community</span></nav>`,
+    `<nav class="breadcrumb" aria-label="Breadcrumb"><a href="${P}/">Notes</a> › <span>Community</span></nav>`,
     `<div class="masthead">`,
     `  <h1>Community</h1>`,
     `  <p>${escapeHtml(description)}</p>`,
@@ -257,7 +263,7 @@ export function renderForum(shell, threads) {
     threads.length
       ? `<div class="thread-list">\n${threads.map(threadCard).join("\n")}\n</div>`
       : `<p class="empty">No threads yet.</p>`,
-    `<p><a href="/">Notes from Tími NOW and its clinics</a> · <a href="${escapeHtml(SITE.customerOrigin)}">Find care that is open now</a></p>`
+    `<p><a href="${P}/">Notes from Tími NOW and its clinics</a> · <a href="${escapeHtml(SITE.customerOrigin)}">Find care that is open now</a></p>`
   ].join("\n");
 
   const head = headTags({ title, description, canonical, type: "website" }) + "\n  " + graph([
@@ -303,7 +309,7 @@ export function renderThread(shell, { thread, replies = [] }) {
   ].join("")).join("\n");
 
   const body = [
-    `<nav class="breadcrumb" aria-label="Breadcrumb"><a href="/">Notes</a> › <a href="/forum">Community</a> › <span>${escapeHtml(thread.title)}</span></nav>`,
+    `<nav class="breadcrumb" aria-label="Breadcrumb"><a href="${P}/">Notes</a> › <a href="${P}/forum">Community</a> › <span>${escapeHtml(thread.title)}</span></nav>`,
     `<article class="thread">`,
     `  <p class="eyebrow">${escapeHtml(KIND_LABEL[thread.kind] || "Discussion")}</p>`,
     `  <h1>${escapeHtml(thread.title)}</h1>`,
@@ -314,7 +320,7 @@ export function renderThread(shell, { thread, replies = [] }) {
     replies.length
       ? `<section class="replies"><h2>${replies.length} ${replies.length === 1 ? "reply" : "replies"}</h2><ol class="reply-list">\n${replyMarkup}\n</ol></section>`
       : `<p class="empty">No replies yet.</p>`,
-    `<p><a href="/forum">More from the community</a> · <a href="${escapeHtml(SITE.customerOrigin)}">Find a clinic that can see your pet now</a></p>`
+    `<p><a href="${P}/forum">More from the community</a> · <a href="${escapeHtml(SITE.customerOrigin)}">Find a clinic that can see your pet now</a></p>`
   ].join("\n");
 
   const head = headTags({
@@ -370,7 +376,7 @@ export function renderNotFound(shell, { path }) {
     `<div class="message-card">`,
     `  <h1>Not found</h1>`,
     `  <p>There is nothing at this address. Everything published is listed on the notes index.</p>`,
-    `  <p><a href="/">All notes</a> · <a href="/forum">Community</a></p>`,
+    `  <p><a href="${P}/">All notes</a> · <a href="${P}/forum">Community</a></p>`,
     `</div>`
   ].join("\n");
   return renderIntoShell(shell, { head, body });

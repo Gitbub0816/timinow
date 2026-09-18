@@ -236,9 +236,9 @@ function assertPageBasics(html, { canonical, label, ssr = true }) {
 
 {
   const html = renderPostList(BLOG_SHELL, [post]);
-  assertPageBasics(html, { canonical: "https://blog.timinow.pet/", label: "post list" });
+  assertPageBasics(html, { canonical: "https://timinow.pet/blog/", label: "post list" });
   assert(html.includes(post.title), "post list shows the post title in the HTML");
-  assert(html.includes('href="/p/grapes-and-dogs"'), "post list links to the post");
+  assert(html.includes('href="/blog/p/grapes-and-dogs"'), "post list links to the post");
   assert(html.includes('rel="alternate" type="application/rss+xml"'), "post list advertises the feed");
   const list = jsonLdBlocks(html)[0]["@graph"].find((node) => node["@type"] === "CollectionPage");
   assertEqual(list.mainEntity.itemListElement[0].name, post.title, "the item list names the post");
@@ -250,7 +250,7 @@ function assertPageBasics(html, { canonical, label, ssr = true }) {
   const html = renderPost(BLOG_SHELL, post, { html: renderMarkdown(post.bodyMarkdown), comments: [
     { authorName: "A reader", body: "Thank you, we went in.", createdAt: "2026-09-11 09:00:00" }
   ] });
-  assertPageBasics(html, { canonical: "https://blog.timinow.pet/p/grapes-and-dogs", label: "post" });
+  assertPageBasics(html, { canonical: "https://timinow.pet/blog/p/grapes-and-dogs", label: "post" });
   assert(html.includes("Act quickly"), "the post body is in the served HTML");
   assert(html.includes("Call a veterinarian"), "the post body is rendered, not summarised");
   assert(html.includes("Thank you, we went in."), "comments are in the served HTML");
@@ -313,7 +313,7 @@ function assertPageBasics(html, { canonical, label, ssr = true }) {
     replies: [{ id: "r1", body: "If he is bearing weight it can usually wait for morning.", authorName: "Dr. Rivera", authorKind: "provider", providerName: "Bayview Animal Hospital", createdAt: "2026-09-14 19:00:00" }]
   };
   const html = renderThread(BLOG_SHELL, thread);
-  assertPageBasics(html, { canonical: "https://blog.timinow.pet/t/is-this-an-emergency", label: "thread" });
+  assertPageBasics(html, { canonical: "https://timinow.pet/blog/t/is-this-an-emergency", label: "thread" });
   assert(html.includes("favouring the left back leg"), "the thread body is in the served HTML");
   assert(html.includes("bearing weight it can usually wait"), "replies are in the served HTML — they are the answer");
   const discussion = jsonLdBlocks(html)[0]["@graph"].find((node) => node["@type"] === "DiscussionForumPosting");
@@ -324,8 +324,8 @@ function assertPageBasics(html, { canonical, label, ssr = true }) {
 
 {
   const html = renderForum(BLOG_SHELL, [{ slug: "a", kind: "question", title: "A question", authorName: "Sam", replyCount: 0, createdAt: "2026-09-14 18:00:00" }]);
-  assertPageBasics(html, { canonical: "https://blog.timinow.pet/forum", label: "forum" });
-  assert(html.includes('href="/t/a"'), "the forum links to its threads");
+  assertPageBasics(html, { canonical: "https://timinow.pet/blog/forum", label: "forum" });
+  assert(html.includes('href="/blog/t/a"'), "the forum links to its threads");
 }
 
 {
@@ -381,24 +381,24 @@ console.log(`SEO tests passed: ${checks} assertions across canonical URLs, descr
   assertEqual(home.headers.get("content-type"), "text/html; charset=utf-8", "the root is HTML");
   assert(home.headers.get("content-security-policy"), "a rendered page still carries the CSP");
   const homeHtml = await home.text();
-  assert(homeHtml.includes('<link rel="canonical" href="https://blog.timinow.pet/">'), "the root declares its canonical");
+  assert(homeHtml.includes('<link rel="canonical" href="https://timinow.pet/blog/">'), "the root declares its canonical");
   assert(homeHtml.includes("<div data-ssr>"), "the root is server-rendered");
 
   const robots = await get("/robots.txt");
   assertEqual(robots.status, 200, "robots.txt is served");
-  assert((await robots.text()).includes("Sitemap: https://blog.timinow.pet/sitemap.xml"), "robots.txt points at the sitemap");
+  assert((await robots.text()).includes("Sitemap: https://timinow.pet/blog/sitemap.xml"), "robots.txt points at the sitemap");
 
   const map = await get("/sitemap.xml");
   assertEqual(map.headers.get("content-type"), "application/xml; charset=utf-8", "the sitemap is XML");
   const mapBody = await map.text();
   assertWellFormedXml(mapBody, "served sitemap");
-  assert(mapBody.includes("<loc>https://blog.timinow.pet/forum</loc>"), "the sitemap lists the forum");
+  assert(mapBody.includes("<loc>https://timinow.pet/blog/forum</loc>"), "the sitemap lists the forum");
 
   const rss = await get("/feed.xml");
   assertWellFormedXml(await rss.text(), "served feed");
 
   const llms = await get("/llms.txt");
-  assert((await llms.text()).includes("blog.timinow.pet/feed.xml"), "llms.txt points at the feed");
+  assert((await llms.text()).includes("timinow.pet/blog/feed.xml"), "llms.txt points at the feed");
 
   const missing = await get("/p/nothing-here");
   assertEqual(missing.status, 404, "an unknown post is a real 404, not a soft one");
@@ -454,7 +454,7 @@ console.log("SEO integration: the blog Worker serves rendered pages, robots.txt,
     // Every page reaches the app and the other pages: an orphan ranks alone.
     assert(html.includes('href="/#find"'), `${path}: links into the app`);
     assert(html.includes('href="/"'), `${path}: links home`);
-    assert(html.includes("blog.timinow.pet"), `${path}: links to the blog`);
+    assert(html.includes('href="/blog/"'), `${path}: links to the blog`);
 
     // No script at all. These are documents; a marketing page that boots a
     // single-page app to show a paragraph fights its own router.
@@ -526,7 +526,7 @@ console.log("SEO integration: the blog Worker serves rendered pages, robots.txt,
 
   const robots = await (await get("/robots.txt")).text();
   assert(robots.includes("Sitemap: https://timinow.pet/sitemap.xml"), "the customer robots points at its own sitemap");
-  assert(robots.includes("Sitemap: https://blog.timinow.pet/sitemap.xml"), "and at the blog's, so one file finds both");
+  assert(robots.includes("Sitemap: https://timinow.pet/blog/sitemap.xml"), "and at the blog's, so one file finds both");
 
   const map = await (await get("/sitemap.xml")).text();
   assertWellFormedXml(map, "customer sitemap");
@@ -649,7 +649,69 @@ console.log("SEO consoles: the veterinary console, the platform console and the 
   for (const path of Object.keys(LANDING_PAGES)) {
     assert(home.includes(`href="${path}"`), `the homepage links to ${path}`);
   }
-  assert(home.includes('href="https://blog.timinow.pet/"'), "the homepage links to the blog");
+  assert(home.includes('href="/blog/"'), "the homepage links to the blog");
 }
 
 console.log("SEO routing: every path each Worker renders is reachable past the asset layer, the two public surfaces answer their own 404s, and the homepage links to every document.");
+
+/* ────────────────────────────────── the blog, served from one domain ── */
+
+/**
+ * timinow.pet/blog forwards to the blog Worker over a service binding.
+ *
+ * A custom domain captures the whole hostname, so no route can hand
+ * timinow.pet/blog to another Worker — the customer Worker forwards it
+ * internally instead. Two things have to hold: the prefix is stripped on the
+ * way in, so the blog keeps its own route table, and the blog is told where it
+ * is mounted, so the links it writes point back to the same place.
+ */
+{
+  const { default: customer } = await import("../src/index.js");
+  const { default: blog } = await import("../apps/blog/src/index.js");
+  const blogEnv = {
+    SURFACE: "blog",
+    ASSETS: { fetch: async () => new Response(BLOG_SHELL, { headers: { "content-type": "text/html" } }) }
+  };
+  const seen = [];
+  const env = {
+    SURFACE: "customer",
+    BLOG: { fetch: async (request) => { seen.push(new URL(request.url).pathname); return blog.fetch(request, blogEnv); } },
+    ASSETS: { fetch: async () => new Response(readFileSync(join(root, "public/index.html"), "utf8"), { headers: { "content-type": "text/html" } }) }
+  };
+  const get = (path) => customer.fetch(new Request(`https://timinow.pet${path}`), env, { waitUntil() {} });
+
+  const index = await get("/blog");
+  assertEqual(index.status, 200, "/blog is served");
+  assertEqual(seen.at(-1), "/", "the /blog prefix is stripped before the blog Worker sees it");
+  const html = await index.text();
+  assert(html.includes('<link rel="canonical" href="https://timinow.pet/blog/">'), "/blog declares the one-domain canonical");
+  // The shell's own /styles.css would be the CUSTOMER's stylesheet here.
+  assert(html.includes('href="/blog/styles.css"'), "the blog's stylesheet is rewritten under the base");
+  assert(html.includes('src="/blog/app.js"'), "the blog's script is rewritten under the base");
+  assert(!/href="\/styles\.css"/.test(html), "no root-relative stylesheet is left pointing at the customer site");
+
+  await get("/blog/forum");
+  assertEqual(seen.at(-1), "/forum", "a nested blog path is stripped correctly");
+
+  const feed = await get("/blog/feed.xml");
+  const feedBody = await feed.text();
+  assertWellFormedXml(feedBody, "feed under /blog");
+  assert(feedBody.includes("<link>https://timinow.pet/blog</link>"), "the feed points at the new home");
+
+  const map = await (await get("/blog/sitemap.xml")).text();
+  assert(map.includes("<loc>https://timinow.pet/blog/</loc>"), "the blog sitemap lists the new addresses");
+  assert(!map.includes("blog.timinow.pet"), "and none of the old ones");
+
+  const missing = await get("/blog/p/nope");
+  assertEqual(missing.status, 404, "a missing post under /blog is still a real 404");
+
+  // Reached directly, the old host keeps working and does not rewrite assets —
+  // it has no /blog to serve them from.
+  const legacy = await blog.fetch(new Request("https://blog.timinow.pet/"), blogEnv);
+  const legacyHtml = await legacy.text();
+  assert(legacyHtml.includes('href="/styles.css"'), "the legacy host still serves its own stylesheet path");
+  assert(legacyHtml.includes('<link rel="canonical" href="https://timinow.pet/blog/">'),
+    "and points its canonical at the new home, which is what a migration is");
+}
+
+console.log("SEO one domain: /blog forwards to the blog Worker with its prefix stripped, rewrites its own asset paths, and every canonical, sitemap entry and feed link names timinow.pet.");

@@ -2550,7 +2550,7 @@ async function handleCrawlable(request, env, url) {
 
   if (path === "/robots.txt") {
     return new Response(robotsTxt({
-      sitemaps: [`${SITE.customerOrigin}/sitemap.xml`, `${SITE.blogOrigin}/sitemap.xml`],
+      sitemaps: [`${SITE.customerOrigin}/sitemap.xml`, `${SITE.blogBase}/sitemap.xml`],
       // /api/ is JSON, /r/ is a one-hop referral redirect that means nothing
       // in an index, and /tracker is a live view of one person's own booking.
       disallow: ["/api/", "/r/"],
@@ -2583,7 +2583,7 @@ async function handleCrawlable(request, env, url) {
             { title: "Pricing", url: `${SITE.customerOrigin}/pricing`, note: "free to search; a fee only on a completed booking" },
             { title: "Help with vet bills", url: `${SITE.customerOrigin}/help-with-vet-bills`, note: "what to ask a clinic, and what the Paw It Forward Fund does and does not cover" },
             { title: "For veterinary clinics", url: `${SITE.customerOrigin}/for-veterinarians` },
-            { title: "Notes and community", url: `${SITE.blogOrigin}/` }
+            { title: "Notes and community", url: `${SITE.blogBase}/` }
           ]
         },
         {
@@ -2620,6 +2620,35 @@ async function handleCrawlable(request, env, url) {
 }
 
 /**
+ * The blog, served from this origin.
+ *
+ * timinow.pet is bound to this Worker as a custom domain, and a custom domain
+ * captures the whole hostname — there is no way to point timinow.pet/blog at
+ * another Worker with a route. So this one forwards, over a service binding,
+ * which is an internal call rather than a second trip across the network.
+ *
+ * The prefix is stripped on the way in, so the blog Worker keeps its own
+ * routes (/, /p/:slug, /forum, /t/:slug) and does not need to know where it
+ * is mounted — except for building links, which is what the header tells it.
+ */
+async function handleBlog(request, env, url) {
+  if (!env.BLOG) return null;
+  const forwarded = new URL(request.url);
+  forwarded.pathname = url.pathname.replace(/^\/blog/, "") || "/";
+  const headers = new Headers(request.headers);
+  headers.set("x-timi-blog-base", "/blog");
+  const response = await env.BLOG.fetch(new Request(forwarded, {
+    method: request.method,
+    headers,
+    body: request.method === "GET" || request.method === "HEAD" ? undefined : request.body
+  }));
+  // Rewritten rather than proxied verbatim: the blog Worker sets its own
+  // security headers and this Worker sets them again on the way out, which is
+  // fine, but the body has to be streamed through untouched.
+  return new Response(response.body, { status: response.status, statusText: response.statusText, headers: new Headers(response.headers) });
+}
+
+/**
  * Anything that is neither an asset, an API call, a referral, nor a page.
  *
  * Reached because `not_found_handling` is now "none": an unmatched asset
@@ -2646,6 +2675,8 @@ export default {
       const referralMatch = request.method === "GET" ? url.pathname.match(/^\/r\/([^/]+)$/) : null;
       const response = referralMatch
         ? await resolveReferralRedirect(env, request, decodeURIComponent(referralMatch[1]))
+        : url.pathname === "/blog" || url.pathname.startsWith("/blog/")
+          ? (await handleBlog(request, env, url)) || notFoundPage(url)
         : url.pathname.startsWith("/api/")
           ? await handleApi(request, env, ctx)
           // robots, sitemap, llms.txt and the landing pages, which are real

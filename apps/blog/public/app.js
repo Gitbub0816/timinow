@@ -457,8 +457,18 @@ function wireSignIn() {
 
 /* ───────────────────────────────────────────────────────────────── routing ── */
 
+/**
+ * Where this app is mounted.
+ *
+ * It answers at timinow.pet/blog now — one domain, so a post's standing and
+ * the main site's are the same pool rather than two. The server renders every
+ * URL with that prefix; this strips it once so the route table below stays
+ * about routes rather than about mounting.
+ */
+const BASE = window.location.pathname.startsWith("/blog") ? "/blog" : "";
+
 async function route() {
-  const path = window.location.pathname;
+  const path = window.location.pathname.slice(BASE.length) || "/";
 
   if (path.startsWith("/p/")) {
     try {
@@ -514,7 +524,9 @@ async function route() {
 }
 
 function go(path) {
-  window.history.pushState({}, "", path);
+  // Callers pass app-relative paths ("/t/slug"); the address bar needs the
+  // mount point in front of them.
+  window.history.pushState({}, "", path.startsWith(BASE) ? path : BASE + path);
   route();
 }
 
@@ -525,6 +537,8 @@ function wire() {
     const link = event.target.closest("a[href^='/']");
     if (!link || link.target === "_blank" || event.metaKey || event.ctrlKey) return;
     event.preventDefault();
+    // Hrefs in the server-rendered markup already carry the base; go() leaves
+    // one that does alone.
     go(link.getAttribute("href"));
   });
   window.addEventListener("popstate", route);
