@@ -15,13 +15,6 @@
     { "pattern": "www.timinow.pet", "custom_domain": true },
     { "pattern": "app.timinow.pet", "custom_domain": true }
   ],
-  // The blog Worker, called internally for timinow.pet/blog/*. A custom domain
-  // captures the whole hostname, so a route cannot hand that path to another
-  // Worker — a service binding can, without a second trip over the network.
-  // See handleBlog in src/index.js.
-  "services": [
-    { "binding": "BLOG", "service": "timinow-blog" }
-  ],
   "vars": {
     "SIGN_IN_REQUIRED": "true",
     "DEMO_MODE": "false",
@@ -60,7 +53,17 @@
   // waiting for a scheduler. Service bindings do not traverse the public
   // internet and cost nothing.
   "services": [
-    { "binding": "VOICE", "service": "timinow-voice" }
+    { "binding": "VOICE", "service": "timinow-voice" },
+    // The blog Worker, called internally for timinow.pet/blog/*. A custom
+    // domain captures the whole hostname, so no route can hand that path to
+    // another Worker — a service binding can, without a second trip over the
+    // network. See handleBlog in src/index.js.
+    //
+    // In this array and not a second "services" key. JSON has no duplicate
+    // keys: a second one silently replaces the first, which is how the first
+    // attempt at this deployed a Worker with VOICE bound and BLOG missing,
+    // and /blog answering 404 in production.
+    { "binding": "BLOG", "service": "timinow-blog" }
   ],
   "d1_databases": [
     {

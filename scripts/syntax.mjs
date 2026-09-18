@@ -27,10 +27,71 @@ async function collect(directory) {
   return found;
 }
 
+const failures = [];
 const files = (await Promise.all(roots.map(collect))).flat().sort();
 if (!files.length) throw new Error("No JavaScript sources were found to check");
 
-const failures = [];
+/**
+ * The same duplicate-key problem, in the configs.
+ *
+ * `node --check` catches nothing here because these are not JavaScript, and
+ * JSON.parse is worse than silent: it accepts a duplicate key and keeps the
+ * LAST one. A second `"services"` block added to wrangler.jsonc — with the
+ * first one already three screens further down — deployed a Worker whose
+ * service bindings were whatever the later block said, and the binding the
+ * new code needed simply was not there. The Worker started, the deploy
+ * reported success, the health check passed, and /blog answered 404.
+ *
+ * So: every key, at every level, once.
+ */
+function duplicateKeysIn(source) {
+  // Comments first, since JSONC allows them and a // inside a string must not
+  // be mistaken for one. Scanning handles both at once below.
+  const stack = [];
+  const duplicates = [];
+  let index = 0;
+  let pendingKey = null;
+  while (index < source.length) {
+    const character = source[index];
+    if (character === "/" && source[index + 1] === "/") {
+      index = source.indexOf("\n", index);
+      if (index === -1) break;
+      continue;
+    }
+    if (character === "/" && source[index + 1] === "*") {
+      index = source.indexOf("*/", index + 2) + 2;
+      continue;
+    }
+    if (character === '"') {
+      let end = index + 1;
+      while (end < source.length && source[end] !== '"') end += source[end] === "\\" ? 2 : 1;
+      pendingKey = source.slice(index + 1, end);
+      index = end + 1;
+      continue;
+    }
+    if (character === ":" && pendingKey !== null && stack.length) {
+      const seen = stack[stack.length - 1];
+      if (seen.has(pendingKey)) duplicates.push(pendingKey);
+      seen.add(pendingKey);
+      pendingKey = null;
+      index += 1;
+      continue;
+    }
+    if (character === "{") { stack.push(new Set()); pendingKey = null; }
+    else if (character === "}") { stack.pop(); pendingKey = null; }
+    else if (character === "," || character === "[" || character === "]") pendingKey = null;
+    index += 1;
+  }
+  return duplicates;
+}
+
+for (const config of (await readdir(".")).filter((name) => /^wrangler.*\.jsonc?$/.test(name)).sort()) {
+  const duplicates = duplicateKeysIn(await readFile(config, "utf8"));
+  if (duplicates.length) {
+    failures.push(`${config}\nDuplicate key(s): ${[...new Set(duplicates)].join(", ")}. JSON keeps the last one silently, so the first is dead configuration that still reads as live.`);
+  }
+}
+
 for (const file of files) {
   // Service workers reference globals Node does not define, but `--check` only
   // parses, so this stays a pure syntax gate.
