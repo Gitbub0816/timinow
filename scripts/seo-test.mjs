@@ -374,7 +374,10 @@ console.log(`SEO tests passed: ${checks} assertions across canonical URLs, descr
     SURFACE: "blog",
     ASSETS: { fetch: async () => new Response(BLOG_SHELL, { headers: { "content-type": "text/html" } }) }
   };
-  const get = (path) => worker.fetch(new Request(`https://blog.timinow.pet${path}`), env);
+  // The forwarded shape: the customer Worker rewrites the host and adds the
+  // base header. A bare blog.timinow.pet request is a 301 now, which the
+  // redirect section below covers.
+  const get = (path) => worker.fetch(new Request(`https://timinow.pet${path}`, { headers: { "x-timi-blog-base": "/blog" } }), env);
 
   const home = await get("/");
   assertEqual(home.status, 200, "the blog root is served by the Worker");
@@ -702,16 +705,55 @@ console.log("SEO routing: every path each Worker renders is reachable past the a
   assert(map.includes("<loc>https://timinow.pet/blog/</loc>"), "the blog sitemap lists the new addresses");
   assert(!map.includes("blog.timinow.pet"), "and none of the old ones");
 
+  // The blog's own API has to be reachable under the mount, or every
+  // interactive part of it — comments, sign-in, subscribing — talks to the
+  // customer Worker, which has no such route.
+  const posts = await get("/blog/api/posts");
+  assertEqual(posts.status, 200, "the blog API answers under /blog");
+  assertEqual(seen.at(-1), "/api/posts", "and reaches the blog Worker with its own path");
+  assert(readFileSync(join(root, "apps/blog/public/app.js"), "utf8").includes("fetch(BASE + path"),
+    "the blog app prefixes its API calls with the mount point");
+
   const missing = await get("/blog/p/nope");
   assertEqual(missing.status, 404, "a missing post under /blog is still a real 404");
 
   // Reached directly, the old host keeps working and does not rewrite assets —
   // it has no /blog to serve them from.
   const legacy = await blog.fetch(new Request("https://blog.timinow.pet/"), blogEnv);
-  const legacyHtml = await legacy.text();
-  assert(legacyHtml.includes('href="/styles.css"'), "the legacy host still serves its own stylesheet path");
-  assert(legacyHtml.includes('<link rel="canonical" href="https://timinow.pet/blog/">'),
-    "and points its canonical at the new home, which is what a migration is");
+  assertEqual(legacy.status, 301, "the legacy host forwards rather than serving a second copy");
+  assertEqual(legacy.headers.get("location"), "https://timinow.pet/blog/", "and forwards to the new home");
 }
 
 console.log("SEO one domain: /blog forwards to the blog Worker with its prefix stripped, rewrites its own asset paths, and every canonical, sitemap entry and feed link names timinow.pet.");
+
+/* ───────────────────────────────────────────── the old host forwards ── */
+
+/**
+ * blog.timinow.pet is now a forwarding address.
+ *
+ * 301 and path-preserving. A permanent redirect is what moves a page's
+ * standing to the new address rather than being read as a temporary detour,
+ * and one that drops the path throws away the thing the visitor asked for.
+ */
+{
+  const { default: blog } = await import("../apps/blog/src/index.js");
+  const env = { SURFACE: "blog", ASSETS: { fetch: async () => new Response(BLOG_SHELL) } };
+  const cases = [
+    ["/", "https://timinow.pet/blog/"],
+    ["/forum", "https://timinow.pet/blog/forum"],
+    ["/p/a-slug", "https://timinow.pet/blog/p/a-slug"],
+    ["/feed.xml", "https://timinow.pet/blog/feed.xml"],
+    ["/api/posts", "https://timinow.pet/blog/api/posts"]
+  ];
+  for (const [path, expected] of cases) {
+    const response = await blog.fetch(new Request(`https://blog.timinow.pet${path}`), env);
+    assertEqual(response.status, 301, `legacy ${path} is a permanent redirect`);
+    assertEqual(response.headers.get("location"), expected, `legacy ${path} keeps its path`);
+  }
+
+  // Forwarded requests must NOT be redirected, or the service binding loops.
+  const forwarded = await blog.fetch(new Request("https://blog.timinow.pet/", { headers: { "x-timi-blog-base": "/blog" } }), env);
+  assertEqual(forwarded.status, 200, "a forwarded request is served, not redirected");
+}
+
+console.log("SEO redirect: blog.timinow.pet answers 301 to the same path under timinow.pet/blog, and forwarded requests are served rather than looping.");

@@ -241,7 +241,9 @@ async function handleApi(request, env, url) {
     const result = await requestSubscription(env, {
       email: body?.email,
       source: "blog",
-      confirmURL: `${url.origin}/subscribe/confirm`
+      // The blog is mounted under /blog on the main domain; the link in the
+      // email has to say so, or it lands on the customer app instead.
+      confirmURL: `${url.origin}${request.headers.get("x-timi-blog-base") || ""}/subscribe/confirm`
     });
     if (!result.ok) return apiError(422, result.code, result.message);
     // Deliberately the same answer whether the address was new, pending or
@@ -491,6 +493,26 @@ async function handlePage(request, env, url) {
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
+
+    /**
+     * The old home, answering with its forwarding address.
+     *
+     * Everything this Worker serves now lives at timinow.pet/blog, reached
+     * through the customer Worker's service binding, which sets the header
+     * below. A request that arrives here without it came to the legacy
+     * hostname directly — an old link, a bookmark, a crawler working through
+     * an index it built last week.
+     *
+     * 301 rather than 302, and path-preserving rather than dumping everyone
+     * on the index: a permanent redirect is what tells a search engine to
+     * move the page's standing to the new address instead of treating it as a
+     * temporary detour, and a redirect that loses the path throws away the
+     * one thing the visitor asked for.
+     */
+    if (url.hostname === "blog.timinow.pet" && !request.headers.get("x-timi-blog-base")) {
+      const destination = new URL(SITE.blogPath + url.pathname + url.search, SITE.customerOrigin);
+      return Response.redirect(destination.toString(), 301);
+    }
 
     if (url.pathname.startsWith("/api/")) {
       try {

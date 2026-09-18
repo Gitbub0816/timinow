@@ -27,12 +27,23 @@ const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 
 /* ─────────────────────────────────────────────────────────────── plumbing ── */
 
+/**
+ * Where this app is mounted.
+ *
+ * It answers at timinow.pet/blog now — one domain, so a post's standing and
+ * the main site's are one pool rather than two. Everything relative has to
+ * carry that prefix, including the API: `/api/posts` on timinow.pet is the
+ * customer Worker, which has no such route. `/blog/api/posts` is forwarded to
+ * the blog Worker with the prefix stripped, which is the one that answers.
+ */
+const BASE = window.location.pathname.startsWith("/blog") ? "/blog" : "";
+
 async function api(path, options = {}) {
   const headers = { ...(options.headers || {}) };
   if (options.body) headers["content-type"] = "application/json";
   const token = await sessionToken();
   if (token) headers.authorization = `Bearer ${token}`;
-  const response = await fetch(path, { ...options, headers });
+  const response = await fetch(BASE + path, { ...options, headers });
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(payload?.error?.message || "That did not work.");
   return payload;
@@ -456,16 +467,6 @@ function wireSignIn() {
 }
 
 /* ───────────────────────────────────────────────────────────────── routing ── */
-
-/**
- * Where this app is mounted.
- *
- * It answers at timinow.pet/blog now — one domain, so a post's standing and
- * the main site's are the same pool rather than two. The server renders every
- * URL with that prefix; this strips it once so the route table below stays
- * about routes rather than about mounting.
- */
-const BASE = window.location.pathname.startsWith("/blog") ? "/blog" : "";
 
 async function route() {
   const path = window.location.pathname.slice(BASE.length) || "/";
