@@ -11,6 +11,18 @@ public struct CustomerRootView: View {
     @Bindable var store: AppStore
     public init(store: AppStore) { self.store = store }
 
+    // The fold UI is a different app above the waist: a vertical menu bar, one
+    // question on the stage, and a half wheel under the thumb — see
+    // DuoRootView. It is chosen on the horizontal size class, which is
+    // `.regular` only on an unfolded device, so every phone build takes the
+    // branch it always did and this decision costs the existing UI nothing.
+    #if os(iOS) && !SKIP
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    private var foldLayout: Bool { horizontalSizeClass == .regular || DuoLayout.forced }
+    #else
+    private var foldLayout: Bool { false }
+    #endif
+
     public var body: some View {
         ZStack(alignment: .top) {
             // Onboarding runs BEFORE sign-in now: a stranger is asked their
@@ -33,6 +45,7 @@ public struct CustomerRootView: View {
                     OnboardingView(store: store)
                 }
             }
+            else if foldLayout { DuoRootView(store: store).transition(.opacity) }
             else { appContent.transition(.opacity) }
             if let error = store.errorMessage { ErrorToast(message: error) { store.errorMessage = nil }.padding(.top, 8).transition(.move(edge: .top).combined(with: .opacity)).zIndex(20) }
             if store.showCelebration { CelebrationOverlay().onAppear { Task { try? await Task.sleep(for: .seconds(1.15)); store.showCelebration = false } }.zIndex(30) }
