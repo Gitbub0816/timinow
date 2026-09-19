@@ -8,6 +8,11 @@ import SwiftUI
 
 /// Where the crease is, if there is one right now.
 ///
+/// Internal rather than public: Skip bridges a transpiled target's public
+/// surface to Android, and CGRect and CGSize have no Kotlin counterpart, so
+/// every property carrying one is a warning. Nothing outside this module
+/// needs either type.
+///
 /// A folding device has a physical seam, and text laid across it is split by
 /// a ridge you can feel with a fingernail. iOS 27.1 reports it as a *reserved
 /// region* of kind `.division`, measured in the asking view's own coordinate
@@ -21,46 +26,46 @@ import SwiftUI
 /// *where the crease physically is* cannot be derived from a size class, and
 /// guessing at a midpoint would be wrong on any device whose panels are not
 /// equal.
-public struct DuoHingeGap: Equatable, Sendable {
+struct DuoHingeGap: Equatable, Sendable {
     /// The reserved rectangle, in the coordinate space of the view that asked.
-    public var rect: CGRect?
+    var rect: CGRect?
 
-    public static let none = DuoHingeGap(rect: nil)
+    static let none = DuoHingeGap(rect: nil)
 
-    public init(rect: CGRect?) { self.rect = rect }
+    init(rect: CGRect?) { self.rect = rect }
 
-    public var isActive: Bool { rect != nil }
+    var isActive: Bool { rect != nil }
 
     /// True when the crease runs top-to-bottom, splitting the screen into a
     /// left panel and a right panel. A landscape-hinged device creases the
     /// other way, and the clearance then belongs on a different edge.
-    public var isVertical: Bool {
+    var isVertical: Bool {
         guard let rect else { return false }
         return rect.height >= rect.width
     }
 
     /// How far in from the trailing edge the crease's near side sits — the
     /// clearance content on the far side must leave so nothing lands in it.
-    public func trailingClearance(in size: CGSize) -> CGFloat {
+    func trailingClearance(in size: CGSize) -> CGFloat {
         guard let rect, isVertical else { return 0 }
         return max(0, size.width - rect.minX)
     }
 
     /// The same measured from the leading edge, for a left-handed layout.
-    public func leadingClearance(in size: CGSize) -> CGFloat {
+    func leadingClearance(in size: CGSize) -> CGFloat {
         guard let rect, isVertical else { return 0 }
         return max(0, rect.maxX)
     }
 }
 
-public enum DuoHinge {
+enum DuoHinge {
     /// Read the active division region out of a geometry proxy.
     ///
     /// Availability-gated rather than compiled out: the app deploys to iOS 17
     /// and this is a 27.1 API, so on anything older — and on a device with no
     /// hinge at all — it simply reports nothing and every caller carries on
     /// with its ordinary spacing.
-    public static func gap(_ proxy: GeometryProxy) -> DuoHingeGap {
+    static func gap(_ proxy: GeometryProxy) -> DuoHingeGap {
         #if os(iOS) && !SKIP
         if #available(iOS 27.1, *) {
             let regions = proxy.reservedRegions(kind: .division)
