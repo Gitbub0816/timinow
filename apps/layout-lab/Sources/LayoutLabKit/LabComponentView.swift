@@ -1,3 +1,4 @@
+import Foundation
 import SwiftUI
 
 /// Draws a placed component.

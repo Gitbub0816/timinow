@@ -172,7 +172,7 @@ struct LabMiniButton: View {
     var body: some View {
         Button(action: action) {
             Text(title).font(.system(size: 12, weight: .black)).foregroundStyle(tint)
-                .frame(maxWidth: wide ? .infinity : nil, minWidth: wide ? nil : 34, minHeight: 32)
+                .frame(minWidth: wide ? nil : 34, maxWidth: wide ? .infinity : nil, minHeight: 32)
                 .padding(.horizontal, wide ? 8 : 0)
                 .background(RoundedRectangle(cornerRadius: 9).fill(.white)
                     .overlay(RoundedRectangle(cornerRadius: 9).stroke(tint.opacity(0.4), lineWidth: 1.5)))
