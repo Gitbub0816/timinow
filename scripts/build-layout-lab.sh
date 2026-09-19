@@ -89,12 +89,28 @@ BUILT="$DERIVED/Build/Products/Debug-iphonesimulator/LayoutLab.app"
 
 echo "==> installing on $NAME"
 xcrun simctl boot "$UDID" 2>/dev/null || true
-# By path, not `open -a Simulator`. The -a form is a LaunchServices lookup by
-# name, and that database goes stale when Xcode.app is replaced in place —
-# which is exactly what upgrading 27.0 to 27.1 did here, so a build that had
-# succeeded reported "Unable to find application named 'Simulator'". The
-# developer directory always knows where its own Simulator is.
-open "$(xcode-select -p)/Applications/Simulator.app"
+# Opening the Simulator is the one step here with no stable answer: `open -a`
+# is a LaunchServices lookup that goes stale when Xcode.app is replaced in
+# place, and the path under the developer directory moved in Xcode 27. So try
+# the known locations, then the bundle identifier, and if none of them work
+# say so and carry on — the app is already installed either way, and failing
+# the whole script at the last line over a window is absurd.
+SIM=""
+for candidate in \
+  "$(xcode-select -p)/Applications/Simulator.app" \
+  "$(dirname "$(xcode-select -p)")/Applications/Simulator.app" \
+  "/Applications/Simulator.app"; do
+  if [ -d "$candidate" ]; then SIM="$candidate"; break; fi
+done
+if [ -z "$SIM" ]; then
+  SIM="$(find "$(dirname "$(xcode-select -p)")" -maxdepth 4 -name Simulator.app -type d 2>/dev/null | head -1)"
+fi
+
+if [ -n "$SIM" ]; then
+  open "$SIM"
+elif ! open -b com.apple.iphonesimulator 2>/dev/null; then
+  echo "    (could not find Simulator.app \u2014 open it from Xcode; the app is installed)"
+fi
 # By id, not "booted": another simulator may already be running from the
 # customer app's build script, and "booted" would install into that one.
 xcrun simctl bootstatus "$UDID" -b >/dev/null 2>&1 || true
