@@ -64,24 +64,13 @@ public struct DuoRootView: View {
     /// hands over to a phone screen, which is what made the wheel invisible to
     /// anyone who had not already signed in.
     ///
-    /// Onboarding is gone from the fold entirely. It exists on the phone so a
-    /// stranger is asked their pet's name rather than their email address —
-    /// worth it there. Here the wheel *already* asks for the pet, the species
-    /// and the urgency, so running onboarding first would ask the same
-    /// questions twice, in two different interaction models, before showing
-    /// the one the app is for. Sign in, then the wheel; pets are added from
-    /// the Pets section with the same control as everything else.
-    /// Onboarding runs BEFORE sign-in, here as on the phone.
-    ///
-    /// That ordering is deliberate and it is not mine to undo: a stranger is
-    /// asked their pet's name rather than their email address, and the code
-    /// screen arrives as the flow's natural last step. Removing it from the
-    /// fold — which I did — threw that away for no reason beyond my wanting
-    /// the wheel on screen sooner.
-    ///
-    /// It carries no wheel. It is a form with several fields and its own
-    /// Continue, and a wheel with one thing to turn is a control that lies
-    /// about what it does.
+    /// Onboarding runs BEFORE sign-in, here as on the phone. That ordering is
+    /// deliberate and it is not this file's to undo: a stranger is asked their
+    /// pet's name rather than their email address, and the code screen arrives
+    /// as the flow's natural last step. It was once removed from the fold on
+    /// the reasoning that the wheel asks the same questions anyway — which
+    /// threw the ordering away for no better reason than getting the wheel on
+    /// screen sooner. It is back. Leave it.
     private var needsOnboarding: Bool {
         guard !DuoLayout.forced else { return false }
         return !store.hasCompletedOnboarding && !store.onboardingSignInRequested
