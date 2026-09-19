@@ -36,22 +36,32 @@ struct DuoWheel: View {
 
     @Environment(\.accessibilityReduceMotion) var reduceMotion
 
-    // Geometry. The pivot is the bottom-trailing corner of the control, so the
-    // track sweeps up into the screen and the action button sits inside it.
-    private let boxWidth: CGFloat = 300
-    private let boxHeight: CGFloat = 330
-    private let radius: CGFloat = 196
+    // Geometry. Every number here was settled by drawing the control at 2x and
+    // measuring it, not by eye: the three windows, the track and the button all
+    // have to sit inside the box with real gaps between them, and the previous
+    // numbers did not — the focus window and the button overlapped, and the
+    // track ran off the edge. `scripts/duo-wheel-geometry.mjs` re-checks them.
+    private let boxWidth: CGFloat = 264
+    private let boxHeight: CGFloat = 264
+    /// How far the wheel's centre sits in from the box's bottom-trailing corner.
+    /// The button is a whole circle around that centre rather than a quarter
+    /// clipped by the corner, which is why this is not zero.
+    private let pivotInset: CGFloat = 84
+    private let radius: CGFloat = 144
     /// Degrees between adjacent windows, and therefore one item of travel.
-    private let step: Double = 27
+    private let step: Double = 46
     /// Where the focus window sits: up and to the left of the thumb.
     private let focusAngle: Double = 225
+    /// Half the button's width, and the radius inside which a drag is read as a
+    /// change of question rather than a turn of the wheel.
+    private let hubRadius: CGFloat = 58
 
     @State var mode = ""
     @State var startAngle: Double = 0
     @State var startIndex = 0
     @State var groupBaseline: CGFloat = 0
 
-    private var pivot: CGPoint { CGPoint(x: boxWidth, y: boxHeight) }
+    private var pivot: CGPoint { CGPoint(x: boxWidth - pivotInset, y: boxHeight - pivotInset) }
     private var actions: [DuoAction] { navigator.group.actions }
     private var scrollable: Bool { actions.count > 1 }
 
@@ -107,7 +117,7 @@ struct DuoWheel: View {
             .animation(reduceMotion ? nil : .spring(response: 0.28, dampingFraction: 0.82),
                        value: navigator.focusIndex)
 
-            actionButton.position(point(at: focusAngle, radius: 92))
+            actionButton.position(pivot)
         }
         .frame(width: boxWidth, height: boxHeight)
         .contentShape(Rectangle())
@@ -146,15 +156,21 @@ struct DuoWheel: View {
         .gesture(groupOnlyDrag)
     }
 
+    /// The track stops where the list stops. Drawing a full sweep under a group
+    /// of two would promise travel that is not there, which is the same lie a
+    /// wheel that cannot turn tells.
+    private var trackStart: Double {
+        focusAngle - min(step * 1.3, Double(navigator.focusIndex) * step + step * 0.55)
+    }
+
+    private var trackEnd: Double {
+        let remaining = Double(actions.count - 1 - navigator.focusIndex)
+        return focusAngle + min(step * 1.3, remaining * step + step * 0.55)
+    }
+
     private var track: some View {
-        DuoTrack(pivot: pivot, radius: radius, from: focusAngle - step * 1.7,
-                 to: focusAngle + step * 1.7)
-            .stroke(TimiColor.ink.faded(0.14), style: StrokeStyle(lineWidth: 26, lineCap: .round))
-            .overlay(
-                DuoTrack(pivot: pivot, radius: radius, from: focusAngle - step * 1.7,
-                         to: focusAngle + step * 1.7)
-                    .stroke(TimiColor.ink.faded(0.5), style: StrokeStyle(lineWidth: 2, lineCap: .round))
-            )
+        DuoTrack(pivot: pivot, radius: radius, from: trackStart, to: trackEnd)
+            .stroke(TimiColor.ink.faded(0.4), style: StrokeStyle(lineWidth: 3, lineCap: .round))
             .frame(width: boxWidth, height: boxHeight)
     }
 
@@ -167,7 +183,8 @@ struct DuoWheel: View {
                     .font(.system(size: 22, weight: .black))
                     .foregroundStyle(.white)
             }
-            .frame(width: 84, height: 84)
+            .frame(width: hubRadius * 2, height: hubRadius * 2)
+            .shadow(color: TimiColor.ink.faded(0.9), radius: 0, x: 5, y: 6)
         }
         .buttonStyle(.plain)
         .disabled(navigator.focused == nil)
@@ -192,10 +209,9 @@ struct DuoWheel: View {
         DragGesture(minimumDistance: 2)
             .onChanged { value in
                 if mode.isEmpty {
-                    let hub = point(at: focusAngle, radius: 92)
-                    let dx = value.startLocation.x - hub.x
-                    let dy = value.startLocation.y - hub.y
-                    mode = sqrt(dx * dx + dy * dy) <= 54 ? "group" : "scroll"
+                    let dx = value.startLocation.x - pivot.x
+                    let dy = value.startLocation.y - pivot.y
+                    mode = sqrt(dx * dx + dy * dy) <= hubRadius ? "group" : "scroll"
                     startAngle = angle(to: value.startLocation)
                     startIndex = navigator.focusIndex
                     groupBaseline = 0
@@ -267,46 +283,43 @@ struct DuoTrack: Shape {
     }
 }
 
-/// A viewer window. The focused one is larger and double-bordered; its
-/// neighbours are smaller and quieter, there to show what is either side.
+/// A viewer window. The focused one is larger, filled and carries the deeper
+/// drop shadow; its neighbours are smaller and quieter, there to show what is
+/// either side. Size and shadow depth do the work colour alone would not — the
+/// focus has to be obvious to someone who cannot tell blue from paper.
 struct DuoWindow: View {
     var action: DuoAction
     var focused: Bool
     var chosen: Bool
 
     var body: some View {
-        VStack(spacing: 4) {
+        VStack(spacing: CGFloat(focused ? 4 : 2)) {
             Image(systemName: action.symbol)
-                .font(.system(size: CGFloat(focused ? 24 : 17), weight: .bold))
+                .font(.system(size: CGFloat(focused ? 23 : 16), weight: .bold))
                 .foregroundStyle(TimiColor.ink)
             Text(action.label)
-                .font(.system(size: CGFloat(focused ? 14 : 11), weight: focused ? .black : .semibold))
+                .font(.system(size: CGFloat(focused ? 14 : 10), weight: focused ? .black : .bold))
                 .foregroundStyle(focused ? TimiColor.ink : TimiColor.muted)
                 .lineLimit(1)
                 .minimumScaleFactor(0.6)
         }
-        .padding(.horizontal, 10)
-        .frame(width: CGFloat(focused ? 124 : 96), height: CGFloat(focused ? 84 : 62))
+        .padding(.horizontal, CGFloat(focused ? 10 : 6))
+        .frame(width: CGFloat(focused ? 116 : 68), height: CGFloat(focused ? 72 : 52))
         .background(
-            RoundedRectangle(cornerRadius: CGFloat(focused ? 20 : 16))
-                .fill(focused ? TimiColor.blueSoft : Color.white)
+            RoundedRectangle(cornerRadius: CGFloat(focused ? 18 : 15))
+                .fill(focused ? TimiColor.blueSoft : TimiColor.paper)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: CGFloat(focused ? 20 : 16))
-                .stroke(focused ? TimiColor.blue : TimiColor.ink.faded(0.45), lineWidth: CGFloat(focused ? 3 : 2))
-        )
-        // The focus window's second border — the double outline in the sketch.
-        // It is what says "this one" without relying on colour alone.
-        .overlay(
-            RoundedRectangle(cornerRadius: CGFloat(focused ? 25 : 16))
-                .stroke(focused ? TimiColor.ink : Color.clear, lineWidth: CGFloat(focused ? 2 : 0))
-                .padding(-5)
+            RoundedRectangle(cornerRadius: CGFloat(focused ? 18 : 15))
+                .stroke(focused ? TimiColor.ink : TimiColor.ink.faded(0.5), lineWidth: 2)
         )
         .overlay(alignment: .topTrailing) {
             if chosen && !focused {
                 Circle().fill(TimiColor.green).frame(width: 10, height: 10).offset(x: 4, y: -4)
             }
         }
-        .opacity(Double(focused ? 1 : 0.72))
+        .shadow(color: TimiColor.ink.faded(focused ? 0.9 : 0.55), radius: 0,
+                x: CGFloat(focused ? 5 : 3), y: CGFloat(focused ? 6 : 4))
+        .opacity(Double(focused ? 1 : 0.62))
     }
 }

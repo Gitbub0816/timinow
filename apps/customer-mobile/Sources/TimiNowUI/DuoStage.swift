@@ -50,12 +50,24 @@ struct DuoStage: View {
         .padding(.bottom, 8)
     }
 
+    /// "Select Bill's species · 3 of 6". The count is dropped for a group with
+    /// one answer, where it would only ever read "1 of 1".
+    private var groupHeading: String {
+        let total = navigator.group.actions.count
+        guard total > 1 else { return navigator.group.label }
+        return "\(navigator.group.label) · \(navigator.focusIndex + 1) of \(total)"
+    }
+
     // MARK: The focused answer
 
     @ViewBuilder private var focusPanel: some View {
         if let action = navigator.focused {
             VStack(alignment: .leading, spacing: 14) {
-                Text(navigator.group.label)
+                // The question, and where you are inside it. The wheel shows
+                // three answers at a time on purpose, so without a count a long
+                // group gives no sense of how much is left — and the wheel has
+                // no room for the number without crowding the thumb.
+                Text(groupHeading)
                     .font(.system(size: 17, weight: .bold))
                     .foregroundStyle(TimiColor.muted)
 
@@ -66,6 +78,7 @@ struct DuoStage: View {
                         .frame(width: 96, height: 96)
                         .background(TimiColor.blueSoft, in: RoundedRectangle(cornerRadius: 26))
                         .overlay(RoundedRectangle(cornerRadius: 26).stroke(TimiColor.ink, lineWidth: 2))
+                        .shadow(color: TimiColor.ink.faded(0.9), radius: 0, x: 5, y: 6)
                         .accessibilityHidden(true)
 
                     VStack(alignment: .leading, spacing: 6) {
