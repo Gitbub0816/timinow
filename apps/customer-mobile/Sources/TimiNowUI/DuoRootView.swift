@@ -38,14 +38,22 @@ public struct DuoRootView: View {
     @State var navigator: DuoNavigator
     @State var section: DuoSection = .find
     @State var handedness = "right"
+    /// The name typed during onboarding, before there is a pet to hang it on.
+    @State var petNameDraft = ""
 
     public init(store: AppStore) {
         self.store = store
-        let signedOut = store.auth.signInRequired && !store.auth.isSignedIn && !DuoLayout.forced
-        _navigator = State(initialValue: DuoNavigator(
-            groups: signedOut
-                ? DuoContent.authGroups(store.auth.stage)
-                : DuoContent.groups(for: store, section: .find, handedness: "right")))
+        // The first frame has to agree with rebuild() about which phase this
+        // is, or the wheel opens holding the wrong question.
+        let onboarding = !DuoLayout.forced
+            && !store.hasCompletedOnboarding && !store.onboardingSignInRequested
+        let signedOut = !onboarding && !DuoLayout.forced
+            && store.auth.signInRequired && !store.auth.isSignedIn
+        let initial: [DuoGroup]
+        if onboarding { initial = DuoContent.onboardingGroups(store) }
+        else if signedOut { initial = DuoContent.authGroups(store.auth.stage) }
+        else { initial = DuoContent.groups(for: store, section: .find, handedness: "right") }
+        _navigator = State(initialValue: DuoNavigator(groups: initial))
     }
 
     private var menuExpanded: Bool { navigator.group.kind == .menu }
@@ -100,6 +108,7 @@ public struct DuoRootView: View {
         .onChange(of: store.currentSearch?.status ?? "") { _, _ in rebuild() }
         .onChange(of: store.auth.stage) { _, _ in rebuild() }
         .onChange(of: store.hasCompletedOnboarding) { _, _ in rebuild() }
+        .onChange(of: store.onboardingPetIndex) { _, _ in rebuild() }
         .onChange(of: store.auth.isSignedIn) { _, _ in rebuild() }
     }
 
@@ -118,18 +127,25 @@ public struct DuoRootView: View {
     private func panels(creaseInset: CGFloat, creased: Bool) -> some View {
         ZStack {
             HStack(spacing: 0) {
-                if nearTrailing && !needsAuth { menuBar }
+                // The menu is on the NEAR edge, with the wheel. Putting it on
+                // the far side was the whole point of the far side being far —
+                // and it made the one control that moves between sections the
+                // one control a thumb could not reach.
+                if !nearTrailing && showsMenu { menuBar }
                 stage(creaseInset: creaseInset)
-                if !nearTrailing && !needsAuth { menuBar }
+                if nearTrailing && showsMenu { menuBar }
             }
 
-            // The wheel, inset from the near edge rather than flush to it.
-            if !needsOnboarding {
+            // The wheel, inset from the near edge rather than flush to it, and
+            // inboard of the menu rail so the two never overlap. Present on
+            // every screen including onboarding: a six-option species picker
+            // is the best thing this control ever gets to do, and hiding it
+            // there left the fold app looking like it had no navigation at all.
             HStack {
                 if nearTrailing { Spacer(minLength: 0) }
                 DuoWheel(navigator: navigator) { action in take(action) }
-                    .padding(.trailing, CGFloat(nearTrailing ? 34 : 0))
-                    .padding(.leading, CGFloat(nearTrailing ? 0 : 34))
+                    .padding(.trailing, wheelTrailingInset)
+                    .padding(.leading, wheelLeadingInset)
                     .padding(.bottom, 28)
                     // Keep the whole control inside the near panel. A wheel
                     // straddling the seam is the worst case of all: the ridge
@@ -139,9 +155,20 @@ public struct DuoRootView: View {
                 if !nearTrailing { Spacer(minLength: 0) }
             }
             .frame(maxHeight: .infinity, alignment: .bottom)
-            }
         }
     }
+
+    /// The menu rail is a sibling in the HStack, so the wheel — which floats
+    /// over everything — has to step around it by hand.
+    private var menuRailWidth: CGFloat { showsMenu ? (menuExpanded ? 232 : 66) : 0 }
+    private var wheelEdgeInset: CGFloat { 34 + menuRailWidth }
+    // Named rather than written inline as a ternary: a bare `0` in a ternary
+    // handed to .padding is untyped, and several overloads accept it.
+    private var wheelTrailingInset: CGFloat { nearTrailing ? wheelEdgeInset : 0 }
+    private var wheelLeadingInset: CGFloat { nearTrailing ? 0 : wheelEdgeInset }
+
+    /// Nothing to navigate to until there is an account and a pet.
+    private var showsMenu: Bool { !needsOnboarding && !needsAuth }
 
     private var menuBar: some View {
         DuoMenuBar(navigator: navigator,
@@ -167,12 +194,16 @@ public struct DuoRootView: View {
     /// device is flat the reserved region is inactive and this is exactly the
     /// spacing it always was.
     @ViewBuilder private func stage(creaseInset: CGFloat) -> some View {
-        let wheelRoom: CGFloat = needsOnboarding ? 0 : 320
+        let wheelRoom: CGFloat = 320 + menuRailWidth
         let nearInset = max(wheelRoom, creaseInset > 0 ? creaseInset + 24 : 0)
 
         Group {
-            if needsOnboarding {
-                OnboardingView(store: store)
+            if needsOnboarding && store.onboardingPetIndex < 0 {
+                DuoNameStage(name: $petNameDraft)
+            } else if needsOnboarding {
+                // The species question renders like any other: the wheel holds
+                // the six answers, the stage shows the one in focus.
+                DuoStage(navigator: navigator)
             } else if needsAuth {
                 DuoAuthStage(auth: store.auth)
             } else {
@@ -196,6 +227,19 @@ public struct DuoRootView: View {
     /// gap rather than a silent no-op.
     private func take(_ action: DuoAction) {
         switch navigator.group.id {
+        case "onbName":
+            store.beginOnboardingDetails(names: [petNameDraft])
+            rebuild()
+
+        case "onbSpecies":
+            guard let species = PetSpecies(rawValue: action.id) else { return }
+            store.recordOnboardingPet(species: species, breed: "", sex: "",
+                                      weightLbs: nil, birthYear: nil,
+                                      medications: "", allergies: "")
+            if store.onboardingIsLastPet { store.completeOnboarding() }
+            else { store.advanceOnboardingPet() }
+            rebuild()
+
         case "auth":
             switch action.id {
             case "send":    Task { await store.auth.submitIdentifier() }
@@ -254,9 +298,14 @@ public struct DuoRootView: View {
     private func rebuild() {
         let previousGroupID = navigator.group.id
         let previousActionID = navigator.focused?.id
-        navigator.groups = needsAuth
-            ? DuoContent.authGroups(store.auth.stage)
-            : DuoContent.groups(for: store, section: section, handedness: handedness)
+        if needsOnboarding {
+            navigator.groups = DuoContent.onboardingGroups(store)
+        } else if needsAuth {
+            navigator.groups = DuoContent.authGroups(store.auth.stage)
+        } else {
+            navigator.groups = DuoContent.groups(for: store, section: section,
+                                                 handedness: handedness)
+        }
 
         if let index = navigator.groups.firstIndex(where: { $0.id == previousGroupID }) {
             navigator.groupIndex = index

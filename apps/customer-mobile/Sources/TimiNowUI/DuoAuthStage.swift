@@ -124,3 +124,48 @@ struct DuoAuthStage: View {
             .foregroundStyle(TimiColor.muted)
     }
 }
+
+
+/// Onboarding's first question: a name, typed.
+///
+/// The only screen in the fold app with a field and nothing to choose, so the
+/// wheel beside it shows a single action and no track — there is nothing to
+/// turn, and a wheel that cannot turn is a control that lies about what it
+/// does.
+struct DuoNameStage: View {
+    @Binding var name: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Spacer(minLength: 0)
+            VStack(alignment: .leading, spacing: 18) {
+                Text("Who are we helping?")
+                    .font(.system(size: 52, weight: .black, design: .serif))
+                    .minimumScaleFactor(0.5)
+                    .lineLimit(2)
+                Text("T\u{ED}mi asks real clinics who can see your pet now \u{2014} and it starts with a name.")
+                    .font(.system(size: 17))
+                    .foregroundStyle(TimiColor.muted)
+                    .lineLimit(3)
+
+                VStack(alignment: .leading, spacing: 7) {
+                    Text("PET\u{2019}S NAME")
+                        .font(.system(size: 11, weight: .black)).tracking(1.3)
+                        .foregroundStyle(TimiColor.muted)
+                    TextField("Humphrey", text: $name)
+                        .font(.system(size: 26, weight: .bold))
+                        .textContentType(.name)
+                        .autocorrectionDisabled()
+                        .padding(.horizontal, 20).padding(.vertical, 16)
+                        .frame(maxWidth: 560)
+                        .timiCard(Color.white)
+                }
+            }
+            Spacer(minLength: 0)
+            Text("T\u{ED}mi asks clinics about live capacity. It does not diagnose, provide veterinary advice, or guarantee an appointment.")
+                .font(.system(size: 12))
+                .foregroundStyle(TimiColor.muted)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+    }
+}

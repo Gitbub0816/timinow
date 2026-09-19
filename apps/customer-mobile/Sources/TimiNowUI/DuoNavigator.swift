@@ -322,6 +322,30 @@ public enum DuoContent {
                   ])]
     }
 
+    /// Onboarding, on the wheel.
+    ///
+    /// The phone asks for a name, then a species, breed, sex, weight and
+    /// birth year per pet. Here only the first two are asked: the copy has
+    /// always said "only the species is required — everything else can wait",
+    /// and on a control built for choosing, a six-option species picker is the
+    /// best thing the wheel ever gets to do. Breed and the rest are editable
+    /// later from Pets.
+    @MainActor
+    public static func onboardingGroups(_ store: AppStore) -> [DuoGroup] {
+        if store.onboardingPetIndex < 0 {
+            return [DuoGroup(id: "onbName", label: "Who are we helping", kind: .single, actions: [
+                DuoAction(id: "continue", label: "Continue", symbol: "arrow.right",
+                          detail: "Their name is all we need to start")
+            ])]
+        }
+        let name = store.onboardingPetName ?? "your pet"
+        return [DuoGroup(id: "onbSpecies", label: "Select \(name)\u{2019}s species",
+                         kind: .choice,
+                         actions: PetSpecies.allCases.map {
+                             DuoAction(id: $0.rawValue, label: $0.title, symbol: $0.icon)
+                         })]
+    }
+
     /// The wheel while signed out.
     ///
     /// Typing is typing — an address and a six-digit code need a keyboard, and
