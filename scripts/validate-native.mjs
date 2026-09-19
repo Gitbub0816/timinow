@@ -927,6 +927,37 @@ for (const path of await collectFiles("apps/customer-mobile/Sources", ".swift"))
   }
 }
 
+// An @Observable whose file does not import SkipFuse or SkipFuseUI compiles
+// and runs perfectly on iOS, and silently fails to drive anything on Android:
+// Skip warns "this file contains @Observables, but they will not be able to
+// power your Android UI". It is a warning, in a build that emits a hundred
+// warnings from upstream package conflicts, so it gets lost — and the symptom
+// is a screen that never updates rather than anything that points here.
+//
+// A file guarded by !SKIP on its first line is excluded from the Android pass
+// entirely and needs nothing. Comments are stripped first so a doc comment
+// that mentions @Observable does not count as one.
+{
+  const targets = [
+    ...await collectFiles("apps/customer-mobile/Sources/TimiNowUI", ".swift"),
+    ...await collectFiles("apps/customer-mobile/Sources/TimiNowCore", ".swift")
+  ];
+  for (const path of targets) {
+    const source = await read(path);
+    const [firstLine = ""] = source.split("\n");
+    if (/^#if\b.*!SKIP/.test(firstLine.trim())) continue;
+
+    const code = source
+      .split("\n")
+      .filter((line) => !line.trim().startsWith("//"))
+      .join("\n");
+    if (!/(^|\s)@Observable\b/.test(code)) continue;
+    if (/^\s*import\s+SkipFuse(UI)?\b/m.test(code)) continue;
+
+    throw new Error(`${path}: declares an @Observable but imports neither SkipFuse nor SkipFuseUI, so it cannot drive the Android UI. Add the conditional import pair this target uses, or guard the whole file with !SKIP on line 1.`);
+  }
+}
+
 // With GENERATE_INFOPLIST_FILE off, the Info.plist is used exactly as written
 // and nothing injects the identity keys. Missing CFBundleIdentifier, the build
 // succeeds, produces a .app, and the install is refused with "not a valid

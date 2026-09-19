@@ -1,6 +1,13 @@
 import Foundation
 import Observation
 import TimiNowCore
+// Required for @Observable to drive the Android UI, and the same conditional
+// pair every other file in this target carries.
+#if os(Android)
+import SkipFuseUI
+#else
+import SwiftUI
+#endif
 
 /// The fold UI's whole navigation model.
 ///
@@ -169,6 +176,7 @@ public enum DuoContent {
     /// Built from the store rather than hand-listed, so a pet added anywhere
     /// or an offer arriving from the network turns up here without this file
     /// knowing how either happened.
+    @MainActor
     public static func groups(for store: AppStore,
                               section: DuoSection,
                               handedness: String) -> [DuoGroup] {
@@ -185,6 +193,7 @@ public enum DuoContent {
 
     // MARK: Find care
 
+    @MainActor
     static func findGroups(_ store: AppStore) -> [DuoGroup] {
         var groups: [DuoGroup] = []
 
@@ -266,6 +275,7 @@ public enum DuoContent {
 
     // MARK: Other sections
 
+    @MainActor
     static func petGroups(_ store: AppStore) -> [DuoGroup] {
         guard !store.pets.isEmpty else {
             return [DuoGroup(id: "pets", label: "No pets yet", kind: .single,
@@ -280,6 +290,7 @@ public enum DuoContent {
                          })]
     }
 
+    @MainActor
     static func activityGroups(_ store: AppStore) -> [DuoGroup] {
         guard !store.history.isEmpty else {
             return [DuoGroup(id: "activity", label: "Nothing here yet", kind: .single,

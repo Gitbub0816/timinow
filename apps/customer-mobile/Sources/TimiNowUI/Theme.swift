@@ -97,6 +97,19 @@ public enum TimiKeyboardKind {
     case phone, email, decimal, number
 }
 
+struct TimiCardModifier: ViewModifier {
+    var color: Color = .white
+
+    func body(content: Content) -> some View {
+        let shape = RoundedRectangle(cornerRadius: 24)
+        return content.padding(18).background(
+            shape.fill(color)
+                .overlay(shape.stroke(TimiColor.ink, lineWidth: 2))
+                .shadow(color: TimiColor.ink.faded(0.95), radius: 0, x: 5, y: 6)
+        )
+    }
+}
+
 extension View {
     @ViewBuilder func timiKeyboard(_ kind: TimiKeyboardKind) -> some View {
         #if os(macOS)
@@ -162,13 +175,15 @@ extension View {
 
     /// The card's border and drop shadow belong to the card, not to what is
     /// written on it — see TimiPrimaryButtonStyle.plate for why that matters.
-    func timiCard(_ color: Color = .white) -> some View {
-        let shape = RoundedRectangle(cornerRadius: 24)
-        return self.padding(18).background(
-            shape.fill(color)
-                .overlay(shape.stroke(TimiColor.ink, lineWidth: 2))
-                .shadow(color: TimiColor.ink.faded(0.95), radius: 0, x: 5, y: 6)
-        )
+    ///
+    /// Returns a concrete `ModifiedContent` rather than `some View`, and is a
+    /// ViewModifier rather than an inline chain, because Skip could not decide
+    /// whether a chain ending in `.timiCard(...)` produced a View: with `some
+    /// View` and nothing downstream to infer from, it warned at exactly the
+    /// call sites that ended a `body` with one, and not at the sites that had
+    /// a further known modifier after it. A concrete type reads everywhere.
+    func timiCard(_ color: Color = .white) -> ModifiedContent<Self, TimiCardModifier> {
+        modifier(TimiCardModifier(color: color))
     }
 }
 

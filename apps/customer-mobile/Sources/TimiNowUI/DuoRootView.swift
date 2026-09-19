@@ -28,6 +28,11 @@ public enum DuoLayout {
 /// half wheel inset from the near edge. Nothing scrolls and nothing is
 /// hierarchical: the wheel turns through answers, a vertical flick on the hub
 /// changes the question, and the hub commits.
+/// `@MainActor` on the type, not on six separate members: the initialiser
+/// builds groups from the store, `rebuild()` does it again, and `take()` calls
+/// store methods. All of that is main-actor work because AppStore is
+/// `@MainActor @Observable`, and a View's `body` already is.
+@MainActor
 public struct DuoRootView: View {
     @Bindable var store: AppStore
     @State var navigator: DuoNavigator
