@@ -18,7 +18,26 @@ public struct CustomerRootView: View {
     // branch it always did and this decision costs the existing UI nothing.
     #if os(iOS) && !SKIP
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
-    private var foldLayout: Bool { horizontalSizeClass == .regular || DuoLayout.forced }
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
+    /// Both axes, not just the width.
+    ///
+    /// The inner display reports a regular width *and* a regular height, which
+    /// is the signature Apple documents for it. Checking width alone was wrong
+    /// in a way that only shows up one way round: a folded device in landscape
+    /// is regular-width and compact-height, and would have been handed the
+    /// unfolded UI on a screen with no room for it.
+    ///
+    /// Deliberately not the hinge API. iOS 27.1 exposes `onHingeChange` and a
+    /// `DeviceHinge` with a `.closed`/`.partiallyOpen`/`.fullyOpen` status, but
+    /// Apple's guidance is explicit that the hinge is for interactions and
+    /// effects and that layout should come from size classes, reserved regions
+    /// and arrangements. A layout that branches on hinge angle also has
+    /// nothing sensible to say about Split View or Stage Manager, where the
+    /// app gets a small window on a fully open device.
+    private var foldLayout: Bool {
+        if DuoLayout.forced { return true }
+        return horizontalSizeClass == .regular && verticalSizeClass == .regular
+    }
     #else
     private var foldLayout: Bool { false }
     #endif

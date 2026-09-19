@@ -63,7 +63,24 @@ public struct DuoRootView: View {
     /// questions twice, in two different interaction models, before showing
     /// the one the app is for. Sign in, then the wheel; pets are added from
     /// the Pets section with the same control as everything else.
+    /// Onboarding runs BEFORE sign-in, here as on the phone.
+    ///
+    /// That ordering is deliberate and it is not mine to undo: a stranger is
+    /// asked their pet's name rather than their email address, and the code
+    /// screen arrives as the flow's natural last step. Removing it from the
+    /// fold — which I did — threw that away for no reason beyond my wanting
+    /// the wheel on screen sooner.
+    ///
+    /// It carries no wheel. It is a form with several fields and its own
+    /// Continue, and a wheel with one thing to turn is a control that lies
+    /// about what it does.
+    private var needsOnboarding: Bool {
+        guard !DuoLayout.forced else { return false }
+        return !store.hasCompletedOnboarding && !store.onboardingSignInRequested
+    }
+
     private var needsAuth: Bool {
+        guard !needsOnboarding else { return false }
         guard store.auth.signInRequired, !store.auth.isSignedIn else { return false }
         // TIMI_DUO=1 skips the gate as well as forcing the layout, so the wheel
         // can be worked on without a live sign-in code. It grants nothing: the
@@ -82,6 +99,7 @@ public struct DuoRootView: View {
         .onChange(of: store.currentSearch?.offers?.count ?? 0) { _, _ in rebuild() }
         .onChange(of: store.currentSearch?.status ?? "") { _, _ in rebuild() }
         .onChange(of: store.auth.stage) { _, _ in rebuild() }
+        .onChange(of: store.hasCompletedOnboarding) { _, _ in rebuild() }
         .onChange(of: store.auth.isSignedIn) { _, _ in rebuild() }
     }
 
@@ -94,6 +112,7 @@ public struct DuoRootView: View {
             }
 
             // The wheel, inset from the near edge rather than flush to it.
+            if !needsOnboarding {
             HStack {
                 if nearTrailing { Spacer(minLength: 0) }
                 DuoWheel(navigator: navigator) { action in take(action) }
@@ -103,6 +122,7 @@ public struct DuoRootView: View {
                 if !nearTrailing { Spacer(minLength: 0) }
             }
             .frame(maxHeight: .infinity, alignment: .bottom)
+            }
         }
     }
 
@@ -124,7 +144,9 @@ public struct DuoRootView: View {
 
     @ViewBuilder private var stage: some View {
         Group {
-            if needsAuth {
+            if needsOnboarding {
+                OnboardingView(store: store)
+            } else if needsAuth {
                 DuoAuthStage(auth: store.auth)
             } else {
                 DuoStage(navigator: navigator)
@@ -133,7 +155,7 @@ public struct DuoRootView: View {
             .padding(.horizontal, 36)
             .padding(.vertical, 28)
             // Room for the wheel, so the longest answer never slides under it.
-            .padding(nearTrailing ? .trailing : .leading, 290)
+            .padding(nearTrailing ? .trailing : .leading, CGFloat(needsOnboarding ? 0 : 320))
             .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
