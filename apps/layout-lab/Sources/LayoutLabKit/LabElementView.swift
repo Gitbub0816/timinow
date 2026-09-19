@@ -168,7 +168,11 @@ struct LabSizing: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            .frame(width: style.fixedWidth, height: style.fixedHeight)
+            // `.map` rather than passing the Double? straight in: Swift's
+            // implicit Double-to-CGFloat conversion does not reach inside an
+            // Optional, so the unwrapped-and-rewrapped form is required.
+            .frame(width: style.fixedWidth.map { CGFloat($0) },
+                   height: style.fixedHeight.map { CGFloat($0) })
             .frame(maxWidth: style.grow && style.fixedWidth == nil ? .infinity : nil,
                    maxHeight: style.grow && style.fixedHeight == nil ? .infinity : nil)
     }
