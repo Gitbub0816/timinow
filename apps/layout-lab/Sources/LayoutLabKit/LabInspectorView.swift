@@ -1,7 +1,8 @@
+import Foundation
 import SwiftUI
 
-/// Properties of the selection, plus the operations that are miserable by
-/// hand: exact frames, alignment against the canvas, z-order, lock.
+/// The right-hand pane on the screens tab: what is selected, where it sits,
+/// and the operations that need more than one thing selected.
 public struct LabInspectorView: View {
     @EnvironmentObject var store: LabStore
 
@@ -9,174 +10,164 @@ public struct LabInspectorView: View {
 
     public var body: some View {
         ScrollView {
-            if let node = store.selectedNode {
-                VStack(alignment: .leading, spacing: 16) {
-                    header(node)
-                    frameFields(node)
-                    labelField(node)
-                    if node.kind.variantCount > 1 { variantPicker(node) }
-                    alignment(node)
-                    order(node)
-                    danger(node)
+            VStack(alignment: .leading, spacing: 16) {
+                if store.selection.isEmpty {
+                    empty
+                } else if store.selection.count > 1 {
+                    multiple
+                    arrangement
+                } else if let instance = store.selectedInstances.first {
+                    single(instance)
+                    arrangement
                 }
-                .padding(14)
-            } else {
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("Nothing selected").font(.system(size: 15, weight: .black))
-                    Text("Tap a component on the canvas to edit it, or drag one in from the left.")
-                        .font(.system(size: 12)).foregroundStyle(LabColor.muted)
-                    Divider().padding(.vertical, 6)
-                    Text("SCREEN").font(.system(size: 10, weight: .black)).tracking(1.4)
-                        .foregroundStyle(LabColor.coral)
-                    Text("\(store.screen.nodes.count) component\(store.screen.nodes.count == 1 ? "" : "s")")
-                        .font(.system(size: 12)).foregroundStyle(LabColor.muted)
-                }
-                .padding(14)
             }
+            .padding(14)
         }
         .background(LabColor.canvas)
     }
 
-    private func header(_ node: LabNode) -> some View {
+    private var empty: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Nothing selected").font(.system(size: 15, weight: .black))
+            Text("Tap a component to edit it. Tap another while one is selected, then use Arrange to line them up with each other.")
+                .font(.system(size: 12)).foregroundStyle(LabColor.muted)
+            Divider()
+            LabSectionLabel(text: "Screen")
+            Text("\(store.screen.instances.count) placed")
+                .font(.system(size: 12)).foregroundStyle(LabColor.muted)
+        }
+    }
+
+    private var multiple: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("\(store.selection.count) selected")
+                .font(.system(size: 17, weight: .black))
+            Text("Align and distribute act on these, relative to each other.")
+                .font(.system(size: 11)).foregroundStyle(LabColor.muted)
+        }
+    }
+
+    @ViewBuilder
+    private func single(_ instance: LabInstance) -> some View {
+        let component = store.component(instance.componentID)
+
         VStack(alignment: .leading, spacing: 3) {
-            Text(node.kind.title).font(.system(size: 17, weight: .black)).foregroundStyle(LabColor.ink)
-            Text(node.kind.rawValue).font(.system(size: 11, design: .monospaced))
-                .foregroundStyle(LabColor.muted)
+            Text(component?.name ?? "Missing component")
+                .font(.system(size: 17, weight: .black))
+            Text("used \(store.usageCount(instance.componentID))\u{00D7} across screens")
+                .font(.system(size: 11)).foregroundStyle(LabColor.muted)
         }
-    }
 
-    private func frameFields(_ node: LabNode) -> some View {
+        LabMiniButton(title: "Edit this component", wide: true, tint: LabColor.blue) {
+            store.editingComponent = instance.componentID
+            store.editingElement = component?.root.id
+        }
+        Text("Editing changes every instance of it, on every screen.")
+            .font(.system(size: 10)).foregroundStyle(LabColor.muted)
+
         VStack(alignment: .leading, spacing: 8) {
-            Text("FRAME").font(.system(size: 10, weight: .black)).tracking(1.4).foregroundStyle(LabColor.coral)
+            LabSectionLabel(text: "Frame")
             HStack(spacing: 8) {
-                LabNumberField(title: "X", value: node.x, onChange: set(node) { $0.x = $1 })
-                LabNumberField(title: "Y", value: node.y, onChange: set(node) { $0.y = $1 })
+                LabNumberField(title: "X", value: instance.x,
+                               onChange: set(instance) { $0.x = $1 })
+                LabNumberField(title: "Y", value: instance.y,
+                               onChange: set(instance) { $0.y = $1 })
             }
             HStack(spacing: 8) {
-                LabNumberField(title: "W", value: node.width, onChange: set(node) { $0.width = max(24, $1) })
-                LabNumberField(title: "H", value: node.height, onChange: set(node) { $0.height = max(18, $1) })
+                LabNumberField(title: "W", value: instance.width,
+                               onChange: set(instance) { $0.width = max(16, $1) })
+                LabNumberField(title: "H", value: instance.height,
+                               onChange: set(instance) { $0.height = max(12, $1) })
             }
         }
-    }
 
-    private func labelField(_ node: LabNode) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("LABEL").font(.system(size: 10, weight: .black)).tracking(1.4).foregroundStyle(LabColor.coral)
-            TextField("Default copy", text: Binding(
-                get: { node.label },
-                set: { text in var n = node; n.label = text; store.update(n) }
-            ))
-            .textFieldStyle(.roundedBorder)
-            Text("Empty uses the component's own words.")
-                .font(.system(size: 10)).foregroundStyle(LabColor.muted)
-        }
-    }
-
-    private func variantPicker(_ node: LabNode) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("VARIANT").font(.system(size: 10, weight: .black)).tracking(1.4).foregroundStyle(LabColor.coral)
-            Picker("Variant", selection: Binding(
-                get: { node.variant },
-                set: { v in var n = node; n.variant = v; store.update(n) }
-            )) {
-                ForEach(0..<node.kind.variantCount, id: \.self) { i in
-                    Text("\(i + 1)").tag(i)
+        VStack(alignment: .leading, spacing: 8) {
+            LabSectionLabel(text: "Orientation")
+            HStack(spacing: 6) {
+                ForEach([0.0, 90.0, 180.0, 270.0], id: \.self) { angle in
+                    LabMiniButton(title: "\(Int(angle))\u{00B0}", wide: true,
+                                  tint: abs(instance.rotation - angle) < 0.5 ? LabColor.blue : LabColor.ink) {
+                        var turned = instance
+                        turned.rotation = angle
+                        store.update(turned)
+                    }
                 }
             }
-            .pickerStyle(.segmented)
-        }
-    }
-
-    private func alignment(_ node: LabNode) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("ALIGN TO CANVAS").font(.system(size: 10, weight: .black)).tracking(1.4)
-                .foregroundStyle(LabColor.coral)
-            HStack(spacing: 6) {
-                LabMiniButton(title: "L") { store.align(node.id, .left) }
-                LabMiniButton(title: "C") { store.align(node.id, .centreX) }
-                LabMiniButton(title: "R") { store.align(node.id, .right) }
-                LabMiniButton(title: "T") { store.align(node.id, .top) }
-                LabMiniButton(title: "M") { store.align(node.id, .centreY) }
-                LabMiniButton(title: "B") { store.align(node.id, .bottom) }
+            LabSlider(title: "Free", value: instance.rotation, range: -180...180, step: 1) { angle in
+                var turned = instance
+                turned.rotation = angle
+                store.update(turned)
             }
         }
-    }
 
-    private func order(_ node: LabNode) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("ORDER").font(.system(size: 10, weight: .black)).tracking(1.4).foregroundStyle(LabColor.coral)
-            HStack(spacing: 6) {
-                LabMiniButton(title: "Front", wide: true) { store.bringToFront(node.id) }
-                LabMiniButton(title: "Back", wide: true) { store.sendToBack(node.id) }
-            }
+        VStack(alignment: .leading, spacing: 8) {
+            LabSectionLabel(text: "This placement only")
+            TextField("Override the text", text: Binding(
+                get: { instance.overrideText },
+                set: { text in var copy = instance; copy.overrideText = text; store.update(copy) }
+            ))
+            .textFieldStyle(.roundedBorder)
+            Toggle("Scale to fit the frame", isOn: Binding(
+                get: { instance.scaleToFit },
+                set: { on in var copy = instance; copy.scaleToFit = on; store.update(copy) }
+            ))
+            .font(.system(size: 13, weight: .semibold))
             Toggle("Locked", isOn: Binding(
-                get: { node.locked },
-                set: { v in var n = node; n.locked = v; store.update(n) }
+                get: { instance.locked },
+                set: { on in var copy = instance; copy.locked = on; store.update(copy) }
             ))
             .font(.system(size: 13, weight: .semibold))
         }
     }
 
-    private func danger(_ node: LabNode) -> some View {
-        HStack(spacing: 6) {
-            LabMiniButton(title: "Duplicate", wide: true) { store.duplicate(node.id) }
-            LabMiniButton(title: "Delete", wide: true, tint: LabColor.coral) { store.delete(node.id) }
+    private var arrangement: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            LabSectionLabel(text: store.selection.count > 1 ? "Align to each other" : "Align to canvas")
+            HStack(spacing: 6) {
+                ForEach(LabStore.LabAlign.allCases, id: \.self) { how in
+                    LabMiniButton(symbol: how.symbol, wide: true) { store.align(how) }
+                }
+            }
+
+            LabSectionLabel(text: "Distribute")
+            HStack(spacing: 6) {
+                LabMiniButton(title: "Across", wide: true) { store.distribute(horizontal: true) }
+                LabMiniButton(title: "Down", wide: true) { store.distribute(horizontal: false) }
+            }
+            if store.selection.count < 3 {
+                Text("Needs three or more.")
+                    .font(.system(size: 10)).foregroundStyle(LabColor.muted)
+            }
+
+            LabSectionLabel(text: "Match size")
+            HStack(spacing: 6) {
+                LabMiniButton(title: "Width", wide: true) { store.matchSize(width: true, height: false) }
+                LabMiniButton(title: "Height", wide: true) { store.matchSize(width: false, height: true) }
+                LabMiniButton(title: "Both", wide: true) { store.matchSize(width: true, height: true) }
+            }
+
+            LabSectionLabel(text: "Order")
+            HStack(spacing: 6) {
+                LabMiniButton(title: "Front", wide: true) { store.bringToFront(store.selection) }
+                LabMiniButton(title: "Back", wide: true) { store.sendToBack(store.selection) }
+            }
+
+            HStack(spacing: 6) {
+                LabMiniButton(title: "Duplicate", wide: true) { store.duplicate(store.selection) }
+                LabMiniButton(title: "Delete", wide: true, tint: LabColor.coral) {
+                    store.delete(store.selection)
+                }
+            }
+            .padding(.top, 4)
         }
-        .padding(.top, 4)
     }
 
-    private func set(_ node: LabNode, _ apply: @escaping (inout LabNode, Double) -> Void) -> (Double) -> Void {
+    private func set(_ instance: LabInstance,
+                     _ apply: @escaping (inout LabInstance, Double) -> Void) -> (Double) -> Void {
         { value in
-            var copy = node
+            var copy = instance
             apply(&copy, value)
             store.update(copy)
         }
-    }
-}
-
-struct LabNumberField: View {
-    var title: String
-    var value: Double
-    var onChange: (Double) -> Void
-    @State private var text: String = ""
-    @FocusState private var focused: Bool
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text(title).font(.system(size: 10, weight: .black)).foregroundStyle(LabColor.muted)
-            TextField("0", text: $text)
-                .keyboardType(.numbersAndPunctuation)
-                .textFieldStyle(.roundedBorder)
-                .focused($focused)
-                .monospacedDigit()
-                .onSubmit { commit() }
-                .onChange(of: focused) { _, isFocused in if !isFocused { commit() } }
-                .onAppear { text = format(value) }
-                .onChange(of: value) { _, newValue in if !focused { text = format(newValue) } }
-        }
-    }
-
-    private func format(_ v: Double) -> String { String(Int(v.rounded())) }
-    private func commit() {
-        if let parsed = Double(text.trimmingCharacters(in: .whitespaces)) { onChange(parsed) }
-        text = format(value)
-    }
-}
-
-struct LabMiniButton: View {
-    var title: String
-    var wide: Bool = false
-    var tint: Color = LabColor.ink
-    var action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            Text(title).font(.system(size: 12, weight: .black)).foregroundStyle(tint)
-                .frame(minWidth: wide ? nil : 34, maxWidth: wide ? .infinity : nil, minHeight: 32)
-                .padding(.horizontal, wide ? 8 : 0)
-                .background(RoundedRectangle(cornerRadius: 9).fill(.white)
-                    .overlay(RoundedRectangle(cornerRadius: 9).stroke(tint.opacity(0.4), lineWidth: 1.5)))
-        }
-        .buttonStyle(.plain)
     }
 }

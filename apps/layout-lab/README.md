@@ -48,85 +48,87 @@ home screen.
 iPad only. The app is three panes side by side and a phone cannot give each of
 them enough width to drag between, which is the only interaction it has.
 
-## Using it
+## Two modes
 
-**Add** — tap a row in the left palette to drop one in the middle, or press
-and hold it and drag it onto the canvas. (The press is deliberate: a plain drag
-would win against the palette's own scrolling and make the list unscrollable.) Dropping outside the canvas cancels rather than placing the
-component somewhere you cannot reach it again.
+**Components** is where you design. Three panes: the element tree, a live
+preview at the component's real size, and every style property of whatever is
+selected. A component is a tree of primitives — stack, box, text, icon,
+spacer, divider, dot, bar — each with fill, border, corner radius, hard-offset
+shadow, padding, spacing, alignment, fixed or flexible size, font size and
+weight, tracking, line limit, rotation and opacity.
 
-**Move and resize** — drag the component; drag the blue square at its
-bottom-right corner to resize. Both snap to the grid while *Snap* is on. The
-inspector on the right takes exact numbers when dragging is not precise enough.
+The seeded library is built from those same primitives. There is no privileged
+set: open any component, take it apart, rebuild it. Switching a stack's axis
+from row to column is how a tab bar becomes a side rail — same children, one
+property.
 
-**Reach overlay** — the dashed green arc is the comfortable thumb sweep for the
-handedness selected in the toolbar. It is the reason this app exists: it is
-there to make an unreachable control obvious while you are placing it, rather
-than after the build. Turn it off with *Reach*.
+**Screens** is where you place. Long-press a component in the library and drag
+it onto the canvas, or tap to drop one in the middle.
 
-**Screens** — tabs above the canvas. Tap the open tab to rename it, long-press
-any tab to delete. Four are seeded from real Tími screens (Intake, Offers,
-Tracker) plus a blank one, because a navigation idea is only judgeable against
-something that looks like the thing it has to navigate.
+## Edit once, everywhere
 
-**Canvas size** — presets in the toolbar, or type width and height directly.
-The *Fold, open* preset is measured from a screenshot of the Duo simulator
-(2000×1406 px halved for @2x), not from a spec sheet — which is exactly why
-the field is editable. Correct it once the real figure is known.
+Screens hold *instances*, which point at components in a shared library. Edit
+a component and every placement of it on every screen changes with it — there
+is nothing to propagate by hand. A component that is currently placed cannot
+be deleted; the app says how many times it is used instead of leaving
+placements pointing at nothing.
 
-**Export** — the Export button shows the whole configuration as JSON. Copy it,
-share it, or *Save to Files*, which writes it into the app's Documents folder
-where the Files app can see it (On My iPad → Layout Lab). The same sheet
-imports a configuration back.
+Per placement you can still override the text, rotate it, lock it, or scale it
+to its frame. Those are properties of the placement, not the component.
 
-Work is autosaved to `Documents/layout-lab.json` on every change and restored
-at launch. *Reset* puts the seeded screens back.
+## Alignment
 
-## The configuration format
+Select one thing and the align buttons work against the canvas. Select two or
+more and they work **against each other**, on the bounding box of the
+selection. Distribute needs three. Match size takes the largest, which is
+almost always the one that was sized on purpose.
 
-```jsonc
-{
-  "version": 1,
-  "exportedAt": "2026-09-19T18:20:00Z",
-  "device": { "name": "iPad 11\" landscape", "width": 1194, "height": 834 },
-  "handedness": "right",
-  "gridStep": 8,
-  "screens": [
-    {
-      "id": "…",
-      "name": "Intake",
-      "nodes": [
-        { "id": "…", "kind": "topBar", "x": 0, "y": 0,
-          "width": 1194, "height": 64, "label": "", "variant": 0, "locked": false }
-      ]
-    }
-  ]
-}
-```
+Dragging magnets to the edges and centres of everything else on the screen,
+not only to the grid, and draws a coral guide where it caught.
+
+## Reach, in millimetres
+
+The first version of this app drew the thumb arc as a fraction of the screen.
+That is simply wrong — a thumb is the same length whatever it is holding — and
+it made a 13-inch canvas look as reachable as a phone.
+
+The arc is now real millimetres converted to points through the device's
+measured physical width, and **nothing is drawn at all when that measurement
+is missing**. An arc with no basis is worse than no arc, because it gets
+believed.
+
+So measure it, which takes about ten seconds:
+
+1. Turn on **Ruler**. A 50mm scale bar appears on the canvas.
+2. Hold a real ruler against the iPad screen.
+3. Adjust **MM W** in the toolbar until the bar measures 50mm.
+
+Every reach figure becomes true at once. **Thumb mm** and **Stretch** are the
+comfortable sweep and the furthest reach with the grip shifting; both are
+settings rather than constants, because hands differ by more than designs
+usually admit and the point is to test against a real one.
+
+The device presets ship with their physical sizes at zero on purpose. Every
+figure would have been recalled rather than measured, and a confidently wrong
+millimetre value is exactly the mistake this replaces.
+
+## Nothing is clipped
+
+Components used to be cut through the middle of a word when they overflowed,
+which reads as a rendering bug rather than as a layout that needs fixing.
+Nothing is clipped now: text shrinks before it truncates and truncates before
+it clips, and a component whose contents genuinely do not fit looks wrong in a
+way you can act on.
+
+## Export
+
+The Export button shows the whole configuration as JSON — the component
+library and the screens together, so a configuration is self-contained and
+opens on another device with the components it needs. Copy it, share it, or
+*Save to Files* (On My iPad → Layout Lab). The same sheet imports one back.
 
 Frames are in **points**, origin top-left, in the canvas's own coordinates —
-the same numbers a SwiftUI `.frame` and `.position` take, so the export reads
-as instructions rather than as data needing a translation layer.
-
-`kind` values are the vocabulary of the format. **Adding a case to `LabKind` is
-safe; renaming one silently breaks every saved configuration**, because the raw
-value is what the JSON stores.
-
-## What is in the palette
-
-45 components in six groups — 31 of them navigation, which is the point:
-
-| Group | What is in it |
-| --- | --- |
-| Bars & rails | top bar, tab bar, tabs with a centre action, side rail, floating pill, toolbar, sidebar list |
-| Moving between | back, breadcrumb, menu button, search, segmented, chip row |
-| Where you are | progress dots, step bar, page dots, status strip |
-| Thumb-first | Pilot, deck, board, radial dial, thumb arc, action rail, floating action, speed dial |
-| Surfaces | bottom sheet, modal card, grabber, split divider, toast, drawer handle |
-| Content | wordmark, headline, body, text field, primary and quiet buttons, species chips, offer card, clinic row, map, countdown, price row, legal notice, pet avatar |
-
-Several have variants — the inspector shows a picker when a component has more
-than one look.
+the same numbers a SwiftUI `.frame` and `.position` take.
 
 ## Deliberately absent
 
@@ -134,8 +136,11 @@ than one look.
   into a view is a decision with taste in it, and a generator would produce
   code nobody wants to own. Read the JSON and build the layout by hand.
 - **No undo.** Autosave plus Reset covers the common mistake. Real undo means a
-  command stack, which is more machinery than a sketchpad earns.
-- **No multi-select.** One component at a time.
+  command stack, which is more machinery than a sketchpad earns — but this is
+  the one on the list most likely to be worth adding next.
+- **No nested components.** A component cannot contain another component, only
+  primitives. Instances-inside-components is a real feature with real
+  bookkeeping behind it, and the tool is useful without it.
 
 If any of those start to hurt in practice, they are worth adding — but each is
 a real feature, not an oversight.

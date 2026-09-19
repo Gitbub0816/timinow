@@ -45,3 +45,38 @@ public extension View {
         return background(shape.fill(fill).overlay(shape.stroke(LabColor.ink, lineWidth: 2)))
     }
 }
+
+public extension LabColor {
+    /// Resolve a paint to a colour. Unknown tokens fall back to ink rather
+    /// than to clear, so a typo shows up as a visible black box instead of a
+    /// component that silently disappeared.
+    static func resolve(_ paint: LabPaint) -> Color {
+        switch paint.token {
+        case "none":      return .clear
+        case "ink":       return ink
+        case "paper":     return paper
+        case "canvas":    return canvas
+        case "white":     return .white
+        case "coral":     return coral
+        case "coralSoft": return coralSoft
+        case "blue":      return blue
+        case "blueSoft":  return blueSoft
+        case "gold":      return gold
+        case "goldSoft":  return goldSoft
+        case "green":     return green
+        case "greenSoft": return greenSoft
+        case "muted":     return muted
+        case "custom":    return fromHex(paint.hex)
+        default:          return ink
+        }
+    }
+
+    static func fromHex(_ hex: String) -> Color {
+        var s = hex.trimmingCharacters(in: .whitespaces)
+        if s.hasPrefix("#") { s.removeFirst() }
+        guard s.count == 6, let value = Int(s, radix: 16) else { return ink }
+        return Color(red: Double((value >> 16) & 0xFF) / 255,
+                     green: Double((value >> 8) & 0xFF) / 255,
+                     blue: Double(value & 0xFF) / 255)
+    }
+}

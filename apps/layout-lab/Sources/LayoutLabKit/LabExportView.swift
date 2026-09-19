@@ -47,11 +47,12 @@ public struct LabExportView: View {
 
     private var summary: some View {
         let screens = store.document.screens
-        let total = screens.reduce(0) { $0 + $1.nodes.count }
+        let total = screens.reduce(0) { $0 + $1.instances.count }
         return HStack(spacing: 22) {
+            stat("\(store.document.components.count)", "components")
             stat("\(screens.count)", "screens")
-            stat("\(total)", "components")
-            stat("\(Int(store.document.device.width))\u{00D7}\(Int(store.document.device.height))", "points")
+            stat("\(total)", "placed")
+            stat("\(Int(store.document.device.pointWidth))\u{00D7}\(Int(store.document.device.pointHeight))", "points")
             Spacer()
         }
         .padding(16)
@@ -83,7 +84,7 @@ public struct LabExportView: View {
                         .font(.system(size: 11)).foregroundStyle(LabColor.green)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                if let error = store.lastSaveError {
+                if let error = store.lastError {
                     Text(error).font(.system(size: 11)).foregroundStyle(LabColor.coral)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
