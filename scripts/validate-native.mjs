@@ -915,7 +915,23 @@ for (const path of await collectFiles("apps/customer-mobile/Sources", ".swift"))
   const bare = new RegExp(`\\b(${MODIFIERS})\\(([^()]*?)\\?[^:()]*:\\s*-?\\d+(?:\\.\\d+)?\\s*[,)]`);
   for (const path of await collectFiles("apps/customer-mobile/Sources/TimiNowUI", ".swift")) {
     const source = await read(path);
-    for (const [index, line] of source.split("\n").entries()) {
+    // Join a line to the next when its brackets are still open, so a modifier
+    // wrapped across lines is checked as the one call it is. Reading strictly
+    // line by line is how `.padding(edge,\n  flag ? 12 : 0)` got written.
+    const lines = source.split("\n");
+    const joined = lines.map((line, index) => {
+      let text = line;
+      let depth = (text.match(/\(/g) || []).length - (text.match(/\)/g) || []).length;
+      let lookahead = index + 1;
+      while (depth > 0 && lookahead < lines.length && lookahead - index <= 3) {
+        const next = lines[lookahead];
+        text += " " + next.trim();
+        depth += (next.match(/\(/g) || []).length - (next.match(/\)/g) || []).length;
+        lookahead += 1;
+      }
+      return text;
+    });
+    for (const [index, line] of joined.entries()) {
       // Only the argument itself matters; a conversion anywhere in it means the
       // literal already has a type.
       const stripped = line.replace(/\b(?:CGFloat|Double|Int|Float)\([^()]*(?:\([^()]*\)[^()]*)*\)/g, "TYPED");

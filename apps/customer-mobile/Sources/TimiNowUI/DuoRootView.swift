@@ -104,10 +104,21 @@ public struct DuoRootView: View {
     }
 
     private var wheelLayout: some View {
+        // A GeometryReader so the crease can be read, and an explicit frame on
+        // the content so wrapping the layout in one changes nothing about it —
+        // a GeometryReader fills its parent and top-leading aligns its child,
+        // which silently re-lays-out anything dropped inside it.
+        GeometryReader { proxy in
+            panels(gap: DuoHinge.gap(proxy), size: proxy.size)
+                .frame(width: proxy.size.width, height: proxy.size.height)
+        }
+    }
+
+    private func panels(gap: DuoHingeGap, size: CGSize) -> some View {
         ZStack {
             HStack(spacing: 0) {
                 if nearTrailing && !needsAuth { menuBar }
-                stage
+                stage(gap: gap, size: size)
                 if !nearTrailing && !needsAuth { menuBar }
             }
 
@@ -119,6 +130,11 @@ public struct DuoRootView: View {
                     .padding(.trailing, CGFloat(nearTrailing ? 34 : 0))
                     .padding(.leading, CGFloat(nearTrailing ? 0 : 34))
                     .padding(.bottom, 28)
+                    // Keep the whole control inside the near panel. A wheel
+                    // straddling the seam is the worst case of all: the ridge
+                    // sits under the thumb mid-sweep.
+                    .padding(nearTrailing ? .leading : .trailing,
+                             CGFloat(gap.isVertical ? 12 : 0))
                 if !nearTrailing { Spacer(minLength: 0) }
             }
             .frame(maxHeight: .infinity, alignment: .bottom)
@@ -142,7 +158,20 @@ public struct DuoRootView: View {
         .animation(.easeOut(duration: 0.2), value: menuExpanded)
     }
 
-    @ViewBuilder private var stage: some View {
+    /// The stage keeps clear of the crease.
+    ///
+    /// It already leaves room on the near side for the wheel; when the device
+    /// is partially folded and the crease sits further in than that, the
+    /// clearance grows to match. Nothing is laid across the seam, and when the
+    /// device is flat the reserved region is inactive and this is exactly the
+    /// spacing it always was.
+    @ViewBuilder private func stage(gap: DuoHingeGap, size: CGSize) -> some View {
+        let wheelRoom: CGFloat = needsOnboarding ? 0 : 320
+        let creaseRoom: CGFloat = nearTrailing
+            ? gap.trailingClearance(in: size)
+            : gap.leadingClearance(in: size)
+        let nearInset = max(wheelRoom, creaseRoom > 0 ? creaseRoom + 24 : 0)
+
         Group {
             if needsOnboarding {
                 OnboardingView(store: store)
@@ -155,7 +184,7 @@ public struct DuoRootView: View {
             .padding(.horizontal, 36)
             .padding(.vertical, 28)
             // Room for the wheel, so the longest answer never slides under it.
-            .padding(nearTrailing ? .trailing : .leading, CGFloat(needsOnboarding ? 0 : 320))
+            .padding(nearTrailing ? .trailing : .leading, nearInset)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
