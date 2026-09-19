@@ -540,11 +540,11 @@ struct AlertsSettingsView: View {
         }
         .timiScrollFits()
         .background(TimiColor.canvas)
-        .onChange(of: store.notificationsEnabled) { enabled in
+        .onChange(of: store.notificationsEnabled) { _, enabled in
             guard enabled else { return }
             Task { store.notificationsEnabled = await PlatformPermissions.requestNotifications() }
         }
-        .onChange(of: store.locationEnabled) { enabled in
+        .onChange(of: store.locationEnabled) { _, enabled in
             guard enabled else { return }
             Task {
                 store.locationEnabled = await PlatformPermissions.requestLocation()

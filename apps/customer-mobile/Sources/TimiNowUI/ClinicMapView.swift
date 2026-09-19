@@ -66,7 +66,7 @@ struct ClinicMapView: View {
         }
         .mapStyle(MapStyle(uri: StyleURI(rawValue: styleURL) ?? .streets))
         .onAppear { recenter() }
-        .onChange(of: userLatitude) { _ in recenter() }
+        .onChange(of: userLatitude) { _, _ in recenter() }
     }
 
     private var rankedClinics: [RankedClinic] {
@@ -183,7 +183,9 @@ struct ClinicMapView: View {
                     Spacer()
                 }
             }
-        }.padding(14).timiCard(Color.white)
+        }
+        .padding(14)
+        .timiCard(Color.white)
     }
 }
 

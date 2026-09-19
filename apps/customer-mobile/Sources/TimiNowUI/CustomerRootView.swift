@@ -49,7 +49,7 @@ public struct CustomerRootView: View {
         // /api/config after launch, so it is applied the moment it exists and
         // re-applied if it ever changes. No-op on builds without Mapbox.
         .task { TimiMapboxToken.apply(store.mapToken) }
-        .onChange(of: store.mapToken) { token in TimiMapboxToken.apply(token) }
+        .onChange(of: store.mapToken) { _, token in TimiMapboxToken.apply(token) }
         // Silent — no prompt, no change to store.notificationsEnabled — so a
         // phone that already granted notification permission in an earlier
         // session keeps registering a fresh APNs token every cold start

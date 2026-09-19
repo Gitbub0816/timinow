@@ -363,7 +363,9 @@ struct TurnByTurnNavigationView: View {
             }
             Button("I'm here") { onArrival() }.buttonStyle(TimiPrimaryButtonStyle())
             Button("End navigation") { onEnd() }.buttonStyle(TimiQuietButtonStyle())
-        }.padding(24).timiCard(Color.white)
+        }
+        .padding(24)
+        .timiCard(Color.white)
     }
 }
 #endif

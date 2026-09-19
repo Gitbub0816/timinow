@@ -252,7 +252,7 @@ struct HardshipEvidenceSection: View {
             }
         }
         .photosPicker(isPresented: $showPhotoPicker, selection: $photoSelection, matching: .images)
-        .onChange(of: photoSelection) { newItem in Task { await handlePhotoSelection(newItem) } }
+        .onChange(of: photoSelection) { _, newItem in Task { await handlePhotoSelection(newItem) } }
         .fileImporter(isPresented: $showFileImporter, allowedContentTypes: [.pdf]) { result in handleFileImport(result) }
         #endif
     }
@@ -388,7 +388,7 @@ struct HardshipIdentitySection: View {
         // browser verification session outstanding — the manual button stays
         // as the explicit fallback. (The native SDK path never sets
         // `sessionURL`, so this stays inert there.)
-        .onChange(of: scenePhase) { phase in
+        .onChange(of: scenePhase) { _, phase in
             guard phase == .active, sessionURL != nil, !verified, !checking else { return }
             Task { checking = true; await store.refreshHardshipIdentityStatus(); checking = false }
         }

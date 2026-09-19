@@ -583,7 +583,7 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
             // Minted fresh if the one in hand is near expiry. A Clerk token
             // lives about a minute, so a search started on a screen opened
             // five minutes ago would otherwise arrive expired.
-            try? await auth.ensureFreshToken()
+            _ = try? await auth.ensureFreshToken()
             // An emergency asks a narrower set of hospitals, the way the web
             // client does. Sending every general practice a possible emergency
             // wastes the ninety seconds the search has.
@@ -624,7 +624,7 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
         showEmergencyList = true
         trackEvent("emergency_list_opened", path: "emergency")
         do {
-            try? await auth.ensureFreshToken()
+            _ = try? await auth.ensureFreshToken()
             let found = try await gateway.emergencyPlaces(
                 latitude: currentLatitude, longitude: currentLongitude, species: selectedPet.species
             )
@@ -1053,7 +1053,7 @@ public enum CustomerRoute: String, Codable, Sendable { case home, intake, search
             try? await Task.sleep(for: .milliseconds(100))
             waited += 0.1
         }
-        try? await auth.ensureFreshToken()
+        _ = try? await auth.ensureFreshToken()
         if !storedIntakeId.isEmpty {
             switch await fetchPersistedIntake(storedIntakeId) {
             case .active(let intake):

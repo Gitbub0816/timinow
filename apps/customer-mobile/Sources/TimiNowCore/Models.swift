@@ -18,7 +18,7 @@ public enum PetSpecies: String, Codable, CaseIterable, Sendable {
     case dog, cat, rabbit, bird, reptile, other
     public var title: String { rawValue.prefix(1).uppercased() + rawValue.dropFirst() }
     public var icon: String {
-        switch self { case .dog: return "pawprint.fill"; case .cat: return "cat.fill"; case .rabbit: return "hare.fill"; case .bird: return "bird.fill"; default: return "heart.fill" }
+        switch self { case .dog: return "pawprint.fill"; case .cat: return "cat.fill"; case .rabbit: return "hare.fill"; case .bird: return "bird.fill"; case .reptile: return "lizard.fill"; case .other: return "pawprint.circle.fill" }
     }
 }
 

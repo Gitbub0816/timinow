@@ -1,5 +1,8 @@
 import Foundation
 import Observation
+// Required for @Observable to drive the Android UI as well as SwiftUI's —
+// see AppStore.swift, which carries the same import for the same reason.
+import SkipFuse
 
 // Custom-UI Clerk sign-in, driven directly against Clerk's Frontend API
 // (`/v1/client/...`) as docs/PLATFORM-CONTRACT.md's "Authentication UI rule"
@@ -250,7 +253,7 @@ public struct AuthFactorOption: Identifiable, Hashable, Sendable {
                 // every launch, it is Clerk ending sessions server-side:
                 // the instance's inactivity timeout or maximum lifetime,
                 // which are Dashboard settings no client code can change.
-                let listed = sessions.map { "\($0.id.suffix(6)):\($0.status)" }.joined(separator: ", ")
+                let listed = sessions.map { "\($0.id.suffix(6)):\($0.status ?? "-")" }.joined(separator: ", ")
                 lastRestoreOutcome = "signed out by Clerk - it lists \(sessions.count) session(s) [\(listed)] and ours is not among the active ones. Recurring at every launch, this is the instance's session lifetime settings."
                 signOutLocally(explicit: false)
                 return

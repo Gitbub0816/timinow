@@ -168,43 +168,67 @@ import UserNotifications
         onLeftOrigin = nil; onArrivedAtClinic = nil
     }
 
-    func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
-        guard manager.authorizationStatus != .notDetermined else { return }
-        let granted = manager.authorizationStatus == .authorizedWhenInUse || manager.authorizationStatus == .authorizedAlways
-        if let continuation { self.continuation = nil; continuation.resume(returning: granted) }
-        if let alwaysContinuation { self.alwaysContinuation = nil; alwaysContinuation.resume(returning: manager.authorizationStatus == .authorizedAlways) }
+    // ── CLLocationManagerDelegate ─────────────────────────────────────────
+    //
+    // `nonisolated` + `MainActor.assumeIsolated`, not a plain @MainActor
+    // conformance. CLLocationManagerDelegate is not main-actor-annotated, so
+    // satisfying it from a @MainActor class crosses an isolation boundary —
+    // a warning today and an error in the Swift 6 language mode.
+    //
+    // `assumeIsolated` rather than a `Task { @MainActor in }` hop, because
+    // these callbacks really are already on the main actor: CoreLocation
+    // delivers them to the queue the manager was created on, and the manager
+    // is created in this class's own initialiser, which is @MainActor. A
+    // Task hop would also be wrong rather than merely wasteful — it would
+    // defer resuming the continuations by a turn, so `request()` would return
+    // after the caller had moved on.
+    nonisolated func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        MainActor.assumeIsolated {
+            guard manager.authorizationStatus != .notDetermined else { return }
+            let granted = manager.authorizationStatus == .authorizedWhenInUse || manager.authorizationStatus == .authorizedAlways
+            if let continuation { self.continuation = nil; continuation.resume(returning: granted) }
+            if let alwaysContinuation { self.alwaysContinuation = nil; alwaysContinuation.resume(returning: manager.authorizationStatus == .authorizedAlways) }
+        }
     }
 
-    func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
-        guard let continuation = locationContinuation else { return }
-        locationContinuation = nil
-        let coordinate = locations.last?.coordinate
-        continuation.resume(returning: coordinate.map { ($0.latitude, $0.longitude) })
+    nonisolated func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+        MainActor.assumeIsolated {
+            guard let continuation = locationContinuation else { return }
+            locationContinuation = nil
+            let coordinate = locations.last?.coordinate
+            continuation.resume(returning: coordinate.map { ($0.latitude, $0.longitude) })
+        }
     }
 
-    func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
-        locationContinuation?.resume(returning: nil); locationContinuation = nil
+    nonisolated func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
+        MainActor.assumeIsolated {
+            locationContinuation?.resume(returning: nil); locationContinuation = nil
+        }
     }
 
-    func locationManager(_ manager: CLLocationManager, didExitRegion region: CLRegion) {
-        guard region.identifier == "timi-origin" else { return }
-        let callback = onLeftOrigin
-        manager.stopMonitoring(for: region)
-        originRegion = nil
-        callback?()
+    nonisolated func locationManager(_ manager: CLLocationManager, didExitRegion region: CLRegion) {
+        MainActor.assumeIsolated {
+            guard region.identifier == "timi-origin" else { return }
+            let callback = onLeftOrigin
+            manager.stopMonitoring(for: region)
+            originRegion = nil
+            callback?()
+        }
     }
 
-    func locationManager(_ manager: CLLocationManager, didEnterRegion region: CLRegion) {
-        guard region.identifier == "timi-clinic" else { return }
-        let callback = onArrivedAtClinic
-        stopMonitoring()
-        callback?()
+    nonisolated func locationManager(_ manager: CLLocationManager, didEnterRegion region: CLRegion) {
+        MainActor.assumeIsolated {
+            guard region.identifier == "timi-clinic" else { return }
+            let callback = onArrivedAtClinic
+            stopMonitoring()
+            callback?()
+        }
     }
 
     // Geofencing is best-effort automation on top of the manual status
     // buttons — a region that fails to register just leaves the manual
     // fallback as the only path, which is not an error worth surfacing.
-    func locationManager(_ manager: CLLocationManager, monitoringDidFailFor region: CLRegion?, withError error: Error) {}
+    nonisolated func locationManager(_ manager: CLLocationManager, monitoringDidFailFor region: CLRegion?, withError error: Error) {}
 }
 #else
 @MainActor enum PlatformPermissions {

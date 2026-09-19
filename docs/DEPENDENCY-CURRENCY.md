@@ -54,3 +54,68 @@ spirit of `scripts/check-subprocessors.mjs`) that fetches each CDN's latest
 version and fails CI when the gap exceeds a threshold — not implemented
 here, since deciding the right threshold (and who reviews the resulting
 PRs) is a team-process decision, not a code change.
+
+## Swift package identity conflicts (Skip), 2026-09 — open, upstream
+
+Building the iOS app under Xcode 27.1 emits ten SwiftPM warnings of the form
+"Conflicting identity for `skip`: dependency `github.com/skiptools/skip` and
+dependency `source.skip.tools/skip` both point to the same package identity".
+SwiftPM says it "will be escalated to an error in future versions", so this is
+a real deadline rather than noise.
+
+The cause is that Skip publishes each package from two hosts and its own
+packages do not agree on which to depend on. Sorting the conflicts by who
+introduced them:
+
+| Identity | Chain A | Chain B | Ours to fix? |
+| --- | --- | --- | --- |
+| `skip` | `skip-model`, `skip-ui` → github.com | our manifest → source.skip.tools | **Yes** |
+| `skip-model` | `skip-ui` → github.com | our manifest → source.skip.tools | **Yes** |
+| `skip-bridge` | `skip-fuse` → github.com | `skip-fuse-ui` → source.skip.tools | No |
+| `skip-android-bridge` | `skip-fuse` → github.com | `skip-fuse-ui` → source.skip.tools | No |
+| `swift-jni` | `skip-fuse` → github.com | `skip-fuse-ui` → source.skip.tools | No |
+
+So switching our five declarations in `Package.swift` from
+`source.skip.tools/…` to `github.com/skiptools/…` would clear the first two
+rows — four of the ten warnings — and leave the rest, which are
+`skip-fuse` disagreeing with `skip-fuse-ui` and can only be fixed by Skip or
+by a version pair where they happen to agree.
+
+**Not done, deliberately.** Changing a dependency URL forces a full
+re-resolution, and this environment has no Swift toolchain and no access to
+`source.skip.tools`, so the change cannot be resolved or compiled here before
+being pushed. Shipping an unresolvable manifest to silence four warnings is a
+bad trade when the warnings are currently cosmetic. Whoever has a Mac can test
+it in about a minute:
+
+```bash
+cd apps/customer-mobile
+swift package resolve            # record the current versions first
+# edit the five URLs, then
+swift package resolve
+```
+
+If it resolves to the same versions, keep it and report the remaining five to
+Skip; if it does not, revert and wait for upstream.
+
+## Two `data(for:)` deprecation warnings — open, needs the compiler
+
+`VoiceController.swift:282` and `:410` call `URLSession.shared.data(for:)` and
+warn "'data(for:)' was deprecated in iOS 15.0: Use iOS 15 API instead".
+`APIClient.swift` makes the same call three times and does not warn. The only
+structural difference is the module: `VoiceController` is in `TimiNowUI`,
+which links `SkipFuseUI` and therefore `SkipFoundation`, while `APIClient` is
+in `TimiNowCore`, which does not.
+
+That points at a shadowed overload rather than an Apple deprecation, and the
+right fix depends on which symbol is actually being resolved — which needs a
+compiler this environment does not have. Guessing between
+`data(for:delegate:)` and a `#if SKIP` split risks breaking the Android
+transpile to silence two warnings. To settle it in one command on a Mac:
+
+```bash
+cd apps/customer-mobile
+swift build -Xswiftc -warnings-as-errors 2>&1 | grep -A3 'data(for:)'
+```
+
+The note in the diagnostic names the declaring module.

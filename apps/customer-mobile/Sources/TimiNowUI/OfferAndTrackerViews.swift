@@ -73,7 +73,7 @@ struct OfferSearchView: View {
                 await store.refreshSearch(); try? await Task.sleep(for: .seconds(3))
             }
         }
-        .onChange(of: offers.count) { count in
+        .onChange(of: offers.count) { _, count in
             if count > lastOfferCount && lastOfferCount > 0 { Task { await PlatformPermissions.notify(title: "A clinic can help \(store.draft.pet.name)", body: "You now have \(count) live Tími offer\(count == 1 ? "" : "s") to compare.") } }
             lastOfferCount = count
         }
@@ -260,7 +260,7 @@ struct TrackerView: View {
             if store.bookingPayment == nil { Task { await store.prepareBookingPayment() } }
             if store.bookingPaymentSettled { Task { await beginArrivalAutomation() } }
         }
-        .onChange(of: store.bookingPaymentSettled) { settled in
+        .onChange(of: store.bookingPaymentSettled) { _, settled in
             // Settlement can land a few seconds after this view already
             // appeared — the customer pays while looking at the screen — so
             // the `.onAppear` check above alone would miss it.

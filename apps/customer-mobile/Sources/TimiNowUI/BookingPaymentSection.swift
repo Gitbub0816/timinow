@@ -83,7 +83,7 @@ struct BookingPaymentSection: View {
         // cancels the old PaymentIntent and mints one for the new total, so
         // the secret this section's Stripe controller was built around is
         // dead the moment this value moves. Rebuild against the new one.
-        .onChange(of: store.bookingPayment?.clientSecret) { _ in
+        .onChange(of: store.bookingPayment?.clientSecret) { _, _ in
             guard store.bookingPayment?.mode == "stripe" else { return }
             // Drop the stale controller before the rebuild, not after: a
             // confirm button still wired to the old secret during the gap
@@ -98,7 +98,7 @@ struct BookingPaymentSection: View {
         // the Worker is all it takes: the poll notices the active grant,
         // retires the fee-charging quote, and re-prices — usually to
         // nothing owed, which settles the card away entirely.
-        .onChange(of: store.hardshipView?.status) { status in
+        .onChange(of: store.hardshipView?.status) { _, status in
             guard status == "APPROVED" else { return }
             Task { await store.prepareBookingPayment() }
         }
