@@ -40,6 +40,11 @@ open LayoutLab.xcodeproj
 is generated from `Darwin/project.yml` and is git-ignored, so a fresh clone has
 no project until you run it.
 
+The icon is a flat drawing of the app's own subject — a canvas with a
+component placed on it, in Tími's palette with the hard offset shadow. It
+shares nothing with the Tími icon, so the two are told apart at a glance on a
+home screen.
+
 iPad only. The app is three panes side by side and a phone cannot give each of
 them enough width to drag between, which is the only interaction it has.
 

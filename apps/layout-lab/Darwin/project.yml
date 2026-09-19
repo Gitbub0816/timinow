@@ -31,6 +31,13 @@ targets:
       Release: LayoutLab.xcconfig
     settings:
       base:
+        # Xcode 27 requires an AppIcon set as soon as a catalog exists at all:
+        # without one the build fails with "None of the input catalogs
+        # contained a matching ... app icon set ... named AppIcon". Named
+        # explicitly rather than left to the default, so the dependency
+        # between this setting and the folder on disk is visible.
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
         INFOPLIST_FILE: Info.plist
         PRODUCT_NAME: LayoutLab
         # Lower case, matching the customer app's convention — a capital in
