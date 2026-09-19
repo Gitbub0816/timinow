@@ -1,0 +1,15 @@
+MARKETING_VERSION = 1.0
+CURRENT_PROJECT_VERSION = 1
+
+IPHONEOS_DEPLOYMENT_TARGET = 17.0
+TARGETED_DEVICE_FAMILY = 2
+SWIFT_VERSION = 5.9
+GENERATE_INFOPLIST_FILE = NO
+INFOPLIST_FILE = Info.plist
+PRODUCT_MODULE_NAME = LayoutLabHost
+CODE_SIGN_STYLE = Automatic
+
+// Optional per-developer settings — DEVELOPMENT_TEAM, mainly. Git-ignored.
+// Comments here are //, not #: xcconfig reads a leading # as a preprocessor
+// directive and fails the build with "unsupported preprocessor directive".
+#include? "Local.xcconfig"

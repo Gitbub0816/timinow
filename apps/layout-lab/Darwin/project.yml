@@ -1,0 +1,41 @@
+name: LayoutLab
+options:
+  bundleIdPrefix: solutions.clearkey
+  deploymentTarget:
+    iOS: "17.0"
+packages:
+  LayoutLabPackage:
+    path: ..
+settings:
+  base:
+    MARKETING_VERSION: "1.0"
+    CURRENT_PROJECT_VERSION: "1"
+targets:
+  LayoutLab:
+    type: application
+    platform: iOS
+    sources:
+      - Sources
+      - path: Assets.xcassets
+        optional: true
+    dependencies:
+      - package: LayoutLabPackage
+        product: LayoutLabKit
+    configFiles:
+      Debug: LayoutLab.xcconfig
+      Release: LayoutLab.xcconfig
+    settings:
+      base:
+        INFOPLIST_FILE: Info.plist
+        PRODUCT_NAME: LayoutLab
+        # Lower case, matching the customer app's convention — a capital in
+        # the identifier is how that one ended up installable but not
+        # launchable by id. See apps/customer-mobile/Darwin/project.yml.
+        PRODUCT_BUNDLE_IDENTIFIER: solutions.clearkey.layoutlab
+        PRODUCT_MODULE_NAME: LayoutLabHost
+        CODE_SIGN_STYLE: Automatic
+        # iPad only. The whole app is three panes side by side; on a phone
+        # they would each be too narrow to drag between, which is the only
+        # interaction it has.
+        TARGETED_DEVICE_FAMILY: 2
+        SUPPORTS_MACCATALYST: NO
