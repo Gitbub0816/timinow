@@ -65,13 +65,24 @@ NAME="$(printf '%s\n' "$MATCH" | sed -E 's/ *\([0-9A-Fa-f-]{36}\).*//' | sed 's/
 
 echo "==> building for $NAME ($UDID)"
 DERIVED="$APP/.build/derived"
+mkdir -p "$DERIVED"
 xcodebuild -project "$APP/Darwin/LayoutLab.xcodeproj" \
   -scheme LayoutLab \
   -configuration Debug \
   -destination "id=$UDID" \
   -derivedDataPath "$DERIVED" \
   CODE_SIGNING_ALLOWED=NO \
-  build | tail -25
+  build > "$DERIVED/build.log" 2>&1 || {
+    # Show what actually broke. `| tail -N` on a full xcodebuild log buries
+    # the compiler diagnostics under the failed-command summary, which names
+    # the file but never the reason.
+    echo
+    echo "Build failed. Diagnostics:"
+    grep -E '(error|warning):' "$DERIVED/build.log" | sort -u | head -40 || true
+    echo
+    echo "Full log: $DERIVED/build.log"
+    exit 1
+  }
 
 BUILT="$DERIVED/Build/Products/Debug-iphonesimulator/LayoutLab.app"
 [ -d "$BUILT" ] || { echo "Build produced no app at $BUILT" >&2; exit 1; }

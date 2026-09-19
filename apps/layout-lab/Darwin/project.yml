@@ -16,8 +16,13 @@ targets:
     platform: iOS
     sources:
       - Sources
-      - path: Assets.xcassets
-        optional: true
+      # Checked in and real, not `optional: true`. That flag stops xcodegen
+      # erroring on a missing path but still writes the file reference, so the
+      # build then fails in CompileAssetCatalogVariant on a catalog that does
+      # not exist. The catalog holds only an accent colour — Tími coral, so
+      # system controls tint on brand — and exists mainly so there is somewhere
+      # to drop an icon later.
+      - Assets.xcassets
     dependencies:
       - package: LayoutLabPackage
         product: LayoutLabKit
