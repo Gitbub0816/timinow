@@ -19,15 +19,23 @@ public struct LabPaint: Codable, Hashable, Sendable {
         self.hex = hex
     }
 
-    public static let none  = LabPaint("none")
-    public static let ink   = LabPaint("ink")
-    public static let paper = LabPaint("paper")
-    public static let white = LabPaint("white")
-    public static let coral = LabPaint("coral")
-    public static let blue  = LabPaint("blue")
-    public static let gold  = LabPaint("gold")
-    public static let green = LabPaint("green")
-    public static let muted = LabPaint("muted")
+    /// One shorthand per entry in `tokens`, in the same order. Keep the two in
+    /// step: the picker iterates `tokens`, so a token with no shorthand is
+    /// only discovered when something tries to use it.
+    public static let none      = LabPaint("none")
+    public static let ink       = LabPaint("ink")
+    public static let paper     = LabPaint("paper")
+    public static let canvas    = LabPaint("canvas")
+    public static let white     = LabPaint("white")
+    public static let coral     = LabPaint("coral")
+    public static let coralSoft = LabPaint("coralSoft")
+    public static let blue      = LabPaint("blue")
+    public static let blueSoft  = LabPaint("blueSoft")
+    public static let gold      = LabPaint("gold")
+    public static let goldSoft  = LabPaint("goldSoft")
+    public static let green     = LabPaint("green")
+    public static let greenSoft = LabPaint("greenSoft")
+    public static let muted     = LabPaint("muted")
 
     public static let tokens = ["none", "ink", "paper", "canvas", "white", "coral", "coralSoft",
                                 "blue", "blueSoft", "gold", "goldSoft", "green", "greenSoft",
