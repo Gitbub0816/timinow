@@ -198,3 +198,30 @@ select_didit() {
   export TIMI_DIDIT=1
   echo "  building with in-app identity verification (Didit native SDK)"
 }
+
+# Bring the Simulator window forward.
+#
+# This is the one step in an app build with no stable answer. `open -a
+# Simulator` is a LaunchServices lookup that goes stale when Xcode.app is
+# replaced in place — which is exactly what happens when you keep one Xcode
+# and delete the other — and the path under the developer directory moved in
+# Xcode 27. So try the known locations, then the bundle identifier, and if
+# none of them work, say so and carry on: the app is installed either way,
+# and failing a build at the last line over a window is absurd.
+open_simulator() {
+  local candidate sim=""
+  for candidate in \
+    "$(xcode-select -p)/Applications/Simulator.app" \
+    "$(dirname "$(xcode-select -p)")/Applications/Simulator.app" \
+    "/Applications/Simulator.app"; do
+    if [ -d "$candidate" ]; then sim="$candidate"; break; fi
+  done
+  if [ -z "$sim" ]; then
+    sim="$(find "$(dirname "$(xcode-select -p)")" -maxdepth 4 -name Simulator.app -type d 2>/dev/null | head -1)"
+  fi
+  if [ -n "$sim" ]; then
+    open "$sim"
+  elif ! open -b com.apple.iphonesimulator 2>/dev/null; then
+    dim "  (could not find Simulator.app — open it from Xcode; the app is installed)"
+  fi
+}

@@ -104,14 +104,23 @@ if wanted:
     exact = [d for d in matches if d["name"].lower() == wanted]
     booted = [d for d in matches if d.get("state") == "Booted"]
     chosen = exact or booted or matches
-    print(chosen[-1]["name"] if chosen else "")
+    # Name *and* udid: the name goes in messages, the udid goes to xcodebuild
+    # and simctl. Two simulators can share a name across runtimes, and
+    # `simctl install booted` picks whichever one happens to be running —
+    # which may be the one the Layout Lab left open.
+    if chosen:
+        print(chosen[-1]["name"] + "\t" + chosen[-1]["udid"])
     raise SystemExit
 
-booted = [d["name"] for _, d in ios if d.get("state") == "Booted"]
+booted = [d for _, d in ios if d.get("state") == "Booted"]
 if booted:
-    print(booted[0]); raise SystemExit
-iphones = [d["name"] for _, d in ios if d["name"].startswith("iPhone")]
-print(iphones[-1] if iphones else "")' "$AVAILABLE")"
+    print(booted[0]["name"] + "\t" + booted[0]["udid"]); raise SystemExit
+iphones = [d for _, d in ios if d["name"].startswith("iPhone")]
+if iphones:
+    print(iphones[-1]["name"] + "\t" + iphones[-1]["udid"])' "$AVAILABLE")"
+
+UDID="$(printf '%s' "$DEVICE" | cut -s -f2)"
+DEVICE="$(printf '%s' "$DEVICE" | cut -f1)"
 
 # A model can be supported by the installed runtimes and still have no
 # simulator, because Xcode only creates a default handful — every other one is
@@ -162,8 +171,9 @@ print("\t".join([device_type["name"], device_type["identifier"], runtime["identi
     NEW_NAME="$(printf '%s' "$CREATE" | cut -f1)"
     NEW_TYPE="$(printf '%s' "$CREATE" | cut -f2)"
     NEW_RUNTIME="$(printf '%s' "$CREATE" | cut -f3)"
-    if xcrun simctl create "$NEW_NAME" "$NEW_TYPE" "$NEW_RUNTIME" >/dev/null 2>&1; then
+    if NEW_UDID="$(xcrun simctl create "$NEW_NAME" "$NEW_TYPE" "$NEW_RUNTIME" 2>/dev/null)"; then
       DEVICE="$NEW_NAME"
+      UDID="$NEW_UDID"
       echo "  no $NEW_NAME simulator existed — created one"
       dim "  Remove it later with: xcrun simctl delete '\''$NEW_NAME'\''"
     fi
@@ -195,6 +205,7 @@ $LISTING
 fi
 rm -f "$AVAILABLE"
 echo "  $DEVICE"
+[ -n "${UDID:-}" ] || die "  Resolved $DEVICE but not its simulator id."
 
 bold "3. Xcode project"
 ( cd "$APP_DIR/Darwin" && xcodegen generate >/dev/null )
@@ -206,7 +217,7 @@ dim "  Full output: /tmp/timi-ios-build.log"
 run_build /tmp/timi-ios-build.log "$APP_DIR" xcodebuild \
   -workspace Project.xcworkspace \
   -scheme TimiNow \
-  -destination "platform=iOS Simulator,name=$DEVICE" \
+  -destination "platform=iOS Simulator,id=$UDID" \
   -derivedDataPath build \
   -skipPackagePluginValidation \
   -skipMacroValidation \
@@ -224,10 +235,11 @@ echo "  built $BUILT"
 
 bold "5. Run"
 if $RUN; then
-  xcrun simctl boot "$DEVICE" 2>/dev/null || true
-  open -a Simulator
-  xcrun simctl install booted "$BUILT"
-  xcrun simctl launch booted "$BUNDLE_ID" >/dev/null
+  xcrun simctl boot "$UDID" 2>/dev/null || true
+  open_simulator
+  xcrun simctl bootstatus "$UDID" -b >/dev/null 2>&1 || true
+  xcrun simctl install "$UDID" "$BUILT"
+  xcrun simctl launch "$UDID" "$BUNDLE_ID" >/dev/null
   echo "  running on $DEVICE"
 else
   dim "  skipped (--build-only)"

@@ -15,8 +15,12 @@ Run `npm run check`. It runs, in order: `scripts/syntax.mjs` (parses every
 JS file in every Worker and browser bundle), `scripts/check-subprocessors.mjs`
 (Rule 3 below), `scripts/validate.mjs` and `scripts/validate-native.mjs`
 (structural/cross-surface consistency, including the legal-text
-cross-references described in Rule 4), then the full integration test suite
-(`scripts/smoke.mjs` through `scripts/e2e.mjs`). It must pass before you
+cross-references described in Rule 4), `scripts/swift-parse.mjs` (runs
+`swiftc -parse` over every Swift source when a toolchain is on the machine,
+and says so and passes when one is not — it is syntax only, so it is the
+cheap half of a build, not a substitute for one), `scripts/duo-wheel-geometry.mjs`
+(Rule 10 below), then the full integration test suite (`scripts/smoke.mjs`
+through `scripts/e2e.mjs`). It must pass before you
 start and must pass again before you finish. A CI workflow
 (`.github/workflows/check.yml`) now runs it on every pull request — but
 don't rely on CI to catch what you could catch first.
@@ -285,3 +289,21 @@ this as a standing checklist for new UI, not a one-time cleanup:
   consistent utility tweaks (`margin`, `font-size`), not visual chaos, but
   worth converging into shared CSS classes when you're already touching a
   block that has several, rather than adding another one-off.
+
+## 10. Absolute layout is arithmetic, and gets checked like arithmetic — enforced
+
+The fold app's wheel (`DuoWheel.swift`) places three windows and a button at
+computed points on an arc. Nothing in SwiftUI objects when two of them land on
+top of each other or when one leaves its box — it draws the overlap and clips
+the overflow, which is how three versions of that control shipped broken while
+every check passed. Its constants were settled by rendering the layout at 2x,
+measuring it, and solving for gaps; `scripts/duo-wheel-geometry.mjs` reads
+those constants back out of the Swift and re-derives the layout, failing the
+build when a window leaves the box, two windows come within 6pt, or the button
+clears a window by less than 12pt.
+
+It parses the source rather than restating the numbers, deliberately: a second
+copy of the constants drifts, and a drifted check confirms its own arithmetic
+instead of the control's. Copy that shape for the next absolutely-positioned
+control. A layout whose correctness is a calculation should not be verified by
+looking at a screenshot and forming an opinion.
