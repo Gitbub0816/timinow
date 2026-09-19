@@ -116,13 +116,14 @@ struct DuoStage: View {
 struct DuoMenuBar: View {
     var navigator: DuoNavigator
     var expanded: Bool
+    /// The section actually showing, not the last thing the wheel committed —
+    /// those diverge the moment you turn the wheel past your own destination.
+    var currentID: String
     var onPick: (DuoAction) -> Void
 
     private var menu: DuoGroup {
         navigator.groups.first { $0.kind == .menu } ?? DuoContent.menu()
     }
-
-    private var currentID: String? { navigator.chosen[menu.id] ?? menu.actions.first?.id }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
