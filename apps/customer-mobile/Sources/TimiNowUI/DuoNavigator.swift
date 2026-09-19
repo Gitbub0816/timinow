@@ -322,6 +322,36 @@ public enum DuoContent {
                   ])]
     }
 
+    /// The wheel while signed out.
+    ///
+    /// Typing is typing — an address and a six-digit code need a keyboard, and
+    /// no amount of wheel changes that. What the wheel carries here is what it
+    /// carries everywhere: the choices.
+    nonisolated public static func authGroups(_ stage: AuthStage) -> [DuoGroup] {
+        switch stage {
+        case .identifier:
+            return [DuoGroup(id: "auth", label: "Send me a code", kind: .single, actions: [
+                DuoAction(id: "send", label: "Send me a code", symbol: "paperplane.fill",
+                          detail: "No password to invent, and no separate sign-up")
+            ])]
+        case .code:
+            return [DuoGroup(id: "auth", label: "Finish signing in", kind: .choice, actions: [
+                DuoAction(id: "verify", label: "Sign in", symbol: "checkmark",
+                          detail: "With the code above"),
+                DuoAction(id: "restart", label: "Use a different address",
+                          symbol: "arrow.uturn.backward", detail: "Start again")
+            ])]
+        default:
+            // The account-creation and factor-picking stages are several
+            // fields each; the form below carries them, so the wheel says so
+            // rather than offering an action that does nothing.
+            return [DuoGroup(id: "auth", label: "This step needs the form", kind: .single, actions: [
+                DuoAction(id: "none", label: "Use the fields", symbol: "keyboard",
+                          detail: "A few more details, then you are through")
+            ])]
+        }
+    }
+
     /// Used before there is any data, so the fold UI is never an empty room.
     public static func sample() -> [DuoGroup] {
         [

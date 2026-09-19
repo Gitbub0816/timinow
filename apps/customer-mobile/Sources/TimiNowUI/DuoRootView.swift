@@ -41,19 +41,28 @@ public struct DuoRootView: View {
 
     public init(store: AppStore) {
         self.store = store
+        let signedOut = store.auth.signInRequired && !store.auth.isSignedIn && !DuoLayout.forced
         _navigator = State(initialValue: DuoNavigator(
-            groups: DuoContent.groups(for: store, section: .find, handedness: "right")))
+            groups: signedOut
+                ? DuoContent.authGroups(store.auth.stage)
+                : DuoContent.groups(for: store, section: .find, handedness: "right")))
     }
 
     private var menuExpanded: Bool { navigator.group.kind == .menu }
     private var nearTrailing: Bool { handedness == "right" }
 
-    /// Sign-in and onboarding are forms, and a wheel cannot type. So they keep
-    /// their own screens here — capped to a readable column rather than
-    /// stretched the width of an unfolded device, which is what a phone layout
-    /// on a tablet looks like and why it reads as broken.
+    /// Signed out, the fold app is still the fold app: the same chrome, the
+    /// same wheel, a different stage and a different set of choices. It never
+    /// hands over to a phone screen, which is what made the wheel invisible to
+    /// anyone who had not already signed in.
     ///
-    /// The wheel appears once there is something to turn.
+    /// Onboarding is gone from the fold entirely. It exists on the phone so a
+    /// stranger is asked their pet's name rather than their email address —
+    /// worth it there. Here the wheel *already* asks for the pet, the species
+    /// and the urgency, so running onboarding first would ask the same
+    /// questions twice, in two different interaction models, before showing
+    /// the one the app is for. Sign in, then the wheel; pets are added from
+    /// the Pets section with the same control as everything else.
     private var needsAuth: Bool {
         guard store.auth.signInRequired, !store.auth.isSignedIn else { return false }
         // TIMI_DUO=1 skips the gate as well as forcing the layout, so the wheel
@@ -67,33 +76,21 @@ public struct DuoRootView: View {
     public var body: some View {
         ZStack {
             TimiColor.paper.ignoresSafeArea()
-            if needsAuth { authColumn } else { wheelLayout }
+            wheelLayout
         }
         .onChange(of: store.pets.count) { _, _ in rebuild() }
         .onChange(of: store.currentSearch?.offers?.count ?? 0) { _, _ in rebuild() }
         .onChange(of: store.currentSearch?.status ?? "") { _, _ in rebuild() }
-    }
-
-    private var authColumn: some View {
-        Group {
-            if store.hasCompletedOnboarding || store.onboardingSignInRequested {
-                SignInView(auth: store.auth,
-                           handoff: store.hasCompletedOnboarding && store.hasPet,
-                           handoffPetName: store.pets.first?.name ?? "")
-            } else {
-                OnboardingView(store: store)
-            }
-        }
-        .frame(maxWidth: 640)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .onChange(of: store.auth.stage) { _, _ in rebuild() }
+        .onChange(of: store.auth.isSignedIn) { _, _ in rebuild() }
     }
 
     private var wheelLayout: some View {
         ZStack {
             HStack(spacing: 0) {
-                if nearTrailing { menuBar }
+                if nearTrailing && !needsAuth { menuBar }
                 stage
-                if !nearTrailing { menuBar }
+                if !nearTrailing && !needsAuth { menuBar }
             }
 
             // The wheel, inset from the near edge rather than flush to it.
@@ -125,8 +122,14 @@ public struct DuoRootView: View {
         .animation(.easeOut(duration: 0.2), value: menuExpanded)
     }
 
-    private var stage: some View {
-        DuoStage(navigator: navigator)
+    @ViewBuilder private var stage: some View {
+        Group {
+            if needsAuth {
+                DuoAuthStage(auth: store.auth)
+            } else {
+                DuoStage(navigator: navigator)
+            }
+        }
             .padding(.horizontal, 36)
             .padding(.vertical, 28)
             // Room for the wheel, so the longest answer never slides under it.
@@ -144,6 +147,14 @@ public struct DuoRootView: View {
     /// gap rather than a silent no-op.
     private func take(_ action: DuoAction) {
         switch navigator.group.id {
+        case "auth":
+            switch action.id {
+            case "send":    Task { await store.auth.submitIdentifier() }
+            case "verify":  Task { await store.auth.submitCode() }
+            case "restart": store.auth.startOver(); rebuild()
+            default:        break
+            }
+
         case "menu":
             guard let next = DuoSection(rawValue: action.id) else { return }
             section = next
@@ -194,7 +205,9 @@ public struct DuoRootView: View {
     private func rebuild() {
         let previousGroupID = navigator.group.id
         let previousActionID = navigator.focused?.id
-        navigator.groups = DuoContent.groups(for: store, section: section, handedness: handedness)
+        navigator.groups = needsAuth
+            ? DuoContent.authGroups(store.auth.stage)
+            : DuoContent.groups(for: store, section: section, handedness: handedness)
 
         if let index = navigator.groups.firstIndex(where: { $0.id == previousGroupID }) {
             navigator.groupIndex = index
