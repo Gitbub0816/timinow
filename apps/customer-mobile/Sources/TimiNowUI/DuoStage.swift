@@ -14,7 +14,7 @@ import SwiftUI
 /// scrolling list plus a wheel — would be two navigation systems arguing.
 struct DuoStage: View {
     var navigator: DuoNavigator
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityReduceMotion) var reduceMotion
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {

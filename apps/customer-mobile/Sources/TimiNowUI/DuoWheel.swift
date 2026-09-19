@@ -33,7 +33,7 @@ struct DuoWheel: View {
     var navigator: DuoNavigator
     var onCommit: (DuoAction) -> Void
 
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityReduceMotion) var reduceMotion
 
     // Geometry. The pivot sits inside the control, so the hub is whole and
     // the arc sweeps into the screen rather than off it.
@@ -45,11 +45,11 @@ struct DuoWheel: View {
     /// degrees at either end are where a thumb runs out of travel.
     private let sweep: Double = 144
 
-    @State private var mode = ""
+    @State var mode = ""
     /// Where the vertical translation stood when the last group step
     /// fired. `translation` is cumulative from the gesture's start, so a step
     /// has to move the baseline rather than zero a running total.
-    @State private var groupBaseline: CGFloat = 0
+    @State var groupBaseline: CGFloat = 0
 
     private var centre: CGPoint { CGPoint(x: boxWidth - hubRadius - 10, y: boxHeight / 2) }
 

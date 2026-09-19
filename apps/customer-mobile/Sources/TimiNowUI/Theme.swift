@@ -30,6 +30,13 @@ enum TimiColor {
     static let gold = Color(red: 0.969, green: 0.784, blue: 0.294)
     static let goldSoft = Color(red: 1.0, green: 0.941, blue: 0.725)
     static let canvas = Color(red: 0.965, green: 0.969, blue: 0.984)
+    /// Success and positive states specifically — never blue. CLAUDE.md
+    /// section 7 calls that out because public/styles.css once had --green
+    /// copy-pasted from --blue and every "success" surface rendered blue.
+    /// The iOS palette simply never carried it; the fold UI is the first
+    /// thing here that needed one.
+    static let green = Color(red: 0.071, green: 0.518, blue: 0.365)
+    static let greenSoft = Color(red: 0.863, green: 0.941, blue: 0.906)
     // #5B6072 — darkened from the original #6F7483 so caption/secondary text
     // clears WCAG 1.4.3's 4.5:1 minimum against every light surface it sits
     // on here (paper, canvas, goldSoft, blueSoft, coralSoft, white); the
