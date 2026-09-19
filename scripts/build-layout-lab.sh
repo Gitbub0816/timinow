@@ -28,30 +28,60 @@ command -v xcodegen >/dev/null 2>&1 || {
 echo "==> generating the Xcode project"
 ( cd "$APP/Darwin" && xcodegen generate )
 
-# An iPad, because the app is iPad-only — three panes side by side need the
-# width, and TARGETED_DEVICE_FAMILY says so.
-if [ -z "$DEVICE" ]; then
-  DEVICE="$(xcrun simctl list devices available \
-    | grep -oE 'iPad[^(]*' | sed 's/ *$//' | tail -1)"
-fi
-[ -n "$DEVICE" ] || { echo "No iPad simulator found. Create one in Xcode." >&2; exit 1; }
+# An iPad, because the app is iPad-only: three panes side by side need the
+# width, and TARGETED_DEVICE_FAMILY=2 says so. An iPhone destination is
+# rejected by xcodebuild with "doesn't match any of LayoutLab.app's targeted
+# device families", which is the setting working rather than a problem.
+#
+# Resolve a UDID rather than a name. simctl prints
+#
+#     iPad Pro 13-inch (M5) (2E8DF8DB-...-CBDEBF5EABB9) (Shutdown)
+#
+# so a name carries parentheses of its own, and matching up to the first "("
+# yields the bare word "iPad" — which matches no device and produces a wall
+# of "destinations compatible with this scheme". A UDID has none of that
+# ambiguity and also pins the runtime, so -destination cannot pick a
+# different iPad from the one that gets booted below.
+UDID=""
+LINES="$(xcrun simctl list devices available | grep -E '^[[:space:]]+iPad' || true)"
+[ -n "$LINES" ] || { echo "No iPad simulator is available. Add one in Xcode > Windows > Devices and Simulators." >&2; exit 1; }
 
-echo "==> building for $DEVICE"
+if [ -n "$DEVICE" ]; then
+  MATCH="$(printf '%s\n' "$LINES" | grep -i -- "$DEVICE" | tail -1 || true)"
+  [ -n "$MATCH" ] || {
+    echo "No available iPad simulator matches '$DEVICE'. These exist:" >&2
+    printf '%s\n' "$LINES" | sed -E 's/ *\([0-9A-Fa-f-]{36}\).*//' | sed 's/^ *//' | sort -u >&2
+    exit 1
+  }
+else
+  # simctl groups by runtime in ascending order, so the last iPad line is on
+  # the newest installed runtime.
+  MATCH="$(printf '%s\n' "$LINES" | tail -1)"
+fi
+
+UDID="$(printf '%s\n' "$MATCH" | grep -oE '[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}' | head -1)"
+NAME="$(printf '%s\n' "$MATCH" | sed -E 's/ *\([0-9A-Fa-f-]{36}\).*//' | sed 's/^ *//')"
+[ -n "$UDID" ] || { echo "Could not read a simulator id out of: $MATCH" >&2; exit 1; }
+
+echo "==> building for $NAME ($UDID)"
 DERIVED="$APP/.build/derived"
 xcodebuild -project "$APP/Darwin/LayoutLab.xcodeproj" \
   -scheme LayoutLab \
   -configuration Debug \
-  -destination "platform=iOS Simulator,name=$DEVICE" \
+  -destination "id=$UDID" \
   -derivedDataPath "$DERIVED" \
   CODE_SIGNING_ALLOWED=NO \
-  build | tail -20
+  build | tail -25
 
 BUILT="$DERIVED/Build/Products/Debug-iphonesimulator/LayoutLab.app"
 [ -d "$BUILT" ] || { echo "Build produced no app at $BUILT" >&2; exit 1; }
 
-echo "==> installing on $DEVICE"
-xcrun simctl boot "$DEVICE" 2>/dev/null || true
+echo "==> installing on $NAME"
+xcrun simctl boot "$UDID" 2>/dev/null || true
 open -a Simulator
-xcrun simctl install booted "$BUILT"
-xcrun simctl launch booted solutions.clearkey.layoutlab >/dev/null
-echo "==> running"
+# By id, not "booted": another simulator may already be running from the
+# customer app's build script, and "booted" would install into that one.
+xcrun simctl bootstatus "$UDID" -b >/dev/null 2>&1 || true
+xcrun simctl install "$UDID" "$BUILT"
+xcrun simctl launch "$UDID" solutions.clearkey.layoutlab >/dev/null
+echo "==> running on $NAME"

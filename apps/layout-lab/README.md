@@ -21,7 +21,12 @@ It is **separate from everything else in this repository on purpose**:
 
 ```bash
 ./scripts/build-layout-lab.sh
+./scripts/build-layout-lab.sh --device 'iPad Pro 13'
 ```
+
+With no `--device` it takes the iPad simulator on the newest installed
+runtime. `--device` is a case-insensitive substring, and a miss lists the
+iPads you actually have rather than every destination Xcode knows about.
 
 Or open it yourself:
 
