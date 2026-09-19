@@ -41,7 +41,7 @@
     "deploy:blog": "wrangler deploy --config wrangler.blog.jsonc --var GIT_SHA:${GIT_SHA:-$(git rev-parse --short=12 HEAD)}"
   },
   "devDependencies": {
-    "esbuild": "^0.28.1",
+    "esbuild": "^0.28.2",
     "wrangler": "^4.131.1"
   }
 }
