@@ -31,8 +31,11 @@ public enum DuoLayout {
 /// changes the question, and the hub commits.
 public struct DuoRootView: View {
     @Bindable var store: AppStore
-    @State private var navigator: DuoNavigator
-    @State private var handedness = "right"
+    // Internal, not private: Skip cannot bridge a private @State property to
+    // Android, and the fold UI is the surface most likely to be wanted on a
+    // Z Fold later. Costs nothing to keep the door open.
+    @State var navigator: DuoNavigator
+    @State var handedness = "right"
 
     public init(store: AppStore) {
         self.store = store
