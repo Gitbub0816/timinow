@@ -109,16 +109,17 @@ public struct DuoRootView: View {
         // a GeometryReader fills its parent and top-leading aligns its child,
         // which silently re-lays-out anything dropped inside it.
         GeometryReader { proxy in
-            panels(gap: DuoHinge.gap(proxy), size: proxy.size)
+            panels(creaseInset: DuoHinge.creaseClearance(proxy, fromTrailing: nearTrailing),
+                   creased: DuoHinge.isCreased(proxy))
                 .frame(width: proxy.size.width, height: proxy.size.height)
         }
     }
 
-    private func panels(gap: DuoHingeGap, size: CGSize) -> some View {
+    private func panels(creaseInset: CGFloat, creased: Bool) -> some View {
         ZStack {
             HStack(spacing: 0) {
                 if nearTrailing && !needsAuth { menuBar }
-                stage(gap: gap, size: size)
+                stage(creaseInset: creaseInset)
                 if !nearTrailing && !needsAuth { menuBar }
             }
 
@@ -134,7 +135,7 @@ public struct DuoRootView: View {
                     // straddling the seam is the worst case of all: the ridge
                     // sits under the thumb mid-sweep.
                     .padding(nearTrailing ? .leading : .trailing,
-                             CGFloat(gap.isVertical ? 12 : 0))
+                             CGFloat(creased ? 12 : 0))
                 if !nearTrailing { Spacer(minLength: 0) }
             }
             .frame(maxHeight: .infinity, alignment: .bottom)
@@ -165,12 +166,9 @@ public struct DuoRootView: View {
     /// clearance grows to match. Nothing is laid across the seam, and when the
     /// device is flat the reserved region is inactive and this is exactly the
     /// spacing it always was.
-    @ViewBuilder private func stage(gap: DuoHingeGap, size: CGSize) -> some View {
+    @ViewBuilder private func stage(creaseInset: CGFloat) -> some View {
         let wheelRoom: CGFloat = needsOnboarding ? 0 : 320
-        let creaseRoom: CGFloat = nearTrailing
-            ? gap.trailingClearance(in: size)
-            : gap.leadingClearance(in: size)
-        let nearInset = max(wheelRoom, creaseRoom > 0 ? creaseRoom + 24 : 0)
+        let nearInset = max(wheelRoom, creaseInset > 0 ? creaseInset + 24 : 0)
 
         Group {
             if needsOnboarding {

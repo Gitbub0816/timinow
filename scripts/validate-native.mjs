@@ -943,6 +943,39 @@ for (const path of await collectFiles("apps/customer-mobile/Sources", ".swift"))
   }
 }
 
+// CGRect and CGSize have no Kotlin counterpart, so Skip refuses them in any
+// *declaration* in a transpiled file — "'CGRect' is not a bridged type", as an
+// error rather than a warning. Access level makes no difference: the
+// transpiler reads the whole file either way, which is why making the type
+// internal did not help. Using one inside a function body is fine, because the
+// body can sit behind `#if os(iOS) && !SKIP` and Android never compiles it.
+//
+// A file guarded by !SKIP on its first line is excluded from the Android pass
+// entirely. `path(in rect: CGRect)` is exempt: it is the Shape protocol's own
+// requirement and Skip handles it.
+{
+  const targets = [
+    ...await collectFiles("apps/customer-mobile/Sources/TimiNowUI", ".swift"),
+    ...await collectFiles("apps/customer-mobile/Sources/TimiNowCore", ".swift")
+  ];
+  const annotation = /(?::|->)\s*(CGRect|CGSize)\b/;
+  for (const path of targets) {
+    const source = await read(path);
+    const [firstLine = ""] = source.split("\n");
+    if (/^#if\b.*!SKIP/.test(firstLine.trim())) continue;
+
+    for (const [index, line] of source.split("\n").entries()) {
+      const trimmed = line.trim();
+      if (trimmed.startsWith("//") || trimmed.startsWith("///")) continue;
+      if (/func\s+path\s*\(\s*in\s+\w+\s*:\s*CGRect\s*\)/.test(trimmed)) continue;
+      const hit = trimmed.match(annotation);
+      if (hit) {
+        throw new Error(`${path}:${index + 1}: declares a ${hit[1]}, which Skip cannot bridge to Android — "'${hit[1]}' is not a bridged type". Return CGFloat/Bool instead and keep the ${hit[1]} inside a function body behind #if os(iOS) && !SKIP, or guard the whole file with !SKIP on line 1.`);
+      }
+    }
+  }
+}
+
 // An @Observable whose file does not import SkipFuse or SkipFuseUI compiles
 // and runs perfectly on iOS, and silently fails to drive anything on Android:
 // Skip warns "this file contains @Observables, but they will not be able to
