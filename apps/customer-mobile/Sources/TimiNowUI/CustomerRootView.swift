@@ -31,7 +31,15 @@ public struct CustomerRootView: View {
             // better for conversion. Signed-in people never see any of it,
             // and a signed-out person who already finished onboarding on this
             // device lands straight on the auth step with their pets intact.
-            if store.auth.signInRequired && !store.auth.isSignedIn {
+            // The fold layout is the outermost decision, not a fallback after
+            // sign-in. It was written as an `else if` below, which made it
+            // unreachable for anyone not already signed in — so an unfolded
+            // device showed the phone onboarding stretched to a tablet.
+            // DuoRootView carries the signed-out case itself.
+            if foldLayout {
+                DuoRootView(store: store).transition(.opacity)
+            }
+            else if store.auth.signInRequired && !store.auth.isSignedIn {
                 if store.hasCompletedOnboarding || store.onboardingSignInRequested {
                     SignInView(
                         auth: store.auth,
@@ -45,7 +53,6 @@ public struct CustomerRootView: View {
                     OnboardingView(store: store)
                 }
             }
-            else if foldLayout { DuoRootView(store: store).transition(.opacity) }
             else { appContent.transition(.opacity) }
             if let error = store.errorMessage { ErrorToast(message: error) { store.errorMessage = nil }.padding(.top, 8).transition(.move(edge: .top).combined(with: .opacity)).zIndex(20) }
             if store.showCelebration { CelebrationOverlay().onAppear { Task { try? await Task.sleep(for: .seconds(1.15)); store.showCelebration = false } }.zIndex(30) }

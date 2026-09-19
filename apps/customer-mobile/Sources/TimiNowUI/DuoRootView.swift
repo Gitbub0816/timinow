@@ -48,10 +48,48 @@ public struct DuoRootView: View {
     private var menuExpanded: Bool { navigator.group.kind == .menu }
     private var nearTrailing: Bool { handedness == "right" }
 
+    /// Sign-in and onboarding are forms, and a wheel cannot type. So they keep
+    /// their own screens here — capped to a readable column rather than
+    /// stretched the width of an unfolded device, which is what a phone layout
+    /// on a tablet looks like and why it reads as broken.
+    ///
+    /// The wheel appears once there is something to turn.
+    private var needsAuth: Bool {
+        guard store.auth.signInRequired, !store.auth.isSignedIn else { return false }
+        // TIMI_DUO=1 skips the gate as well as forcing the layout, so the wheel
+        // can be worked on without a live sign-in code. It grants nothing: the
+        // store still has no token, so every call that needs one fails exactly
+        // as it should. An environment variable can only be set by whoever
+        // launches the process, which on a shipped app is nobody.
+        return !DuoLayout.forced
+    }
+
     public var body: some View {
         ZStack {
             TimiColor.paper.ignoresSafeArea()
+            if needsAuth { authColumn } else { wheelLayout }
+        }
+        .onChange(of: store.pets.count) { _, _ in rebuild() }
+        .onChange(of: store.currentSearch?.offers?.count ?? 0) { _, _ in rebuild() }
+        .onChange(of: store.currentSearch?.status ?? "") { _, _ in rebuild() }
+    }
 
+    private var authColumn: some View {
+        Group {
+            if store.hasCompletedOnboarding || store.onboardingSignInRequested {
+                SignInView(auth: store.auth,
+                           handoff: store.hasCompletedOnboarding && store.hasPet,
+                           handoffPetName: store.pets.first?.name ?? "")
+            } else {
+                OnboardingView(store: store)
+            }
+        }
+        .frame(maxWidth: 640)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var wheelLayout: some View {
+        ZStack {
             HStack(spacing: 0) {
                 if nearTrailing { menuBar }
                 stage
@@ -69,12 +107,6 @@ public struct DuoRootView: View {
             }
             .frame(maxHeight: .infinity, alignment: .bottom)
         }
-        // The wheel only ever reads groups, so anything that changes what the
-        // app can do right now — a pet added, an offer arriving from the
-        // network — turns up here without this view knowing how it happened.
-        .onChange(of: store.pets.count) { _, _ in rebuild() }
-        .onChange(of: store.currentSearch?.offers?.count ?? 0) { _, _ in rebuild() }
-        .onChange(of: store.currentSearch?.status ?? "") { _, _ in rebuild() }
     }
 
     private var menuBar: some View {
