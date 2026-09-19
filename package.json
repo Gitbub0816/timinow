@@ -4,6 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "xcode": "bash scripts/open-xcode.sh",
+    "ios": "bash scripts/build-ios-app.sh",
+    "lab": "bash scripts/build-layout-lab.sh",
     "dev": "wrangler dev --config wrangler.local.jsonc --local --persist-to .wrangler/state",
     "dev:local": "wrangler dev --config wrangler.local.jsonc --local --persist-to .wrangler/state",
     "dev:vet": "wrangler dev --config wrangler.vet.jsonc --local --persist-to .wrangler/state --port 8788",
